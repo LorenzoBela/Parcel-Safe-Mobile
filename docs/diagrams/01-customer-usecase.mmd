@@ -1,0 +1,21 @@
+%%{init: {'flowchart': {'curve': 'linear'}}}%%
+flowchart LR
+    Customer((Customer))
+    
+    UC1(["Login/Register"])
+    UC2(["View Dashboard"])
+    UC3(["Track Delivery"])
+    UC4(["View OTP Code"])
+    UC5(["Confirm Receipt"])
+    UC6(["View Delivery History"])
+    UC7(["View Photo Audit"])
+    UC8(["Manage Profile"])
+    
+    Customer --- UC1
+    Customer --- UC2
+    Customer --- UC3
+    Customer --- UC4
+    Customer --- UC5
+    Customer --- UC6
+    Customer --- UC7
+    Customer --- UC8

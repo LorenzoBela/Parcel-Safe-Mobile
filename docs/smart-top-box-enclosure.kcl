@@ -1,0 +1,139 @@
+// Smart Top Box - Parcel Safe Motorcycle Top Box
+// Manufacturing-ready 3D CAD model with flush-mounted interface panel
+// 500mm x 500mm x 400mm black polypropylene enclosure
+
+// Set units to millimeters
+@settings(defaultLengthUnit = mm, kclVersion = 1.0)
+
+// ==================== MAIN ENCLOSURE PARAMETERS ====================
+enclosureWidth = 500      // X dimension (length)
+enclosureDepth = 500      // Y dimension (width)
+enclosureHeight = 400     // Z dimension (height)
+wallThickness = 3         // Wall thickness (polypropylene)
+filletRadius = 15         // Fillet radius for aerodynamics
+
+// ==================== LID PARAMETERS ====================
+lidHeight = 100           // Height of the lid portion (100mm from top)
+lidGap = 1                // Gap between lid and body
+sealWidth = 3             // Tongue-and-groove seal width
+sealDepth = 3             // Tongue-and-groove seal depth
+
+// ==================== FLUSH INTERFACE PANEL PARAMETERS ====================
+// Panel is on the REAR face (Y = enclosureDepth) - delivery side
+// Recessed cut 6mm deep, 160mm wide, 120mm tall for flush-mounted components
+recessWidth = 160
+recessHeight = 120
+recessDepth = 6
+recessOffsetX = (enclosureWidth - recessWidth) / 2  // Centered horizontally
+recessOffsetZ = 100       // Height from base to bottom of recess
+
+// LCD I2C Display Cutout (72mm x 25mm, centered at top of recess)
+lcdCutoutWidth = 72
+lcdCutoutHeight = 25
+lcdOffsetX = (recessWidth - lcdCutoutWidth) / 2
+lcdOffsetZ = recessHeight - lcdCutoutHeight - 10  // Near top of recess
+
+// 4x3 Keypad Cutout (70mm x 52mm, centered below LCD)
+keypadWidth = 70
+keypadHeight = 52
+keypadOffsetX = (recessWidth - keypadWidth) / 2
+keypadOffsetZ = 8  // Near bottom of recess
+
+// Camera Aperture (12mm diameter, 15mm above LCD slot)
+cameraApertureDiameter = 12
+cameraOffsetZ = recessOffsetZ + lcdOffsetZ + lcdCutoutHeight + 15  // 15mm above LCD
+cameraCenterX = recessOffsetX + recessWidth / 2
+
+// ==================== UNDER-BRACKET MOUNTING PARAMETERS ====================
+// Reserved for future underside mounting features
+
+// ==================== CREATE MAIN ENCLOSURE BASE WITH INTEGRATED FEATURES ====================
+// Build rear wall with recessed panel area and component cutouts
+// Using sketch on rear face (XZ plane at Y = enclosureDepth)
+
+// Main enclosure body
+enclosureBase = startSketchOn(XY)
+  |> startProfile(at = [0, 0])
+  |> xLine(length = enclosureWidth, tag = $baseRight)
+  |> yLine(length = enclosureDepth, tag = $baseFront)
+  |> xLine(length = -enclosureWidth, tag = $baseLeft)
+  |> yLine(length = -enclosureDepth, tag = $baseRear)
+  |> close()
+  |> extrude(length = enclosureHeight - lidHeight)
+
+// Apply fillets to vertical edges for aerodynamics
+fillet(enclosureBase, radius = filletRadius, tags = [getNextAdjacentEdge(baseRight)])
+fillet(enclosureBase, radius = filletRadius, tags = [getNextAdjacentEdge(baseFront)])
+fillet(enclosureBase, radius = filletRadius, tags = [getNextAdjacentEdge(baseLeft)])
+fillet(enclosureBase, radius = filletRadius, tags = [getNextAdjacentEdge(baseRear)])
+
+// ==================== FLUSH RECESSED PANEL CUT INTO REAR WALL ====================
+// 6mm deep recess cut INTO the rear face for flush mounting
+recessCut = startSketchOn(enclosureBase, face = baseFront)
+  |> startProfile(at = [recessOffsetX, recessOffsetZ])
+  |> xLine(length = recessWidth)
+  |> yLine(length = recessHeight)
+  |> xLine(length = -recessWidth)
+  |> yLine(length = -recessHeight)
+  |> close()
+  |> extrude(length = recessDepth)
+
+// ==================== LCD I2C DISPLAY THROUGH-CUT (72mm x 25mm) ====================
+// Cut through the recessed area into the box
+lcdCutout = startSketchOn(recessCut, face = END)
+  |> startProfile(at = [recessOffsetX + lcdOffsetX, recessOffsetZ + lcdOffsetZ])
+  |> xLine(length = lcdCutoutWidth)
+  |> yLine(length = lcdCutoutHeight)
+  |> xLine(length = -lcdCutoutWidth)
+  |> yLine(length = -lcdCutoutHeight)
+  |> close()
+  |> extrude(length = -(wallThickness - recessDepth + recessDepth + 5))
+
+// ==================== 4x3 KEYPAD THROUGH-CUT (70mm x 52mm) ====================
+// Cut through the recessed area into the box
+keypadCutout = startSketchOn(recessCut, face = END)
+  |> startProfile(at = [recessOffsetX + keypadOffsetX, recessOffsetZ + keypadOffsetZ])
+  |> xLine(length = keypadWidth)
+  |> yLine(length = keypadHeight)
+  |> xLine(length = -keypadWidth)
+  |> yLine(length = -keypadHeight)
+  |> close()
+  |> extrude(length = -(wallThickness - recessDepth + recessDepth + 5))
+
+// ==================== CAMERA APERTURE (12mm CIRCULAR) ====================
+// 15mm above the LCD slot, tied to recessed panel so it stays aligned with interface
+cameraAperture = startSketchOn(recessCut, face = END)
+  |> circle(center = [cameraCenterX, cameraOffsetZ], radius = cameraApertureDiameter / 2)
+  |> extrude(length = -(wallThickness + 5))
+
+// ==================== TONGUE (LIP) ON BASE TOP ====================
+// 3mm wide, 3mm tall stepped lip on base for waterproof seal
+sealLipBase = startSketchOn(offsetPlane(XY, offset = enclosureHeight - lidHeight))
+  |> startProfile(at = [wallThickness, wallThickness])
+  |> xLine(length = enclosureWidth - 2 * wallThickness)
+  |> yLine(length = sealWidth)
+  |> xLine(length = -(enclosureWidth - 2 * wallThickness - 2 * sealWidth))
+  |> yLine(length = enclosureDepth - 2 * wallThickness - 2 * sealWidth)
+  |> xLine(length = enclosureWidth - 2 * wallThickness - 2 * sealWidth)
+  |> yLine(length = sealWidth)
+  |> xLine(length = -(enclosureWidth - 2 * wallThickness))
+  |> yLine(length = -(enclosureDepth - 2 * wallThickness))
+  |> close()
+  |> extrude(length = sealDepth)
+
+// ==================== CREATE LID ====================
+lidBody = startSketchOn(offsetPlane(XY, offset = enclosureHeight - lidHeight + lidGap))
+  |> startProfile(at = [0, 0])
+  |> xLine(length = enclosureWidth, tag = $lidRight)
+  |> yLine(length = enclosureDepth, tag = $lidFront)
+  |> xLine(length = -enclosureWidth, tag = $lidLeft)
+  |> yLine(length = -enclosureDepth, tag = $lidRear)
+  |> close()
+  |> extrude(length = lidHeight - lidGap)
+
+// Apply fillets to lid vertical edges
+fillet(lidBody, radius = filletRadius, tags = [getNextAdjacentEdge(lidRight)])
+fillet(lidBody, radius = filletRadius, tags = [getNextAdjacentEdge(lidFront)])
+fillet(lidBody, radius = filletRadius, tags = [getNextAdjacentEdge(lidLeft)])
+fillet(lidBody, radius = filletRadius, tags = [getNextAdjacentEdge(lidRear)])
+

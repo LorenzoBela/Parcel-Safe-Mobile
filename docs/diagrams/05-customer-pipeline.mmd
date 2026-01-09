@@ -1,0 +1,57 @@
+%%{init: {'flowchart': {'curve': 'linear'}}}%%
+flowchart LR
+    subgraph Input
+        A[Customer Taps Button]
+        B[Push Notification]
+    end
+    
+    subgraph "Mobile App"
+        C[Show Screen]
+        D[Request Data]
+        E[Display Map]
+        F[Show OTP Code]
+    end
+    
+    subgraph Server
+        G[Process Request]
+        H[Query Database]
+        I[Generate OTP]
+        J[Send Notification]
+    end
+    
+    subgraph "Smart Box"
+        K[Report Status]
+        L[Send GPS Location]
+        M[Capture Photos]
+        N[Detect Tamper]
+    end
+    
+    subgraph Output
+        O[Live Tracking Map]
+        P[OTP Display]
+        Q[Delivery Photos]
+        R[Alert Message]
+    end
+    
+    A --> C
+    B --> C
+    C --> D
+    D --> G
+    G --> H
+    H --> G
+    G --> I
+    I --> J
+    J --> B
+    
+    K --> G
+    L --> G
+    M --> G
+    N --> G
+    
+    G --> D
+    D --> E
+    D --> F
+    E --> O
+    F --> P
+    D --> Q
+    N --> R

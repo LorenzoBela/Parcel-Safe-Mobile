@@ -1,0 +1,28 @@
+%%{init: {'flowchart': {'curve': 'linear'}}}%%
+flowchart TD
+    A([Start]) --> B[Box Sensors Active]
+    B --> C{Tampering?}
+    
+    C -->|No| D[Wait]
+    D --> B
+    
+    C -->|Yes| E[Record Event]
+    E --> F[Turn On Camera]
+    F --> G[Take Photo]
+    G --> H[Get Location]
+    H --> I[Get Time]
+    
+    I --> J[Send to Server]
+    J --> K[Save Photo]
+    
+    K --> L[Alert Customer]
+    L --> M[Customer Sees Photo]
+    
+    M --> N([End])
+    
+    style A fill:#e1f5fe
+    style C fill:#ffcdd2
+    style F fill:#fff9c4
+    style G fill:#fff9c4
+    style L fill:#ffcdd2
+    style N fill:#e1f5fe

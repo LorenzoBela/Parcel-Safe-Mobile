@@ -1,0 +1,41 @@
+%%{init: {'flowchart': {'curve': 'linear'}}}%%
+flowchart TD
+    A([Start]) --> B[Rider Arrives]
+    B --> C{Near Location?}
+    
+    C -->|No| D[Move Closer]
+    D --> C
+    
+    C -->|Yes| E[Create OTP Code]
+    E --> F[Send to Customer]
+    F --> G[Show 6-Digit Code]
+    G --> H[Start 5-min Timer]
+    
+    H --> I[Customer Tells Code]
+    I --> J[/Rider Types Code/]
+    J --> K{Correct?}
+    
+    K -->|No| L[Add 1 to Tries]
+    L --> M{Tried 3 Times?}
+    M -->|Yes| N[Wait 5 mins]
+    N --> O([End - Locked])
+    
+    M -->|No| P[Wrong Code]
+    P --> J
+    
+    K -->|Yes| Q{Time Up?}
+    Q -->|Yes| R[New Code]
+    R --> F
+    
+    Q -->|No| S[Code Used]
+    S --> T[Turn On Camera]
+    T --> U[Take Photo of Person]
+    U --> V[Save Photo]
+    V --> W[Unlock Box]
+    W --> X([End - Success])
+    
+    style A fill:#e1f5fe
+    style T fill:#fff9c4
+    style U fill:#fff9c4
+    style X fill:#c8e6c9
+    style O fill:#ffcdd2

@@ -1,0 +1,29 @@
+%%{init: {'flowchart': {'curve': 'linear'}}}%%
+flowchart TD
+    subgraph "When to Take Photo"
+        A[OTP Correct]
+        B[Tamper Detected]
+    end
+    
+    subgraph "Camera"
+        C[Turn On Camera]
+        D[Take Photo]
+    end
+    
+    subgraph "Save"
+        E[Send to Server]
+        F[Store in Database]
+    end
+    
+    subgraph "Who Can View"
+        G[Customer]
+        H[Admin]
+    end
+    
+    A --> C
+    B --> C
+    C --> D
+    D --> E
+    E --> F
+    F --> G
+    F --> H

@@ -1,0 +1,391 @@
+<mxfile host="app.diagrams.net" modified="2024-01-15T10:00:00.000Z" agent="Mozilla/5.0" version="22.1.0" type="device">
+  <diagram name="Network Diagram - GNS3 Style" id="network-gns3">
+    <mxGraphModel dx="1400" dy="1000" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1400" pageHeight="900" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        
+        <!-- ========== INTERNET CLOUD ========== -->
+        <mxCell id="internet" value="Internet" style="ellipse;shape=cloud;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;strokeWidth=2;fontSize=14;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="580" y="40" width="200" height="100" as="geometry" />
+        </mxCell>
+        
+        <!-- ========== CELLULAR TOWER (Center) ========== -->
+        <mxCell id="cell-tower" value="" style="shape=mxgraph.cisco.wireless.antenna;html=1;pointerEvents=1;dashed=0;fillColor=#FF9800;strokeColor=#333333;strokeWidth=1;verticalLabelPosition=bottom;verticalAlign=top;align=center;outlineConnect=0;" vertex="1" parent="1">
+          <mxGeometry x="660" y="200" width="40" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="cell-tower-label" value="4G/LTE&#xa;Cell Tower" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=top;fontSize=10;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="640" y="280" width="80" height="30" as="geometry" />
+        </mxCell>
+        
+        <!-- ========== MOBILE DEVICES (Left Side) ========== -->
+        
+        <!-- Customer Smartphone -->
+        <mxCell id="customer-phone" value="" style="shape=mxgraph.cisco.mobile.pda;html=1;pointerEvents=1;dashed=0;fillColor=#29AAE1;strokeColor=#333333;strokeWidth=1;verticalLabelPosition=bottom;verticalAlign=top;align=center;outlineConnect=0;" vertex="1" parent="1">
+          <mxGeometry x="120" y="200" width="50" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="customer-label" value="Customer&#xa;Mobile App" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=top;fontSize=10;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="100" y="280" width="90" height="30" as="geometry" />
+        </mxCell>
+        
+        <!-- Rider Smartphone -->
+        <mxCell id="rider-phone" value="" style="shape=mxgraph.cisco.mobile.pda;html=1;pointerEvents=1;dashed=0;fillColor=#7EC850;strokeColor=#333333;strokeWidth=1;verticalLabelPosition=bottom;verticalAlign=top;align=center;outlineConnect=0;" vertex="1" parent="1">
+          <mxGeometry x="120" y="380" width="50" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="rider-label" value="Rider&#xa;Mobile App" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=top;fontSize=10;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="100" y="460" width="90" height="30" as="geometry" />
+        </mxCell>
+        
+        <!-- ========== FIREBASE CLOUD (Server Farm) ========== -->
+        <mxCell id="firebase-cloud" value="" style="ellipse;shape=cloud;whiteSpace=wrap;html=1;fillColor=#FFF3E0;strokeColor=#FF9800;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="900" y="120" width="280" height="180" as="geometry" />
+        </mxCell>
+        <mxCell id="firebase-label" value="Firebase Cloud Platform" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;fontSize=12;fontStyle=1;fontColor=#E65100;" vertex="1" parent="1">
+          <mxGeometry x="970" y="135" width="160" height="20" as="geometry" />
+        </mxCell>
+        
+        <!-- Firebase Auth Server -->
+        <mxCell id="fb-auth" value="" style="shape=mxgraph.cisco.servers.standard_host;html=1;pointerEvents=1;dashed=0;fillColor=#4CAF50;strokeColor=#333333;strokeWidth=1;verticalLabelPosition=bottom;verticalAlign=top;align=center;outlineConnect=0;" vertex="1" parent="1">
+          <mxGeometry x="940" y="175" width="40" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="fb-auth-label" value="Auth" style="text;html=1;strokeColor=none;fillColor=none;align=center;fontSize=9;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="935" y="225" width="50" height="15" as="geometry" />
+        </mxCell>
+        
+        <!-- Firebase Firestore Server -->
+        <mxCell id="fb-firestore" value="" style="shape=mxgraph.cisco.servers.database;html=1;pointerEvents=1;dashed=0;fillColor=#2196F3;strokeColor=#333333;strokeWidth=1;verticalLabelPosition=bottom;verticalAlign=top;align=center;outlineConnect=0;" vertex="1" parent="1">
+          <mxGeometry x="1010" y="175" width="40" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="fb-firestore-label" value="Firestore" style="text;html=1;strokeColor=none;fillColor=none;align=center;fontSize=9;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="1000" y="225" width="60" height="15" as="geometry" />
+        </mxCell>
+        
+        <!-- Firebase Storage Server -->
+        <mxCell id="fb-storage" value="" style="shape=mxgraph.cisco.storage.storage;html=1;pointerEvents=1;dashed=0;fillColor=#9C27B0;strokeColor=#333333;strokeWidth=1;verticalLabelPosition=bottom;verticalAlign=top;align=center;outlineConnect=0;" vertex="1" parent="1">
+          <mxGeometry x="1080" y="175" width="40" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="fb-storage-label" value="Storage" style="text;html=1;strokeColor=none;fillColor=none;align=center;fontSize=9;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="1070" y="225" width="60" height="15" as="geometry" />
+        </mxCell>
+        
+        <!-- Firebase Functions Server -->
+        <mxCell id="fb-functions" value="" style="shape=mxgraph.cisco.servers.application_server;html=1;pointerEvents=1;dashed=0;fillColor=#FF5722;strokeColor=#333333;strokeWidth=1;verticalLabelPosition=bottom;verticalAlign=top;align=center;outlineConnect=0;" vertex="1" parent="1">
+          <mxGeometry x="1150" y="175" width="40" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="fb-functions-label" value="Functions" style="text;html=1;strokeColor=none;fillColor=none;align=center;fontSize=9;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="1140" y="225" width="60" height="15" as="geometry" />
+        </mxCell>
+        
+        <!-- ========== GOOGLE MAPS API ========== -->
+        <mxCell id="gmaps-server" value="" style="shape=mxgraph.cisco.servers.application_server;html=1;pointerEvents=1;dashed=0;fillColor=#34A853;strokeColor=#333333;strokeWidth=1;verticalLabelPosition=bottom;verticalAlign=top;align=center;outlineConnect=0;" vertex="1" parent="1">
+          <mxGeometry x="1100" y="360" width="50" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="gmaps-label" value="Google Maps&#xa;API Server" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=top;fontSize=10;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="1080" y="420" width="90" height="30" as="geometry" />
+        </mxCell>
+        
+        <!-- ========== MQTT BROKER ========== -->
+        <mxCell id="mqtt-broker" value="" style="shape=mxgraph.cisco.servers.communications_server;html=1;pointerEvents=1;dashed=0;fillColor=#F44336;strokeColor=#333333;strokeWidth=1;verticalLabelPosition=bottom;verticalAlign=top;align=center;outlineConnect=0;" vertex="1" parent="1">
+          <mxGeometry x="1100" y="500" width="50" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="mqtt-label" value="MQTT Broker&#xa;IoT Hub" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=top;fontSize=10;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="1080" y="560" width="90" height="30" as="geometry" />
+        </mxCell>
+        
+        <!-- ========== SMART TOP BOX (IoT Device) ========== -->
+        <mxCell id="smartbox-container" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF8E1;strokeColor=#FF9800;strokeWidth=2;dashed=1;" vertex="1" parent="1">
+          <mxGeometry x="80" y="540" width="280" height="280" as="geometry" />
+        </mxCell>
+        <mxCell id="smartbox-title" value="Smart Top Box (IoT Device)" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;fontSize=12;fontStyle=1;fontColor=#E65100;" vertex="1" parent="1">
+          <mxGeometry x="130" y="550" width="180" height="20" as="geometry" />
+        </mxCell>
+        
+        <!-- ESP32 MCU -->
+        <mxCell id="esp32" value="" style="shape=mxgraph.cisco.controllers_and_modules.cisco_ons_15310_ma_sdh_pl_mr;html=1;pointerEvents=1;dashed=0;fillColor=#FF9800;strokeColor=#333333;strokeWidth=1;verticalLabelPosition=bottom;verticalAlign=top;align=center;outlineConnect=0;" vertex="1" parent="1">
+          <mxGeometry x="180" y="580" width="80" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="esp32-label" value="ESP32 MCU" style="text;html=1;strokeColor=none;fillColor=none;align=center;fontSize=10;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="180" y="620" width="80" height="15" as="geometry" />
+        </mxCell>
+        
+        <!-- Camera Module -->
+        <mxCell id="camera" value="" style="shape=mxgraph.cisco.misc.camera;html=1;pointerEvents=1;dashed=0;fillColor=#607D8B;strokeColor=#333333;strokeWidth=1;verticalLabelPosition=bottom;verticalAlign=top;align=center;outlineConnect=0;" vertex="1" parent="1">
+          <mxGeometry x="100" y="660" width="40" height="32" as="geometry" />
+        </mxCell>
+        <mxCell id="camera-label" value="Camera" style="text;html=1;strokeColor=none;fillColor=none;align=center;fontSize=9;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="95" y="692" width="50" height="15" as="geometry" />
+        </mxCell>
+        
+        <!-- GPS NEO-M8N -->
+        <mxCell id="gps" value="" style="shape=mxgraph.cisco.misc.satellite;html=1;pointerEvents=1;dashed=0;fillColor=#8BC34A;strokeColor=#333333;strokeWidth=1;verticalLabelPosition=bottom;verticalAlign=top;align=center;outlineConnect=0;" vertex="1" parent="1">
+          <mxGeometry x="170" y="660" width="40" height="32" as="geometry" />
+        </mxCell>
+        <mxCell id="gps-label" value="NEO-M8N" style="text;html=1;strokeColor=none;fillColor=none;align=center;fontSize=9;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="160" y="692" width="60" height="15" as="geometry" />
+        </mxCell>
+        
+        <!-- GSM Module -->
+        <mxCell id="gsm" value="" style="shape=mxgraph.cisco.wireless.antenna;html=1;pointerEvents=1;dashed=0;fillColor=#03A9F4;strokeColor=#333333;strokeWidth=1;verticalLabelPosition=bottom;verticalAlign=top;align=center;outlineConnect=0;" vertex="1" parent="1">
+          <mxGeometry x="240" y="650" width="30" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="gsm-label" value="GSM" style="text;html=1;strokeColor=none;fillColor=none;align=center;fontSize=9;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="235" y="700" width="40" height="15" as="geometry" />
+        </mxCell>
+        
+        <!-- Servo Lock -->
+        <mxCell id="servo" value="" style="shape=mxgraph.cisco.misc.lock;html=1;pointerEvents=1;dashed=0;fillColor=#9E9E9E;strokeColor=#333333;strokeWidth=1;verticalLabelPosition=bottom;verticalAlign=top;align=center;outlineConnect=0;" vertex="1" parent="1">
+          <mxGeometry x="300" y="660" width="30" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="servo-label" value="Servo Lock" style="text;html=1;strokeColor=none;fillColor=none;align=center;fontSize=9;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="285" y="700" width="60" height="15" as="geometry" />
+        </mxCell>
+        
+        <!-- Reed Switch -->
+        <mxCell id="reed" value="" style="shape=mxgraph.electrical.electro-mechanical.pushbutton_(make);html=1;pointerEvents=1;dashed=0;fillColor=#FFEB3B;strokeColor=#333333;strokeWidth=1;verticalLabelPosition=bottom;verticalAlign=top;align=center;outlineConnect=0;rotation=0;" vertex="1" parent="1">
+          <mxGeometry x="105" y="740" width="40" height="30" as="geometry" />
+        </mxCell>
+        <mxCell id="reed-label" value="Reed Switch" style="text;html=1;strokeColor=none;fillColor=none;align=center;fontSize=9;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="90" y="770" width="70" height="15" as="geometry" />
+        </mxCell>
+        
+        <!-- Temp Sensor -->
+        <mxCell id="temp" value="" style="shape=mxgraph.cisco.misc.thermometer;html=1;pointerEvents=1;dashed=0;fillColor=#F44336;strokeColor=#333333;strokeWidth=1;verticalLabelPosition=bottom;verticalAlign=top;align=center;outlineConnect=0;" vertex="1" parent="1">
+          <mxGeometry x="180" y="730" width="20" height="45" as="geometry" />
+        </mxCell>
+        <mxCell id="temp-label" value="Temp" style="text;html=1;strokeColor=none;fillColor=none;align=center;fontSize=9;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="165" y="775" width="50" height="15" as="geometry" />
+        </mxCell>
+        
+        <!-- Battery -->
+        <mxCell id="battery" value="" style="shape=mxgraph.electrical.signal_sources.dc_source_1;html=1;pointerEvents=1;dashed=0;fillColor=#4CAF50;strokeColor=#333333;strokeWidth=1;verticalLabelPosition=bottom;verticalAlign=top;align=center;outlineConnect=0;" vertex="1" parent="1">
+          <mxGeometry x="240" y="735" width="40" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="battery-label" value="Battery" style="text;html=1;strokeColor=none;fillColor=none;align=center;fontSize=9;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="235" y="775" width="50" height="15" as="geometry" />
+        </mxCell>
+        
+        <!-- SD Card -->
+        <mxCell id="sdcard" value="" style="shape=mxgraph.cisco.storage.disk_group;html=1;pointerEvents=1;dashed=0;fillColor=#795548;strokeColor=#333333;strokeWidth=1;verticalLabelPosition=bottom;verticalAlign=top;align=center;outlineConnect=0;" vertex="1" parent="1">
+          <mxGeometry x="300" y="735" width="40" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="sdcard-label" value="SD Card" style="text;html=1;strokeColor=none;fillColor=none;align=center;fontSize=9;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="295" y="775" width="50" height="15" as="geometry" />
+        </mxCell>
+        
+        <!-- ========== CONNECTION LINES ========== -->
+        
+        <!-- Customer to Cell Tower (4G/LTE Wireless) -->
+        <mxCell id="conn1" value="4G/LTE" style="endArrow=none;html=1;rounded=0;strokeColor=#29AAE1;strokeWidth=2;dashed=1;dashPattern=8 4;fontStyle=1;fontSize=9;labelBackgroundColor=#FFFFFF;" edge="1" parent="1" source="customer-phone" target="cell-tower">
+          <mxGeometry width="50" height="50" relative="1" as="geometry">
+            <mxPoint x="200" y="240" as="sourcePoint" />
+            <mxPoint x="600" y="240" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        
+        <!-- Rider to Cell Tower (4G/LTE Wireless) -->
+        <mxCell id="conn2" value="4G/LTE" style="endArrow=none;html=1;rounded=0;strokeColor=#7EC850;strokeWidth=2;dashed=1;dashPattern=8 4;fontStyle=1;fontSize=9;labelBackgroundColor=#FFFFFF;" edge="1" parent="1" source="rider-phone" target="cell-tower">
+          <mxGeometry width="50" height="50" relative="1" as="geometry">
+            <mxPoint x="200" y="420" as="sourcePoint" />
+            <mxPoint x="600" y="280" as="targetPoint" />
+            <Array as="points">
+              <mxPoint x="400" y="420" />
+              <mxPoint x="400" y="240" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        
+        <!-- Cell Tower to Internet -->
+        <mxCell id="conn3" value="" style="endArrow=none;html=1;rounded=0;strokeColor=#666666;strokeWidth=2;" edge="1" parent="1" source="cell-tower" target="internet">
+          <mxGeometry width="50" height="50" relative="1" as="geometry">
+            <mxPoint x="680" y="200" as="sourcePoint" />
+            <mxPoint x="680" y="140" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        
+        <!-- Internet to Firebase -->
+        <mxCell id="conn4" value="HTTPS/443" style="endArrow=none;html=1;rounded=0;strokeColor=#FF9800;strokeWidth=2;dashed=1;fontStyle=1;fontSize=9;labelBackgroundColor=#FFFFFF;" edge="1" parent="1" source="internet" target="firebase-cloud">
+          <mxGeometry width="50" height="50" relative="1" as="geometry">
+            <mxPoint x="800" y="90" as="sourcePoint" />
+            <mxPoint x="900" y="180" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        
+        <!-- Internet to Google Maps -->
+        <mxCell id="conn5" value="" style="endArrow=none;html=1;rounded=0;strokeColor=#34A853;strokeWidth=2;dashed=1;" edge="1" parent="1" source="internet" target="gmaps-server">
+          <mxGeometry width="50" height="50" relative="1" as="geometry">
+            <mxPoint x="800" y="100" as="sourcePoint" />
+            <mxPoint x="1100" y="360" as="targetPoint" />
+            <Array as="points">
+              <mxPoint x="850" y="60" />
+              <mxPoint x="1125" y="60" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        
+        <!-- Internet to MQTT Broker -->
+        <mxCell id="conn6" value="" style="endArrow=none;html=1;rounded=0;strokeColor=#F44336;strokeWidth=2;dashed=1;" edge="1" parent="1" source="internet" target="mqtt-broker">
+          <mxGeometry width="50" height="50" relative="1" as="geometry">
+            <mxPoint x="800" y="120" as="sourcePoint" />
+            <mxPoint x="1100" y="500" as="targetPoint" />
+            <Array as="points">
+              <mxPoint x="830" y="50" />
+              <mxPoint x="1180" y="50" />
+              <mxPoint x="1180" y="530" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        
+        <!-- Smart Box GSM to Cell Tower (4G/LTE Wireless) -->
+        <mxCell id="conn7" value="4G/LTE" style="endArrow=none;html=1;rounded=0;strokeColor=#03A9F4;strokeWidth=2;dashed=1;dashPattern=8 4;fontStyle=1;fontSize=9;labelBackgroundColor=#FFFFFF;" edge="1" parent="1" source="gsm" target="cell-tower">
+          <mxGeometry width="50" height="50" relative="1" as="geometry">
+            <mxPoint x="270" y="670" as="sourcePoint" />
+            <mxPoint x="660" y="280" as="targetPoint" />
+            <Array as="points">
+              <mxPoint x="500" y="670" />
+              <mxPoint x="500" y="240" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        
+        <!-- Smart Box to MQTT (via Cell Tower) - conceptual line -->
+        <mxCell id="conn8" value="MQTT/8883" style="endArrow=none;html=1;rounded=0;strokeColor=#F44336;strokeWidth=2;dashed=1;fontStyle=1;fontSize=9;labelBackgroundColor=#FFFFFF;" edge="1" parent="1" source="cell-tower" target="mqtt-broker">
+          <mxGeometry width="50" height="50" relative="1" as="geometry">
+            <mxPoint x="700" y="240" as="sourcePoint" />
+            <mxPoint x="1100" y="530" as="targetPoint" />
+            <Array as="points">
+              <mxPoint x="800" y="240" />
+              <mxPoint x="800" y="530" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        
+        <!-- ESP32 internal connections -->
+        <mxCell id="int1" value="" style="endArrow=none;html=1;rounded=0;strokeColor=#FF9800;strokeWidth=1;" edge="1" parent="1" source="esp32" target="camera">
+          <mxGeometry width="50" height="50" relative="1" as="geometry">
+            <mxPoint x="160" y="620" as="sourcePoint" />
+            <mxPoint x="120" y="660" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="int2" value="" style="endArrow=none;html=1;rounded=0;strokeColor=#FF9800;strokeWidth=1;" edge="1" parent="1" source="esp32" target="gps">
+          <mxGeometry width="50" height="50" relative="1" as="geometry">
+            <mxPoint x="200" y="620" as="sourcePoint" />
+            <mxPoint x="190" y="660" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="int3" value="" style="endArrow=none;html=1;rounded=0;strokeColor=#FF9800;strokeWidth=1;" edge="1" parent="1" source="esp32" target="gsm">
+          <mxGeometry width="50" height="50" relative="1" as="geometry">
+            <mxPoint x="240" y="620" as="sourcePoint" />
+            <mxPoint x="255" y="650" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="int4" value="" style="endArrow=none;html=1;rounded=0;strokeColor=#FF9800;strokeWidth=1;" edge="1" parent="1" source="esp32" target="servo">
+          <mxGeometry width="50" height="50" relative="1" as="geometry">
+            <mxPoint x="260" y="620" as="sourcePoint" />
+            <mxPoint x="315" y="660" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="int5" value="" style="endArrow=none;html=1;rounded=0;strokeColor=#FF9800;strokeWidth=1;" edge="1" parent="1" source="esp32" target="reed">
+          <mxGeometry width="50" height="50" relative="1" as="geometry">
+            <mxPoint x="180" y="620" as="sourcePoint" />
+            <mxPoint x="125" y="740" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="int6" value="" style="endArrow=none;html=1;rounded=0;strokeColor=#FF9800;strokeWidth=1;" edge="1" parent="1" source="esp32" target="temp">
+          <mxGeometry width="50" height="50" relative="1" as="geometry">
+            <mxPoint x="200" y="620" as="sourcePoint" />
+            <mxPoint x="190" y="730" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="int7" value="" style="endArrow=none;html=1;rounded=0;strokeColor=#FF9800;strokeWidth=1;" edge="1" parent="1" source="esp32" target="battery">
+          <mxGeometry width="50" height="50" relative="1" as="geometry">
+            <mxPoint x="230" y="620" as="sourcePoint" />
+            <mxPoint x="260" y="735" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="int8" value="" style="endArrow=none;html=1;rounded=0;strokeColor=#FF9800;strokeWidth=1;" edge="1" parent="1" source="esp32" target="sdcard">
+          <mxGeometry width="50" height="50" relative="1" as="geometry">
+            <mxPoint x="250" y="620" as="sourcePoint" />
+            <mxPoint x="320" y="735" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        
+        <!-- ========== LEGEND ========== -->
+        <mxCell id="legend-box" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FAFAFA;strokeColor=#333333;strokeWidth=1;" vertex="1" parent="1">
+          <mxGeometry x="400" y="450" width="220" height="140" as="geometry" />
+        </mxCell>
+        <mxCell id="legend-title" value="Legend" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;fontSize=12;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="480" y="455" width="60" height="20" as="geometry" />
+        </mxCell>
+        
+        <mxCell id="leg1" value="" style="endArrow=none;html=1;rounded=0;strokeColor=#333333;strokeWidth=2;" edge="1" parent="1">
+          <mxGeometry width="50" height="50" relative="1" as="geometry">
+            <mxPoint x="415" y="490" as="sourcePoint" />
+            <mxPoint x="455" y="490" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="leg1-txt" value="Wired Connection" style="text;html=1;strokeColor=none;fillColor=none;align=left;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="465" y="482" width="100" height="16" as="geometry" />
+        </mxCell>
+        
+        <mxCell id="leg2" value="" style="endArrow=none;html=1;rounded=0;strokeColor=#03A9F4;strokeWidth=2;dashed=1;dashPattern=8 4;" edge="1" parent="1">
+          <mxGeometry width="50" height="50" relative="1" as="geometry">
+            <mxPoint x="415" y="515" as="sourcePoint" />
+            <mxPoint x="455" y="515" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="leg2-txt" value="4G/LTE Wireless" style="text;html=1;strokeColor=none;fillColor=none;align=left;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="465" y="507" width="100" height="16" as="geometry" />
+        </mxCell>
+        
+        <mxCell id="leg3" value="" style="endArrow=none;html=1;rounded=0;strokeColor=#FF9800;strokeWidth=2;dashed=1;" edge="1" parent="1">
+          <mxGeometry width="50" height="50" relative="1" as="geometry">
+            <mxPoint x="415" y="540" as="sourcePoint" />
+            <mxPoint x="455" y="540" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="leg3-txt" value="Cloud Connection" style="text;html=1;strokeColor=none;fillColor=none;align=left;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="465" y="532" width="100" height="16" as="geometry" />
+        </mxCell>
+        
+        <mxCell id="leg4" value="" style="shape=mxgraph.cisco.servers.standard_host;html=1;pointerEvents=1;dashed=0;fillColor=#4CAF50;strokeColor=#333333;strokeWidth=1;" vertex="1" parent="1">
+          <mxGeometry x="420" y="555" width="25" height="30" as="geometry" />
+        </mxCell>
+        <mxCell id="leg4-txt" value="Server" style="text;html=1;strokeColor=none;fillColor=none;align=left;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="465" y="562" width="60" height="16" as="geometry" />
+        </mxCell>
+        
+        <!-- Protocol Labels -->
+        <mxCell id="proto-box" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FAFAFA;strokeColor=#333333;strokeWidth=1;" vertex="1" parent="1">
+          <mxGeometry x="400" y="610" width="200" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="proto-title" value="Protocols &amp; Ports" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;fontSize=12;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="445" y="615" width="110" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="proto1" value="• HTTPS - Port 443 (TLS 1.3)" style="text;html=1;strokeColor=none;fillColor=none;align=left;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="410" y="640" width="180" height="16" as="geometry" />
+        </mxCell>
+        <mxCell id="proto2" value="• MQTT - Port 8883 (TLS)" style="text;html=1;strokeColor=none;fillColor=none;align=left;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="410" y="660" width="180" height="16" as="geometry" />
+        </mxCell>
+        <mxCell id="proto3" value="• 4G/LTE Mobile Data" style="text;html=1;strokeColor=none;fillColor=none;align=left;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="410" y="680" width="180" height="16" as="geometry" />
+        </mxCell>
+        
+        <!-- Security Note -->
+        <mxCell id="security-box" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFEBEE;strokeColor=#F44336;strokeWidth=1;" vertex="1" parent="1">
+          <mxGeometry x="400" y="730" width="200" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="security-title" value="🔒 Security" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;fontSize=12;fontStyle=1;fontColor=#C62828;" vertex="1" parent="1">
+          <mxGeometry x="455" y="735" width="90" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="sec1" value="• TLS 1.3 Encryption" style="text;html=1;strokeColor=none;fillColor=none;align=left;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="410" y="760" width="140" height="16" as="geometry" />
+        </mxCell>
+        <mxCell id="sec2" value="• OAuth 2.0 + JWT Auth" style="text;html=1;strokeColor=none;fillColor=none;align=left;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="410" y="780" width="140" height="16" as="geometry" />
+        </mxCell>
+        
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

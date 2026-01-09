@@ -1,0 +1,38 @@
+%%{init: {'flowchart': {'curve': 'linear'}}}%%
+flowchart LR
+    subgraph Input
+        A[Rider Taps Button]
+        B[GPS Location]
+    end
+    
+    subgraph "Mobile App"
+        C[Show Screen]
+        D[Send Command]
+    end
+    
+    subgraph Server
+        E[Process Request]
+        F[Save to Database]
+    end
+    
+    subgraph "Smart Box"
+        G[Receive Command]
+        H[Lock/Unlock]
+        I[Read Sensors]
+        J[Take Photo]
+    end
+    
+    A --> C
+    B --> D
+    C --> D
+    D --> E
+    E --> F
+    E --> G
+    G --> H
+    G --> I
+    G --> J
+    I --> G
+    J --> G
+    G --> E
+    E --> D
+    D --> C

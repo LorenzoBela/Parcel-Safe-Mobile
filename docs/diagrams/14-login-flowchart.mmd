@@ -1,0 +1,39 @@
+%%{init: {'flowchart': {'curve': 'linear'}}}%%
+flowchart TD
+    A([Start]) --> B[/Open App/]
+    B --> C{Already Logged In?}
+    
+    C -->|Yes| D[Check if Valid]
+    D --> E{Still Valid?}
+    E -->|No| F[Log Out]
+    F --> G[Show Login Screen]
+    E -->|Yes| H[Get User Type]
+    
+    C -->|No| G
+    G --> I[/Type Email & Password/]
+    I --> J{Filled In?}
+    J -->|No| K[Show Error]
+    K --> I
+    
+    J -->|Yes| L[Check with Server]
+    L --> M{Correct?}
+    M -->|No| N[Wrong Login]
+    N --> I
+    
+    M -->|Yes| O[Remember Login]
+    O --> H
+    
+    H --> P{User Type?}
+    P -->|Customer| Q[Customer App]
+    P -->|Rider| R[Rider App]
+    P -->|Admin| S[Admin App]
+    
+    Q --> T([End])
+    R --> T
+    S --> T
+    
+    style A fill:#e1f5fe
+    style T fill:#e1f5fe
+    style Q fill:#e3f2fd
+    style R fill:#e8f5e9
+    style S fill:#ffebee

@@ -1,0 +1,41 @@
+%%{init: {'flowchart': {'curve': 'linear'}}}%%
+flowchart TD
+    A([Start]) --> B[/Open App/]
+    B --> C{Logged In?}
+    C -->|No| D[/Type Email & Password/]
+    D --> E{Correct?}
+    E -->|No| D
+    E -->|Yes| F[Show Dashboard]
+    C -->|Yes| F
+    
+    F --> G[/Tap Track Order/]
+    G --> H{Have Delivery?}
+    H -->|No| I[Show: No Orders]
+    I --> J([End])
+    
+    H -->|Yes| K[Get Delivery Info]
+    K --> L[Show Map]
+    L --> M[Show Time Left]
+    M --> N{Rider Here?}
+    
+    N -->|No| O[Update Map]
+    O --> L
+    
+    N -->|Yes| P[Show OTP Screen]
+    P --> Q[/Show 6-Digit Code/]
+    Q --> R[Start Timer]
+    R --> S{Code Used?}
+    
+    S -->|No| T{Time Up?}
+    T -->|No| S
+    T -->|Yes| U[New Code]
+    U --> Q
+    
+    S -->|Yes| V[Show Photo]
+    V --> W[Delivery Done]
+    W --> J
+    
+    style A fill:#e1f5fe
+    style J fill:#e1f5fe
+    style V fill:#fff9c4
+    style W fill:#c8e6c9

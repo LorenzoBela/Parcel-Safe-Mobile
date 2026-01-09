@@ -1,0 +1,45 @@
+%%{init: {'flowchart': {'curve': 'linear'}}}%%
+flowchart LR
+    subgraph "Step 1"
+        A[Order Placed]
+    end
+    
+    subgraph "Step 2"
+        B[Assign Rider]
+        C[Pickup Parcel]
+        D[Lock Box]
+    end
+    
+    subgraph "Step 3"
+        E[Deliver]
+        F[Track Location]
+    end
+    
+    subgraph "Step 4"
+        G[Arrive]
+        H[Show OTP]
+    end
+    
+    subgraph "Step 5"
+        I[Enter OTP]
+        J[Take Photo]
+        K[Unlock Box]
+        L[Give Parcel]
+    end
+    
+    subgraph "Step 6"
+        M[Done]
+    end
+    
+    A --> B
+    B --> C
+    C --> D
+    D --> E
+    E --> F
+    F --> G
+    G --> H
+    H --> I
+    I --> J
+    J --> K
+    K --> L
+    L --> M

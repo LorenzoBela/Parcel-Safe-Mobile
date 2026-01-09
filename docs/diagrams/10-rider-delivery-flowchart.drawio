@@ -1,0 +1,210 @@
+<mxfile host="app.diagrams.net" modified="2024-12-02T00:00:00.000Z" agent="draw.io" version="21.0.0">
+  <diagram name="Rider Delivery Flowchart" id="rider-delivery-flowchart">
+    <mxGraphModel dx="2400" dy="900" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="3000" pageHeight="1200" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        
+        <!-- ROW 1: Start to Auto-Seal -->
+        <mxCell id="A" value="Start" style="ellipse;whiteSpace=wrap;html=1;fillColor=#e1f5fe;strokeColor=#0288d1;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="40" y="200" width="80" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="B" value="Accept Delivery" style="shape=parallelogram;perimeter=parallelogramPerimeter;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1">
+          <mxGeometry x="160" y="200" width="120" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="C" value="Navigate to Pickup" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e3f2fd;strokeColor=#1565c0;" vertex="1" parent="1">
+          <mxGeometry x="320" y="200" width="120" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="D" value="Within Pickup&#xa;Radius?" style="rhombus;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;" vertex="1" parent="1">
+          <mxGeometry x="480" y="190" width="100" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="E" value="Unlock Box" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#c8e6c9;strokeColor=#2e7d32;" vertex="1" parent="1">
+          <mxGeometry x="620" y="200" width="100" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="F" value="Load Parcel" style="shape=parallelogram;perimeter=parallelogramPerimeter;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1">
+          <mxGeometry x="760" y="200" width="100" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="G" value="Close Box" style="shape=parallelogram;perimeter=parallelogramPerimeter;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1">
+          <mxGeometry x="900" y="200" width="100" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="H" value="Left Pickup&#xa;Area?" style="rhombus;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;" vertex="1" parent="1">
+          <mxGeometry x="1040" y="190" width="100" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="I" value="Box Auto-Seals" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#b3e5fc;strokeColor=#0288d1;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="1180" y="200" width="110" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="J" value="Navigate to Dropoff" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e3f2fd;strokeColor=#1565c0;" vertex="1" parent="1">
+          <mxGeometry x="1330" y="200" width="120" height="40" as="geometry" />
+        </mxCell>
+        
+        <!-- ROW 2: Tamper Detection Branch -->
+        <mxCell id="K" value="Tamper&#xa;Detected?" style="rhombus;whiteSpace=wrap;html=1;fillColor=#ffcdd2;strokeColor=#c62828;" vertex="1" parent="1">
+          <mxGeometry x="1490" y="190" width="100" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="L" value="Take Tamper Photo" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffcdd2;strokeColor=#c62828;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="1490" y="80" width="100" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="M" value="Alert Customer" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffcdd2;strokeColor=#c62828;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="1640" y="80" width="100" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="N" value="End - Tampered" style="ellipse;whiteSpace=wrap;html=1;fillColor=#ffcdd2;strokeColor=#c62828;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="1790" y="85" width="110" height="40" as="geometry" />
+        </mxCell>
+        
+        <!-- ROW 1 CONTINUED: Dropoff Geofencing -->
+        <mxCell id="O" value="Within Dropoff&#xa;Radius?" style="rhombus;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;" vertex="1" parent="1">
+          <mxGeometry x="1640" y="190" width="100" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="P" value="Keypad Activates" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff9c4;strokeColor=#fbc02d;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="1790" y="200" width="110" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="Q" value="Customer Inputs OTP" style="shape=parallelogram;perimeter=parallelogramPerimeter;whiteSpace=wrap;html=1;fillColor=#fff9c4;strokeColor=#fbc02d;" vertex="1" parent="1">
+          <mxGeometry x="1940" y="200" width="130" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="R" value="OTP&#xa;Correct?" style="rhombus;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;" vertex="1" parent="1">
+          <mxGeometry x="2110" y="190" width="90" height="60" as="geometry" />
+        </mxCell>
+        
+        <!-- OTP Error Branch -->
+        <mxCell id="S" value="Show Error" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffcdd2;strokeColor=#c62828;" vertex="1" parent="1">
+          <mxGeometry x="2110" y="300" width="90" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="T" value="Retry?" style="rhombus;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;" vertex="1" parent="1">
+          <mxGeometry x="2110" y="380" width="90" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="U" value="End - Failed" style="ellipse;whiteSpace=wrap;html=1;fillColor=#ffcdd2;strokeColor=#c62828;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="2250" y="385" width="100" height="40" as="geometry" />
+        </mxCell>
+        
+        <!-- Successful Delivery -->
+        <mxCell id="V" value="Unlock Box" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#c8e6c9;strokeColor=#2e7d32;" vertex="1" parent="1">
+          <mxGeometry x="2240" y="200" width="100" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="W" value="Customer Takes Parcel" style="shape=parallelogram;perimeter=parallelogramPerimeter;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1">
+          <mxGeometry x="2380" y="200" width="130" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="X" value="Take Recipient Photo" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff9c4;strokeColor=#fbc02d;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="2550" y="200" width="120" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="Y" value="Box Locks" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e8f5e9;strokeColor=#388e3c;" vertex="1" parent="1">
+          <mxGeometry x="2710" y="200" width="100" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="Z" value="Mark Delivered" style="shape=parallelogram;perimeter=parallelogramPerimeter;whiteSpace=wrap;html=1;fillColor=#c8e6c9;strokeColor=#2e7d32;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="2850" y="200" width="120" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="AA" value="End - Success" style="ellipse;whiteSpace=wrap;html=1;fillColor=#c8e6c9;strokeColor=#2e7d32;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="3010" y="200" width="100" height="40" as="geometry" />
+        </mxCell>
+        
+        <!-- EDGES -->
+        <!-- Start to Pickup -->
+        <mxCell id="e1" style="endArrow=classic;html=1;" edge="1" parent="1" source="A" target="B">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e2" style="endArrow=classic;html=1;" edge="1" parent="1" source="B" target="C">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e3" style="endArrow=classic;html=1;" edge="1" parent="1" source="C" target="D">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e4" value="No" style="endArrow=classic;html=1;exitX=0.5;exitY=0;entryX=0.5;entryY=0;edgeStyle=orthogonalEdgeStyle;" edge="1" parent="1" source="D" target="C">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points"><mxPoint x="530" y="160" /><mxPoint x="380" y="160" /></Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e5" value="Yes" style="endArrow=classic;html=1;" edge="1" parent="1" source="D" target="E">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e6" style="endArrow=classic;html=1;" edge="1" parent="1" source="E" target="F">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e7" style="endArrow=classic;html=1;" edge="1" parent="1" source="F" target="G">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e8" style="endArrow=classic;html=1;" edge="1" parent="1" source="G" target="H">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e9" value="No" style="endArrow=classic;html=1;exitX=0.5;exitY=0;entryX=0.5;entryY=0;edgeStyle=orthogonalEdgeStyle;" edge="1" parent="1" source="H" target="H">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points"><mxPoint x="1090" y="160" /><mxPoint x="1120" y="160" /><mxPoint x="1120" y="190" /></Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e10" value="Yes" style="endArrow=classic;html=1;" edge="1" parent="1" source="H" target="I">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e11" style="endArrow=classic;html=1;" edge="1" parent="1" source="I" target="J">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e12" style="endArrow=classic;html=1;" edge="1" parent="1" source="J" target="K">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        
+        <!-- Tamper Branch -->
+        <mxCell id="e13" value="Yes" style="endArrow=classic;html=1;exitX=0.5;exitY=0;entryX=0.5;entryY=1;" edge="1" parent="1" source="K" target="L">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e14" style="endArrow=classic;html=1;" edge="1" parent="1" source="L" target="M">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e15" style="endArrow=classic;html=1;" edge="1" parent="1" source="M" target="N">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        
+        <!-- Normal Flow to Dropoff -->
+        <mxCell id="e16" value="No" style="endArrow=classic;html=1;" edge="1" parent="1" source="K" target="O">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e17" value="No" style="endArrow=classic;html=1;exitX=0.5;exitY=1;entryX=0.5;entryY=1;edgeStyle=orthogonalEdgeStyle;" edge="1" parent="1" source="O" target="J">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points"><mxPoint x="1690" y="280" /><mxPoint x="1390" y="280" /></Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e18" value="Yes" style="endArrow=classic;html=1;" edge="1" parent="1" source="O" target="P">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e19" style="endArrow=classic;html=1;" edge="1" parent="1" source="P" target="Q">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e20" style="endArrow=classic;html=1;" edge="1" parent="1" source="Q" target="R">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        
+        <!-- OTP Error Branch -->
+        <mxCell id="e21" value="No" style="endArrow=classic;html=1;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="R" target="S">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e22" style="endArrow=classic;html=1;" edge="1" parent="1" source="S" target="T">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e23" value="Yes" style="endArrow=classic;html=1;exitX=0;exitY=0.5;entryX=0.5;entryY=1;edgeStyle=orthogonalEdgeStyle;" edge="1" parent="1" source="T" target="Q">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points"><mxPoint x="2005" y="405" /></Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e24" value="No" style="endArrow=classic;html=1;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="1" source="T" target="U">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        
+        <!-- Successful Delivery -->
+        <mxCell id="e25" value="Yes" style="endArrow=classic;html=1;" edge="1" parent="1" source="R" target="V">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e26" style="endArrow=classic;html=1;" edge="1" parent="1" source="V" target="W">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e27" style="endArrow=classic;html=1;" edge="1" parent="1" source="W" target="X">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e28" style="endArrow=classic;html=1;" edge="1" parent="1" source="X" target="Y">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e29" style="endArrow=classic;html=1;" edge="1" parent="1" source="Y" target="Z">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e30" style="endArrow=classic;html=1;" edge="1" parent="1" source="Z" target="AA">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

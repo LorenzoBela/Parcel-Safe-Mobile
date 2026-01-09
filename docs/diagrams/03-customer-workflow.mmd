@@ -1,0 +1,28 @@
+%%{init: {'flowchart': {'curve': 'linear'}}}%%
+flowchart TD
+    A[Open App] --> B[Login Screen]
+    B --> C{Logged In?}
+    C -->|No| D[Register Screen]
+    D --> B
+    C -->|Yes| E[Customer Dashboard]
+    
+    E --> F[Track Order]
+    E --> G[View OTP]
+    E --> H[Delivery History]
+    E --> I[Profile]
+    E --> J[Settings]
+    
+    F --> K[See Map]
+    F --> L[See Details]
+    
+    G --> M[Show 6-Digit Code]
+    M --> N[Timer Counting]
+    
+    H --> O[Past Deliveries]
+    O --> P[See Recipient Photo]
+    O --> Q[See Tamper Photo]
+    
+    style E fill:#e3f2fd
+    style G fill:#fff9c4
+    style P fill:#c8e6c9
+    style Q fill:#ffcdd2

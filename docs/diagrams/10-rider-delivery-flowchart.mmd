@@ -1,0 +1,55 @@
+%%{init: {'flowchart': {'curve': 'linear'}}}%%
+flowchart LR
+    %% Start and Accept
+    A([Start]) --> B[/Accept Delivery/]
+    B --> C[Navigate to Pickup]
+    
+    %% Pickup Geofencing
+    C --> D{Within Pickup Radius?}
+    D -->|No| C
+    D -->|Yes| E[Unlock Box]
+    E --> F[/Load Parcel/]
+    F --> G[/Close Box/]
+    
+    %% Auto-seal on departure
+    G --> H{Left Pickup Area?}
+    H -->|No| H
+    H -->|Yes| I[Box Auto-Seals]
+    I --> J[Navigate to Dropoff]
+    
+    %% Transit Tamper Detection
+    J --> K{Tamper Detected?}
+    K -->|Yes| L[Take Tamper Photo]
+    L --> M[Alert Customer]
+    M --> N([End - Tampered])
+    
+    %% Dropoff Geofencing
+    K -->|No| O{Within Dropoff Radius?}
+    O -->|No| J
+    O -->|Yes| P[Keypad Activates]
+    
+    %% OTP Verification
+    P --> Q[/Customer Inputs OTP/]
+    Q --> R{OTP Correct?}
+    R -->|No| S[Show Error]
+    S --> T{Retry?}
+    T -->|Yes| Q
+    T -->|No| U([End - Failed])
+    
+    %% Successful Delivery
+    R -->|Yes| V[Unlock Box]
+    V --> W[/Customer Takes Parcel/]
+    W --> X[Take Recipient Photo]
+    X --> Y[Box Locks]
+    Y --> Z[/Mark Delivered/]
+    Z --> AA([End - Success])
+    
+    style A fill:#e1f5fe
+    style L fill:#ffcdd2
+    style M fill:#ffcdd2
+    style N fill:#ffcdd2
+    style X fill:#fff9c4
+    style AA fill:#c8e6c9
+    style U fill:#ffcdd2
+    style I fill:#b3e5fc
+    style P fill:#fff9c4

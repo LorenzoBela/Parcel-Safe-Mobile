@@ -1,0 +1,37 @@
+%%{init: {'flowchart': {'curve': 'linear'}}}%%
+flowchart TD
+    A([Start]) --> B[/Open Box Controls/]
+    B --> C[Get Box Status]
+    C --> D[Show Battery, GPS, Lock]
+    
+    D --> E{What to Do?}
+    
+    E -->|Lock/Unlock| F{Is Locked?}
+    F -->|Yes| G[/Tap Unlock/]
+    F -->|No| H[/Tap Lock/]
+    G --> I[/Confirm/]
+    H --> I
+    I --> J[Send Command]
+    J --> K[Save to Log]
+    K --> L[Update Screen]
+    
+    E -->|Restart| M[/Tap Restart/]
+    M --> N[/Confirm/]
+    N --> O[Restart Box]
+    O --> P[Wait 30s]
+    P --> Q[Box Online]
+    Q --> K
+    
+    E -->|Emergency| R[/Hold Button/]
+    R --> S[/Confirm/]
+    S --> T[Take Photo]
+    T --> U[Force Open]
+    U --> V[Make Report]
+    V --> K
+    
+    L --> W([End])
+    
+    style A fill:#e1f5fe
+    style W fill:#e1f5fe
+    style T fill:#fff9c4
+    style U fill:#ffcdd2

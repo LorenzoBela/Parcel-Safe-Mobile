@@ -1,0 +1,39 @@
+%%{init: {'flowchart': {'curve': 'linear'}}}%%
+flowchart TD
+    A([Start]) --> B[Customer Orders]
+    B --> C[Assign Rider]
+    C --> D[Rider Gets Parcel]
+    D --> E[Lock Box]
+    
+    E --> F[Start Trip]
+    F --> G[Track with GPS]
+    G --> H{Tampering?}
+    
+    H -->|Yes| I[Take Photo]
+    I --> J[Alert Customer]
+    J --> G
+    
+    H -->|No| K{Arrived?}
+    K -->|No| G
+    K -->|Yes| L[Show OTP to Customer]
+    
+    L --> M[Customer Tells OTP]
+    M --> N[Rider Types OTP]
+    N --> O{Correct?}
+    
+    O -->|No| P[Try Again]
+    P --> N
+    
+    O -->|Yes| Q[Take Photo of Person]
+    Q --> R[Save Photo]
+    R --> S[Unlock Box]
+    S --> T[Give Parcel]
+    T --> U[Lock Box]
+    U --> V[Done]
+    V --> W([End])
+    
+    style A fill:#e1f5fe
+    style I fill:#ffcdd2
+    style J fill:#ffcdd2
+    style Q fill:#c8e6c9
+    style W fill:#e1f5fe

@@ -1,0 +1,24 @@
+export type RootStackParamList = {
+  Login: undefined;
+  Register: undefined;
+  CustomerDashboard: undefined;
+  RiderDashboard: undefined;
+  AssignedDeliveries: undefined;
+  BoxControls: undefined;
+  Arrival: undefined;
+  DeliveryCompletion: undefined;
+  AdminDashboard: undefined;
+  GlobalMap: undefined;
+  TamperAlerts: undefined;
+  DeliveryRecords: undefined;
+  OTP: undefined;
+  TrackOrder: undefined;
+  DeliveryLog: undefined;
+  PhotoAudit: { logId: string } | undefined;
+  Profile: undefined;
+  Settings: undefined;
+  DeliveryDetail: { delivery: any };
+  CustomerApp: undefined;
+  RiderApp: undefined;
+  AdminApp: undefined;
+};

@@ -1,0 +1,35 @@
+%%{init: {'flowchart': {'curve': 'linear'}}}%%
+flowchart TD
+    A[Open App] --> B[Login Screen]
+    B --> C{Logged In?}
+    C -->|No| B
+    C -->|Yes| D[Rider Dashboard]
+    
+    D --> E[Go Online/Offline]
+    D --> F[My Deliveries]
+    D --> G[Box Controls]
+    D --> H[Profile]
+    
+    F --> I[Pick Delivery]
+    I --> J[See Details]
+    J --> K[Navigate]
+    
+    G --> L[See Battery & GPS]
+    G --> M[Lock/Unlock]
+    G --> N[See Logs]
+    G --> O[Emergency Open]
+    
+    K --> P{Arrived?}
+    P -->|No| K
+    P -->|Yes| Q[Type OTP]
+    Q --> R{Correct?}
+    R -->|No| Q
+    R -->|Yes| S[Take Photo]
+    S --> T[Unlock Box]
+    T --> U[Give Parcel]
+    U --> V[Lock Box]
+    V --> W[Mark Done]
+    
+    style D fill:#e8f5e9
+    style S fill:#fff9c4
+    style W fill:#c8e6c9
