@@ -43,8 +43,7 @@
         {
           "androidApiKey": ""
         }
-      ],
-      "lottie-react-native"
+      ]
     ],
     "extra": {
       "eas": {
