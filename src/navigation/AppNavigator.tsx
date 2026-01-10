@@ -4,25 +4,29 @@ import { createStackNavigator } from '@react-navigation/stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 
-import LoginScreen from '../screens/LoginScreen';
-import RegisterScreen from '../screens/RegisterScreen';
-import CustomerDashboard from '../screens/CustomerDashboard';
-import RiderDashboard from '../screens/RiderDashboard';
-import AssignedDeliveriesScreen from '../screens/AssignedDeliveriesScreen';
-import BoxControlsScreen from '../screens/BoxControlsScreen';
-import ArrivalScreen from '../screens/ArrivalScreen';
-import DeliveryCompletionScreen from '../screens/DeliveryCompletionScreen';
-import AdminDashboard from '../screens/AdminDashboard';
-import GlobalMapScreen from '../screens/GlobalMapScreen';
-import TamperAlertsScreen from '../screens/TamperAlertsScreen';
-import DeliveryRecordsScreen from '../screens/DeliveryRecordsScreen';
-import OTPScreen from '../screens/OTPScreen';
-import TrackOrderScreen from '../screens/TrackOrderScreen';
-import DeliveryLogScreen from '../screens/DeliveryLogScreen';
-import PhotoAuditScreen from '../screens/PhotoAuditScreen';
-import ProfileScreen from '../screens/ProfileScreen';
-import SettingsScreen from '../screens/SettingsScreen';
-import DeliveryDetailScreen from '../screens/DeliveryDetailScreen';
+import LoginScreen from '../screens/auth/LoginScreen';
+import RegisterScreen from '../screens/auth/RegisterScreen';
+import OTPScreen from '../screens/auth/OTPScreen';
+
+import CustomerDashboard from '../screens/client/CustomerDashboard';
+import TrackOrderScreen from '../screens/client/TrackOrderScreen';
+import DeliveryLogScreen from '../screens/client/DeliveryLogScreen';
+
+import RiderDashboard from '../screens/rider/RiderDashboard';
+import AssignedDeliveriesScreen from '../screens/rider/AssignedDeliveriesScreen';
+import BoxControlsScreen from '../screens/rider/BoxControlsScreen';
+import ArrivalScreen from '../screens/rider/ArrivalScreen';
+import DeliveryCompletionScreen from '../screens/rider/DeliveryCompletionScreen';
+import DeliveryRecordsScreen from '../screens/rider/DeliveryRecordsScreen';
+
+import AdminDashboard from '../screens/admin/AdminDashboard';
+import GlobalMapScreen from '../screens/admin/GlobalMapScreen';
+import TamperAlertsScreen from '../screens/admin/TamperAlertsScreen';
+import PhotoAuditScreen from '../screens/admin/PhotoAuditScreen';
+
+import ProfileScreen from '../screens/common/ProfileScreen';
+import SettingsScreen from '../screens/common/SettingsScreen';
+import DeliveryDetailScreen from '../screens/common/DeliveryDetailScreen';
 
 const Stack = createStackNavigator();
 const Tab = createBottomTabNavigator();

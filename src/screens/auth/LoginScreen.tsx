@@ -1,9 +1,9 @@
 import React, { useState } from 'react';
-import { signInWithGoogle } from '../services/auth';
+import { signInWithGoogle } from '../../services/auth';
 import { View, StyleSheet, KeyboardAvoidingView, Platform, Image, TouchableOpacity } from 'react-native';
 import { Text, TextInput, Button, useTheme } from 'react-native-paper';
 import { useNavigation } from '@react-navigation/native';
-import useAuthStore from '../store/authStore';
+import useAuthStore from '../../store/authStore';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 
 export default function LoginScreen() {
