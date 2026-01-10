@@ -29,7 +29,10 @@
         "ACCESS_COARSE_LOCATION",
         "ACCESS_FINE_LOCATION"
       ],
-      "googleServicesFile": "./google-services.json"
+      "googleServicesFile": "./google-services.json",
+      "plugins": [
+        "@react-native-google-signin/google-signin"
+      ]
     },
     "web": {
       "favicon": "./assets/favicon.png"

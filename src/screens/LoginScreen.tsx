@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { signInWithGoogle } from '../services/auth';
 import { View, StyleSheet, KeyboardAvoidingView, Platform, Image, TouchableOpacity } from 'react-native';
 import { Text, TextInput, Button, useTheme } from 'react-native-paper';
 import { useNavigation } from '@react-navigation/native';
@@ -103,6 +104,31 @@ export default function LoginScreen() {
                     contentStyle={styles.buttonContent}
                 >
                     Login
+                </Button>
+
+                <Button
+                    mode="outlined"
+                    onPress={async () => {
+                        try {
+                            setLoading(true);
+                            await signInWithGoogle();
+                            // In a real app, you would verify the token with your backend here
+                            // For now, we'll assume it's a customer or rider based on some logic, or default to customer
+                            login({ email: 'google-user@example.com', role: 'customer' });
+                            setLoading(false);
+                            navigation.replace('CustomerApp');
+                        } catch (error) {
+                            setLoading(false);
+                            console.error(error);
+                            alert('Google Sign-In failed');
+                        }
+                    }}
+                    loading={loading}
+                    style={[styles.button, { marginTop: 10, borderColor: theme.colors.primary }]}
+                    contentStyle={styles.buttonContent}
+                    icon="google"
+                >
+                    Sign in with Google
                 </Button>
 
                 <View style={styles.registerContainer}>
