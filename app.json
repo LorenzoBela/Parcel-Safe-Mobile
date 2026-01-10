@@ -2,6 +2,7 @@
   "expo": {
     "name": "ParcelSafeApp",
     "slug": "ParcelSafeApp",
+    "scheme": "parcelsafe",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -29,14 +30,14 @@
         "ACCESS_COARSE_LOCATION",
         "ACCESS_FINE_LOCATION"
       ],
-      "googleServicesFile": "./google-services.json",
-      "plugins": [
-        "@react-native-google-signin/google-signin"
-      ]
+      "googleServicesFile": "./google-services.json"
     },
     "web": {
       "favicon": "./assets/favicon.png"
     },
+    "plugins": [
+      "@react-native-google-signin/google-signin"
+    ],
     "extra": {
       "eas": {
         "projectId": "f311506b-aeb6-4cf8-9847-9edf898eac0d"
