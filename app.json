@@ -36,7 +36,15 @@
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
-      "@react-native-google-signin/google-signin"
+      "@react-native-google-signin/google-signin",
+      "expo-location",
+      [
+        "react-native-maps",
+        {
+          "androidApiKey": ""
+        }
+      ],
+      "lottie-react-native"
     ],
     "extra": {
       "eas": {
