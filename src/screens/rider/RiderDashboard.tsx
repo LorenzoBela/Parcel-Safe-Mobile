@@ -7,6 +7,7 @@ import dayjs from 'dayjs';
 import * as Location from 'expo-location';
 import MapView, { Marker, PROVIDER_GOOGLE } from 'react-native-maps';
 import LottieView from 'lottie-react-native';
+import { useLocationRedundancy, getStatusMessage, getStatusColor } from '../../hooks/useLocationRedundancy';
 
 export default function RiderDashboard() {
     const navigation = useNavigation<any>();
@@ -21,6 +22,22 @@ export default function RiderDashboard() {
     const [logs, setLogs] = useState<{ time: string; message: string; type: string }[]>([]);
     const mapRef = useRef<MapView>(null);
     const animationRef = useRef<LottieView>(null);
+
+    // GPS Redundancy Hook - monitors box connectivity and handles failover
+    const {
+        source: gpsSource,
+        isBoxOnline,
+        phoneGpsActive,
+        startMonitoring,
+        activateTracking,
+        deactivateTracking,
+    } = useLocationRedundancy();
+
+    // Auto-start monitoring when component mounts (demo box ID)
+    useEffect(() => {
+        startMonitoring('BOX_001');
+        return () => deactivateTracking();
+    }, []);
 
     const focusOnUser = () => {
         if (riderLocation && mapRef.current) {
@@ -243,6 +260,38 @@ export default function RiderDashboard() {
                     </View>
                     <Switch value={isOnline} onValueChange={setIsOnline} trackColor={{ true: "#4CAF50", false: "#767577" }} />
                 </View>
+
+                {/* GPS Connection Status Indicator */}
+                <Surface style={styles.gpsStatusCard} elevation={1}>
+                    <View style={styles.gpsStatusRow}>
+                        <View style={[
+                            styles.gpsStatusIcon,
+                            { backgroundColor: getStatusColor(gpsSource, isBoxOnline) + '20' }
+                        ]}>
+                            <MaterialCommunityIcons
+                                name={gpsSource === 'box' ? 'access-point' : gpsSource === 'phone' ? 'cellphone' : 'access-point-off'}
+                                size={24}
+                                color={getStatusColor(gpsSource, isBoxOnline)}
+                            />
+                        </View>
+                        <View style={styles.gpsStatusInfo}>
+                            <Text variant="titleSmall" style={{ fontWeight: 'bold' }}>GPS Tracking</Text>
+                            <Text variant="bodySmall" style={{ color: getStatusColor(gpsSource, isBoxOnline) }}>
+                                {getStatusMessage(gpsSource, isBoxOnline)}
+                            </Text>
+                        </View>
+                        {phoneGpsActive && (
+                            <Chip
+                                compact
+                                icon="phone"
+                                style={{ backgroundColor: '#FFF3E0' }}
+                                textStyle={{ fontSize: 10 }}
+                            >
+                                Fallback
+                            </Chip>
+                        )}
+                    </View>
+                </Surface>
 
                 {/* Quick Actions */}
                 <View style={styles.actionsGrid}>
@@ -668,6 +717,27 @@ const styles = StyleSheet.create({
     },
     logMessage: {
         fontSize: 12,
+        flex: 1,
+    },
+    gpsStatusCard: {
+        backgroundColor: 'white',
+        borderRadius: 16,
+        padding: 12,
+        marginBottom: 16,
+    },
+    gpsStatusRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+    },
+    gpsStatusIcon: {
+        width: 44,
+        height: 44,
+        borderRadius: 22,
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginRight: 12,
+    },
+    gpsStatusInfo: {
         flex: 1,
     },
 });
