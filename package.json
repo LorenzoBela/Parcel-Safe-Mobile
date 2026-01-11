@@ -1,14 +1,18 @@
 {
   "devDependencies": {
+    "@types/jest": "^30.0.0",
     "@types/react": "19.1.10",
     "babel-preset-expo": "^54.0.9",
+    "jest": "^30.2.0",
+    "ts-jest": "^29.4.6",
     "typescript": "^5.9.3"
   },
   "name": "mobile",
   "version": "1.0.0",
   "scripts": {
     "android": "expo run:android",
-    "ios": "expo run:ios"
+    "ios": "expo run:ios",
+    "test": "jest"
   },
   "dependencies": {
     "@expo/vector-icons": "^15.0.3",

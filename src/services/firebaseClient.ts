@@ -179,5 +179,33 @@ export function subscribeToBattery(
     return () => off(batteryRef);
 }
 
+// ==================== EC-18: Tamper Detection ====================
+
+export interface TamperState {
+    detected: boolean;
+    timestamp: number;
+    photoUrl?: string;
+    lockdown: boolean;
+    resetBy?: string;  // Admin who reset the lockdown
+}
+
+/**
+ * Subscribe to box tamper state updates
+ */
+export function subscribeToTamper(
+    boxId: string,
+    callback: (state: TamperState | null) => void
+): () => void {
+    const db = getFirebaseDatabase();
+    const tamperRef = ref(db, `hardware/${boxId}/tamper`);
+
+    const unsubscribe = onValue(tamperRef, (snapshot) => {
+        const data = snapshot.val();
+        callback(data as TamperState | null);
+    });
+
+    return () => off(tamperRef);
+}
+
 export { ref, onValue, off, set, serverTimestamp };
 export type { Database, DatabaseReference };

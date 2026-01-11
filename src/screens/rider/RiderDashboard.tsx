@@ -8,7 +8,7 @@ import * as Location from 'expo-location';
 import MapView, { Marker, PROVIDER_GOOGLE } from 'react-native-maps';
 import LottieView from 'lottie-react-native';
 import { useLocationRedundancy, getStatusMessage, getStatusColor } from '../../hooks/useLocationRedundancy';
-import { subscribeToBattery, BatteryState } from '../../services/firebaseClient';
+import { subscribeToBattery, BatteryState, subscribeToTamper, TamperState } from '../../services/firebaseClient';
 
 export default function RiderDashboard() {
     const navigation = useNavigation<any>();
@@ -26,6 +26,9 @@ export default function RiderDashboard() {
 
     // EC-03: Battery Monitoring
     const [batteryState, setBatteryState] = useState<BatteryState | null>(null);
+
+    // EC-18: Tamper Detection
+    const [tamperState, setTamperState] = useState<TamperState | null>(null);
 
     // GPS Redundancy Hook - monitors box connectivity and handles failover
     const {
@@ -61,9 +64,24 @@ export default function RiderDashboard() {
             }
         });
 
+        // EC-18: Subscribe to tamper state
+        const unsubscribeTamper = subscribeToTamper('BOX_001', (state) => {
+            setTamperState(state);
+
+            // Show critical alert on tamper detection
+            if (state?.detected) {
+                Alert.alert(
+                    '🚨 SECURITY ALERT',
+                    'Unauthorized access detected on your assigned box! The box is now in lockdown mode. Contact support immediately.',
+                    [{ text: 'Contact Support', style: 'destructive' }]
+                );
+            }
+        });
+
         return () => {
             deactivateTracking();
             unsubscribeBattery();
+            unsubscribeTamper();
         };
     }, []);
 
@@ -294,6 +312,16 @@ export default function RiderDashboard() {
                     <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
                 }
             >
+                {/* EC-18: Tamper Alert Banner */}
+                {tamperState?.detected && (
+                    <Surface style={styles.tamperBanner} elevation={4}>
+                        <MaterialCommunityIcons name="alert-decagram" size={24} color="white" />
+                        <View style={{ flex: 1, marginLeft: 12 }}>
+                            <Text style={styles.tamperTitle}>SECURITY ALERT</Text>
+                            <Text style={styles.tamperText}>Unauthorized box access detected!</Text>
+                        </View>
+                    </Surface>
+                )}
 
                 {/* Status Toggle */}
                 <View style={styles.statusToggleContainer}>
@@ -786,5 +814,22 @@ const styles = StyleSheet.create({
     },
     gpsStatusInfo: {
         flex: 1,
+    },
+    tamperBanner: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#D32F2F', // Dark red
+        margin: 16,
+        padding: 16,
+        borderRadius: 12,
+    },
+    tamperTitle: {
+        color: 'white',
+        fontWeight: 'bold',
+        fontSize: 16,
+    },
+    tamperText: {
+        color: 'rgba(255,255,255,0.9)',
+        fontSize: 14,
     },
 });
