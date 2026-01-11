@@ -8,6 +8,7 @@ import * as Location from 'expo-location';
 import MapView, { Marker, PROVIDER_GOOGLE } from 'react-native-maps';
 import LottieView from 'lottie-react-native';
 import { useLocationRedundancy, getStatusMessage, getStatusColor } from '../../hooks/useLocationRedundancy';
+import { subscribeToBattery, BatteryState } from '../../services/firebaseClient';
 
 export default function RiderDashboard() {
     const navigation = useNavigation<any>();
@@ -23,6 +24,9 @@ export default function RiderDashboard() {
     const mapRef = useRef<MapView>(null);
     const animationRef = useRef<LottieView>(null);
 
+    // EC-03: Battery Monitoring
+    const [batteryState, setBatteryState] = useState<BatteryState | null>(null);
+
     // GPS Redundancy Hook - monitors box connectivity and handles failover
     const {
         source: gpsSource,
@@ -36,7 +40,31 @@ export default function RiderDashboard() {
     // Auto-start monitoring when component mounts (demo box ID)
     useEffect(() => {
         startMonitoring('BOX_001');
-        return () => deactivateTracking();
+
+        // EC-03: Subscribe to battery state
+        const unsubscribeBattery = subscribeToBattery('BOX_001', (state) => {
+            setBatteryState(state);
+
+            // Show alert on low battery
+            if (state?.lowBatteryWarning && !state?.criticalBatteryWarning) {
+                Alert.alert(
+                    'Low Battery Warning',
+                    `Box battery is at ${state.percentage}%. Consider completing current delivery soon.`,
+                    [{ text: 'OK' }]
+                );
+            } else if (state?.criticalBatteryWarning) {
+                Alert.alert(
+                    '⚠️ Critical Battery',
+                    `Box battery is critically low at ${state.percentage}%! Delivery may fail if battery dies.`,
+                    [{ text: 'Understood' }]
+                );
+            }
+        });
+
+        return () => {
+            deactivateTracking();
+            unsubscribeBattery();
+        };
     }, []);
 
     const focusOnUser = () => {
@@ -200,9 +228,26 @@ export default function RiderDashboard() {
     };
 
     const boxStatus = {
-        battery: 0.85,
+        battery: batteryState?.percentage ? batteryState.percentage / 100 : 0.85, // Fall back to 85% if no data
         connection: 'Connected',
         signal: 'Strong',
+    };
+
+    // EC-03: Get battery icon based on level
+    const getBatteryIcon = () => {
+        const pct = batteryState?.percentage ?? 85;
+        if (pct > 80) return 'battery';
+        if (pct > 60) return 'battery-70';
+        if (pct > 40) return 'battery-50';
+        if (pct > 20) return 'battery-30';
+        return 'battery-alert';
+    };
+
+    const getBatteryColor = () => {
+        const pct = batteryState?.percentage ?? 85;
+        if (pct > 20) return '#2196F3';
+        if (pct > 10) return '#FF9800';
+        return '#F44336';
     };
 
     const QuickAction = ({ icon, label, onPress, color }) => (
@@ -419,14 +464,16 @@ export default function RiderDashboard() {
                     <View style={styles.divider} />
 
                     <View style={styles.statusRow}>
-                        <View style={[styles.statusIconContainer, { backgroundColor: '#E3F2FD' }]}>
-                            <MaterialCommunityIcons name="battery-70" size={24} color="#2196F3" />
+                        <View style={[styles.statusIconContainer, { backgroundColor: getBatteryColor() + '20' }]}>
+                            <MaterialCommunityIcons name={getBatteryIcon() as any} size={24} color={getBatteryColor()} />
                         </View>
                         <View style={styles.statusInfo}>
                             <Text variant="titleSmall">Battery Level</Text>
                             <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4 }}>
-                                <ProgressBar progress={boxStatus.battery} color="#2196F3" style={styles.progressBar} />
-                                <Text variant="labelSmall" style={{ marginLeft: 8, fontWeight: 'bold' }}>85%</Text>
+                                <ProgressBar progress={boxStatus.battery} color={getBatteryColor()} style={styles.progressBar} />
+                                <Text variant="labelSmall" style={{ marginLeft: 8, fontWeight: 'bold', color: getBatteryColor() }}>
+                                    {batteryState?.percentage ?? 85}%
+                                </Text>
                             </View>
                         </View>
                     </View>

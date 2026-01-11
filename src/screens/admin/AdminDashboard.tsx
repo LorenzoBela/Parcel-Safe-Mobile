@@ -1,13 +1,18 @@
 import React, { useState, useEffect } from 'react';
-import { View, StyleSheet, ScrollView, TouchableOpacity } from 'react-native';
-import { Text, Card, Avatar, Button, Surface, IconButton } from 'react-native-paper';
+import { View, StyleSheet, ScrollView, TouchableOpacity, Alert, TextInput as RNTextInput } from 'react-native';
+import { Text, Card, Avatar, Button, Surface, IconButton, Modal, Portal, TextInput } from 'react-native-paper';
 import { useNavigation } from '@react-navigation/native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import dayjs from 'dayjs';
+import { markDeliveryComplete, getDeliveryByIdOrTracking } from '../../services/supabaseClient';
 
 export default function AdminDashboard() {
     const navigation = useNavigation<any>();
     const [currentTime, setCurrentTime] = useState(dayjs());
+    const [overrideModalVisible, setOverrideModalVisible] = useState(false);
+    const [trackingInput, setTrackingInput] = useState('');
+    const [reasonInput, setReasonInput] = useState('');
+    const [isProcessing, setIsProcessing] = useState(false);
 
     useEffect(() => {
         const timer = setInterval(() => {
@@ -15,6 +20,60 @@ export default function AdminDashboard() {
         }, 60000);
         return () => clearInterval(timer);
     }, []);
+
+    // EC-03: Handle manual delivery completion
+    const handleOverrideDelivery = async () => {
+        if (!trackingInput.trim()) {
+            Alert.alert('Error', 'Please enter a tracking number or delivery ID');
+            return;
+        }
+        if (!reasonInput.trim()) {
+            Alert.alert('Error', 'Please provide a reason for manual completion');
+            return;
+        }
+
+        setIsProcessing(true);
+
+        // First verify the delivery exists
+        const delivery = await getDeliveryByIdOrTracking(trackingInput.trim());
+        if (!delivery) {
+            Alert.alert('Not Found', 'No delivery found with that tracking number');
+            setIsProcessing(false);
+            return;
+        }
+
+        if (delivery.status === 'COMPLETED') {
+            Alert.alert('Already Complete', 'This delivery is already marked as completed');
+            setIsProcessing(false);
+            return;
+        }
+
+        // Confirm before proceeding
+        Alert.alert(
+            'Confirm Override',
+            `Mark delivery ${delivery.tracking_number} as COMPLETED?\n\nReason: ${reasonInput}`,
+            [
+                { text: 'Cancel', style: 'cancel', onPress: () => setIsProcessing(false) },
+                {
+                    text: 'Confirm',
+                    style: 'destructive',
+                    onPress: async () => {
+                        const success = await markDeliveryComplete(trackingInput.trim(), reasonInput.trim());
+                        setIsProcessing(false);
+                        setOverrideModalVisible(false);
+
+                        if (success) {
+                            Alert.alert('Success', 'Delivery marked as complete');
+                            setTrackingInput('');
+                            setReasonInput('');
+                        } else {
+                            Alert.alert('Error', 'Failed to update delivery. Please try again.');
+                        }
+                    }
+                }
+            ]
+        );
+    };
 
     // Mock data
     const weather = { temp: '28°C', condition: 'Cloudy', icon: 'weather-cloudy' };
@@ -98,7 +157,65 @@ export default function AdminDashboard() {
                     >
                         Records
                     </Button>
+                    <Button
+                        mode="contained"
+                        icon="checkbox-marked-circle-outline"
+                        style={[styles.quickLinkBtn, { backgroundColor: '#FF9800' }]}
+                        onPress={() => setOverrideModalVisible(true)}
+                    >
+                        Override
+                    </Button>
                 </ScrollView>
+
+                {/* EC-03: Override Delivery Modal */}
+                <Portal>
+                    <Modal
+                        visible={overrideModalVisible}
+                        onDismiss={() => setOverrideModalVisible(false)}
+                        contentContainerStyle={styles.modalContainer}
+                    >
+                        <Text variant="titleLarge" style={{ fontWeight: 'bold', marginBottom: 16 }}>
+                            Manual Delivery Override
+                        </Text>
+                        <Text variant="bodyMedium" style={{ color: '#666', marginBottom: 16 }}>
+                            Use this when box battery died or hardware failed but customer received package.
+                        </Text>
+                        <TextInput
+                            label="Tracking Number / Delivery ID"
+                            value={trackingInput}
+                            onChangeText={setTrackingInput}
+                            mode="outlined"
+                            style={{ marginBottom: 12 }}
+                        />
+                        <TextInput
+                            label="Reason for Override"
+                            value={reasonInput}
+                            onChangeText={setReasonInput}
+                            mode="outlined"
+                            multiline
+                            numberOfLines={2}
+                            placeholder="e.g., Battery died, customer confirmed receipt"
+                            style={{ marginBottom: 20 }}
+                        />
+                        <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 12 }}>
+                            <Button
+                                mode="outlined"
+                                onPress={() => setOverrideModalVisible(false)}
+                            >
+                                Cancel
+                            </Button>
+                            <Button
+                                mode="contained"
+                                onPress={handleOverrideDelivery}
+                                loading={isProcessing}
+                                disabled={isProcessing}
+                                buttonColor="#FF9800"
+                            >
+                                Complete Delivery
+                            </Button>
+                        </View>
+                    </Modal>
+                </Portal>
 
                 {/* Recent Alerts List */}
                 <View style={styles.alertsHeader}>
@@ -232,5 +349,11 @@ const styles = StyleSheet.create({
     },
     alertIcon: {
         marginRight: 12,
+    },
+    modalContainer: {
+        backgroundColor: 'white',
+        padding: 24,
+        margin: 20,
+        borderRadius: 16,
     },
 });

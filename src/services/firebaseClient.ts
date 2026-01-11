@@ -150,5 +150,34 @@ export async function updateBoxState(
     });
 }
 
+// ==================== EC-03: Battery Monitoring ====================
+
+export interface BatteryState {
+    percentage: number;
+    voltage: number;
+    charging: boolean;
+    lowBatteryWarning: boolean;      // < 20%
+    criticalBatteryWarning: boolean; // < 10%
+    timestamp: number;
+}
+
+/**
+ * Subscribe to box battery state updates
+ */
+export function subscribeToBattery(
+    boxId: string,
+    callback: (state: BatteryState | null) => void
+): () => void {
+    const db = getFirebaseDatabase();
+    const batteryRef = ref(db, `hardware/${boxId}/battery`);
+
+    const unsubscribe = onValue(batteryRef, (snapshot) => {
+        const data = snapshot.val();
+        callback(data as BatteryState | null);
+    });
+
+    return () => off(batteryRef);
+}
+
 export { ref, onValue, off, set, serverTimestamp };
 export type { Database, DatabaseReference };
