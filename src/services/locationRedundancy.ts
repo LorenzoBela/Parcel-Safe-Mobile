@@ -67,6 +67,7 @@ class LocationRedundancyManager {
     private phoneGpsWatchId: Location.LocationSubscription | null = null;
     private heartbeatCheckInterval: NodeJS.Timeout | null = null;
     private lastSourceSwitchTime: number = 0;
+    private phoneGpsSessionToken: number = 0;
 
     // ==================== Public API ====================
 
@@ -244,8 +245,13 @@ class LocationRedundancyManager {
     private async startPhoneGpsFallback(): Promise<void> {
         if (this.phoneGpsWatchId) return; // Already running
 
+        // Cancellation token to avoid races (e.g., box comes back online while fallback is starting).
+        const sessionToken = ++this.phoneGpsSessionToken;
+
         try {
             const { status } = await Location.requestForegroundPermissionsAsync();
+            if (sessionToken !== this.phoneGpsSessionToken) return; // Cancelled while awaiting
+
             if (status !== 'granted') {
                 console.error('[Redundancy] Location permission denied');
                 this.updateState({ source: 'none' });
@@ -258,7 +264,7 @@ class LocationRedundancyManager {
             });
 
             // Start watching location with power-efficient settings
-            this.phoneGpsWatchId = await Location.watchPositionAsync(
+            const subscription = await Location.watchPositionAsync(
                 {
                     accuracy: Location.Accuracy.Balanced, // Balance accuracy vs power
                     timeInterval: CONFIG.PHONE_GPS_INTERVAL,
@@ -267,9 +273,18 @@ class LocationRedundancyManager {
                 (location) => this.handlePhoneLocationUpdate(location)
             );
 
+            // If we were cancelled while awaiting watchPositionAsync, immediately tear down.
+            if (sessionToken !== this.phoneGpsSessionToken) {
+                subscription.remove();
+                return;
+            }
+
+            this.phoneGpsWatchId = subscription;
+
             console.log('[Redundancy] Phone GPS fallback activated');
         } catch (error) {
             console.error('[Redundancy] Failed to start phone GPS:', error);
+            if (sessionToken !== this.phoneGpsSessionToken) return;
             this.updateState({ source: 'none', phoneGpsActive: false });
         }
     }
@@ -300,6 +315,9 @@ class LocationRedundancyManager {
     }
 
     private stopPhoneGps(): void {
+        // Cancel any pending startPhoneGpsFallback() run.
+        this.phoneGpsSessionToken++;
+
         if (this.phoneGpsWatchId) {
             this.phoneGpsWatchId.remove();
             this.phoneGpsWatchId = null;

@@ -7,4 +7,7 @@ module.exports = {
         '^.+\\.tsx?$': 'ts-jest',
     },
     testMatch: ['**/__tests__/**/*.[jt]s?(x)', '**/?(*.)+(spec|test).[jt]s?(x)'],
+    transformIgnorePatterns: [
+        'node_modules/(?!(expo|expo-location|expo-modules-core|@react-native|react-native)/)',
+    ],
 };
