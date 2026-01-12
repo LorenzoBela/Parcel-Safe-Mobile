@@ -8,7 +8,10 @@ import * as Location from 'expo-location';
 import MapView, { Marker, PROVIDER_GOOGLE } from 'react-native-maps';
 import LottieView from 'lottie-react-native';
 import { useLocationRedundancy, getStatusMessage, getStatusColor } from '../../hooks/useLocationRedundancy';
-import { subscribeToBattery, BatteryState, subscribeToTamper, TamperState } from '../../services/firebaseClient';
+import { subscribeToBattery, BatteryState, subscribeToTamper, TamperState, subscribeToLocation, LocationData } from '../../services/firebaseClient';
+import { offlineCache, PendingSync } from '../../services/offlineCache';
+import { isSpeedAnomaly, isClockSyncRequired, canAddToPhotoQueue, isGpsStale, SAFETY_CONSTANTS } from '../../services/SafetyLogic';
+import NetInfo from '@react-native-community/netinfo';
 
 export default function RiderDashboard() {
     const navigation = useNavigation<any>();
@@ -29,6 +32,22 @@ export default function RiderDashboard() {
 
     // EC-18: Tamper Detection
     const [tamperState, setTamperState] = useState<TamperState | null>(null);
+
+    // EC-01/EC-06: Offline Mode & Sync Status
+    const [isOffline, setIsOffline] = useState(false);
+    const [pendingSyncs, setPendingSyncs] = useState(0);
+    const [isSyncing, setIsSyncing] = useState(false);
+
+    // EC-08: GPS Spoofing Detection
+    const [gpsSpoofWarning, setGpsSpoofWarning] = useState(false);
+    const [lastGpsLocation, setLastGpsLocation] = useState<LocationData | null>(null);
+
+    // EC-46: Clock Skew Warning
+    const [clockSkewWarning, setClockSkewWarning] = useState(false);
+
+    // EC-10: Photo Queue Status
+    const [photoQueueCount, setPhotoQueueCount] = useState(0);
+    const [photoQueueFull, setPhotoQueueFull] = useState(false);
 
     // GPS Redundancy Hook - monitors box connectivity and handles failover
     const {
@@ -78,11 +97,63 @@ export default function RiderDashboard() {
             }
         });
 
+        // EC-01/EC-06: Monitor network connectivity
+        const unsubscribeNetInfo = NetInfo.addEventListener(state => {
+            setIsOffline(!state.isConnected);
+        });
+
+        // EC-08: Subscribe to GPS location for spoofing detection
+        const unsubscribeLocation = subscribeToLocation('BOX_001', (location) => {
+            if (location && lastGpsLocation) {
+                // Calculate distance using Haversine approximation
+                const R = 6371000;
+                const dLat = (location.latitude - lastGpsLocation.latitude) * Math.PI / 180;
+                const dLon = (location.longitude - lastGpsLocation.longitude) * Math.PI / 180;
+                const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+                    Math.cos(lastGpsLocation.latitude * Math.PI / 180) * Math.cos(location.latitude * Math.PI / 180) *
+                    Math.sin(dLon/2) * Math.sin(dLon/2);
+                const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+                const distanceMeters = R * c;
+
+                const timeDelta = (location.timestamp - lastGpsLocation.timestamp) / 1000;
+                if (timeDelta > 0 && isSpeedAnomaly(distanceMeters, timeDelta)) {
+                    setGpsSpoofWarning(true);
+                    Alert.alert(
+                        '⚠️ GPS Anomaly Detected',
+                        'Unusual location jump detected. This may indicate GPS issues or spoofing.',
+                        [{ text: 'Dismiss', onPress: () => setGpsSpoofWarning(false) }]
+                    );
+                }
+
+                // EC-46: Check for clock skew
+                if (location.server_timestamp && isClockSyncRequired(location.server_timestamp)) {
+                    setClockSkewWarning(true);
+                }
+            }
+            setLastGpsLocation(location);
+        });
+
         return () => {
             deactivateTracking();
             unsubscribeBattery();
             unsubscribeTamper();
+            unsubscribeNetInfo();
+            unsubscribeLocation();
         };
+    }, [lastGpsLocation]);
+
+    // EC-01/EC-06: Check for pending syncs periodically
+    useEffect(() => {
+        const checkSyncStatus = async () => {
+            const status = await offlineCache.getSyncStatus();
+            setPendingSyncs(status.pendingCount);
+            setPhotoQueueCount(status.pendingCount);
+            setPhotoQueueFull(!canAddToPhotoQueue(status.pendingCount));
+        };
+
+        checkSyncStatus();
+        const interval = setInterval(checkSyncStatus, 10000); // Check every 10 seconds
+        return () => clearInterval(interval);
     }, []);
 
     const focusOnUser = () => {
@@ -320,6 +391,59 @@ export default function RiderDashboard() {
                             <Text style={styles.tamperTitle}>SECURITY ALERT</Text>
                             <Text style={styles.tamperText}>Unauthorized box access detected!</Text>
                         </View>
+                    </Surface>
+                )}
+
+                {/* EC-01/EC-06: Offline Mode Banner */}
+                {isOffline && (
+                    <Surface style={styles.offlineBanner} elevation={3}>
+                        <MaterialCommunityIcons name="wifi-off" size={24} color="white" />
+                        <View style={{ flex: 1, marginLeft: 12 }}>
+                            <Text style={styles.offlineTitle}>OFFLINE MODE</Text>
+                            <Text style={styles.offlineText}>
+                                {pendingSyncs > 0 
+                                    ? `${pendingSyncs} action${pendingSyncs > 1 ? 's' : ''} pending sync` 
+                                    : 'Working with cached data'}
+                            </Text>
+                        </View>
+                        {pendingSyncs > 0 && (
+                            <View style={styles.syncBadge}>
+                                <Text style={styles.syncBadgeText}>{pendingSyncs}</Text>
+                            </View>
+                        )}
+                    </Surface>
+                )}
+
+                {/* EC-08: GPS Spoofing Warning */}
+                {gpsSpoofWarning && (
+                    <Surface style={styles.spoofWarning} elevation={3}>
+                        <MaterialCommunityIcons name="map-marker-alert" size={24} color="#7B341E" />
+                        <View style={{ flex: 1, marginLeft: 12 }}>
+                            <Text style={styles.spoofTitle}>GPS ANOMALY</Text>
+                            <Text style={styles.spoofText}>Unusual location data detected</Text>
+                        </View>
+                        <TouchableOpacity onPress={() => setGpsSpoofWarning(false)}>
+                            <MaterialCommunityIcons name="close" size={20} color="#7B341E" />
+                        </TouchableOpacity>
+                    </Surface>
+                )}
+
+                {/* EC-46: Clock Skew Warning */}
+                {clockSkewWarning && (
+                    <Surface style={styles.clockWarning} elevation={2}>
+                        <MaterialCommunityIcons name="clock-alert" size={20} color="#1E40AF" />
+                        <Text style={styles.clockText}>Device time may be out of sync</Text>
+                        <TouchableOpacity onPress={() => setClockSkewWarning(false)}>
+                            <MaterialCommunityIcons name="close" size={18} color="#1E40AF" />
+                        </TouchableOpacity>
+                    </Surface>
+                )}
+
+                {/* EC-10: Photo Queue Full Warning */}
+                {photoQueueFull && (
+                    <Surface style={styles.queueWarning} elevation={2}>
+                        <MaterialCommunityIcons name="image-off" size={20} color="#B45309" />
+                        <Text style={styles.queueText}>Photo queue full ({photoQueueCount}/{SAFETY_CONSTANTS.MAX_QUEUED_PHOTOS})</Text>
                     </Surface>
                 )}
 
@@ -818,8 +942,9 @@ const styles = StyleSheet.create({
     tamperBanner: {
         flexDirection: 'row',
         alignItems: 'center',
-        backgroundColor: '#D32F2F', // Dark red
-        margin: 16,
+        backgroundColor: '#D32F2F',
+        marginHorizontal: 16,
+        marginTop: 16,
         padding: 16,
         borderRadius: 12,
     },
@@ -831,5 +956,90 @@ const styles = StyleSheet.create({
     tamperText: {
         color: 'rgba(255,255,255,0.9)',
         fontSize: 14,
+    },
+    // EC-01/EC-06: Offline Mode Styles
+    offlineBanner: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#475569',
+        marginHorizontal: 16,
+        marginTop: 8,
+        padding: 14,
+        borderRadius: 12,
+    },
+    offlineTitle: {
+        color: 'white',
+        fontWeight: 'bold',
+        fontSize: 14,
+    },
+    offlineText: {
+        color: 'rgba(255,255,255,0.8)',
+        fontSize: 12,
+    },
+    syncBadge: {
+        backgroundColor: '#EF4444',
+        width: 24,
+        height: 24,
+        borderRadius: 12,
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    syncBadgeText: {
+        color: 'white',
+        fontSize: 12,
+        fontWeight: 'bold',
+    },
+    // EC-08: GPS Spoofing Warning Styles
+    spoofWarning: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#FEF3C7',
+        marginHorizontal: 16,
+        marginTop: 8,
+        padding: 12,
+        borderRadius: 10,
+        borderLeftWidth: 4,
+        borderLeftColor: '#D97706',
+    },
+    spoofTitle: {
+        color: '#92400E',
+        fontWeight: 'bold',
+        fontSize: 13,
+    },
+    spoofText: {
+        color: '#B45309',
+        fontSize: 12,
+    },
+    // EC-46: Clock Skew Warning Styles
+    clockWarning: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#DBEAFE',
+        marginHorizontal: 16,
+        marginTop: 8,
+        padding: 10,
+        borderRadius: 8,
+        gap: 8,
+    },
+    clockText: {
+        flex: 1,
+        color: '#1E40AF',
+        fontSize: 12,
+    },
+    // EC-10: Photo Queue Warning Styles
+    queueWarning: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#FEF3C7',
+        marginHorizontal: 16,
+        marginTop: 8,
+        padding: 10,
+        borderRadius: 8,
+        gap: 8,
+    },
+    queueText: {
+        flex: 1,
+        color: '#B45309',
+        fontSize: 12,
     },
 });

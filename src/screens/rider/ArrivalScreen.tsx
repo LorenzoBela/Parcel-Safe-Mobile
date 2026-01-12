@@ -43,7 +43,20 @@ import {
     startBackgroundLocation,
     stopBackgroundLocation,
     isBackgroundLocationRunning,
+    subscribeToBackgroundLocationState,
+    BackgroundLocationState,
 } from '../../services/backgroundLocationService';
+
+import {
+    subscribeToLockout,
+    LockoutState,
+    subscribeToBattery,
+    BatteryState,
+    subscribeToTamper,
+    TamperState,
+} from '../../services/firebaseClient';
+
+import { bleOtpService, BleBoxDevice } from '../../services/bleOtpService';
 
 interface RouteParams {
     deliveryId: string;
@@ -87,15 +100,100 @@ export default function ArrivalScreen() {
     const [newAddress, setNewAddress] = useState('');
     const [addressReason, setAddressReason] = useState('');
 
+    // EC-04: OTP Lockout State
+    const [lockoutState, setLockoutState] = useState<LockoutState | null>(null);
+    const [lockoutCountdown, setLockoutCountdown] = useState('');
+
+    // EC-03: Battery State
+    const [batteryState, setBatteryState] = useState<BatteryState | null>(null);
+
+    // EC-18: Tamper State
+    const [tamperState, setTamperState] = useState<TamperState | null>(null);
+
+    // EC-15: Background Location State
+    const [bgLocationState, setBgLocationState] = useState<BackgroundLocationState | null>(null);
+
+    // EC-02: BLE Transfer State
+    const [showBleModal, setShowBleModal] = useState(false);
+    const [bleStatus, setBleStatus] = useState<'idle' | 'scanning' | 'connecting' | 'transferring' | 'success' | 'error'>('idle');
+    const [bleMessage, setBleMessage] = useState('');
+
     // EC-15: Background location starts automatically when screen mounts
     useEffect(() => {
         if (!isBackgroundLocationRunning()) {
             startBackgroundLocation(params.boxId);
         }
+
+        // Subscribe to background location state
+        const unsubscribeBgLocation = subscribeToBackgroundLocationState(setBgLocationState);
+
+        // EC-04: Subscribe to OTP lockout state
+        const unsubscribeLockout = subscribeToLockout(params.boxId, (state) => {
+            setLockoutState(state);
+            if (state?.active) {
+                Alert.alert(
+                    '🔒 OTP Lockout Active',
+                    `Too many failed OTP attempts. Box is locked for ${Math.ceil((state.expires_at - Date.now()) / 60000)} minutes.`,
+                    [{ text: 'OK' }]
+                );
+            }
+        });
+
+        // EC-03: Subscribe to battery state
+        const unsubscribeBattery = subscribeToBattery(params.boxId, (state) => {
+            setBatteryState(state);
+            if (state?.criticalBatteryWarning) {
+                Alert.alert(
+                    '⚠️ Critical Battery',
+                    `Box battery is critically low (${state.percentage}%). Complete delivery quickly!`,
+                    [{ text: 'OK' }]
+                );
+            }
+        });
+
+        // EC-18: Subscribe to tamper state
+        const unsubscribeTamper = subscribeToTamper(params.boxId, (state) => {
+            setTamperState(state);
+            if (state?.detected) {
+                Alert.alert(
+                    '🚨 SECURITY ALERT',
+                    'Box tamper detected! The box is now in lockdown mode. Contact support.',
+                    [{ text: 'Contact Support', style: 'destructive' }]
+                );
+            }
+        });
+
         return () => {
-            // Keep running until delivery completes
+            unsubscribeBgLocation();
+            unsubscribeLockout();
+            unsubscribeBattery();
+            unsubscribeTamper();
         };
     }, [params.boxId]);
+
+    // EC-04: Lockout countdown timer
+    useEffect(() => {
+        if (!lockoutState?.active) {
+            setLockoutCountdown('');
+            return;
+        }
+
+        const updateCountdown = () => {
+            const now = Date.now();
+            const remaining = lockoutState.expires_at - now;
+            if (remaining <= 0) {
+                setLockoutCountdown('Expired');
+            } else {
+                const mins = Math.floor(remaining / 60000);
+                const secs = Math.floor((remaining % 60000) / 1000);
+                setLockoutCountdown(`${mins}:${secs.toString().padStart(2, '0')}`);
+            }
+        };
+
+        updateCountdown();
+        const interval = setInterval(updateCountdown, 1000);
+        return () => clearInterval(interval);
+    }, [lockoutState]);
 
     // Timer update effect
     useEffect(() => {
@@ -229,6 +327,61 @@ export default function ArrivalScreen() {
         );
     };
 
+    // EC-02: BLE OTP Transfer
+    const handleBleTransfer = async () => {
+        setShowBleModal(true);
+        setBleStatus('scanning');
+        setBleMessage('Scanning for nearby box...');
+
+        try {
+            const result = await bleOtpService.sendOtpToBox(
+                params.boxId,
+                '123456', // Would come from delivery OTP
+                params.deliveryId,
+                {
+                    onScanStart: () => {
+                        setBleStatus('scanning');
+                        setBleMessage('Scanning for nearby Smart Box...');
+                    },
+                    onDeviceFound: (device) => {
+                        setBleMessage(`Found: ${device.name}`);
+                    },
+                    onConnecting: (name) => {
+                        setBleStatus('connecting');
+                        setBleMessage(`Connecting to ${name}...`);
+                    },
+                    onTransferring: () => {
+                        setBleStatus('transferring');
+                        setBleMessage('Transferring OTP...');
+                    },
+                    onSuccess: (name) => {
+                        setBleStatus('success');
+                        setBleMessage(`OTP sent to ${name} successfully!`);
+                    },
+                    onError: (error) => {
+                        setBleStatus('error');
+                        setBleMessage(error);
+                    }
+                }
+            );
+
+            if (!result.success) {
+                setBleStatus('error');
+                setBleMessage(result.message);
+            }
+        } catch (error) {
+            setBleStatus('error');
+            setBleMessage('BLE transfer failed');
+        }
+    };
+
+    const closeBleModal = () => {
+        setShowBleModal(false);
+        setBleStatus('idle');
+        setBleMessage('');
+        bleOtpService.stopScan();
+    };
+
     // EC-12: Submit address update
     const handleAddressUpdate = async () => {
         const request = createAddressUpdateRequest(
@@ -313,6 +466,66 @@ export default function ArrivalScreen() {
 
     return (
         <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+            {/* EC-18: Tamper Alert Banner */}
+            {tamperState?.detected && (
+                <Card style={styles.tamperBanner}>
+                    <Card.Content style={styles.bannerContent}>
+                        <Text style={styles.bannerIcon}>🚨</Text>
+                        <View style={{ flex: 1 }}>
+                            <Text style={styles.tamperTitle}>SECURITY ALERT</Text>
+                            <Text style={styles.tamperText}>Box tamper detected - Lockdown active</Text>
+                        </View>
+                    </Card.Content>
+                </Card>
+            )}
+
+            {/* EC-04: OTP Lockout Banner */}
+            {lockoutState?.active && (
+                <Card style={styles.lockoutBanner}>
+                    <Card.Content style={styles.bannerContent}>
+                        <Text style={styles.bannerIcon}>🔒</Text>
+                        <View style={{ flex: 1 }}>
+                            <Text style={styles.lockoutTitle}>OTP LOCKOUT</Text>
+                            <Text style={styles.lockoutText}>
+                                {lockoutState.attempt_count} failed attempts • Unlocks in {lockoutCountdown}
+                            </Text>
+                        </View>
+                    </Card.Content>
+                </Card>
+            )}
+
+            {/* EC-03: Battery Warning Banner */}
+            {batteryState?.lowBatteryWarning && (
+                <Card style={[styles.batteryBanner, batteryState.criticalBatteryWarning && styles.criticalBattery]}>
+                    <Card.Content style={styles.bannerContent}>
+                        <Text style={styles.bannerIcon}>{batteryState.criticalBatteryWarning ? '🔴' : '🟡'}</Text>
+                        <View style={{ flex: 1 }}>
+                            <Text style={[styles.batteryTitle, batteryState.criticalBatteryWarning && { color: 'white' }]}>
+                                {batteryState.criticalBatteryWarning ? 'CRITICAL BATTERY' : 'LOW BATTERY'}
+                            </Text>
+                            <Text style={[styles.batteryText, batteryState.criticalBatteryWarning && { color: 'rgba(255,255,255,0.9)' }]}>
+                                Box battery at {batteryState.percentage}%
+                            </Text>
+                        </View>
+                    </Card.Content>
+                </Card>
+            )}
+
+            {/* EC-15: Background Location Status */}
+            {bgLocationState && bgLocationState.status !== 'RUNNING' && (
+                <Card style={styles.bgLocationBanner}>
+                    <Card.Content style={styles.bannerContent}>
+                        <Text style={styles.bannerIcon}>📍</Text>
+                        <View style={{ flex: 1 }}>
+                            <Text style={styles.bgLocationTitle}>GPS TRACKING {bgLocationState.status}</Text>
+                            <Text style={styles.bgLocationText}>
+                                {bgLocationState.lastError || 'Background tracking not active'}
+                            </Text>
+                        </View>
+                    </Card.Content>
+                </Card>
+            )}
+
             <Text variant="headlineMedium" style={styles.title}>
                 Arrival & Verification
             </Text>
@@ -392,6 +605,70 @@ export default function ArrivalScreen() {
                     </Text>
                 </Card.Content>
             </Card>
+
+            {/* EC-02: BLE OTP Transfer Card */}
+            <Card style={styles.bleCard}>
+                <Card.Content>
+                    <Text style={styles.infoTitle}>📡 Box Offline?</Text>
+                    <Text style={styles.infoText}>
+                        If the box was offline during assignment, send OTP via Bluetooth.
+                    </Text>
+                    <Button
+                        mode="outlined"
+                        onPress={handleBleTransfer}
+                        icon="bluetooth"
+                        style={{ marginTop: 12 }}
+                    >
+                        Send OTP via Bluetooth
+                    </Button>
+                </Card.Content>
+            </Card>
+
+            {/* EC-02: BLE Transfer Modal */}
+            <Portal>
+                <Modal
+                    visible={showBleModal}
+                    onDismiss={closeBleModal}
+                    contentContainerStyle={styles.bleModal}
+                >
+                    <Text variant="titleLarge" style={{ marginBottom: 16, fontWeight: 'bold' }}>
+                        BLE OTP Transfer
+                    </Text>
+
+                    <View style={styles.bleStatusContainer}>
+                        {(bleStatus === 'scanning' || bleStatus === 'connecting' || bleStatus === 'transferring') && (
+                            <Text style={styles.bleStatusIcon}>⏳</Text>
+                        )}
+                        {bleStatus === 'success' && <Text style={styles.bleStatusIcon}>✅</Text>}
+                        {bleStatus === 'error' && <Text style={styles.bleStatusIcon}>❌</Text>}
+                    </View>
+
+                    <Text style={styles.bleStatusText}>
+                        {bleStatus === 'scanning' ? 'Scanning...' :
+                         bleStatus === 'connecting' ? 'Connecting...' :
+                         bleStatus === 'transferring' ? 'Transferring...' :
+                         bleStatus === 'success' ? 'Success!' :
+                         bleStatus === 'error' ? 'Failed' : 'Ready'}
+                    </Text>
+                    <Text style={styles.bleMessageText}>{bleMessage}</Text>
+
+                    <View style={styles.bleActions}>
+                        {bleStatus === 'error' && (
+                            <Button mode="contained" onPress={handleBleTransfer}>
+                                Retry
+                            </Button>
+                        )}
+                        {bleStatus === 'success' && (
+                            <Button mode="contained" onPress={closeBleModal} buttonColor="#22c55e">
+                                Done
+                            </Button>
+                        )}
+                        <Button mode="outlined" onPress={closeBleModal} style={{ marginTop: 8 }}>
+                            {bleStatus === 'success' ? 'Close' : 'Cancel'}
+                        </Button>
+                    </View>
+                </Modal>
+            </Portal>
 
             {/* EC-12: Address Update Modal */}
             <Portal>
@@ -571,5 +848,118 @@ const styles = StyleSheet.create({
         justifyContent: 'flex-end',
         gap: 12,
         marginTop: 8,
+    },
+    // EC-18: Tamper Banner
+    tamperBanner: {
+        backgroundColor: '#DC2626',
+        marginBottom: 12,
+        borderRadius: 12,
+    },
+    bannerContent: {
+        flexDirection: 'row',
+        alignItems: 'center',
+    },
+    bannerIcon: {
+        fontSize: 24,
+        marginRight: 12,
+    },
+    tamperTitle: {
+        color: 'white',
+        fontWeight: 'bold',
+        fontSize: 14,
+    },
+    tamperText: {
+        color: 'rgba(255,255,255,0.9)',
+        fontSize: 12,
+    },
+    // EC-04: Lockout Banner
+    lockoutBanner: {
+        backgroundColor: '#FFEDD5',
+        marginBottom: 12,
+        borderRadius: 12,
+        borderLeftWidth: 4,
+        borderLeftColor: '#EA580C',
+    },
+    lockoutTitle: {
+        color: '#C2410C',
+        fontWeight: 'bold',
+        fontSize: 14,
+    },
+    lockoutText: {
+        color: '#EA580C',
+        fontSize: 12,
+    },
+    // EC-03: Battery Banner
+    batteryBanner: {
+        backgroundColor: '#FEF3C7',
+        marginBottom: 12,
+        borderRadius: 12,
+        borderLeftWidth: 4,
+        borderLeftColor: '#D97706',
+    },
+    criticalBattery: {
+        backgroundColor: '#DC2626',
+        borderLeftColor: '#DC2626',
+    },
+    batteryTitle: {
+        color: '#92400E',
+        fontWeight: 'bold',
+        fontSize: 14,
+    },
+    batteryText: {
+        color: '#B45309',
+        fontSize: 12,
+    },
+    // EC-15: Background Location Banner
+    bgLocationBanner: {
+        backgroundColor: '#DBEAFE',
+        marginBottom: 12,
+        borderRadius: 12,
+        borderLeftWidth: 4,
+        borderLeftColor: '#2563EB',
+    },
+    bgLocationTitle: {
+        color: '#1E40AF',
+        fontWeight: 'bold',
+        fontSize: 14,
+    },
+    bgLocationText: {
+        color: '#3B82F6',
+        fontSize: 12,
+    },
+    // EC-02: BLE Card and Modal
+    bleCard: {
+        marginTop: 16,
+        backgroundColor: '#EFF6FF',
+        borderLeftWidth: 4,
+        borderLeftColor: '#3B82F6',
+    },
+    bleModal: {
+        backgroundColor: 'white',
+        padding: 24,
+        margin: 20,
+        borderRadius: 16,
+    },
+    bleStatusContainer: {
+        alignItems: 'center',
+        marginVertical: 24,
+    },
+    bleStatusIcon: {
+        fontSize: 64,
+    },
+    bleStatusText: {
+        fontSize: 18,
+        fontWeight: 'bold',
+        textAlign: 'center',
+        marginBottom: 8,
+    },
+    bleMessageText: {
+        fontSize: 14,
+        color: '#666',
+        textAlign: 'center',
+        marginBottom: 24,
+    },
+    bleActions: {
+        alignItems: 'center',
     },
 });
