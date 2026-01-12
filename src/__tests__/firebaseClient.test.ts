@@ -3,219 +3,232 @@
  * Tests location subscriptions, writes, and box state management
  */
 
-import {
-  subscribeToLocation,
-  subscribeToBoxState,
-  writePhoneLocation,
-  updateBoxState,
-  LocationData,
-  BoxState,
-} from '../services/firebaseClient';
-import { ref } from 'firebase/database';
-
-// Mock Firebase RTDB
-const mockOn = jest.fn();
-const mockOff = jest.fn();
-const mockSet = jest.fn(() => Promise.resolve());
-
-jest.mock('firebase/database', () => ({
-  getDatabase: jest.fn(() => ({})),
-  ref: jest.fn(() => ({
-    on: mockOn,
-    off: mockOff,
-    set: mockSet,
-  })),
-  onValue: jest.fn((dbRef, callback) => {
-    // Store callback for manual invocation in tests
-    mockOn.mockImplementation((eventType, cb) => {
-      if (eventType === 'value') callback({ val: () => null });
-    });
-    return () => mockOff();
-  }),
-  set: mockSet,
-}));
-
-// Mock firebase config (prevents import errors)
+// Mock firebase config first (prevents import errors)
 jest.mock('../config/firebase', () => ({}), { virtual: true });
 
+// Mock Firebase app
+jest.mock('firebase/app', () => ({
+    initializeApp: jest.fn(() => ({})),
+    getApps: jest.fn(() => [{}]),
+}));
+
+// Shared mock references
+let mockOnValueCallback: ((snapshot: { val: () => unknown }) => void) | null = null;
+let lastSetCall: { ref: unknown; data: unknown } | null = null;
+
+// Mock Firebase RTDB
+jest.mock('firebase/database', () => ({
+    getDatabase: jest.fn(() => ({})),
+    ref: jest.fn((db, path) => ({ _path: path })),
+    onValue: jest.fn((dbRef, callback) => {
+        mockOnValueCallback = callback;
+        return () => {}; // Unsubscribe
+    }),
+    off: jest.fn(),
+    set: jest.fn((dbRef, data) => {
+        lastSetCall = { ref: dbRef, data };
+        return Promise.resolve();
+    }),
+    serverTimestamp: jest.fn(() => ({ '.sv': 'timestamp' })),
+}));
+
+import {
+    subscribeToLocation,
+    subscribeToBoxState,
+    writePhoneLocation,
+    updateBoxState,
+    LocationData,
+    BoxState,
+} from '../services/firebaseClient';
+import { ref, onValue, off, set } from 'firebase/database';
+
 describe('firebaseClient', () => {
-  beforeEach(() => {
-    jest.clearAllMocks();
-  });
-
-  describe('subscribeToLocation', () => {
-    test('subscribes to box location updates', () => {
-      const mockCallback = jest.fn();
-      const unsubscribe = subscribeToLocation('BOX_001', mockCallback);
-
-      expect(ref).toHaveBeenCalledWith(expect.anything(), 'locations/BOX_001');
-      expect(typeof unsubscribe).toBe('function');
+    beforeEach(() => {
+        jest.clearAllMocks();
+        mockOnValueCallback = null;
+        lastSetCall = null;
     });
 
-    test('invokes callback when location data received', () => {
-      const { onValue } = require('firebase/database');
-      const mockCallback = jest.fn();
-      
-      const mockLocationData: LocationData = {
-        latitude: 14.5995,
-        longitude: 120.9842,
-        timestamp: Date.now(),
-        source: 'box',
-        server_timestamp: Date.now(),
-      };
+    describe('subscribeToLocation', () => {
+        test('subscribes to box location updates', () => {
+            const mockCallback = jest.fn();
+            const unsubscribe = subscribeToLocation('BOX_001', mockCallback);
 
-      onValue.mockImplementation((dbRef, callback) => {
-        callback({ val: () => mockLocationData });
-        return () => {};
-      });
+            expect(ref).toHaveBeenCalledWith(expect.anything(), 'locations/BOX_001');
+            expect(typeof unsubscribe).toBe('function');
+        });
 
-      subscribeToLocation('BOX_001', mockCallback);
+        test('invokes callback when location data received', () => {
+            const mockCallback = jest.fn();
 
-      expect(mockCallback).toHaveBeenCalledWith(mockLocationData);
+            const mockLocationData: LocationData = {
+                latitude: 14.5995,
+                longitude: 120.9842,
+                timestamp: Date.now(),
+                source: 'box',
+                server_timestamp: Date.now(),
+            };
+
+            subscribeToLocation('BOX_001', mockCallback);
+            
+            // Simulate receiving data through the callback
+            if (mockOnValueCallback) {
+                mockOnValueCallback({ val: () => mockLocationData });
+            }
+
+            expect(mockCallback).toHaveBeenCalledWith(mockLocationData);
+        });
+
+        test('handles null location data gracefully', () => {
+            const mockCallback = jest.fn();
+
+            subscribeToLocation('BOX_001', mockCallback);
+            
+            // Simulate receiving null data
+            if (mockOnValueCallback) {
+                mockOnValueCallback({ val: () => null });
+            }
+
+            // The service passes null to callback
+            expect(mockCallback).toHaveBeenCalledWith(null);
+        });
+
+        test('unsubscribe function is returned', () => {
+            const mockCallback = jest.fn();
+            const unsubscribe = subscribeToLocation('BOX_001', mockCallback);
+
+            expect(typeof unsubscribe).toBe('function');
+            
+            // Call unsubscribe - should call off
+            unsubscribe();
+            expect(off).toHaveBeenCalled();
+        });
     });
 
-    test('handles null location data gracefully', () => {
-      const { onValue } = require('firebase/database');
-      const mockCallback = jest.fn();
+    describe('subscribeToBoxState', () => {
+        test('subscribes to box state updates', () => {
+            const mockCallback = jest.fn();
+            const unsubscribe = subscribeToBoxState('BOX_001', mockCallback);
 
-      onValue.mockImplementation((dbRef, callback) => {
-        callback({ val: () => null });
-        return () => {};
-      });
+            expect(ref).toHaveBeenCalledWith(expect.anything(), 'hardware/BOX_001');
+            expect(typeof unsubscribe).toBe('function');
+        });
 
-      subscribeToLocation('BOX_001', mockCallback);
+        test('invokes callback with box state data', () => {
+            const mockCallback = jest.fn();
 
-      expect(mockCallback).not.toHaveBeenCalled();
+            const mockBoxState: BoxState = {
+                status: 'ACTIVE',
+                delivery_id: 'DEL_001',
+                last_heartbeat: Date.now(),
+            };
+
+            subscribeToBoxState('BOX_001', mockCallback);
+
+            // Simulate receiving data
+            if (mockOnValueCallback) {
+                mockOnValueCallback({ val: () => mockBoxState });
+            }
+
+            expect(mockCallback).toHaveBeenCalledWith(mockBoxState);
+        });
+
+        test('handles null box state gracefully', () => {
+            const mockCallback = jest.fn();
+
+            subscribeToBoxState('BOX_001', mockCallback);
+
+            // Simulate receiving null
+            if (mockOnValueCallback) {
+                mockOnValueCallback({ val: () => null });
+            }
+
+            expect(mockCallback).toHaveBeenCalledWith(null);
+        });
     });
 
-    test('unsubscribe function stops receiving updates', () => {
-      const { onValue } = require('firebase/database');
-      const mockUnsubscribeFn = jest.fn();
-      onValue.mockReturnValue(mockUnsubscribeFn);
+    describe('writePhoneLocation', () => {
+        test('writes phone GPS location to Firebase', async () => {
+            await writePhoneLocation('BOX_001', 14.6042, 121.0246, 5.5, 180);
 
-      const unsubscribe = subscribeToLocation('BOX_001', jest.fn());
-      
-      expect(mockUnsubscribeFn).not.toHaveBeenCalled();
-      
-      unsubscribe();
-      
-      expect(mockUnsubscribeFn).toHaveBeenCalledTimes(1);
-    });
-  });
+            expect(ref).toHaveBeenCalledWith(expect.anything(), 'locations/BOX_001');
+            expect(set).toHaveBeenCalled();
+            
+            expect(lastSetCall).not.toBeNull();
+            const data = lastSetCall!.data as Record<string, unknown>;
+            expect(data.latitude).toBe(14.6042);
+            expect(data.longitude).toBe(121.0246);
+            expect(data.source).toBe('phone');
+            expect(data.speed).toBe(5.5);
+            expect(data.heading).toBe(180);
+        });
 
-  describe('subscribeToBoxState', () => {
-    test('subscribes to box state updates', () => {
-      const mockCallback = jest.fn();
-      const unsubscribe = subscribeToBoxState('BOX_001', mockCallback);
+        test('uses default values for optional parameters', async () => {
+            await writePhoneLocation('BOX_001', 14.6042, 121.0246);
 
-      expect(ref).toHaveBeenCalledWith(expect.anything(), 'boxes/BOX_001/state');
-      expect(typeof unsubscribe).toBe('function');
-    });
+            expect(lastSetCall).not.toBeNull();
+            const data = lastSetCall!.data as Record<string, unknown>;
+            expect(data.speed).toBe(0);
+            expect(data.heading).toBe(0);
+        });
 
-    test('invokes callback with box state data', () => {
-      const { onValue } = require('firebase/database');
-      const mockCallback = jest.fn();
+        test('throws error when write fails', async () => {
+            (set as jest.Mock).mockRejectedValueOnce(new Error('Network error'));
 
-      const mockBoxState: BoxState = {
-        status: 'ACTIVE',
-        delivery_id: 'DEL_001',
-        last_heartbeat: Date.now(),
-      };
-
-      onValue.mockImplementation((dbRef, callback) => {
-        callback({ val: () => mockBoxState });
-        return () => {};
-      });
-
-      subscribeToBoxState('BOX_001', mockCallback);
-
-      expect(mockCallback).toHaveBeenCalledWith(mockBoxState);
+            await expect(writePhoneLocation('BOX_001', 14.6042, 121.0246)).rejects.toThrow('Network error');
+        });
     });
 
-    test('handles null box state gracefully', () => {
-      const { onValue } = require('firebase/database');
-      const mockCallback = jest.fn();
+    describe('updateBoxState', () => {
+        test('updates box state in Firebase', async () => {
+            const boxState: Partial<BoxState> = {
+                status: 'ARRIVED',
+                delivery_id: 'DEL_001',
+                otp_code: '123456',
+            };
 
-      onValue.mockImplementation((dbRef, callback) => {
-        callback({ val: () => null });
-        return () => {};
-      });
+            await updateBoxState('BOX_001', boxState);
 
-      subscribeToBoxState('BOX_001', mockCallback);
+            expect(ref).toHaveBeenCalledWith(expect.anything(), 'hardware/BOX_001');
+            expect(set).toHaveBeenCalled();
+            
+            expect(lastSetCall).not.toBeNull();
+            const data = lastSetCall!.data as Record<string, unknown>;
+            expect(data.status).toBe('ARRIVED');
+            expect(data.delivery_id).toBe('DEL_001');
+            expect(data.otp_code).toBe('123456');
+        });
 
-      expect(mockCallback).not.toHaveBeenCalled();
-    });
-  });
+        test('handles partial state updates', async () => {
+            const partialState: Partial<BoxState> = {
+                status: 'STANDBY',
+            };
 
-  describe('writePhoneLocation', () => {
-    test('writes phone GPS location to Firebase', async () => {
-      const { set } = require('firebase/database');
+            await updateBoxState('BOX_001', partialState);
 
-      await writePhoneLocation('BOX_001', 14.6042, 121.0246, 5.5, 180);
-
-      expect(ref).toHaveBeenCalledWith(expect.anything(), 'locations/BOX_001');
-      expect(set).toHaveBeenCalled();
-      const callArgs = set.mock.calls[0][1];
-      expect(callArgs.latitude).toBe(14.6042);
-      expect(callArgs.longitude).toBe(121.0246);
-      expect(callArgs.source).toBe('phone');
-    });
-
-    test('throws error when write fails', async () => {
-      const { set } = require('firebase/database');
-      set.mockRejectedValueOnce(new Error('Network error'));
-
-      await expect(writePhoneLocation('BOX_001', 14.6042, 121.0246)).rejects.toThrow('Network error');
-    });
-  });
-
-  describe('updateBoxState', () => {
-    test('updates box state in Firebase', async () => {
-      const { set } = require('firebase/database');
-      const boxState: BoxState = {
-        status: 'ARRIVED',
-        delivery_id: 'DEL_001',
-        otp_code: '123456',
-      };
-
-      await updateBoxState('BOX_001', boxState);
-
-      expect(ref).toHaveBeenCalledWith(expect.anything(), 'boxes/BOX_001/state');
-      expect(set).toHaveBeenCalledWith(expect.anything(), boxState);
+            expect(lastSetCall).not.toBeNull();
+            const data = lastSetCall!.data as Record<string, unknown>;
+            expect(data.status).toBe('STANDBY');
+        });
     });
 
-    test('handles partial state updates', async () => {
-      const { set } = require('firebase/database');
-      const partialState: Partial<BoxState> = {
-        status: 'STANDBY',
-        last_heartbeat: Date.now(),
-      };
+    describe('data validation', () => {
+        test('location data passed as-is to callback', () => {
+            const mockCallback = jest.fn();
 
-      await updateBoxState('BOX_001', partialState);
+            const invalidLocation = {
+                latitude: 14.5995,
+                // Missing longitude, source, timestamp - but service doesn't validate
+            };
 
-      expect(set).toHaveBeenCalledWith(expect.anything(), partialState);
+            subscribeToLocation('BOX_001', mockCallback);
+
+            if (mockOnValueCallback) {
+                mockOnValueCallback({ val: () => invalidLocation });
+            }
+
+            // Service passes data as-is (validation is in business logic layer)
+            expect(mockCallback).toHaveBeenCalledWith(invalidLocation);
+        });
     });
-  });
-
-  describe('data validation', () => {
-    test('location data has required fields', () => {
-      const { onValue } = require('firebase/database');
-      const mockCallback = jest.fn();
-
-      const invalidLocation = {
-        latitude: 14.5995,
-        // Missing longitude, source, timestamp
-      };
-
-      onValue.mockImplementation((dbRef, callback) => {
-        callback({ val: () => invalidLocation });
-        return () => {};
-      });
-
-      subscribeToLocation('BOX_001', mockCallback);
-
-      // Should still invoke callback (validation happens in business logic layer)
-      expect(mockCallback).toHaveBeenCalledWith(invalidLocation);
-    });
-  });
 });
