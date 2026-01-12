@@ -207,5 +207,121 @@ export function subscribeToTamper(
     return () => off(tamperRef);
 }
 
+// ==================== EC-04: OTP Lockout State ====================
+
+export interface LockoutState {
+    active: boolean;
+    started_at: number;
+    expires_at: number;
+    attempt_count: number;
+    delivery_id: string;
+}
+
+/**
+ * Subscribe to box OTP lockout state (EC-04)
+ */
+export function subscribeToLockout(
+    boxId: string,
+    callback: (state: LockoutState | null) => void
+): () => void {
+    const db = getFirebaseDatabase();
+    const lockoutRef = ref(db, `hardware/${boxId}/lockout`);
+
+    const unsubscribe = onValue(lockoutRef, (snapshot) => {
+        const data = snapshot.val();
+        callback(data as LockoutState | null);
+    });
+
+    return () => off(lockoutRef);
+}
+
+/**
+ * Reset OTP lockout (admin action) - EC-04
+ */
+export async function resetLockout(boxId: string): Promise<void> {
+    const db = getFirebaseDatabase();
+    const resetRef = ref(db, `hardware/${boxId}/reset_lockout`);
+    await set(resetRef, true);
+}
+
+// ==================== EC-07: OTP Expiry State ====================
+
+export interface OtpStatus {
+    otp_expired: boolean;
+    expired_at?: number;
+    delivery_id: string;
+}
+
+export interface OtpAssignment {
+    otp_code: string;
+    otp_issued_at: number;  // EC-07: Timestamp for expiry tracking
+    delivery_id: string;
+    target_lat: number;
+    target_lng: number;
+}
+
+/**
+ * Subscribe to OTP status (expiry notifications) - EC-07
+ */
+export function subscribeToOtpStatus(
+    boxId: string,
+    callback: (status: OtpStatus | null) => void
+): () => void {
+    const db = getFirebaseDatabase();
+    const statusRef = ref(db, `hardware/${boxId}/otp_status`);
+
+    const unsubscribe = onValue(statusRef, (snapshot) => {
+        const data = snapshot.val();
+        callback(data as OtpStatus | null);
+    });
+
+    return () => off(statusRef);
+}
+
+/**
+ * Assign OTP to box with timestamp for expiry tracking - EC-07
+ */
+export async function assignOtpToBox(
+    boxId: string,
+    assignment: OtpAssignment
+): Promise<void> {
+    const db = getFirebaseDatabase();
+    const hardwareRef = ref(db, `hardware/${boxId}`);
+
+    await set(hardwareRef, {
+        ...assignment,
+        otp_issued_at: serverTimestamp(), // EC-07: Server timestamp for accuracy
+        last_heartbeat: serverTimestamp(),
+    });
+}
+
+/**
+ * Revoke OTP (delivery cancelled/reassigned) - EC-07
+ */
+export async function revokeOtp(boxId: string): Promise<void> {
+    const db = getFirebaseDatabase();
+    const revokeRef = ref(db, `hardware/${boxId}/otp_revoked`);
+    await set(revokeRef, true);
+}
+
+/**
+ * Regenerate OTP (when compromised) - EC-07
+ */
+export async function regenerateOtp(
+    boxId: string,
+    newOtpCode: string,
+    deliveryId: string
+): Promise<void> {
+    const db = getFirebaseDatabase();
+    const hardwareRef = ref(db, `hardware/${boxId}`);
+
+    await set(hardwareRef, {
+        otp_code: newOtpCode,
+        otp_issued_at: serverTimestamp(),
+        delivery_id: deliveryId,
+        last_heartbeat: serverTimestamp(),
+    });
+}
+
 export { ref, onValue, off, set, serverTimestamp };
 export type { Database, DatabaseReference };
