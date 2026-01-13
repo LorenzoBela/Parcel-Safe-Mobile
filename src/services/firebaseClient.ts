@@ -323,5 +323,111 @@ export async function regenerateOtp(
     });
 }
 
+// ==================== EC-21/EC-22: Solenoid State ====================
+export type SolenoidStatusType = 'OK' | 'STUCK_CLOSED' | 'STUCK_OPEN' | 'UNKNOWN';
+
+export interface SolenoidState {
+    status: SolenoidStatusType;
+    retry_count: number;
+    out_of_service: boolean;
+    timestamp: number;
+    delivery_id: string;
+    failure_type?: string;
+    message?: string;
+    severity?: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
+}
+
+/**
+ * Subscribe to solenoid state updates (EC-21/EC-22)
+ */
+export function subscribeToSolenoid(
+    boxId: string,
+    callback: (state: SolenoidState | null) => void
+): () => void {
+    const db = getFirebaseDatabase();
+    const solenoidRef = ref(db, `hardware/${boxId}/solenoid`);
+
+    const unsubscribe = onValue(solenoidRef, (snapshot) => {
+        const data = snapshot.val();
+        callback(data as SolenoidState | null);
+    });
+
+    return () => off(solenoidRef);
+}
+
+// ==================== EC-23: Camera State ====================
+export type CameraStatusType = 'OK' | 'RETRY_SUCCESS' | 'FAILED' | 'NOT_INITIALIZED' | 'HARDWARE_ERROR';
+
+export interface CameraState {
+    status: CameraStatusType;
+    has_hardware_error: boolean;
+    last_capture_attempts: number;
+    failure_reason: string;
+    timestamp: number;
+    delivery_id: string;
+    severity?: 'LOW' | 'MEDIUM' | 'HIGH';
+    message?: string;
+}
+
+/**
+ * Subscribe to camera state updates (EC-23)
+ */
+export function subscribeToCamera(
+    boxId: string,
+    callback: (state: CameraState | null) => void
+): () => void {
+    const db = getFirebaseDatabase();
+    const cameraRef = ref(db, `hardware/${boxId}/camera`);
+
+    const unsubscribe = onValue(cameraRef, (snapshot) => {
+        const data = snapshot.val();
+        callback(data as CameraState | null);
+    });
+
+    return () => off(cameraRef);
+}
+
+// ==================== EC-25: Reboot State ====================
+export interface RebootState {
+    rebooted: boolean;
+    boot_count: number;
+    had_active_delivery: boolean;
+    delivery_id: string;
+    timestamp: number;
+    restored_state?: {
+        delivery_id: string;
+        is_arrived: boolean;
+        is_unlocked: boolean;
+        power_state: number;
+    };
+}
+
+/**
+ * Subscribe to reboot state updates (EC-25)
+ */
+export function subscribeToReboot(
+    boxId: string,
+    callback: (state: RebootState | null) => void
+): () => void {
+    const db = getFirebaseDatabase();
+    const rebootRef = ref(db, `hardware/${boxId}/reboot`);
+
+    const unsubscribe = onValue(rebootRef, (snapshot) => {
+        const data = snapshot.val();
+        callback(data as RebootState | null);
+    });
+
+    return () => off(rebootRef);
+}
+
+/**
+ * Clear reboot flag after acknowledgment
+ */
+export async function clearRebootFlag(boxId: string): Promise<void> {
+    const db = getFirebaseDatabase();
+    const rebootRef = ref(db, `hardware/${boxId}/reboot/rebooted`);
+    await set(rebootRef, false);
+}
+
 export { ref, onValue, off, set, serverTimestamp };
 export type { Database, DatabaseReference };
