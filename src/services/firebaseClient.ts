@@ -429,5 +429,185 @@ export async function clearRebootFlag(boxId: string): Promise<void> {
     await set(rebootRef, false);
 }
 
+// ==================== EC-47: Duplicate Delivery Prevention ====================
+
+export type DuplicateCheckResult = 'NEW' | 'SAME' | 'UPDATE' | 'REJECTED';
+
+export interface IdempotencyKey {
+    delivery_id: string;
+    otp_code: string;
+    issued_at: number;
+    request_hash: string;  // Combined hash of the request
+    created_at: number;
+}
+
+export interface DuplicateDeliveryEvent {
+    attempted_delivery_id: string;
+    active_delivery_id: string;
+    result: DuplicateCheckResult;
+    timestamp: number;
+    update_count: number;
+}
+
+/**
+ * Generate idempotency key for a delivery assignment
+ * EC-47: Used to detect and handle duplicate requests
+ */
+export function generateIdempotencyKey(
+    deliveryId: string,
+    otpCode: string,
+    issuedAt: number
+): string {
+    return `${deliveryId}:${otpCode}:${issuedAt}`;
+}
+
+/**
+ * Assign delivery with idempotency check - EC-47
+ * Prevents duplicate delivery records from retries
+ */
+export async function assignDeliveryWithIdempotency(
+    boxId: string,
+    deliveryId: string,
+    otpCode: string,
+    targetLat: number,
+    targetLng: number
+): Promise<{ success: boolean; result: DuplicateCheckResult }> {
+    const db = getFirebaseDatabase();
+    const hardwareRef = ref(db, `hardware/${boxId}`);
+    
+    // Generate idempotency key
+    const issuedAt = Date.now();
+    const idempotencyKey = generateIdempotencyKey(deliveryId, otpCode, issuedAt);
+    
+    // Set with idempotency data
+    await set(hardwareRef, {
+        delivery_id: deliveryId,
+        otp_code: otpCode,
+        otp_issued_at: serverTimestamp(),
+        target_lat: targetLat,
+        target_lng: targetLng,
+        idempotency_key: idempotencyKey,
+        last_heartbeat: serverTimestamp(),
+    });
+    
+    return { success: true, result: 'NEW' };
+}
+
+/**
+ * Subscribe to duplicate delivery events - EC-47
+ */
+export function subscribeToDuplicateEvents(
+    boxId: string,
+    callback: (event: DuplicateDeliveryEvent | null) => void
+): () => void {
+    const db = getFirebaseDatabase();
+    const eventRef = ref(db, `hardware/${boxId}/duplicate_event`);
+
+    const unsubscribe = onValue(eventRef, (snapshot) => {
+        const data = snapshot.val();
+        callback(data as DuplicateDeliveryEvent | null);
+    });
+
+    return () => off(eventRef);
+}
+
+// ==================== EC-48: Data Integrity Monitoring ====================
+
+export type IntegrityStatus = 'OK' | 'CORRUPTED' | 'RECOVERED_RTC' | 'RECOVERED_FIREBASE' | 'LOST';
+export type QueueIntegrityStatus = 'OK' | 'ISSUE' | 'RECOVERED' | 'LOST';
+
+export interface DataIntegrityState {
+    delivery_state: {
+        status: IntegrityStatus;
+        corruption_count: number;
+        needs_firebase_recovery: boolean;
+    };
+    photo_queue: {
+        status: QueueIntegrityStatus;
+        corruption_detected: boolean;
+        recovery_count: number;
+    };
+    timestamp: number;
+    boot_count: number;
+}
+
+export interface CorruptionEvent {
+    filename: string;
+    check_result: 'VALID' | 'CHECKSUM_FAIL' | 'PARSE_FAIL' | 'FILE_MISSING' | 'READ_ERROR';
+    recovery_status: 'NOT_NEEDED' | 'FROM_RTC' | 'FROM_FIREBASE' | 'FAILED' | 'PARTIAL';
+    timestamp: number;
+    expected_checksum?: string;
+    actual_checksum?: string;
+}
+
+/**
+ * Subscribe to data integrity state updates - EC-48
+ */
+export function subscribeToDataIntegrity(
+    boxId: string,
+    callback: (state: DataIntegrityState | null) => void
+): () => void {
+    const db = getFirebaseDatabase();
+    const integrityRef = ref(db, `hardware/${boxId}/data_integrity`);
+
+    const unsubscribe = onValue(integrityRef, (snapshot) => {
+        const data = snapshot.val();
+        callback(data as DataIntegrityState | null);
+    });
+
+    return () => off(integrityRef);
+}
+
+/**
+ * Check if box needs Firebase recovery - EC-48
+ */
+export async function checkRecoveryNeeded(boxId: string): Promise<boolean> {
+    const db = getFirebaseDatabase();
+    const recoveryRef = ref(db, `hardware/${boxId}/data_integrity/delivery_state/needs_firebase_recovery`);
+    
+    return new Promise((resolve) => {
+        onValue(recoveryRef, (snapshot) => {
+            const data = snapshot.val();
+            resolve(data === true);
+        }, { onlyOnce: true });
+    });
+}
+
+/**
+ * Send recovery data to box - EC-48
+ * Used when box reports corruption and needs data re-fetch
+ */
+export async function sendRecoveryData(
+    boxId: string,
+    deliveryId: string,
+    otpCode: string,
+    targetLat: number,
+    targetLng: number
+): Promise<void> {
+    const db = getFirebaseDatabase();
+    const recoveryRef = ref(db, `hardware/${boxId}/recovery_data`);
+    
+    await set(recoveryRef, {
+        delivery_id: deliveryId,
+        otp_code: otpCode,
+        otp_issued_at: serverTimestamp(),
+        target_lat: targetLat,
+        target_lng: targetLng,
+        sent_at: serverTimestamp(),
+    });
+}
+
+/**
+ * Acknowledge corruption event (admin action) - EC-48
+ */
+export async function acknowledgeCorruption(boxId: string): Promise<void> {
+    const db = getFirebaseDatabase();
+    const ackRef = ref(db, `hardware/${boxId}/data_integrity/acknowledged`);
+    await set(ackRef, {
+        acknowledged: true,
+        timestamp: serverTimestamp(),
+    });
+}
+
 export { ref, onValue, off, set, serverTimestamp };
 export type { Database, DatabaseReference };
