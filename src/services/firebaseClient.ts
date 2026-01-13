@@ -609,5 +609,87 @@ export async function acknowledgeCorruption(boxId: string): Promise<void> {
     });
 }
 
+// ==================== EC-55: Firebase Quota Types ====================
+
+export type QuotaAlertLevel = 'OK' | 'WARNING' | 'CRITICAL' | 'EXCEEDED';
+
+export interface QuotaState {
+    reads: {
+        count: number;
+        limit: number;
+        percentage: number;
+    };
+    writes: {
+        count: number;
+        limit: number;
+        percentage: number;
+    };
+    storage: {
+        used_bytes: number;
+        limit_bytes: number;
+        percentage: number;
+    };
+    bandwidth: {
+        used_bytes: number;
+        limit_bytes: number;
+        percentage: number;
+    };
+    alert_level: QuotaAlertLevel;
+    last_updated: number;
+    last_reset: number;
+}
+
+/**
+ * Subscribe to quota state updates (EC-55) - For app monitoring
+ */
+export function subscribeToQuotaState(
+    callback: (state: QuotaState | null) => void
+): () => void {
+    const db = getFirebaseDatabase();
+    const quotaRef = ref(db, 'admin/quota_state');
+
+    const unsubscribe = onValue(quotaRef, (snapshot) => {
+        const data = snapshot.val();
+        callback(data as QuotaState | null);
+    });
+
+    return () => off(quotaRef);
+}
+
+// ==================== EC-56: Photo Upload Types ====================
+
+export type PhotoUploadStatus = 'PENDING' | 'COMPRESSING' | 'UPLOADING' | 'COMPLETED' | 'FAILED';
+
+export interface PhotoUploadState {
+    delivery_id: string;
+    status: PhotoUploadStatus;
+    progress_percent: number;
+    original_size_bytes: number;
+    compressed_size_bytes: number;
+    compression_ratio: number;
+    upload_started_at?: number;
+    upload_completed_at?: number;
+    error_message?: string;
+    retry_count: number;
+}
+
+/**
+ * Subscribe to photo upload state (EC-56)
+ */
+export function subscribeToPhotoUploadState(
+    boxId: string,
+    callback: (state: PhotoUploadState | null) => void
+): () => void {
+    const db = getFirebaseDatabase();
+    const uploadRef = ref(db, `hardware/${boxId}/photo_upload`);
+
+    const unsubscribe = onValue(uploadRef, (snapshot) => {
+        const data = snapshot.val();
+        callback(data as PhotoUploadState | null);
+    });
+
+    return () => off(uploadRef);
+}
+
 export { ref, onValue, off, set, serverTimestamp };
 export type { Database, DatabaseReference };

@@ -8,6 +8,11 @@
  * - Rider correction: App allows address update
  * - Customer correction: Tracking page has "Update Address"
  * - Geofence flexibility: 50m radius accommodates GPS errors
+ * 
+ * EC-68: Residential vs Business Address Handling
+ * - Address type field: RESIDENTIAL, BUSINESS, OTHER
+ * - Dynamic geofence sizing based on address type
+ * - Building name/unit prompt for business addresses
  */
 
 import { getFirebaseDatabase, serverTimestamp, ref, set, onValue, off } from './firebaseClient';
@@ -15,7 +20,7 @@ import { getFirebaseDatabase, serverTimestamp, ref, set, onValue, off } from './
 // ==================== Configuration ====================
 
 export const CONFIG = {
-    /** Default geofence radius (meters) */
+    /** Default geofence radius (meters) - used for RESIDENTIAL */
     DEFAULT_GEOFENCE_RADIUS_M: 50,
 
     /** Maximum geofence radius for special cases (meters) */
@@ -32,11 +37,31 @@ export const CONFIG = {
 
     /** Cooldown between address updates (ms) */
     ADDRESS_UPDATE_COOLDOWN_MS: 60000, // 1 minute
+    
+    // ==================== EC-68: Address Type Configuration ====================
+    
+    /** EC-68: Geofence radius for residential addresses (meters) */
+    RESIDENTIAL_GEOFENCE_RADIUS_M: 50,
+    
+    /** EC-68: Geofence radius for business addresses (meters) */
+    BUSINESS_GEOFENCE_RADIUS_M: 100,
+    
+    /** EC-68: Geofence radius for other/unspecified addresses (meters) */
+    OTHER_GEOFENCE_RADIUS_M: 50,
+    
+    /** EC-68: Minimum building name length for business addresses */
+    MIN_BUILDING_NAME_LENGTH: 2,
+    
+    /** EC-68: Minimum unit number length */
+    MIN_UNIT_NUMBER_LENGTH: 1,
 };
 
 // ==================== Types ====================
 
 export type AddressUpdateSource = 'RIDER' | 'CUSTOMER' | 'ADMIN';
+
+// EC-68: Address type for residential vs business disambiguation
+export type AddressType = 'RESIDENTIAL' | 'BUSINESS' | 'OTHER';
 
 export interface AddressData {
     address: string;
@@ -44,6 +69,11 @@ export interface AddressData {
     longitude: number;
     notes?: string;
     landmark?: string;
+    // EC-68: Address type fields
+    addressType?: AddressType;
+    buildingName?: string;
+    unitNumber?: string;
+    floorNumber?: string;
 }
 
 export interface AddressUpdateRequest {
@@ -368,4 +398,200 @@ export function subscribeToGeofence(
     });
     
     return () => off(geofenceRef);
+}
+
+// ==================== EC-68: Address Type Functions ====================
+
+/**
+ * EC-68: Get default geofence radius based on address type
+ * 
+ * - RESIDENTIAL: 50m (standard home delivery)
+ * - BUSINESS: 100m (larger complexes, multiple entrances)
+ * - OTHER: 50m (default fallback)
+ */
+export function getGeofenceRadiusForAddressType(addressType: AddressType): number {
+    switch (addressType) {
+        case 'RESIDENTIAL':
+            return CONFIG.RESIDENTIAL_GEOFENCE_RADIUS_M;
+        case 'BUSINESS':
+            return CONFIG.BUSINESS_GEOFENCE_RADIUS_M;
+        case 'OTHER':
+        default:
+            return CONFIG.OTHER_GEOFENCE_RADIUS_M;
+    }
+}
+
+/**
+ * EC-68: Create geofence with address type awareness
+ */
+export function createGeofenceForAddressType(
+    lat: number, 
+    lng: number, 
+    addressType: AddressType
+): GeofenceConfig {
+    return {
+        centerLat: lat,
+        centerLng: lng,
+        radiusMeters: getGeofenceRadiusForAddressType(addressType),
+    };
+}
+
+/**
+ * EC-68: Validate business address has required details
+ * Business addresses require either building name OR unit number
+ */
+export function validateBusinessAddress(address: AddressData): {
+    isValid: boolean;
+    errors: string[];
+} {
+    const errors: string[] = [];
+    
+    if (address.addressType !== 'BUSINESS') {
+        // Not a business address, no additional validation needed
+        return { isValid: true, errors: [] };
+    }
+    
+    // Business addresses require building name or unit number
+    const hasBuildingName = address.buildingName && 
+        address.buildingName.length >= CONFIG.MIN_BUILDING_NAME_LENGTH;
+    const hasUnitNumber = address.unitNumber && 
+        address.unitNumber.length >= CONFIG.MIN_UNIT_NUMBER_LENGTH;
+    
+    if (!hasBuildingName && !hasUnitNumber) {
+        errors.push('Business addresses require a building name or unit number');
+    }
+    
+    return {
+        isValid: errors.length === 0,
+        errors,
+    };
+}
+
+/**
+ * EC-68: Determine address type from address string (heuristic)
+ * 
+ * Uses common patterns to suggest address type:
+ * - Contains "Building", "Tower", "Plaza", "Mall", "Office" -> BUSINESS
+ * - Contains "Unit", "Suite", "Floor" -> BUSINESS
+ * - Default -> RESIDENTIAL
+ */
+export function suggestAddressType(addressString: string): AddressType {
+    const lowerAddress = addressString.toLowerCase();
+    
+    // Business indicators
+    const businessKeywords = [
+        'building', 'tower', 'plaza', 'mall', 'office',
+        'center', 'centre', 'corporate', 'business',
+        'industrial', 'commercial', 'warehouse',
+        'unit', 'suite', 'floor', 'level',
+        'company', 'corp', 'inc', 'ltd',
+    ];
+    
+    for (const keyword of businessKeywords) {
+        if (lowerAddress.includes(keyword)) {
+            return 'BUSINESS';
+        }
+    }
+    
+    return 'RESIDENTIAL';
+}
+
+/**
+ * EC-68: Get address type display label
+ */
+export function getAddressTypeLabel(addressType: AddressType): string {
+    switch (addressType) {
+        case 'RESIDENTIAL':
+            return 'Residential Address';
+        case 'BUSINESS':
+            return 'Business/Commercial';
+        case 'OTHER':
+            return 'Other';
+        default:
+            return 'Unknown';
+    }
+}
+
+/**
+ * EC-68: Get address type description for UI
+ */
+export function getAddressTypeDescription(addressType: AddressType): string {
+    switch (addressType) {
+        case 'RESIDENTIAL':
+            return 'Home or apartment delivery (50m geofence)';
+        case 'BUSINESS':
+            return 'Office, building, or commercial location (100m geofence)';
+        case 'OTHER':
+            return 'Other location type (50m geofence)';
+        default:
+            return '';
+    }
+}
+
+/**
+ * EC-68: Check if address needs business details prompt
+ */
+export function needsBusinessDetails(address: AddressData): boolean {
+    if (address.addressType !== 'BUSINESS') {
+        return false;
+    }
+    
+    const hasBuildingName = address.buildingName && 
+        address.buildingName.length >= CONFIG.MIN_BUILDING_NAME_LENGTH;
+    const hasUnitNumber = address.unitNumber && 
+        address.unitNumber.length >= CONFIG.MIN_UNIT_NUMBER_LENGTH;
+    
+    return !hasBuildingName && !hasUnitNumber;
+}
+
+/**
+ * EC-68: Extended address validation including address type
+ */
+export function validateAddressWithType(
+    request: AddressUpdateRequest
+): { isValid: boolean; errors: string[] } {
+    // First run standard validation
+    const standardValidation = validateAddressUpdateRequest(request);
+    if (!standardValidation.isValid) {
+        return standardValidation;
+    }
+    
+    // Then validate business-specific requirements
+    const businessValidation = validateBusinessAddress(request.updatedAddress);
+    if (!businessValidation.isValid) {
+        return businessValidation;
+    }
+    
+    return { isValid: true, errors: [] };
+}
+
+/**
+ * EC-68: Format address with type and details
+ */
+export function formatAddressWithDetails(address: AddressData): string {
+    let formatted = address.address;
+    
+    if (address.addressType === 'BUSINESS') {
+        const details: string[] = [];
+        
+        if (address.buildingName) {
+            details.push(address.buildingName);
+        }
+        if (address.floorNumber) {
+            details.push(`Floor ${address.floorNumber}`);
+        }
+        if (address.unitNumber) {
+            details.push(`Unit ${address.unitNumber}`);
+        }
+        
+        if (details.length > 0) {
+            formatted = `${details.join(', ')}, ${formatted}`;
+        }
+    }
+    
+    if (address.landmark) {
+        formatted += ` (Near: ${address.landmark})`;
+    }
+    
+    return formatted;
 }
