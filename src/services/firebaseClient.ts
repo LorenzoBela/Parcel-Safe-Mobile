@@ -938,5 +938,248 @@ export function subscribeToPhotoUploadState(
     return () => off(uploadRef);
 }
 
+// ==================== EC-49: Out-of-Order Event Handling ====================
+
+/**
+ * EC-49: Delivery status type for state machine transitions
+ * Same as web implementation for consistency
+ */
+export type DeliveryStatus =
+    | 'PENDING'
+    | 'IN_TRANSIT'
+    | 'ARRIVED'
+    | 'COMPLETED'
+    | 'CANCELLED'
+    | 'TAMPERED'
+    | 'EXPIRED'
+    | 'ATTEMPTED'
+    | 'RETURNED';
+
+/**
+ * EC-49: Valid state transitions map
+ */
+export const DELIVERY_VALID_TRANSITIONS: Record<DeliveryStatus, DeliveryStatus[]> = {
+    PENDING: ['IN_TRANSIT', 'CANCELLED', 'EXPIRED'],
+    IN_TRANSIT: ['ARRIVED', 'CANCELLED', 'TAMPERED'],
+    ARRIVED: ['COMPLETED', 'RETURNED', 'ATTEMPTED', 'CANCELLED'],
+    ATTEMPTED: ['ARRIVED', 'CANCELLED'],  // ARRIVED = admin reset
+    COMPLETED: [],  // Terminal state
+    CANCELLED: [],  // Terminal state
+    TAMPERED: [],   // Terminal until admin reset
+    EXPIRED: [],    // Terminal state
+    RETURNED: [],   // Terminal state
+};
+
+/**
+ * EC-49: Check if a state transition is valid
+ */
+export function validateDeliveryTransition(from: DeliveryStatus, to: DeliveryStatus): boolean {
+    const validTargets = DELIVERY_VALID_TRANSITIONS[from];
+    return validTargets.includes(to);
+}
+
+/**
+ * EC-49: Check if status is a terminal state
+ */
+export function isTerminalStatus(status: DeliveryStatus): boolean {
+    return DELIVERY_VALID_TRANSITIONS[status].length === 0;
+}
+
+/**
+ * EC-49: Out-of-order event interface
+ */
+export interface OutOfOrderEvent {
+    rejectedTransition: {
+        from: DeliveryStatus;
+        to: DeliveryStatus;
+    };
+    expectedStates: DeliveryStatus[];
+    timestamp: number;
+    deliveryId: string;
+    boxId: string;
+    eventId: string;
+    acknowledged: boolean;
+}
+
+/**
+ * EC-49: Subscribe to out-of-order events for a box (rider view)
+ */
+export function subscribeToOutOfOrderEvents(
+    boxId: string,
+    callback: (events: OutOfOrderEvent[] | null) => void
+): () => void {
+    const db = getFirebaseDatabase();
+    const eventsRef = ref(db, `hardware/${boxId}/out_of_order_events`);
+
+    const unsubscribe = onValue(eventsRef, (snapshot) => {
+        const data = snapshot.val();
+        if (!data) {
+            callback(null);
+            return;
+        }
+        const events = Object.values(data) as OutOfOrderEvent[];
+        callback(events);
+    });
+
+    return () => off(eventsRef);
+}
+
+/**
+ * EC-49: Get expected transitions from current status
+ */
+export function getExpectedTransitions(from: DeliveryStatus): DeliveryStatus[] {
+    return DELIVERY_VALID_TRANSITIONS[from];
+}
+
+/**
+ * EC-49: Format expected transitions as readable string
+ */
+export function formatExpectedTransitions(from: DeliveryStatus): string {
+    const valid = DELIVERY_VALID_TRANSITIONS[from];
+    if (valid.length === 0) {
+        return '(terminal state)';
+    }
+    return valid.join(', ');
+}
+
+// ==================== EC-66: Customer Multi-Delivery Tracking ====================
+
+/**
+ * EC-66: Individual delivery info for rider's view
+ */
+export interface RiderDeliveryInfo {
+    deliveryId: string;
+    customerId: string;
+    customerName: string;
+    customerPhone?: string;
+    boxId: string;
+    otpCode: string;
+    status: DeliveryStatus;
+    eta?: number;
+    distance?: number;
+    dropoffLat: number;
+    dropoffLng: number;
+    packageDescription?: string;
+    isSameDestinationGroup: boolean;  // True if customer has other active deliveries
+    createdAt: number;
+    updatedAt: number;
+}
+
+/**
+ * EC-66: Multi-delivery context for riders
+ * Shows when multiple deliveries are going to the same customer
+ */
+export interface MultiDeliveryContext {
+    customerId: string;
+    customerName: string;
+    totalActiveDeliveries: number;
+    myDeliveryIndex: number;  // This rider's position (e.g., 1 of 2)
+    otherRiders: Array<{
+        riderId: string;
+        riderName: string;
+        status: DeliveryStatus;
+    }>;
+}
+
+/**
+ * EC-66: Customer multi-delivery state
+ */
+export interface CustomerMultiDeliveryState {
+    customerId: string;
+    deliveries: RiderDeliveryInfo[];
+    activeCount: number;
+    completedCount: number;
+}
+
+/**
+ * EC-66: Configuration for multi-delivery handling
+ */
+export const MULTI_DELIVERY_CONFIG = {
+    NOTIFICATION_GROUP_WINDOW_MS: 300000, // 5 minutes
+    MAX_VISIBLE_DELIVERIES: 5,
+};
+
+/**
+ * EC-66: Subscribe to multi-delivery context for a specific delivery
+ * Rider sees if their customer has multiple inbound deliveries
+ */
+export function subscribeToMultiDeliveryContext(
+    deliveryId: string,
+    callback: (context: MultiDeliveryContext | null) => void
+): () => void {
+    const db = getFirebaseDatabase();
+    const contextRef = ref(db, `deliveries/${deliveryId}/multi_delivery_context`);
+
+    const unsubscribe = onValue(contextRef, (snapshot) => {
+        const data = snapshot.val();
+        callback(data as MultiDeliveryContext | null);
+    });
+
+    return () => off(contextRef);
+}
+
+/**
+ * EC-66: Subscribe to all deliveries going to the same destination
+ * Rider can see other deliveries in their queue with same drop-off
+ */
+export function subscribeToSameDestinationGroup(
+    riderId: string,
+    callback: (deliveries: RiderDeliveryInfo[] | null) => void
+): () => void {
+    const db = getFirebaseDatabase();
+    const groupRef = ref(db, `riders/${riderId}/same_destination_group`);
+
+    const unsubscribe = onValue(groupRef, (snapshot) => {
+        const data = snapshot.val();
+        if (!data) {
+            callback(null);
+            return;
+        }
+        const deliveries = Object.values(data) as RiderDeliveryInfo[];
+        callback(deliveries);
+    });
+
+    return () => off(groupRef);
+}
+
+/**
+ * EC-66: Check if a customer has multiple active deliveries
+ */
+export function hasMultipleActiveDeliveries(context: MultiDeliveryContext | null): boolean {
+    return context !== null && context.totalActiveDeliveries > 1;
+}
+
+/**
+ * EC-66: Format multi-delivery info message for rider
+ */
+export function formatMultiDeliveryMessage(context: MultiDeliveryContext): string {
+    const { totalActiveDeliveries, myDeliveryIndex, otherRiders } = context;
+
+    if (totalActiveDeliveries === 1) {
+        return '';
+    }
+
+    const otherCount = otherRiders.length;
+    if (otherCount === 1) {
+        return `Another rider (${otherRiders[0].riderName}) is also delivering to this customer`;
+    }
+
+    return `${otherCount} other riders are also delivering to this customer`;
+}
+
+/**
+ * EC-66: Get distinct OTP codes for rider's deliveries
+ */
+export function getDistinctOtpCodes(deliveries: RiderDeliveryInfo[]): Map<string, string> {
+    const otpMap = new Map<string, string>();
+    deliveries.forEach(d => {
+        if (d.otpCode) {
+            otpMap.set(d.deliveryId, d.otpCode);
+        }
+    });
+    return otpMap;
+}
+
 export { ref, onValue, off, set, serverTimestamp };
 export type { Database, DatabaseReference };
+
