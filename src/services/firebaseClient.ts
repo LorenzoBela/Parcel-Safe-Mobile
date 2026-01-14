@@ -323,6 +323,253 @@ export async function regenerateOtp(
     });
 }
 
+// ==================== EC-20: OTP Collision Prevention ====================
+
+/**
+ * EC-20: OTP Collision Prevention Constants
+ */
+export const OTP_COLLISION_CONFIG = {
+    OTP_LENGTH: 6,
+    MIN_OTP_REUSE_INTERVAL_MS: 300000, // 5 minutes
+};
+
+export interface OtpSource {
+    deliveryId: string;
+    boxId: string;
+    issuedAt: number;
+    otpCode: string;
+    hash: string;
+}
+
+/**
+ * EC-20: Generate a secure 6-digit OTP
+ */
+export function generateSecureOtp(): string {
+    // Generate random 6-digit OTP
+    const otp = Math.floor(Math.random() * 1000000).toString().padStart(6, '0');
+    return otp;
+}
+
+/**
+ * EC-20: Generate OTP uniqueness hash
+ */
+export function generateOtpHash(deliveryId: string, boxId: string, timestamp: number): string {
+    const input = `${deliveryId}:${boxId}:${timestamp}`;
+    let hash = 0;
+    for (let i = 0; i < input.length; i++) {
+        const char = input.charCodeAt(i);
+        hash = ((hash << 5) - hash) + char;
+        hash = hash & hash;
+    }
+    return Math.abs(hash).toString(16).padStart(8, '0');
+}
+
+/**
+ * EC-20: Check for OTP collision before assignment
+ */
+export async function checkOtpCollision(
+    boxId: string,
+    proposedOtp: string
+): Promise<{ hasCollision: boolean; existingDeliveryId?: string }> {
+    try {
+        const db = getFirebaseDatabase();
+        const hardwareRef = ref(db, `hardware/${boxId}`);
+        return new Promise((resolve) => {
+            onValue(hardwareRef, (snapshot) => {
+                const data = snapshot.val();
+                if (data && data.otp_code === proposedOtp && data.delivery_id) {
+                    resolve({ hasCollision: true, existingDeliveryId: data.delivery_id });
+                } else {
+                    resolve({ hasCollision: false });
+                }
+            }, { onlyOnce: true });
+        });
+    } catch (error) {
+        console.error('[EC-20] Collision check failed:', error);
+        return { hasCollision: false };
+    }
+}
+
+/**
+ * EC-20: Assign OTP with collision prevention
+ */
+export async function assignOtpWithCollisionCheck(
+    boxId: string,
+    deliveryId: string,
+    targetLat: number,
+    targetLng: number
+): Promise<{ success: boolean; otpCode: string; attempts: number; error?: string }> {
+    const db = getFirebaseDatabase();
+    const MAX_ATTEMPTS = 3;
+
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+        const otpCode = generateSecureOtp();
+        const collision = await checkOtpCollision(boxId, otpCode);
+
+        if (!collision.hasCollision) {
+            const hardwareRef = ref(db, `hardware/${boxId}`);
+            const timestamp = Date.now();
+
+            await set(hardwareRef, {
+                delivery_id: deliveryId,
+                otp_code: otpCode,
+                otp_issued_at: serverTimestamp(),
+                otp_hash: generateOtpHash(deliveryId, boxId, timestamp),
+                target_lat: targetLat,
+                target_lng: targetLng,
+                last_heartbeat: serverTimestamp(),
+            });
+
+            return { success: true, otpCode, attempts: attempt };
+        }
+    }
+
+    return {
+        success: false,
+        otpCode: '',
+        attempts: MAX_ATTEMPTS,
+        error: 'Failed to generate unique OTP after 3 attempts'
+    };
+}
+
+// ==================== EC-29: OTP Regeneration (Immediate) ====================
+
+export const OTP_REGENERATION_CONFIG = {
+    COOLDOWN_MS: 600000, // 10 minutes
+    MAX_REGENERATIONS_PER_DELIVERY: 5,
+};
+
+export interface OtpRegenerationRequest {
+    deliveryId: string;
+    reason: string;
+    requestedAt: number;
+    status: 'PENDING' | 'COMPLETED' | 'RATE_LIMITED' | 'MAX_REACHED';
+    newOtp?: string;
+    completedAt?: number;
+    regenerationCount: number;
+    nextAllowedAt?: number;
+}
+
+export interface OtpRegenerationState {
+    deliveryId: string;
+    regenerationCount: number;
+    lastRegeneratedAt: number;
+    history: Array<{
+        oldOtp: string;
+        newOtp: string;
+        reason: string;
+        timestamp: number;
+    }>;
+}
+
+/**
+ * EC-29: Check if regeneration cooldown is active
+ */
+export function isRegenerationCooldownActive(lastRegeneratedAt: number): boolean {
+    return (Date.now() - lastRegeneratedAt) < OTP_REGENERATION_CONFIG.COOLDOWN_MS;
+}
+
+/**
+ * EC-29: Get remaining cooldown time in seconds
+ */
+export function getRegenerationCooldownRemaining(lastRegeneratedAt: number): number {
+    const elapsed = Date.now() - lastRegeneratedAt;
+    if (elapsed >= OTP_REGENERATION_CONFIG.COOLDOWN_MS) return 0;
+    return Math.ceil((OTP_REGENERATION_CONFIG.COOLDOWN_MS - elapsed) / 1000);
+}
+
+/**
+ * EC-29: Request immediate OTP regeneration (rider action)
+ */
+export async function requestOtpRegeneration(
+    deliveryId: string,
+    boxId: string,
+    reason: string
+): Promise<{ success: boolean; newOtp?: string; error?: string; cooldownSeconds?: number }> {
+    try {
+        const db = getFirebaseDatabase();
+        const stateRef = ref(db, `deliveries/${deliveryId}/otp_regeneration`);
+
+        const currentState = await new Promise<OtpRegenerationState | null>((resolve) => {
+            onValue(stateRef, (snapshot) => {
+                resolve(snapshot.val() as OtpRegenerationState | null);
+            }, { onlyOnce: true });
+        });
+
+        // Check rate limiting
+        if (currentState && isRegenerationCooldownActive(currentState.lastRegeneratedAt)) {
+            const remaining = getRegenerationCooldownRemaining(currentState.lastRegeneratedAt);
+            return {
+                success: false,
+                error: `Please wait ${Math.ceil(remaining / 60)} minutes`,
+                cooldownSeconds: remaining
+            };
+        }
+
+        // Check max regenerations
+        const regenCount = currentState?.regenerationCount ?? 0;
+        if (regenCount >= OTP_REGENERATION_CONFIG.MAX_REGENERATIONS_PER_DELIVERY) {
+            return { success: false, error: 'Maximum OTP regenerations reached' };
+        }
+
+        // Get current OTP
+        const hardwareRef = ref(db, `hardware/${boxId}`);
+        const currentHardware = await new Promise<any>((resolve) => {
+            onValue(hardwareRef, (snapshot) => resolve(snapshot.val()), { onlyOnce: true });
+        });
+
+        const oldOtp = currentHardware?.otp_code || '';
+
+        // Generate new OTP with collision check
+        const result = await assignOtpWithCollisionCheck(
+            boxId,
+            deliveryId,
+            currentHardware?.target_lat || 0,
+            currentHardware?.target_lng || 0
+        );
+
+        if (!result.success) {
+            return { success: false, error: result.error };
+        }
+
+        // Update regeneration state
+        const now = Date.now();
+        const newHistory = currentState?.history || [];
+        newHistory.push({ oldOtp, newOtp: result.otpCode, reason, timestamp: now });
+
+        await set(stateRef, {
+            deliveryId,
+            regenerationCount: regenCount + 1,
+            lastRegeneratedAt: now,
+            history: newHistory
+        });
+
+        return { success: true, newOtp: result.otpCode };
+
+    } catch (error) {
+        console.error('[EC-29] Failed to regenerate OTP:', error);
+        return { success: false, error: 'Failed to regenerate OTP' };
+    }
+}
+
+/**
+ * EC-29: Subscribe to OTP regeneration requests (for rider)
+ */
+export function subscribeToOtpRegenerationRequests(
+    deliveryId: string,
+    callback: (request: OtpRegenerationRequest | null) => void
+): () => void {
+    const db = getFirebaseDatabase();
+    const requestRef = ref(db, `deliveries/${deliveryId}/otp_regeneration_request`);
+
+    const unsubscribe = onValue(requestRef, (snapshot) => {
+        callback(snapshot.val() as OtpRegenerationRequest | null);
+    });
+
+    return () => off(requestRef);
+}
+
+
 // ==================== EC-21/EC-22: Solenoid State ====================
 export type SolenoidStatusType = 'OK' | 'STUCK_CLOSED' | 'STUCK_OPEN' | 'UNKNOWN';
 
@@ -474,11 +721,11 @@ export async function assignDeliveryWithIdempotency(
 ): Promise<{ success: boolean; result: DuplicateCheckResult }> {
     const db = getFirebaseDatabase();
     const hardwareRef = ref(db, `hardware/${boxId}`);
-    
+
     // Generate idempotency key
     const issuedAt = Date.now();
     const idempotencyKey = generateIdempotencyKey(deliveryId, otpCode, issuedAt);
-    
+
     // Set with idempotency data
     await set(hardwareRef, {
         delivery_id: deliveryId,
@@ -489,7 +736,7 @@ export async function assignDeliveryWithIdempotency(
         idempotency_key: idempotencyKey,
         last_heartbeat: serverTimestamp(),
     });
-    
+
     return { success: true, result: 'NEW' };
 }
 
@@ -564,7 +811,7 @@ export function subscribeToDataIntegrity(
 export async function checkRecoveryNeeded(boxId: string): Promise<boolean> {
     const db = getFirebaseDatabase();
     const recoveryRef = ref(db, `hardware/${boxId}/data_integrity/delivery_state/needs_firebase_recovery`);
-    
+
     return new Promise((resolve) => {
         onValue(recoveryRef, (snapshot) => {
             const data = snapshot.val();
@@ -586,7 +833,7 @@ export async function sendRecoveryData(
 ): Promise<void> {
     const db = getFirebaseDatabase();
     const recoveryRef = ref(db, `hardware/${boxId}/recovery_data`);
-    
+
     await set(recoveryRef, {
         delivery_id: deliveryId,
         otp_code: otpCode,
