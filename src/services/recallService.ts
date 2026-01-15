@@ -1,0 +1,55 @@
+import database from '@react-native-firebase/database';
+import { DATA_KEYS } from '../constants/firebaseKeys';
+
+/**
+ * Service to handle Package Recall (EC-85)
+ * Allows the app to listen for recall commands and switch the UI state.
+ */
+class RecallService {
+    private static instance: RecallService;
+    private recallListener: ((isRecalled: boolean, returnOtp: string | null) => void) | null = null;
+
+    private constructor() { }
+
+    public static getInstance(): RecallService {
+        if (!RecallService.instance) {
+            RecallService.instance = new RecallService();
+        }
+        return RecallService.instance;
+    }
+
+    /**
+     * Listen for recall status updates logic
+     * @param deliveryId 
+     * @param callback 
+     */
+    public listenForRecall(deliveryId: string, callback: (isRecalled: boolean, returnOtp: string | null) => void) {
+        if (!deliveryId) return;
+
+        this.recallListener = callback;
+        const path = `deliveries/${deliveryId}/recall`;
+
+        database().ref(path).on('value', (snapshot) => {
+            const data = snapshot.val();
+            if (data && data.is_recalled) {
+                // Return OTP might be null if not yet generated, but usually is sent with recall
+                callback(true, data.return_otp || null);
+            } else {
+                callback(false, null);
+            }
+        });
+    }
+
+    /**
+     * Stop listening
+     * @param deliveryId 
+     */
+    public stopListening(deliveryId: string) {
+        if (!deliveryId) return;
+        const path = `deliveries/${deliveryId}/recall`;
+        database().ref(path).off();
+        this.recallListener = null;
+    }
+}
+
+export default RecallService.getInstance();

@@ -33,6 +33,14 @@ export interface UseLocationRedundancyResult {
     /** Timestamp of last box heartbeat */
     lastBoxHeartbeat: number | null;
 
+    /** Current GPS Health Status (EC-84) */
+    gpsHealth: {
+        hdop: number;
+        satellites: number;
+        obstructionDetected: boolean;
+        isDegraded: boolean;
+    } | null;
+
     /** Start monitoring a box (call when delivery is assigned) */
     startMonitoring: (boxId: string) => void;
 
@@ -128,6 +136,7 @@ export function useLocationRedundancy(
         phoneGpsActive: state.phoneGpsActive,
         lastLocation: state.lastLocation,
         lastBoxHeartbeat: state.lastBoxHeartbeat,
+        gpsHealth: state.gpsHealth,
         startMonitoring,
         activateTracking,
         deactivateTracking,

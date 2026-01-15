@@ -15,6 +15,7 @@ import {
     LocationData,
     BoxState
 } from './firebaseClient';
+import database from '@react-native-firebase/database'; // Direct access for custom health node
 
 // ==================== Configuration ====================
 
@@ -44,6 +45,13 @@ export interface RedundancyState {
     phoneGpsActive: boolean;
     lastLocation: LocationData | null;
     lastBoxHeartbeat: number | null;
+    // EC-84: GPS Health
+    gpsHealth: {
+        hdop: number;
+        satellites: number;
+        obstructionDetected: boolean;
+        isDegraded: boolean;
+    } | null;
 }
 
 export type StateChangeCallback = (state: RedundancyState) => void;
@@ -59,11 +67,13 @@ class LocationRedundancyManager {
         phoneGpsActive: false,
         lastLocation: null,
         lastBoxHeartbeat: null,
+        gpsHealth: null,
     };
 
     private listeners: Set<StateChangeCallback> = new Set();
     private unsubscribeLocation: (() => void) | null = null;
     private unsubscribeBoxState: (() => void) | null = null;
+    private unsubscribeGpsHealth: (() => void) | null = null; // EC-84 Listener
     private phoneGpsWatchId: Location.LocationSubscription | null = null;
     private heartbeatCheckInterval: NodeJS.Timeout | null = null;
     private lastSourceSwitchTime: number = 0;
@@ -125,6 +135,11 @@ class LocationRedundancyManager {
             this.unsubscribeBoxState = null;
         }
 
+        if (this.unsubscribeGpsHealth) {
+            this.unsubscribeGpsHealth();
+            this.unsubscribeGpsHealth = null;
+        }
+
         this.boxId = null;
         this.updateState({
             powerState: 'SLEEP',
@@ -133,6 +148,7 @@ class LocationRedundancyManager {
             phoneGpsActive: false,
             lastLocation: null,
             lastBoxHeartbeat: null,
+            gpsHealth: null,
         });
     }
 
@@ -178,6 +194,50 @@ class LocationRedundancyManager {
                 }
             }
         });
+
+        // EC-84: Subscribe to GPS Health
+        const healthPath = `boxes/${this.boxId}/gps_health`;
+        const onHealthUpdate = (snapshot: any) => {
+            const data = snapshot.val();
+            if (data) {
+                this.handleGpsHealthUpdate(data);
+            }
+        };
+        database().ref(healthPath).on('value', onHealthUpdate);
+        this.unsubscribeGpsHealth = () => database().ref(healthPath).off('value', onHealthUpdate);
+    }
+
+    // EC-84: Handle GPS health updates
+    private handleGpsHealthUpdate(data: any): void {
+        const hdop = data.box_hdop || 100;
+        const satellites = data.satellites_visible || 0;
+        const obstructionDetected = data.obstruction_detected || false;
+
+        // Determine if signal is degraded
+        // HDOP > 5 is generally considered poor
+        const isDegraded = hdop > 5.0 || obstructionDetected;
+
+        this.updateState({
+            gpsHealth: {
+                hdop,
+                satellites,
+                obstructionDetected,
+                isDegraded
+            }
+        });
+
+        // Trigger fallback if degraded and box is "online" but blindly trusted
+        // Ideally we only switch if we are MOVING, but for now safety first.
+        if (isDegraded && this.state.powerState === 'ACTIVE' && !this.state.phoneGpsActive) {
+            console.log(`[Redundancy] GPS Degraded (HDOP: ${hdop}, Obstruction: ${obstructionDetected}). Activating Phone GPS.`);
+            this.startPhoneGpsFallback();
+        } else if (!isDegraded && this.state.phoneGpsActive) {
+            // If health recovers, we could switch back, but let's stick to the debounce logic
+            // or simply allow the next heartbeat check to decide?
+            // For "Ironclad" safety, we prefer phone GPS if active.
+            // But if we want to save battery, we should switch back if health is GOOD for X seconds.
+            // Leaving strictly as "start fallback" for now.
+        }
     }
 
     private handleBoxLocationUpdate(location: LocationData): void {

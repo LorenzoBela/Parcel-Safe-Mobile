@@ -11,6 +11,7 @@ import { useLocationRedundancy, getStatusMessage, getStatusColor } from '../../h
 import { subscribeToBattery, BatteryState, subscribeToTamper, TamperState, subscribeToLocation, LocationData, subscribeToKeypad, KeypadState, subscribeToHinge, HingeState } from '../../services/firebaseClient';
 import { offlineCache, PendingSync } from '../../services/offlineCache';
 import { isSpeedAnomaly, isClockSyncRequired, canAddToPhotoQueue, isGpsStale, SAFETY_CONSTANTS } from '../../services/SafetyLogic';
+import RecallService from '../../services/recallService';
 import NetInfo from '@react-native-community/netinfo';
 
 export default function RiderDashboard() {
@@ -63,11 +64,28 @@ export default function RiderDashboard() {
         startMonitoring,
         activateTracking,
         deactivateTracking,
+        gpsHealth // EC-84
     } = useLocationRedundancy();
+
+    // EC-85: Recall State
+    const [recallState, setRecallState] = useState<{ isRecalled: boolean; returnOtp: string | null }>({ isRecalled: false, returnOtp: null });
 
     // Auto-start monitoring when component mounts (demo box ID)
     useEffect(() => {
         startMonitoring('BOX_001');
+
+        // EC-85: Listen for recall
+        // In a real app, 'TRK-8821-9023' would be dynamic
+        RecallService.listenForRecall('TRK-8821-9023', (isRecalled, returnOtp) => {
+            setRecallState({ isRecalled, returnOtp });
+            if (isRecalled) {
+                Alert.alert(
+                    '⚠️ PACKAGE RECALLED',
+                    'The sender has recalled this package. Please return it to the pickup point immediately.',
+                    [{ text: 'Routing to Sender' }]
+                );
+            }
+        });
 
         // EC-03: Subscribe to battery state
         const unsubscribeBattery = subscribeToBattery('BOX_001', (state) => {
@@ -433,6 +451,37 @@ export default function RiderDashboard() {
                         <View style={{ flex: 1, marginLeft: 12 }}>
                             <Text style={styles.bannerTitle}>KEYPAD MALFUNCTION</Text>
                             <Text style={styles.bannerText}>Key '{keypadState.stuck_key}' is stuck. Use App Unlock.</Text>
+                        </View>
+                    </Surface>
+                )}
+
+                {/* EC-85: Recall Banner */}
+                {recallState.isRecalled && (
+                    <Surface style={styles.dangerBanner} elevation={4}>
+                        <MaterialCommunityIcons name="backup-restore" size={24} color="white" />
+                        <View style={{ flex: 1, marginLeft: 12 }}>
+                            <Text style={styles.bannerTitle}>PACKAGE RECALLED</Text>
+                            <Text style={styles.bannerText}>Return to Sender immediately!</Text>
+                            {recallState.returnOtp && (
+                                <Text style={[styles.bannerText, { fontWeight: 'bold', marginTop: 4 }]}>
+                                    Return OTP: {recallState.returnOtp}
+                                </Text>
+                            )}
+                        </View>
+                    </Surface>
+                )}
+
+                {/* EC-84: GPS Health Warning */}
+                {gpsHealth?.isDegraded && (
+                    <Surface style={styles.warningBanner} elevation={3}>
+                        <MaterialCommunityIcons name="satellite-variant" size={24} color="white" />
+                        <View style={{ flex: 1, marginLeft: 12 }}>
+                            <Text style={styles.bannerTitle}>WEAK GPS SIGNAL</Text>
+                            <Text style={styles.bannerText}>
+                                {gpsHealth.obstructionDetected
+                                    ? "Box antenna obstructed! Please clear package."
+                                    : `Poor reception (HDOP: ${gpsHealth.hdop.toFixed(1)})`}
+                            </Text>
                         </View>
                     </Surface>
                 )}
