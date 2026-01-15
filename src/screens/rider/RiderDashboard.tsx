@@ -8,7 +8,7 @@ import * as Location from 'expo-location';
 import MapView, { Marker, PROVIDER_GOOGLE } from 'react-native-maps';
 import LottieView from 'lottie-react-native';
 import { useLocationRedundancy, getStatusMessage, getStatusColor } from '../../hooks/useLocationRedundancy';
-import { subscribeToBattery, BatteryState, subscribeToTamper, TamperState, subscribeToLocation, LocationData } from '../../services/firebaseClient';
+import { subscribeToBattery, BatteryState, subscribeToTamper, TamperState, subscribeToLocation, LocationData, subscribeToKeypad, KeypadState, subscribeToHinge, HingeState } from '../../services/firebaseClient';
 import { offlineCache, PendingSync } from '../../services/offlineCache';
 import { isSpeedAnomaly, isClockSyncRequired, canAddToPhotoQueue, isGpsStale, SAFETY_CONSTANTS } from '../../services/SafetyLogic';
 import NetInfo from '@react-native-community/netinfo';
@@ -32,6 +32,12 @@ export default function RiderDashboard() {
 
     // EC-18: Tamper Detection
     const [tamperState, setTamperState] = useState<TamperState | null>(null);
+
+    // EC-82: Keypad State
+    const [keypadState, setKeypadState] = useState<KeypadState | null>(null);
+
+    // EC-83: Hinge State
+    const [hingeState, setHingeState] = useState<HingeState | null>(null);
 
     // EC-01/EC-06: Offline Mode & Sync Status
     const [isOffline, setIsOffline] = useState(false);
@@ -109,10 +115,10 @@ export default function RiderDashboard() {
                 const R = 6371000;
                 const dLat = (location.latitude - lastGpsLocation.latitude) * Math.PI / 180;
                 const dLon = (location.longitude - lastGpsLocation.longitude) * Math.PI / 180;
-                const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+                const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
                     Math.cos(lastGpsLocation.latitude * Math.PI / 180) * Math.cos(location.latitude * Math.PI / 180) *
-                    Math.sin(dLon/2) * Math.sin(dLon/2);
-                const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+                    Math.sin(dLon / 2) * Math.sin(dLon / 2);
+                const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
                 const distanceMeters = R * c;
 
                 const timeDelta = (location.timestamp - lastGpsLocation.timestamp) / 1000;
@@ -133,12 +139,38 @@ export default function RiderDashboard() {
             setLastGpsLocation(location);
         });
 
+        // EC-82: Subscribe to Keypad
+        const unsubscribeKeypad = subscribeToKeypad('BOX_001', (state) => {
+            setKeypadState(state);
+            if (state?.is_stuck) {
+                Alert.alert(
+                    '⚠️ Keypad Malfunction',
+                    `Key '${state.stuck_key}' is stuck! You may need to use App Unlock for OTP.`,
+                    [{ text: 'OK' }]
+                );
+            }
+        });
+
+        // EC-83: Subscribe to Hinge
+        const unsubscribeHinge = subscribeToHinge('BOX_001', (state) => {
+            setHingeState(state);
+            if (state?.status === 'DAMAGED') {
+                Alert.alert(
+                    '🚨 PHYSICAL DAMAGE DETECTED',
+                    'Door sensor mismatch detected while locked. Inspect box immediately!',
+                    [{ text: 'Contact Support', style: 'destructive' }]
+                );
+            }
+        });
+
         return () => {
             deactivateTracking();
             unsubscribeBattery();
             unsubscribeTamper();
             unsubscribeNetInfo();
             unsubscribeLocation();
+            unsubscribeKeypad();
+            unsubscribeHinge();
         };
     }, [lastGpsLocation]);
 
@@ -394,6 +426,37 @@ export default function RiderDashboard() {
                     </Surface>
                 )}
 
+                {/* EC-82: Keypad Warning Banner */}
+                {keypadState?.is_stuck && (
+                    <Surface style={styles.warningBanner} elevation={4}>
+                        <MaterialCommunityIcons name="keyboard-off" size={24} color="white" />
+                        <View style={{ flex: 1, marginLeft: 12 }}>
+                            <Text style={styles.bannerTitle}>KEYPAD MALFUNCTION</Text>
+                            <Text style={styles.bannerText}>Key '{keypadState.stuck_key}' is stuck. Use App Unlock.</Text>
+                        </View>
+                    </Surface>
+                )}
+
+                {/* EC-83: Hinge Damage Banner */}
+                {hingeState?.status === 'DAMAGED' && (
+                    <Surface style={styles.dangerBanner} elevation={4}>
+                        <MaterialCommunityIcons name="door-open" size={24} color="white" />
+                        <View style={{ flex: 1, marginLeft: 12 }}>
+                            <Text style={styles.bannerTitle}>HINGE DAMAGE</Text>
+                            <Text style={styles.bannerText}>Physical integrity compromised!</Text>
+                        </View>
+                    </Surface>
+                )}
+
+                {hingeState?.status === 'FLAPPING' && (
+                    <Surface style={styles.warningBanner} elevation={4}>
+                        <MaterialCommunityIcons name="door-open" size={24} color="white" />
+                        <View style={{ flex: 1, marginLeft: 12 }}>
+                            <Text style={styles.bannerTitle}>DOOR SENSOR UNSTABLE</Text>
+                            <Text style={styles.bannerText}>Check for obstructions near door.</Text>
+                        </View>
+                    </Surface>
+                )}
                 {/* EC-01/EC-06: Offline Mode Banner */}
                 {isOffline && (
                     <Surface style={styles.offlineBanner} elevation={3}>
@@ -401,8 +464,8 @@ export default function RiderDashboard() {
                         <View style={{ flex: 1, marginLeft: 12 }}>
                             <Text style={styles.offlineTitle}>OFFLINE MODE</Text>
                             <Text style={styles.offlineText}>
-                                {pendingSyncs > 0 
-                                    ? `${pendingSyncs} action${pendingSyncs > 1 ? 's' : ''} pending sync` 
+                                {pendingSyncs > 0
+                                    ? `${pendingSyncs} action${pendingSyncs > 1 ? 's' : ''} pending sync`
                                     : 'Working with cached data'}
                             </Text>
                         </View>
@@ -670,6 +733,33 @@ export default function RiderDashboard() {
 }
 
 const styles = StyleSheet.create({
+    bannerTitle: {
+        color: 'white',
+        fontWeight: 'bold',
+        fontSize: 14,
+    },
+    bannerText: {
+        color: 'white',
+        fontSize: 12,
+    },
+    warningBanner: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        padding: 16,
+        marginHorizontal: 16,
+        marginBottom: 16,
+        borderRadius: 12,
+        backgroundColor: '#F57C00', // Orange for warning
+    },
+    dangerBanner: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        padding: 16,
+        marginHorizontal: 16,
+        marginBottom: 16,
+        borderRadius: 12,
+        backgroundColor: '#D32F2F', // Red for critical
+    },
     container: {
         flex: 1,
         backgroundColor: '#F7F9FC',

@@ -87,14 +87,14 @@ export default function HardwareStatusScreen({ route, navigation }: HardwareStat
                 {/* Header Status Card */}
                 <View style={[styles.statusCard, { borderColor: statusColor }]}>
                     <View style={styles.statusHeader}>
-                        <HardwareStatusBadge 
-                            status={overallStatus} 
-                            size="large" 
+                        <HardwareStatusBadge
+                            status={overallStatus}
+                            size="large"
                             loading={isLoading}
                         />
                     </View>
                     <Text style={styles.boxId}>Box ID: {boxId}</Text>
-                    
+
                     {/* Safety Status */}
                     <View style={styles.safetyContainer}>
                         {isSafe ? (
@@ -135,36 +135,36 @@ export default function HardwareStatusScreen({ route, navigation }: HardwareStat
                 {/* Hardware Components Status */}
                 <View style={styles.section}>
                     <Text style={styles.sectionTitle}>Hardware Components</Text>
-                    
+
                     {/* Lock Mechanism */}
                     <View style={styles.componentCard}>
                         <View style={styles.componentHeader}>
                             <Text style={styles.componentIcon}>🔐</Text>
                             <Text style={styles.componentTitle}>Lock Mechanism</Text>
-                            <StatusDot 
+                            <StatusDot
                                 status={
                                     health.solenoid?.status === 'OK' ? 'HEALTHY' :
-                                    health.solenoid?.status === 'STUCK_OPEN' ? 'OUT_OF_SERVICE' :
-                                    health.solenoid?.status === 'STUCK_CLOSED' ? 'CRITICAL' :
-                                    'HEALTHY'
+                                        health.solenoid?.status === 'STUCK_OPEN' ? 'OUT_OF_SERVICE' :
+                                            health.solenoid?.status === 'STUCK_CLOSED' ? 'CRITICAL' :
+                                                'HEALTHY'
                                 }
                             />
                         </View>
                         <View style={styles.componentDetails}>
-                            <DetailRow 
-                                label="Status" 
-                                value={health.solenoid?.status || 'OK'} 
+                            <DetailRow
+                                label="Status"
+                                value={health.solenoid?.status || 'OK'}
                             />
                             {health.solenoid?.retry_count && health.solenoid.retry_count > 0 && (
-                                <DetailRow 
-                                    label="Retry Attempts" 
-                                    value={health.solenoid.retry_count.toString()} 
+                                <DetailRow
+                                    label="Retry Attempts"
+                                    value={health.solenoid.retry_count.toString()}
                                 />
                             )}
                             {health.solenoid?.out_of_service && (
-                                <DetailRow 
-                                    label="Service Status" 
-                                    value="OUT OF SERVICE" 
+                                <DetailRow
+                                    label="Service Status"
+                                    value="OUT OF SERVICE"
                                     valueColor="#ef4444"
                                 />
                             )}
@@ -176,30 +176,86 @@ export default function HardwareStatusScreen({ route, navigation }: HardwareStat
                         <View style={styles.componentHeader}>
                             <Text style={styles.componentIcon}>📷</Text>
                             <Text style={styles.componentTitle}>Camera</Text>
-                            <StatusDot 
+                            <StatusDot
                                 status={
                                     health.camera?.has_hardware_error ? 'CRITICAL' :
-                                    health.camera?.status === 'FAILED' ? 'WARNING' :
-                                    'HEALTHY'
+                                        health.camera?.status === 'FAILED' ? 'WARNING' :
+                                            'HEALTHY'
                                 }
                             />
                         </View>
                         <View style={styles.componentDetails}>
-                            <DetailRow 
-                                label="Status" 
-                                value={health.camera?.status || 'OK'} 
+                            <DetailRow
+                                label="Status"
+                                value={health.camera?.status || 'OK'}
                             />
                             {health.camera?.last_capture_attempts && health.camera.last_capture_attempts > 1 && (
-                                <DetailRow 
-                                    label="Last Capture Attempts" 
-                                    value={health.camera.last_capture_attempts.toString()} 
+                                <DetailRow
+                                    label="Last Capture Attempts"
+                                    value={health.camera.last_capture_attempts.toString()}
                                 />
                             )}
                             {health.camera?.has_hardware_error && (
-                                <DetailRow 
-                                    label="Hardware Error" 
-                                    value="Requires Service" 
+                                <DetailRow
+                                    label="Hardware Error"
+                                    value="Requires Service"
                                     valueColor="#ef4444"
+                                />
+                            )}
+                        </View>
+                    </View>
+
+                    {/* EC-82: Keypad */}
+                    <View style={styles.componentCard}>
+                        <View style={styles.componentHeader}>
+                            <Text style={styles.componentIcon}>⌨️</Text>
+                            <Text style={styles.componentTitle}>Keypad</Text>
+                            <StatusDot
+                                status={health.keypad?.is_stuck ? 'CRITICAL' : 'HEALTHY'}
+                            />
+                        </View>
+                        <View style={styles.componentDetails}>
+                            <DetailRow
+                                label="Status"
+                                value={health.keypad?.is_stuck ? 'MALFUNCTION' : 'OK'}
+                                valueColor={health.keypad?.is_stuck ? '#ef4444' : undefined}
+                            />
+                            {health.keypad?.is_stuck && (
+                                <DetailRow
+                                    label="Stuck Key"
+                                    value={`'${health.keypad.stuck_key}'`}
+                                    valueColor="#ef4444"
+                                />
+                            )}
+                        </View>
+                    </View>
+
+                    {/* EC-83: Hinge */}
+                    <View style={styles.componentCard}>
+                        <View style={styles.componentHeader}>
+                            <Text style={styles.componentIcon}>🚪</Text>
+                            <Text style={styles.componentTitle}>Hinge Sensor</Text>
+                            <StatusDot
+                                status={
+                                    health.hinge?.status === 'DAMAGED' ? 'CRITICAL' :
+                                        health.hinge?.status === 'FLAPPING' ? 'WARNING' :
+                                            'HEALTHY'
+                                }
+                            />
+                        </View>
+                        <View style={styles.componentDetails}>
+                            <DetailRow
+                                label="Status"
+                                value={health.hinge?.status || 'OK'}
+                                valueColor={
+                                    health.hinge?.status === 'DAMAGED' ? '#ef4444' :
+                                        health.hinge?.status === 'FLAPPING' ? '#eab308' : undefined
+                                }
+                            />
+                            {health.hinge?.event_count !== undefined && health.hinge.event_count > 0 && (
+                                <DetailRow
+                                    label="Events"
+                                    value={health.hinge.event_count.toString()}
                                 />
                             )}
                         </View>
@@ -210,29 +266,29 @@ export default function HardwareStatusScreen({ route, navigation }: HardwareStat
                         <View style={styles.componentHeader}>
                             <Text style={styles.componentIcon}>🔄</Text>
                             <Text style={styles.componentTitle}>System</Text>
-                            <StatusDot 
+                            <StatusDot
                                 status={health.reboot?.rebooted ? 'WARNING' : 'HEALTHY'}
                             />
                         </View>
                         <View style={styles.componentDetails}>
-                            <DetailRow 
-                                label="Status" 
-                                value={health.reboot?.rebooted ? 'Recently Rebooted' : 'Stable'} 
+                            <DetailRow
+                                label="Status"
+                                value={health.reboot?.rebooted ? 'Recently Rebooted' : 'Stable'}
                             />
                             {health.reboot?.boot_count && (
-                                <DetailRow 
-                                    label="Boot Count" 
-                                    value={health.reboot.boot_count.toString()} 
+                                <DetailRow
+                                    label="Boot Count"
+                                    value={health.reboot.boot_count.toString()}
                                 />
                             )}
                             {health.reboot?.rebooted && health.reboot.had_active_delivery && (
                                 <>
-                                    <DetailRow 
-                                        label="Recovery" 
-                                        value="Delivery Auto-Resumed" 
+                                    <DetailRow
+                                        label="Recovery"
+                                        value="Delivery Auto-Resumed"
                                         valueColor="#22c55e"
                                     />
-                                    <TouchableOpacity 
+                                    <TouchableOpacity
                                         style={styles.acknowledgeButton}
                                         onPress={handleAcknowledgeReboot}
                                     >
@@ -247,15 +303,15 @@ export default function HardwareStatusScreen({ route, navigation }: HardwareStat
                 {/* Action Buttons */}
                 <View style={styles.actionsSection}>
                     {!canProceed && (
-                        <TouchableOpacity 
+                        <TouchableOpacity
                             style={styles.supportButton}
-                            onPress={() => {/* Open support */}}
+                            onPress={() => {/* Open support */ }}
                         >
                             <Text style={styles.supportButtonText}>📞 Contact Support</Text>
                         </TouchableOpacity>
                     )}
-                    
-                    <TouchableOpacity 
+
+                    <TouchableOpacity
                         style={styles.backButton}
                         onPress={() => navigation.goBack()}
                     >
@@ -268,13 +324,13 @@ export default function HardwareStatusScreen({ route, navigation }: HardwareStat
 }
 
 // Helper component for detail rows
-function DetailRow({ 
-    label, 
-    value, 
-    valueColor 
-}: { 
-    label: string; 
-    value: string; 
+function DetailRow({
+    label,
+    value,
+    valueColor
+}: {
+    label: string;
+    value: string;
     valueColor?: string;
 }) {
     return (

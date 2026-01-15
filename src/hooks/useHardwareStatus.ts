@@ -15,10 +15,14 @@ import {
     subscribeToSolenoid,
     subscribeToCamera,
     subscribeToReboot,
+    subscribeToKeypad,
+    subscribeToHinge,
     clearRebootFlag,
     SolenoidState,
     CameraState,
     RebootState,
+    KeypadState,
+    HingeState,
     HardwareHealth,
     HardwareAlert,
     OverallHealthStatus,
@@ -37,19 +41,19 @@ export interface UseHardwareStatusResult {
     alerts: HardwareAlert[];
     isLoading: boolean;
     error: string | null;
-    
+
     // Computed values
     overallStatus: OverallHealthStatus;
     statusText: string;
     statusColor: string;
     statusIcon: string;
-    
+
     // Safety checks
     isSafe: boolean;
     safetyReason?: string;
     canProceed: boolean;
     proceedWarnings: string[];
-    
+
     // Actions
     dismissAlert: (alertId: string) => void;
     acknowledgeReboot: () => Promise<void>;
@@ -64,6 +68,8 @@ export function useHardwareStatus(
     const [solenoidState, setSolenoidState] = useState<SolenoidState | null>(null);
     const [cameraState, setCameraState] = useState<CameraState | null>(null);
     const [rebootState, setRebootState] = useState<RebootState | null>(null);
+    const [keypadState, setKeypadState] = useState<KeypadState | null>(null);
+    const [hingeState, setHingeState] = useState<HingeState | null>(null);
     const [isLoading, setIsLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [dismissedAlerts, setDismissedAlerts] = useState<Set<string>>(new Set());
@@ -79,7 +85,7 @@ export function useHardwareStatus(
         setIsLoading(true);
         setError(null);
         let loadedCount = 0;
-        const totalSources = 3;
+        const totalSources = 5; // Solenoid, Camera, Reboot, Keypad, Hinge
 
         const checkLoaded = () => {
             loadedCount++;
@@ -104,10 +110,22 @@ export function useHardwareStatus(
                 checkLoaded();
             });
 
+            const unsubKeypad = subscribeToKeypad(boxId, (state) => {
+                setKeypadState(state);
+                checkLoaded();
+            });
+
+            const unsubHinge = subscribeToHinge(boxId, (state) => {
+                setHingeState(state);
+                checkLoaded();
+            });
+
             return () => {
                 unsubSolenoid();
                 unsubCamera();
                 unsubReboot();
+                unsubKeypad();
+                unsubHinge();
             };
         } catch (err) {
             setError(err instanceof Error ? err.message : 'Failed to subscribe to hardware status');
@@ -120,7 +138,15 @@ export function useHardwareStatus(
         solenoid: solenoidState,
         camera: cameraState,
         reboot: rebootState,
-        overallStatus: getOverallHealthStatus({ solenoid: solenoidState, camera: cameraState, reboot: rebootState }),
+        keypad: keypadState,
+        hinge: hingeState,
+        overallStatus: getOverallHealthStatus({
+            solenoid: solenoidState,
+            camera: cameraState,
+            reboot: rebootState,
+            keypad: keypadState,
+            hinge: hingeState
+        }),
         alerts: [],
     };
 
@@ -164,19 +190,19 @@ export function useHardwareStatus(
         alerts,
         isLoading,
         error,
-        
+
         // Computed values
         overallStatus,
         statusText,
         statusColor,
         statusIcon,
-        
+
         // Safety checks
         isSafe: safetyCheck.safe,
         safetyReason: safetyCheck.reason,
         canProceed: proceedCheck.canProceed,
         proceedWarnings: proceedCheck.warnings,
-        
+
         // Actions
         dismissAlert,
         acknowledgeReboot,

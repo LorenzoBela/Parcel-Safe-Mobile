@@ -805,6 +805,58 @@ export function subscribeToDataIntegrity(
     return () => off(integrityRef);
 }
 
+// ==================== EC-82: Keypad Stuck Detection ====================
+
+export interface KeypadState {
+    stuck_key?: string;
+    is_stuck: boolean;
+    timestamp: number;
+}
+
+/**
+ * Subscribe to keypad health updates (EC-82)
+ */
+export function subscribeToKeypad(
+    boxId: string,
+    callback: (state: KeypadState | null) => void
+): () => void {
+    const db = getFirebaseDatabase();
+    const keypadRef = ref(db, `hardware/${boxId}/keypad`);
+
+    const unsubscribe = onValue(keypadRef, (snapshot) => {
+        const data = snapshot.val();
+        callback(data as KeypadState | null);
+    });
+
+    return () => off(keypadRef);
+}
+
+// ==================== EC-83: Hinge Damage Detection ====================
+
+export interface HingeState {
+    status: 'OK' | 'DAMAGED' | 'FLAPPING';
+    event_count: number;
+    timestamp: number;
+}
+
+/**
+ * Subscribe to hinge health updates (EC-83)
+ */
+export function subscribeToHinge(
+    boxId: string,
+    callback: (state: HingeState | null) => void
+): () => void {
+    const db = getFirebaseDatabase();
+    const hingeRef = ref(db, `hardware/${boxId}/hinge`);
+
+    const unsubscribe = onValue(hingeRef, (snapshot) => {
+        const data = snapshot.val();
+        callback(data as HingeState | null);
+    });
+
+    return () => off(hingeRef);
+}
+
 /**
  * Check if box needs Firebase recovery - EC-48
  */

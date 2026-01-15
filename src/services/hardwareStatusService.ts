@@ -14,10 +14,14 @@ import {
     subscribeToSolenoid,
     subscribeToCamera,
     subscribeToReboot,
+    subscribeToKeypad,
+    subscribeToHinge,
     clearRebootFlag,
     SolenoidState,
     CameraState,
     RebootState,
+    KeypadState,
+    HingeState,
     SolenoidStatusType,
     CameraStatusType,
 } from './firebaseClient';
@@ -30,13 +34,15 @@ export interface HardwareHealth {
     solenoid: SolenoidState | null;
     camera: CameraState | null;
     reboot: RebootState | null;
+    keypad: KeypadState | null;
+    hinge: HingeState | null;
     overallStatus: OverallHealthStatus;
     alerts: HardwareAlert[];
 }
 
 export interface HardwareAlert {
     id: string;
-    type: 'solenoid' | 'camera' | 'reboot';
+    type: 'solenoid' | 'camera' | 'reboot' | 'keypad' | 'hinge';
     severity: 'info' | 'warning' | 'error' | 'critical';
     title: string;
     message: string;
@@ -54,17 +60,28 @@ export function getOverallHealthStatus(health: Partial<HardwareHealth>): Overall
     if (health.solenoid?.out_of_service || health.solenoid?.status === 'STUCK_OPEN') {
         return 'OUT_OF_SERVICE';
     }
-    
+
+    // EC-83: Hinge Damaged means physical security compromise
+    if (health.hinge?.status === 'DAMAGED') {
+        return 'OUT_OF_SERVICE';
+    }
+
     // EC-21: Solenoid stuck closed or EC-23: Camera hardware error
     if (health.solenoid?.status === 'STUCK_CLOSED' || health.camera?.has_hardware_error) {
         return 'CRITICAL';
     }
-    
+
+    // EC-82: Stuck Key is Critical (prevents OTP entry)
+    if (health.keypad?.is_stuck) {
+        return 'CRITICAL';
+    }
+
     // EC-23: Camera failed or EC-25: Recent reboot during delivery
-    if (health.camera?.status === 'FAILED' || health.reboot?.rebooted) {
+    // EC-83: Hinge Flapping is a warning
+    if (health.camera?.status === 'FAILED' || health.reboot?.rebooted || health.hinge?.status === 'FLAPPING') {
         return 'WARNING';
     }
-    
+
     return 'HEALTHY';
 }
 
@@ -74,7 +91,7 @@ export function getOverallHealthStatus(health: Partial<HardwareHealth>): Overall
 export function generateAlerts(health: Partial<HardwareHealth>, deliveryId?: string): HardwareAlert[] {
     const alerts: HardwareAlert[] = [];
     const now = Date.now();
-    
+
     // EC-21: Solenoid Stuck Closed
     if (health.solenoid?.status === 'STUCK_CLOSED') {
         alerts.push({
@@ -87,7 +104,7 @@ export function generateAlerts(health: Partial<HardwareHealth>, deliveryId?: str
             timestamp: health.solenoid.timestamp || now,
         });
     }
-    
+
     // EC-22: Solenoid Stuck Open
     if (health.solenoid?.status === 'STUCK_OPEN') {
         alerts.push({
@@ -100,7 +117,7 @@ export function generateAlerts(health: Partial<HardwareHealth>, deliveryId?: str
             timestamp: health.solenoid.timestamp || now,
         });
     }
-    
+
     // EC-22: Out of Service
     if (health.solenoid?.out_of_service && health.solenoid.status !== 'STUCK_OPEN') {
         alerts.push({
@@ -113,7 +130,7 @@ export function generateAlerts(health: Partial<HardwareHealth>, deliveryId?: str
             timestamp: health.solenoid.timestamp || now,
         });
     }
-    
+
     // EC-23: Camera Failed
     if (health.camera?.status === 'FAILED') {
         alerts.push({
@@ -126,7 +143,7 @@ export function generateAlerts(health: Partial<HardwareHealth>, deliveryId?: str
             timestamp: health.camera.timestamp || now,
         });
     }
-    
+
     // EC-23: Camera Hardware Error
     if (health.camera?.has_hardware_error) {
         alerts.push({
@@ -139,7 +156,7 @@ export function generateAlerts(health: Partial<HardwareHealth>, deliveryId?: str
             timestamp: health.camera.timestamp || now,
         });
     }
-    
+
     // EC-25: Reboot During Delivery
     if (health.reboot?.rebooted && health.reboot.had_active_delivery) {
         const isCurrentDelivery = !deliveryId || health.reboot.delivery_id === deliveryId;
@@ -155,7 +172,46 @@ export function generateAlerts(health: Partial<HardwareHealth>, deliveryId?: str
             });
         }
     }
-    
+
+    // EC-82: Keypad Stuck
+    if (health.keypad?.is_stuck) {
+        alerts.push({
+            id: 'ec82-keypad-stuck',
+            type: 'keypad',
+            severity: 'critical',
+            title: 'Keypad Malfunction',
+            message: `Key '${health.keypad.stuck_key}' is stuck. OTP entry may be impossible.`,
+            action: 'Try to unstick key or use App Override',
+            timestamp: health.keypad.timestamp || now,
+        });
+    }
+
+    // EC-83: Hinge Flapping
+    if (health.hinge?.status === 'FLAPPING') {
+        alerts.push({
+            id: 'ec83-hinge-flapping',
+            type: 'hinge',
+            severity: 'warning',
+            title: 'Door Sensor Unstable',
+            message: 'Door sensor is flapping (intermittent signal). Check for obstructions.',
+            action: 'Secure door properly',
+            timestamp: health.hinge.timestamp || now,
+        });
+    }
+
+    // EC-83: Hinge Damaged
+    if (health.hinge?.status === 'DAMAGED') {
+        alerts.push({
+            id: 'ec83-hinge-damaged',
+            type: 'hinge',
+            severity: 'critical',
+            title: 'Physical Damage Detected',
+            message: 'Door sensor indicates OPEN while Lock is LOCKED. Possible forced entry damage.',
+            action: 'Inspect hardware immediately',
+            timestamp: health.hinge.timestamp || now,
+        });
+    }
+
     return alerts;
 }
 
@@ -173,7 +229,7 @@ export function isBoxSafeForDelivery(health: Partial<HardwareHealth>): {
             reason: 'Box is marked out of service',
         };
     }
-    
+
     // EC-22: Stuck open
     if (health.solenoid?.status === 'STUCK_OPEN') {
         return {
@@ -181,7 +237,7 @@ export function isBoxSafeForDelivery(health: Partial<HardwareHealth>): {
             reason: 'Lock mechanism cannot secure the box',
         };
     }
-    
+
     // EC-21: Stuck closed (delivery possible but risky)
     if (health.solenoid?.status === 'STUCK_CLOSED') {
         return {
@@ -189,7 +245,15 @@ export function isBoxSafeForDelivery(health: Partial<HardwareHealth>): {
             reason: 'Lock mechanism is jammed - may not open for customer',
         };
     }
-    
+
+    // EC-83: Hinge Damage
+    if (health.hinge?.status === 'DAMAGED') {
+        return {
+            safe: false,
+            reason: 'Box physical integrity compromised (Hinge Damaged)',
+        };
+    }
+
     return { safe: true };
 }
 
@@ -201,17 +265,17 @@ export function canProceedWithDelivery(health: Partial<HardwareHealth>): {
     warnings: string[];
 } {
     const warnings: string[] = [];
-    
+
     // Camera issues don't block delivery
     if (health.camera?.status === 'FAILED' || health.camera?.has_hardware_error) {
         warnings.push('Photo capture unavailable - delivery will be flagged for review');
     }
-    
+
     // Reboot doesn't block delivery
     if (health.reboot?.rebooted) {
         warnings.push('System recovered from restart - delivery continuing');
     }
-    
+
     // Solenoid issues DO block delivery
     if (health.solenoid?.status === 'STUCK_OPEN' || health.solenoid?.out_of_service) {
         return {
@@ -219,14 +283,27 @@ export function canProceedWithDelivery(health: Partial<HardwareHealth>): {
             warnings: ['Box cannot be used - lock mechanism failure'],
         };
     }
-    
+
     if (health.solenoid?.status === 'STUCK_CLOSED') {
         return {
             canProceed: false,
             warnings: ['Box lock is jammed - customer cannot retrieve package'],
         };
     }
-    
+
+    // EC-83: Hinge Damage blocks delivery
+    if (health.hinge?.status === 'DAMAGED') {
+        return {
+            canProceed: false,
+            warnings: ['Box physical integrity compromised'],
+        };
+    }
+
+    // EC-82: Stuck key warns but doesn't strictly block (app override exists)
+    if (health.keypad?.is_stuck) {
+        warnings.push(`Keypad key '${health.keypad.stuck_key}' is stuck - use App Unlock`);
+    }
+
     return {
         canProceed: true,
         warnings,
@@ -287,6 +364,8 @@ export {
     subscribeToSolenoid,
     subscribeToCamera,
     subscribeToReboot,
+    subscribeToKeypad,
+    subscribeToHinge,
     clearRebootFlag,
 };
 
@@ -294,6 +373,8 @@ export type {
     SolenoidState,
     CameraState,
     RebootState,
+    KeypadState,
+    HingeState,
     SolenoidStatusType,
     CameraStatusType,
 };
