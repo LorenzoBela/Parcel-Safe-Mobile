@@ -261,6 +261,38 @@ export default function HardwareStatusScreen({ route, navigation }: HardwareStat
                         </View>
                     </View>
 
+                    {/* EC-86: Display */}
+                    <View style={styles.componentCard}>
+                        <View style={styles.componentHeader}>
+                            <Text style={styles.componentIcon}>🖥️</Text>
+                            <Text style={styles.componentTitle}>I2C Display</Text>
+                            <StatusDot
+                                status={
+                                    health.display?.status === 'FAILED' ? 'CRITICAL' :
+                                        health.display?.status === 'DEGRADED' ? 'WARNING' :
+                                            'HEALTHY'
+                                }
+                            />
+                        </View>
+                        <View style={styles.componentDetails}>
+                            <DetailRow
+                                label="Status"
+                                value={health.display?.status || 'OK'}
+                                valueColor={
+                                    health.display?.status === 'FAILED' ? '#ef4444' :
+                                        health.display?.status === 'DEGRADED' ? '#eab308' : undefined
+                                }
+                            />
+                            <DetailRow
+                                label="Error Count"
+                                value={String(health.display?.error_count || 0)}
+                            />
+                            {health.display?.needs_service && (
+                                <Text style={styles.warningText}>⚠️ Requires Maintenance</Text>
+                            )}
+                        </View>
+                    </View>
+
                     {/* System */}
                     <View style={styles.componentCard}>
                         <View style={styles.componentHeader}>

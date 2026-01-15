@@ -1,13 +1,15 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { View, StyleSheet, Dimensions, TouchableOpacity } from 'react-native';
 import MapView, { Marker, Circle, Polyline } from 'react-native-maps';
 import { Text, Card, Avatar, Button, IconButton, Surface, useTheme } from 'react-native-paper';
 import { useNavigation } from '@react-navigation/native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { subscribeToDisplay } from '../../services/firebaseClient';
 
 export default function TrackOrderScreen() {
     const navigation = useNavigation<any>();
     const theme = useTheme();
+    const [displayStatus, setDisplayStatus] = useState<'OK' | 'DEGRADED' | 'FAILED'>('OK');
 
     // Mock coordinates
     const boxLocation = { latitude: 14.5995, longitude: 120.9842 };
@@ -20,6 +22,16 @@ export default function TrackOrderScreen() {
         rating: 4.8,
         phone: '+63 912 345 6789',
     };
+
+    useEffect(() => {
+        // EC-86: Monitor display health
+        const unsubscribe = subscribeToDisplay('BOX_001', (displayState) => {
+            if (displayState) {
+                setDisplayStatus(displayState.status);
+            }
+        });
+        return () => unsubscribe();
+    }, []);
 
     return (
         <View style={styles.container}>
@@ -84,6 +96,12 @@ export default function TrackOrderScreen() {
                     <View>
                         <Text variant="titleLarge" style={{ fontWeight: 'bold' }}>Arriving in 10 mins</Text>
                         <Text variant="bodyMedium" style={{ color: '#666' }}>On the way to your location</Text>
+                        {/* EC-86: Display hint when keypad unavailable */}
+                        {displayStatus === 'FAILED' && (
+                            <Text variant="bodySmall" style={{ color: '#1976D2', marginTop: 4 }}>
+                                ℹ️ Keypad display unavailable - use app to unlock
+                            </Text>
+                        )}
                     </View>
                     <Surface style={styles.etaBadge} elevation={0}>
                         <Text style={{ color: 'white', fontWeight: 'bold' }}>10 min</Text>

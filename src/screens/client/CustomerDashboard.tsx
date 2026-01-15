@@ -5,6 +5,8 @@ import { useNavigation } from '@react-navigation/native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import dayjs from 'dayjs';
 import * as Location from 'expo-location';
+import { CustomerHardwareBanner } from '../../../components';
+import { subscribeToDisplay } from '../../../services/firebaseClient';
 
 export default function CustomerDashboard() {
     const navigation = useNavigation<any>();
@@ -14,6 +16,7 @@ export default function CustomerDashboard() {
     const [selectedImage, setSelectedImage] = useState(null);
     const [locationName, setLocationName] = useState('Locating...');
     const [refreshing, setRefreshing] = useState(false);
+    const [displayStatus, setDisplayStatus] = useState<'OK' | 'DEGRADED' | 'FAILED'>('OK');
 
     useEffect(() => {
         const timer = setInterval(() => {
@@ -52,6 +55,16 @@ export default function CustomerDashboard() {
     useEffect(() => {
         fetchLocation();
     }, [fetchLocation]);
+
+    useEffect(() => {
+        // EC-86: Monitor display health
+        const unsubscribe = subscribeToDisplay('BOX_001', (displayState) => {
+            if (displayState) {
+                setDisplayStatus(displayState.status);
+            }
+        });
+        return () => unsubscribe();
+    }, []);
 
     const onRefresh = useCallback(async () => {
         setRefreshing(true);
@@ -173,6 +186,9 @@ export default function CustomerDashboard() {
                     </View>
                     <Avatar.Image size={50} source={{ uri: 'https://i.pravatar.cc/150?img=12' }} />
                 </View>
+
+                {/* EC-86: Display failure notification */}
+                <CustomerHardwareBanner displayStatus={displayStatus} />
 
                 {/* Active Delivery Card */}
                 <Text variant="titleMedium" style={styles.sectionTitle}>Active Delivery</Text>

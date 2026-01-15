@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { View, StyleSheet, TouchableOpacity } from 'react-native';
-import { Text, Button, Surface, ProgressBar, IconButton, useTheme } from 'react-native-paper';
+import { Text, Button, Surface, ProgressBar, IconButton, useTheme, Portal } from 'react-native-paper';
 import { useNavigation } from '@react-navigation/native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import {
@@ -9,6 +9,8 @@ import {
     useBlurOnFulfill,
     useClearByFocusCell,
 } from 'react-native-confirmation-code-field';
+import { CustomerBleUnlockModal } from '../../components';
+import { subscribeToDisplay } from '../../services/firebaseClient';
 
 const CELL_COUNT = 6;
 
@@ -21,12 +23,24 @@ export default function OTPScreen() {
         setValue,
     });
     const [timeLeft, setTimeLeft] = useState(300); // 5 minutes
+    const [displayStatus, setDisplayStatus] = useState<'OK' | 'DEGRADED' | 'FAILED'>('OK');
+    const [showBleModal, setShowBleModal] = useState(false);
 
     useEffect(() => {
         const timer = setInterval(() => {
             setTimeLeft((prev) => (prev > 0 ? prev - 1 : 0));
         }, 1000);
         return () => clearInterval(timer);
+    }, []);
+
+    useEffect(() => {
+        // EC-86: Monitor display health
+        const unsubscribe = subscribeToDisplay('BOX_001', (displayState) => {
+            if (displayState) {
+                setDisplayStatus(displayState.status);
+            }
+        });
+        return () => unsubscribe();
     }, []);
 
     const formatTime = (seconds) => {
@@ -104,7 +118,28 @@ export default function OTPScreen() {
                 >
                     Copy Code
                 </Button>
+
+                {/* EC-86: BLE unlock option when display failed */}
+                {displayStatus === 'FAILED' && (
+                    <Button
+                        mode="outlined"
+                        icon="bluetooth"
+                        onPress={() => setShowBleModal(true)}
+                        style={[styles.button, { marginTop: 12 }]}
+                        contentStyle={{ paddingVertical: 8 }}
+                    >
+                        Unlock with Bluetooth
+                    </Button>
+                )}
             </View>
+
+            {/* EC-86: BLE unlock modal */}
+            <CustomerBleUnlockModal
+                visible={showBleModal}
+                boxId="BOX_001"
+                otpCode={value}
+                onClose={() => setShowBleModal(false)}
+            />
         </View>
     );
 }

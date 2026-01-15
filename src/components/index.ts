@@ -15,3 +15,7 @@ export {
     StatusDot,
     StatusIndicator,
 } from './HardwareStatusBadge';
+
+// Customer Hardware Components (EC-86)
+export { default as CustomerHardwareBanner } from './CustomerHardwareBanner';
+export { default as CustomerBleUnlockModal } from './CustomerBleUnlockModal';

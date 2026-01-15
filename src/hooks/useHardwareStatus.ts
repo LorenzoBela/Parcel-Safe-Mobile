@@ -2,7 +2,7 @@
  * useHardwareStatus Hook
  * 
  * React hook for monitoring hardware health status in the mobile app.
- * Handles EC-21, EC-22, EC-23, EC-25 edge cases.
+ * Handles EC-21, EC-22, EC-23, EC-25, EC-82, EC-83, EC-86 edge cases.
  * 
  * Usage:
  * ```tsx
@@ -17,12 +17,14 @@ import {
     subscribeToReboot,
     subscribeToKeypad,
     subscribeToHinge,
+    subscribeToDisplay,
     clearRebootFlag,
     SolenoidState,
     CameraState,
     RebootState,
     KeypadState,
     HingeState,
+    DisplayState,
     HardwareHealth,
     HardwareAlert,
     OverallHealthStatus,
@@ -70,6 +72,7 @@ export function useHardwareStatus(
     const [rebootState, setRebootState] = useState<RebootState | null>(null);
     const [keypadState, setKeypadState] = useState<KeypadState | null>(null);
     const [hingeState, setHingeState] = useState<HingeState | null>(null);
+    const [displayState, setDisplayState] = useState<DisplayState | null>(null);
     const [isLoading, setIsLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [dismissedAlerts, setDismissedAlerts] = useState<Set<string>>(new Set());
@@ -85,7 +88,7 @@ export function useHardwareStatus(
         setIsLoading(true);
         setError(null);
         let loadedCount = 0;
-        const totalSources = 5; // Solenoid, Camera, Reboot, Keypad, Hinge
+        const totalSources = 6; // Solenoid, Camera, Reboot, Keypad, Hinge, Display
 
         const checkLoaded = () => {
             loadedCount++;
@@ -120,12 +123,18 @@ export function useHardwareStatus(
                 checkLoaded();
             });
 
+            const unsubDisplay = subscribeToDisplay(boxId, (state) => {
+                setDisplayState(state);
+                checkLoaded();
+            });
+
             return () => {
                 unsubSolenoid();
                 unsubCamera();
                 unsubReboot();
                 unsubKeypad();
                 unsubHinge();
+                unsubDisplay();
             };
         } catch (err) {
             setError(err instanceof Error ? err.message : 'Failed to subscribe to hardware status');
@@ -140,12 +149,14 @@ export function useHardwareStatus(
         reboot: rebootState,
         keypad: keypadState,
         hinge: hingeState,
+        display: displayState,
         overallStatus: getOverallHealthStatus({
             solenoid: solenoidState,
             camera: cameraState,
             reboot: rebootState,
             keypad: keypadState,
-            hinge: hingeState
+            hinge: hingeState,
+            display: displayState
         }),
         alerts: [],
     };

@@ -6,6 +6,9 @@
  * - EC-22: Solenoid Stuck Open  
  * - EC-23: Camera Failure
  * - EC-25: ESP32 Brownout/Reboot
+ * - EC-82: Keypad Stuck
+ * - EC-83: Hinge Damage
+ * - EC-86: Display Failure
  * 
  * Used by riders to monitor box health during deliveries.
  */
@@ -16,12 +19,14 @@ import {
     subscribeToReboot,
     subscribeToKeypad,
     subscribeToHinge,
+    subscribeToDisplay,
     clearRebootFlag,
     SolenoidState,
     CameraState,
     RebootState,
     KeypadState,
     HingeState,
+    DisplayState,
     SolenoidStatusType,
     CameraStatusType,
 } from './firebaseClient';
@@ -36,13 +41,14 @@ export interface HardwareHealth {
     reboot: RebootState | null;
     keypad: KeypadState | null;
     hinge: HingeState | null;
+    display: DisplayState | null;
     overallStatus: OverallHealthStatus;
     alerts: HardwareAlert[];
 }
 
 export interface HardwareAlert {
     id: string;
-    type: 'solenoid' | 'camera' | 'reboot' | 'keypad' | 'hinge';
+    type: 'solenoid' | 'camera' | 'reboot' | 'keypad' | 'hinge' | 'display';
     severity: 'info' | 'warning' | 'error' | 'critical';
     title: string;
     message: string;
@@ -76,9 +82,15 @@ export function getOverallHealthStatus(health: Partial<HardwareHealth>): Overall
         return 'CRITICAL';
     }
 
+    // EC-86: Display Failed is Critical (customer can't see OTP entry)
+    if (health.display?.status === 'FAILED') {
+        return 'CRITICAL';
+    }
+
     // EC-23: Camera failed or EC-25: Recent reboot during delivery
     // EC-83: Hinge Flapping is a warning
-    if (health.camera?.status === 'FAILED' || health.reboot?.rebooted || health.hinge?.status === 'FLAPPING') {
+    // EC-86: Display Degraded is a warning
+    if (health.camera?.status === 'FAILED' || health.reboot?.rebooted || health.hinge?.status === 'FLAPPING' || health.display?.status === 'DEGRADED') {
         return 'WARNING';
     }
 
@@ -212,6 +224,32 @@ export function generateAlerts(health: Partial<HardwareHealth>, deliveryId?: str
         });
     }
 
+    // EC-86: Display Failed
+    if (health.display?.status === 'FAILED') {
+        alerts.push({
+            id: 'ec86-display-failed',
+            type: 'display',
+            severity: 'critical',
+            title: 'Display Not Working',
+            message: 'Box display is not functional. Customer cannot see OTP entry.',
+            action: 'Use mobile app unlock or contact customer to use tracking link',
+            timestamp: health.display.timestamp || now,
+        });
+    }
+
+    // EC-86: Display Degraded
+    if (health.display?.status === 'DEGRADED') {
+        alerts.push({
+            id: 'ec86-display-degraded',
+            type: 'display',
+            severity: 'warning',
+            title: 'Display Quality Issue',
+            message: `Display may be hard to read. Buzzer and LED feedback active. Error count: ${health.display.error_count}`,
+            action: 'Monitor customer feedback',
+            timestamp: health.display.timestamp || now,
+        });
+    }
+
     return alerts;
 }
 
@@ -251,6 +289,14 @@ export function isBoxSafeForDelivery(health: Partial<HardwareHealth>): {
         return {
             safe: false,
             reason: 'Box physical integrity compromised (Hinge Damaged)',
+        };
+    }
+
+    // EC-86: Display Failed (customer experience severely degraded)
+    if (health.display?.status === 'FAILED') {
+        return {
+            safe: false,
+            reason: 'Display not working - customer cannot see OTP entry',
         };
     }
 

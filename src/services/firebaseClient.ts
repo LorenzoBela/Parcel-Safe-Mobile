@@ -857,6 +857,37 @@ export function subscribeToHinge(
     return () => off(hingeRef);
 }
 
+// ==================== EC-86: Display Failure Detection ====================
+
+export interface DisplayState {
+    status: 'OK' | 'DEGRADED' | 'FAILED';
+    last_i2c_ack: number;
+    brightness: number;
+    contrast: number;
+    error_count: number;
+    last_error: string;
+    needs_service: boolean;
+    timestamp: number;
+}
+
+/**
+ * Subscribe to display health updates (EC-86)
+ */
+export function subscribeToDisplay(
+    boxId: string,
+    callback: (state: DisplayState | null) => void
+): () => void {
+    const db = getFirebaseDatabase();
+    const displayRef = ref(db, `hardware/${boxId}/display_health`);
+
+    const unsubscribe = onValue(displayRef, (snapshot) => {
+        const data = snapshot.val();
+        callback(data as DisplayState | null);
+    });
+
+    return () => off(displayRef);
+}
+
 /**
  * Check if box needs Firebase recovery - EC-48
  */
