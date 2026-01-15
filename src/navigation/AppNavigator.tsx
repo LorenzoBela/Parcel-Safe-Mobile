@@ -18,6 +18,8 @@ import BoxControlsScreen from '../screens/rider/BoxControlsScreen';
 import ArrivalScreen from '../screens/rider/ArrivalScreen';
 import DeliveryCompletionScreen from '../screens/rider/DeliveryCompletionScreen';
 import DeliveryRecordsScreen from '../screens/rider/DeliveryRecordsScreen';
+import TheftAlertScreen from '../screens/rider/TheftAlertScreen';
+import TrackMyBoxScreen from '../screens/rider/TrackMyBoxScreen';
 
 import AdminDashboard from '../screens/admin/AdminDashboard';
 import GlobalMapScreen from '../screens/admin/GlobalMapScreen';
@@ -138,7 +140,12 @@ export default function AppNavigator() {
                 <Stack.Screen name="GlobalMap" component={GlobalMapScreen} />
                 <Stack.Screen name="TamperAlerts" component={TamperAlertsScreen} />
                 <Stack.Screen name="DeliveryRecords" component={DeliveryRecordsScreen} />
+
+                {/* EC-81: Theft Detection Screens */}
+                <Stack.Screen name="TheftAlert" component={TheftAlertScreen} options={{ headerShown: true, title: 'Box Security' }} />
+                <Stack.Screen name="TrackMyBox" component={TrackMyBoxScreen} options={{ headerShown: true, title: 'Track My Box' }} />
             </Stack.Navigator>
         </NavigationContainer>
     );
 }
+
