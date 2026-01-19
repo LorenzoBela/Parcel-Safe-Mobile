@@ -83,22 +83,22 @@ export default function TrackOrderScreen() {
 
             {/* Header Actions */}
             <View style={styles.headerActions}>
-                <Surface style={styles.iconButtonSurface} elevation={2}>
-                    <IconButton icon="arrow-left" size={24} onPress={() => navigation.goBack()} />
+                <Surface style={[styles.iconButtonSurface, { backgroundColor: theme.colors.surface }]} elevation={2}>
+                    <IconButton icon="arrow-left" size={24} iconColor={theme.colors.onSurface} onPress={() => navigation.goBack()} />
                 </Surface>
             </View>
 
             {/* Bottom Sheet Info */}
-            <View style={styles.bottomSheet}>
-                <View style={styles.handleBar} />
+            <View style={[styles.bottomSheet, { backgroundColor: theme.colors.surface }]}>
+                <View style={[styles.handleBar, { backgroundColor: theme.colors.outline }]} />
 
                 <View style={styles.statusHeader}>
                     <View>
-                        <Text variant="titleLarge" style={{ fontWeight: 'bold' }}>Arriving in 10 mins</Text>
-                        <Text variant="bodyMedium" style={{ color: '#666' }}>On the way to your location</Text>
+                        <Text variant="titleLarge" style={{ fontWeight: 'bold', color: theme.colors.onSurface }}>Arriving in 10 mins</Text>
+                        <Text variant="bodyMedium" style={{ color: theme.colors.onSurfaceVariant }}>On the way to your location</Text>
                         {/* EC-86: Display hint when keypad unavailable */}
                         {displayStatus === 'FAILED' && (
-                            <Text variant="bodySmall" style={{ color: '#1976D2', marginTop: 4 }}>
+                            <Text variant="bodySmall" style={{ color: theme.colors.error, marginTop: 4 }}>
                                 ℹ️ Keypad display unavailable - use app to unlock
                             </Text>
                         )}
@@ -108,23 +108,23 @@ export default function TrackOrderScreen() {
                     </Surface>
                 </View>
 
-                <View style={styles.divider} />
+                <View style={[styles.divider, { backgroundColor: theme.colors.outlineVariant }]} />
 
                 <View style={styles.riderInfo}>
                     <Avatar.Image size={50} source={{ uri: 'https://i.pravatar.cc/150?img=11' }} />
                     <View style={{ flex: 1, marginLeft: 16 }}>
-                        <Text variant="titleMedium" style={{ fontWeight: 'bold' }}>{riderDetails.name}</Text>
-                        <Text variant="bodySmall" style={{ color: '#666' }}>{riderDetails.vehicle}</Text>
+                        <Text variant="titleMedium" style={{ fontWeight: 'bold', color: theme.colors.onSurface }}>{riderDetails.name}</Text>
+                        <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>{riderDetails.vehicle}</Text>
                         <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4 }}>
                             <MaterialCommunityIcons name="star" size={16} color="#FFC107" />
-                            <Text variant="labelSmall" style={{ marginLeft: 4 }}>{riderDetails.rating}</Text>
+                            <Text variant="labelSmall" style={{ marginLeft: 4, color: theme.colors.onSurface }}>{riderDetails.rating}</Text>
                         </View>
                     </View>
                     <View style={styles.actionButtons}>
                         <IconButton
                             mode="contained"
                             icon="phone"
-                            containerColor="#E3F2FD"
+                            containerColor={theme.dark ? '#1A237E' : '#E3F2FD'} // Darker blue for dark mode
                             iconColor="#2196F3"
                             size={24}
                             onPress={() => console.log('Call')}
@@ -132,7 +132,7 @@ export default function TrackOrderScreen() {
                         <IconButton
                             mode="contained"
                             icon="message-text"
-                            containerColor="#E8F5E9"
+                            containerColor={theme.dark ? '#1B5E20' : '#E8F5E9'} // Darker green for dark mode
                             iconColor="#4CAF50"
                             size={24}
                             onPress={() => console.log('Message')}
@@ -180,7 +180,6 @@ const styles = StyleSheet.create({
         bottom: 0,
         left: 0,
         right: 0,
-        backgroundColor: 'white',
         borderTopLeftRadius: 24,
         borderTopRightRadius: 24,
         padding: 24,
@@ -194,7 +193,6 @@ const styles = StyleSheet.create({
     handleBar: {
         width: 40,
         height: 4,
-        backgroundColor: '#E0E0E0',
         borderRadius: 2,
         alignSelf: 'center',
         marginBottom: 20,
@@ -213,7 +211,6 @@ const styles = StyleSheet.create({
     },
     divider: {
         height: 1,
-        backgroundColor: '#F0F0F0',
         marginBottom: 20,
     },
     riderInfo: {

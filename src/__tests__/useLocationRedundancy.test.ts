@@ -5,7 +5,7 @@
  * Tests lifecycle management and state synchronization with redundancy manager
  */
 
-import { renderHook, act } from '@testing-library/react';
+import { renderHook, act } from '@testing-library/react-native';
 import { useLocationRedundancy } from '../hooks/useLocationRedundancy';
 import { locationRedundancy } from '../services/locationRedundancy';
 

@@ -8,12 +8,17 @@ export default function ProfileScreen() {
     const theme = useTheme();
 
     return (
-        <ScrollView style={styles.container}>
-            <View style={styles.header}>
+        <ScrollView style={[styles.container, { backgroundColor: theme.colors.background }]}>
+            <View style={[styles.header, { backgroundColor: theme.colors.surface }]}>
                 <Avatar.Image size={100} source={{ uri: 'https://i.pravatar.cc/150?img=12' }} />
-                <Text variant="headlineSmall" style={styles.name}>Lorenzo Bela</Text>
-                <Text variant="bodyMedium" style={styles.email}>lorenzo.bela@example.com</Text>
-                <Button mode="outlined" style={styles.editBtn} onPress={() => console.log('Edit Profile')}>
+                <Text variant="headlineSmall" style={[styles.name, { color: theme.colors.onSurface }]}>Lorenzo Bela</Text>
+                <Text variant="bodyMedium" style={[styles.email, { color: theme.colors.onSurfaceVariant }]}>lorenzo.bela@example.com</Text>
+                <Button
+                    mode="outlined"
+                    style={styles.editBtn}
+                    onPress={() => console.log('Edit Profile')}
+                    textColor={theme.colors.primary}
+                >
                     Edit Profile
                 </Button>
             </View>
@@ -57,19 +62,16 @@ export default function ProfileScreen() {
 const styles = StyleSheet.create({
     container: {
         flex: 1,
-        backgroundColor: '#fff',
     },
     header: {
         alignItems: 'center',
         padding: 24,
-        backgroundColor: '#f5f5f5',
     },
     name: {
         marginTop: 16,
         fontWeight: 'bold',
     },
     email: {
-        color: '#666',
         marginBottom: 16,
     },
     editBtn: {

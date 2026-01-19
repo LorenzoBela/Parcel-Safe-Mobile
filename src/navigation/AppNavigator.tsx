@@ -4,9 +4,16 @@ import { createStackNavigator } from '@react-navigation/stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 
+import { useTheme } from 'react-native-paper'; // Import useTheme
+
 import LoginScreen from '../screens/auth/LoginScreen';
 import RegisterScreen from '../screens/auth/RegisterScreen';
 import OTPScreen from '../screens/auth/OTPScreen';
+import DevRoleSelectionScreen from '../screens/auth/DevRoleSelectionScreen';
+import BookServiceScreen from '../screens/client/BookServiceScreen';
+import SearchingRiderScreen from '../screens/client/SearchingRiderScreen';
+import RatesScreen from '../screens/client/RatesScreen';
+import ReportScreen from '../screens/client/ReportScreen';
 
 import CustomerDashboard from '../screens/client/CustomerDashboard';
 import TrackOrderScreen from '../screens/client/TrackOrderScreen';
@@ -29,6 +36,9 @@ import PhotoAuditScreen from '../screens/admin/PhotoAuditScreen';
 import ProfileScreen from '../screens/common/ProfileScreen';
 import SettingsScreen from '../screens/common/SettingsScreen';
 import DeliveryDetailScreen from '../screens/common/DeliveryDetailScreen';
+import HelpCenterScreen from '../screens/common/HelpCenterScreen';
+import TermsOfServiceScreen from '../screens/common/TermsOfServiceScreen';
+import PrivacyPolicyScreen from '../screens/common/PrivacyPolicyScreen';
 
 const Stack = createStackNavigator();
 const Tab = createBottomTabNavigator();
@@ -38,82 +48,124 @@ const TabIcon = ({ name, color, size }: { name: any; color: string; size: number
 );
 
 // Customer Tabs
-const CustomerNavigator = () => (
-    <Tab.Navigator id="CustomerTabs" screenOptions={{ headerShown: false, tabBarActiveTintColor: '#2196F3' }}>
-        <Tab.Screen
-            name="Home"
-            component={CustomerDashboard}
-            options={{ tabBarIcon: (props) => <TabIcon name="home" {...props} /> }}
-        />
-        <Tab.Screen
-            name="History"
-            component={DeliveryLogScreen}
-            options={{ tabBarIcon: (props) => <TabIcon name="history" {...props} /> }}
-        />
-        <Tab.Screen
-            name="Settings"
-            component={SettingsScreen}
-            options={{ tabBarIcon: (props) => <TabIcon name="cog" {...props} /> }}
-        />
-        <Tab.Screen
-            name="Profile"
-            component={ProfileScreen}
-            options={{ tabBarIcon: (props) => <TabIcon name="account" {...props} /> }}
-        />
-    </Tab.Navigator>
-);
+const CustomerNavigator = () => {
+    const theme = useTheme();
+    return (
+        <Tab.Navigator
+            id="CustomerTabs"
+            screenOptions={{
+                headerShown: false,
+                tabBarActiveTintColor: theme.colors.primary,
+                tabBarInactiveTintColor: theme.colors.onSurfaceVariant,
+                tabBarStyle: {
+                    backgroundColor: theme.colors.surface,
+                    borderTopColor: theme.colors.outline,
+                }
+            }}
+        >
+            <Tab.Screen
+                name="Home"
+                component={CustomerDashboard}
+                options={{ tabBarIcon: (props) => <TabIcon name="home" {...props} /> }}
+            />
+            <Tab.Screen
+                name="History"
+                component={DeliveryLogScreen}
+                options={{ tabBarIcon: (props) => <TabIcon name="history" {...props} /> }}
+            />
+            <Tab.Screen
+                name="Settings"
+                component={SettingsScreen}
+                options={{ tabBarIcon: (props) => <TabIcon name="cog" {...props} /> }}
+            />
+            <Tab.Screen
+                name="Profile"
+                component={ProfileScreen}
+                options={{ tabBarIcon: (props) => <TabIcon name="account" {...props} /> }}
+            />
+        </Tab.Navigator>
+    );
+};
 
 // Rider Tabs
-const RiderNavigator = () => (
-    <Tab.Navigator id="RiderTabs" screenOptions={{ headerShown: false, tabBarActiveTintColor: '#4CAF50' }}>
-        <Tab.Screen
-            name="Dashboard"
-            component={RiderDashboard}
-            options={{ tabBarIcon: (props) => <TabIcon name="view-dashboard" {...props} /> }}
-        />
-        <Tab.Screen
-            name="Deliveries"
-            component={AssignedDeliveriesScreen}
-            options={{ tabBarIcon: (props) => <TabIcon name="clipboard-list" {...props} /> }}
-        />
-        <Tab.Screen
-            name="Settings"
-            component={SettingsScreen}
-            options={{ tabBarIcon: (props) => <TabIcon name="cog" {...props} /> }}
-        />
-        <Tab.Screen
-            name="Profile"
-            component={ProfileScreen}
-            options={{ tabBarIcon: (props) => <TabIcon name="account" {...props} /> }}
-        />
-    </Tab.Navigator>
-);
+const RiderNavigator = () => {
+    const theme = useTheme();
+    return (
+        <Tab.Navigator
+            id="RiderTabs"
+            screenOptions={{
+                headerShown: false,
+                tabBarActiveTintColor: '#4CAF50', // Keep specific rider color or use theme? keeping specific for identity
+                tabBarInactiveTintColor: theme.colors.onSurfaceVariant,
+                tabBarStyle: {
+                    backgroundColor: theme.colors.surface,
+                    borderTopColor: theme.colors.outline,
+                }
+            }}
+        >
+            <Tab.Screen
+                name="Dashboard"
+                component={RiderDashboard}
+                options={{ tabBarIcon: (props) => <TabIcon name="view-dashboard" {...props} /> }}
+            />
+            <Tab.Screen
+                name="Deliveries"
+                component={AssignedDeliveriesScreen}
+                options={{ tabBarIcon: (props) => <TabIcon name="clipboard-list" {...props} /> }}
+            />
+            <Tab.Screen
+                name="Settings"
+                component={SettingsScreen}
+                options={{ tabBarIcon: (props) => <TabIcon name="cog" {...props} /> }}
+            />
+            <Tab.Screen
+                name="Profile"
+                component={ProfileScreen}
+                options={{ tabBarIcon: (props) => <TabIcon name="account" {...props} /> }}
+            />
+        </Tab.Navigator>
+    );
+};
 
 // Admin Tabs
-const AdminNavigator = () => (
-    <Tab.Navigator id="AdminTabs" screenOptions={{ headerShown: false, tabBarActiveTintColor: '#F44336' }}>
-        <Tab.Screen
-            name="Dashboard"
-            component={AdminDashboard}
-            options={{ tabBarIcon: (props) => <TabIcon name="view-dashboard" {...props} /> }}
-        />
-        <Tab.Screen
-            name="Map"
-            component={GlobalMapScreen}
-            options={{ tabBarIcon: (props) => <TabIcon name="map" {...props} /> }}
-        />
-        <Tab.Screen
-            name="Alerts"
-            component={TamperAlertsScreen}
-            options={{ tabBarIcon: (props) => <TabIcon name="alert" {...props} /> }}
-        />
-        <Tab.Screen
-            name="Profile"
-            component={ProfileScreen}
-            options={{ tabBarIcon: (props) => <TabIcon name="account" {...props} /> }}
-        />
-    </Tab.Navigator>
-);
+const AdminNavigator = () => {
+    const theme = useTheme();
+    return (
+        <Tab.Navigator
+            id="AdminTabs"
+            screenOptions={{
+                headerShown: false,
+                tabBarActiveTintColor: '#F44336',
+                tabBarInactiveTintColor: theme.colors.onSurfaceVariant,
+                tabBarStyle: {
+                    backgroundColor: theme.colors.surface,
+                    borderTopColor: theme.colors.outline,
+                }
+            }}
+        >
+            <Tab.Screen
+                name="Dashboard"
+                component={AdminDashboard}
+                options={{ tabBarIcon: (props) => <TabIcon name="view-dashboard" {...props} /> }}
+            />
+            <Tab.Screen
+                name="Map"
+                component={GlobalMapScreen}
+                options={{ tabBarIcon: (props) => <TabIcon name="map" {...props} /> }}
+            />
+            <Tab.Screen
+                name="Alerts"
+                component={TamperAlertsScreen}
+                options={{ tabBarIcon: (props) => <TabIcon name="alert" {...props} /> }}
+            />
+            <Tab.Screen
+                name="Profile"
+                component={ProfileScreen}
+                options={{ tabBarIcon: (props) => <TabIcon name="account" {...props} /> }}
+            />
+        </Tab.Navigator>
+    );
+};
 
 export default function AppNavigator() {
     return (
@@ -121,6 +173,7 @@ export default function AppNavigator() {
             <Stack.Navigator id="RootStack" initialRouteName="Login" screenOptions={{ headerShown: false }}>
                 <Stack.Screen name="Login" component={LoginScreen} />
                 <Stack.Screen name="Register" component={RegisterScreen} />
+                <Stack.Screen name="DevRoleSelection" component={DevRoleSelectionScreen} />
 
                 {/* Main App Flows (Tabs) */}
                 <Stack.Screen name="CustomerApp" component={CustomerNavigator} />
@@ -129,6 +182,10 @@ export default function AppNavigator() {
 
                 {/* Common/Detail Screens (Stack) */}
                 <Stack.Screen name="OTP" component={OTPScreen} />
+                <Stack.Screen name="BookService" component={BookServiceScreen} />
+                <Stack.Screen name="SearchingRider" component={SearchingRiderScreen} />
+                <Stack.Screen name="Rates" component={RatesScreen} />
+                <Stack.Screen name="Report" component={ReportScreen} />
                 <Stack.Screen name="TrackOrder" component={TrackOrderScreen} />
                 <Stack.Screen name="DeliveryLog" component={DeliveryLogScreen} />
                 <Stack.Screen name="DeliveryDetail" component={DeliveryDetailScreen} />
@@ -140,6 +197,11 @@ export default function AppNavigator() {
                 <Stack.Screen name="GlobalMap" component={GlobalMapScreen} />
                 <Stack.Screen name="TamperAlerts" component={TamperAlertsScreen} />
                 <Stack.Screen name="DeliveryRecords" component={DeliveryRecordsScreen} />
+
+                {/* Common Info Screens */}
+                <Stack.Screen name="HelpCenter" component={HelpCenterScreen} options={{ headerShown: true, title: 'Help Center' }} />
+                <Stack.Screen name="TermsOfService" component={TermsOfServiceScreen} options={{ headerShown: true, title: 'Terms of Service' }} />
+                <Stack.Screen name="PrivacyPolicy" component={PrivacyPolicyScreen} options={{ headerShown: true, title: 'Privacy Policy' }} />
 
                 {/* EC-81: Theft Detection Screens */}
                 <Stack.Screen name="TheftAlert" component={TheftAlertScreen} options={{ headerShown: true, title: 'Box Security' }} />

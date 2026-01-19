@@ -1,22 +1,40 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { View, StyleSheet, ScrollView, TouchableOpacity, ImageBackground, Image, Alert, RefreshControl } from 'react-native';
+import { View, StyleSheet, ScrollView, TouchableOpacity, ImageBackground, Image, Alert, RefreshControl, Share } from 'react-native';
 import { Text, Card, Button, FAB, useTheme, Avatar, Surface, Portal, Modal, IconButton } from 'react-native-paper';
 import { useNavigation } from '@react-navigation/native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import dayjs from 'dayjs';
+import { useAppTheme } from '../../context/ThemeContext'; // Import custom hook if needed, or just useTheme from paper
 import * as Location from 'expo-location';
-import { CustomerHardwareBanner } from '../../../components';
-import { subscribeToDisplay } from '../../../services/firebaseClient';
+import { CustomerHardwareBanner } from '../../components';
+import { subscribeToDisplay } from '../../services/firebaseClient';
 
 export default function CustomerDashboard() {
     const navigation = useNavigation<any>();
     const theme = useTheme();
     const [currentTime, setCurrentTime] = useState(dayjs());
-    const [modalVisible, setModalVisible] = useState(false);
-    const [selectedImage, setSelectedImage] = useState(null);
+    const [modalVisible, setModalVisible] = useState(false); // For Proof of Delivery
+    const [shareModalVisible, setShareModalVisible] = useState(false); // For Share Warning
     const [locationName, setLocationName] = useState('Locating...');
     const [refreshing, setRefreshing] = useState(false);
     const [displayStatus, setDisplayStatus] = useState<'OK' | 'DEGRADED' | 'FAILED'>('OK');
+
+    const handleShare = () => {
+        setShareModalVisible(true);
+    };
+
+    const performShare = async () => {
+        setShareModalVisible(false);
+        try {
+            const result = await Share.share({
+                message: 'Track your Parcel-Safe delivery here: https://parcel-safe.web.app/track/TEMP-123',
+                url: 'https://parcel-safe.web.app/track/TEMP-123', // iOS uses this
+                title: 'Track Parcel'
+            });
+        } catch (error: any) {
+            Alert.alert(error.message);
+        }
+    };
 
     useEffect(() => {
         const timer = setInterval(() => {
@@ -77,8 +95,8 @@ export default function CustomerDashboard() {
 
     const weatherImages = {
         'Sunny': 'https://images.unsplash.com/photo-1622278612016-dd3a787f8003?ixlib=rb-1.2.1&auto=format&fit=crop&w=1000&q=80',
-        'Cloudy': 'https://images.unsplash.com/photo-1534088568595-a066f410bcda?ixlib=rb-1.2.1&auto=format&fit=crop&w=1000&q=80', // More distinct cloudy sky
-        'Rainy': 'https://images.unsplash.com/photo-1515694346937-94d85e41e6f0?ixlib=rb-1.2.1&auto=format&fit=crop&w=1000&q=80', // Rain on glass
+        'Cloudy': 'https://images.unsplash.com/photo-1534088568595-a066f410bcda?ixlib=rb-1.2.1&auto=format&fit=crop&w=1000&q=80',
+        'Rainy': 'https://images.unsplash.com/photo-1515694346937-94d85e41e6f0?ixlib=rb-1.2.1&auto=format&fit=crop&w=1000&q=80',
         'Thunder': 'https://images.unsplash.com/photo-1605727216801-e27ce1d0cc28?ixlib=rb-1.2.1&auto=format&fit=crop&w=1000&q=80',
     };
 
@@ -93,34 +111,31 @@ export default function CustomerDashboard() {
     const recentActivity = [
         {
             id: 1,
+            trackingId: 'TRK-9921-8821',
             type: 'Delivered',
-            date: 'Yesterday',
-            item: 'Electronics Package',
+            date: 'Yesterday, 2:30 PM',
+            serviceType: 'Standard Delivery',
             status: 'Delivered',
-            image: 'https://images.unsplash.com/photo-1566576912906-600aceeb7aef?ixlib=rb-1.2.1&auto=format&fit=crop&w=500&q=80'
         },
         {
             id: 2,
+            trackingId: 'TRK-1120-3342',
             type: 'Tampered',
-            date: 'Oct 24',
-            item: 'Documents',
+            date: 'Oct 24, 10:15 AM',
+            serviceType: 'Express Delivery',
             status: 'Tampered',
-            image: 'https://images.unsplash.com/photo-1606168094336-42f9e9462f7f?ixlib=rb-1.2.1&auto=format&fit=crop&w=500&q=80'
         },
         {
             id: 3,
+            trackingId: 'TRK-7782-1102',
             type: 'Cancelled',
-            date: 'Oct 20',
-            item: 'Food Delivery',
+            date: 'Oct 20, 9:00 AM',
+            serviceType: 'Standard Delivery',
             status: 'Cancelled',
-            image: 'https://images.unsplash.com/photo-1595246140625-573b715d1128?ixlib=rb-1.2.1&auto=format&fit=crop&w=500&q=80'
         },
     ];
 
-    const showImage = (image) => {
-        setSelectedImage(image);
-        setModalVisible(true);
-    };
+
 
     const hideModal = () => setModalVisible(false);
 
@@ -141,6 +156,13 @@ export default function CustomerDashboard() {
             <Text variant="labelMedium" style={styles.actionLabel}>{label}</Text>
         </TouchableOpacity>
     );
+
+    const getGreeting = () => {
+        const hour = currentTime.hour();
+        if (hour < 12) return 'Good Morning,';
+        if (hour < 18) return 'Good Afternoon,';
+        return 'Good Evening,';
+    };
 
     return (
         <View style={styles.container}>
@@ -171,6 +193,7 @@ export default function CustomerDashboard() {
             </ImageBackground>
 
             <ScrollView
+                style={{ backgroundColor: theme.colors.background }}
                 contentContainerStyle={styles.scrollContent}
                 showsVerticalScrollIndicator={false}
                 refreshControl={
@@ -181,8 +204,8 @@ export default function CustomerDashboard() {
                 {/* Greeting Section */}
                 <View style={styles.greetingContainer}>
                     <View>
-                        <Text variant="headlineSmall" style={styles.greeting}>Good Morning,</Text>
-                        <Text variant="headlineMedium" style={styles.userName}>Lorenzo Bela</Text>
+                        <Text variant="headlineSmall" style={[styles.greeting, { color: theme.colors.onSurfaceVariant }]}>{getGreeting()}</Text>
+                        <Text variant="headlineMedium" style={[styles.userName, { color: theme.colors.onSurface }]}>Lorenzo Bela</Text>
                     </View>
                     <Avatar.Image size={50} source={{ uri: 'https://i.pravatar.cc/150?img=12' }} />
                 </View>
@@ -191,30 +214,30 @@ export default function CustomerDashboard() {
                 <CustomerHardwareBanner displayStatus={displayStatus} />
 
                 {/* Active Delivery Card */}
-                <Text variant="titleMedium" style={styles.sectionTitle}>Active Delivery</Text>
-                <Card style={styles.deliveryCard} mode="elevated">
+                <Text variant="titleMedium" style={[styles.sectionTitle, { color: theme.colors.onSurface }]}>Active Delivery</Text>
+                <Card style={[styles.deliveryCard, { backgroundColor: theme.colors.primaryContainer }]} mode="elevated">
                     <View style={styles.deliveryHeader}>
                         <View style={styles.deliveryIdContainer}>
-                            <MaterialCommunityIcons name="package-variant" size={20} color={theme.colors.primary} />
-                            <Text variant="titleSmall" style={{ marginLeft: 8, color: theme.colors.primary }}>{activeDelivery.id}</Text>
+                            <MaterialCommunityIcons name="package-variant" size={20} color={theme.colors.onPrimaryContainer} />
+                            <Text variant="titleSmall" style={{ marginLeft: 8, color: theme.colors.onPrimaryContainer }}>{activeDelivery.id}</Text>
                         </View>
-                        <View style={styles.statusBadge}>
-                            <Text style={styles.statusText}>{activeDelivery.status}</Text>
+                        <View style={[styles.statusBadge, { backgroundColor: theme.colors.primary }]}>
+                            <Text style={[styles.statusText, { color: theme.colors.onPrimary }]}>{activeDelivery.status}</Text>
                         </View>
                     </View>
 
                     <Card.Content style={styles.deliveryContent}>
                         <View style={styles.deliveryRow}>
-                            <MaterialCommunityIcons name="clock-outline" size={20} color="#666" />
-                            <Text variant="bodyMedium" style={styles.deliveryDetail}>Arriving in {activeDelivery.eta}</Text>
+                            <MaterialCommunityIcons name="clock-outline" size={20} color={theme.colors.onSurfaceVariant} />
+                            <Text variant="bodyMedium" style={[styles.deliveryDetail, { color: theme.colors.onSurface }]}>Arriving in {activeDelivery.eta}</Text>
                         </View>
                         <View style={styles.deliveryRow}>
-                            <MaterialCommunityIcons name="map-marker-outline" size={20} color="#666" />
-                            <Text variant="bodyMedium" style={styles.deliveryDetail}>{activeDelivery.location}</Text>
+                            <MaterialCommunityIcons name="map-marker-outline" size={20} color={theme.colors.onSurfaceVariant} />
+                            <Text variant="bodyMedium" style={[styles.deliveryDetail, { color: theme.colors.onSurface }]}>{activeDelivery.location}</Text>
                         </View>
                         <View style={styles.deliveryRow}>
-                            <MaterialCommunityIcons name="motorbike" size={20} color="#666" />
-                            <Text variant="bodyMedium" style={styles.deliveryDetail}>{activeDelivery.rider}</Text>
+                            <MaterialCommunityIcons name="motorbike" size={20} color={theme.colors.onSurfaceVariant} />
+                            <Text variant="bodyMedium" style={[styles.deliveryDetail, { color: theme.colors.onSurface }]}>{activeDelivery.rider}</Text>
                         </View>
                     </Card.Content>
 
@@ -223,48 +246,77 @@ export default function CustomerDashboard() {
                             mode="contained"
                             onPress={() => navigation.navigate('TrackOrder')}
                             icon="map"
-                            style={{ flex: 1, marginRight: 8 }}
+                            style={{ flex: 1, marginRight: 4 }}
+                            contentStyle={{ paddingHorizontal: 0 }}
+                            labelStyle={{ fontSize: 13 }}
                         >
                             Track
                         </Button>
                         <Button
                             mode="contained-tonal"
-                            onPress={() => navigation.navigate('OTP')}
+                            onPress={() => navigation.navigate('OTP', { boxId: 'BOX_001' })}
                             icon="lock-open"
-                            style={{ flex: 1 }}
+                            style={{ flex: 1, marginRight: 4 }}
+                            contentStyle={{ paddingHorizontal: 0 }}
+                            labelStyle={{ fontSize: 13 }}
                         >
                             Unlock
+                        </Button>
+                        <Button
+                            mode="outlined"
+                            onPress={handleShare}
+                            icon="share-variant"
+                            style={{ flex: 1, borderColor: theme.colors.primary }}
+                            contentStyle={{ paddingHorizontal: 0 }}
+                            labelStyle={{ fontSize: 13 }}
+                        >
+                            Share
                         </Button>
                     </Card.Actions>
                 </Card>
 
-                {/* Quick Actions */}
+                {/* Main Action - Book Now */}
+                <Card style={[styles.bookActionCard, { backgroundColor: theme.colors.surface }]} onPress={() => navigation.navigate('BookService')} mode="elevated">
+                    <Card.Content style={styles.bookActionContent}>
+                        <View style={styles.bookActionTextContainer}>
+                            <Text variant="titleLarge" style={[styles.bookActionTitle, { color: theme.colors.onSurface }]}>Send a Package</Text>
+                            <Text variant="bodyMedium" style={{ color: theme.colors.onSurfaceVariant }}>Fast, secure delivery with Parcel-Safe</Text>
+                        </View>
+                        <Surface style={styles.bookActionIcon} elevation={4}>
+                            <MaterialCommunityIcons name="moped" size={32} color={theme.colors.primary} />
+                        </Surface>
+                    </Card.Content>
+                </Card>
+
                 <View style={styles.actionsGrid}>
-                    <QuickAction icon="qrcode-scan" label="Scan" onPress={() => console.log('Scan')} color="#4CAF50" />
+                    {/* Book button removed from here, promoted to Hero Card */}
+                    <QuickAction icon="calculator" label="Rates" onPress={() => navigation.navigate('Rates')} color="#4CAF50" />
                     <QuickAction icon="history" label="History" onPress={() => navigation.navigate('DeliveryLog')} color="#2196F3" />
-                    <QuickAction icon="file-document-outline" label="Report" onPress={() => console.log('Report')} color="#FF9800" />
-                    <QuickAction icon="share-variant" label="Share" onPress={() => console.log('Share')} color="#9C27B0" />
+                    <QuickAction icon="file-document-outline" label="Report" onPress={() => navigation.navigate('Report')} color="#FF9800" />
                 </View>
 
                 {/* Recent Activity */}
-                <Text variant="titleMedium" style={styles.sectionTitle}>Recent Activity</Text>
+                <Text variant="titleMedium" style={[styles.sectionTitle, { color: theme.colors.onSurface }]}>Recent Activity</Text>
                 {recentActivity.map((activity) => {
                     const statusStyle = getStatusIcon(activity.status);
                     return (
-                        <TouchableOpacity key={activity.id} onPress={() => showImage(activity.image)}>
-                            <Surface style={styles.activityItem} elevation={1}>
-                                <View style={styles.activityLeft}>
-                                    <View style={[styles.activityIcon, { backgroundColor: statusStyle.bg }]}>
-                                        <MaterialCommunityIcons name={statusStyle.icon as any} size={20} color={statusStyle.color} />
+                        <Card key={activity.id} style={[styles.activityCard, { backgroundColor: theme.colors.surface }]} mode="elevated">
+                            <Card.Content style={styles.activityContent}>
+                                <View style={styles.activityRow}>
+                                    <View style={[styles.iconContainer, { backgroundColor: statusStyle.bg }]}>
+                                        <MaterialCommunityIcons name={statusStyle.icon as any} size={24} color={statusStyle.color} />
                                     </View>
-                                    <View style={{ marginLeft: 12 }}>
-                                        <Text variant="titleSmall">{activity.item}</Text>
-                                        <Text variant="bodySmall" style={{ color: statusStyle.color, fontWeight: 'bold' }}>{activity.status}</Text>
+                                    <View style={styles.activityInfo}>
+                                        <Text variant="titleSmall" style={[styles.trackingId, { color: theme.colors.onSurface }]}>{activity.trackingId}</Text>
+                                        <Text variant="bodySmall" style={[styles.serviceType, { color: theme.colors.onSurfaceVariant }]}>{activity.serviceType}</Text>
+                                    </View>
+                                    <View style={styles.activityStatus}>
+                                        <Text variant="labelSmall" style={{ color: statusStyle.color, fontWeight: 'bold' }}>{activity.status}</Text>
+                                        <Text variant="bodySmall" style={styles.dateTextCard}>{activity.date}</Text>
                                     </View>
                                 </View>
-                                <Text variant="bodySmall" style={{ color: '#999' }}>{activity.date}</Text>
-                            </Surface>
-                        </TouchableOpacity>
+                            </Card.Content>
+                        </Card>
                     );
                 })}
 
@@ -277,15 +329,55 @@ export default function CustomerDashboard() {
                 onPress={() => console.log('New Delivery Request')}
             />
 
-            {/* Image Modal */}
+            {/* Premium Share Warning Modal */}
             <Portal>
-                <Modal visible={modalVisible} onDismiss={hideModal} contentContainerStyle={styles.modalContainer}>
+                <Modal visible={shareModalVisible} onDismiss={() => setShareModalVisible(false)} contentContainerStyle={styles.modalContainer}>
                     <View style={styles.modalContent}>
-                        <IconButton icon="close" size={24} onPress={hideModal} style={styles.closeButton} />
+                        <Surface style={[styles.warningIconSurface, { backgroundColor: '#FFF3E0' }]} elevation={2}>
+                            <MaterialCommunityIcons name="shield-lock-outline" size={48} color="#F57C00" />
+                        </Surface>
+
+                        <Text variant="headlineSmall" style={[styles.modalTitle, { marginTop: 16, color: '#F57C00' }]}>
+                            Security Warning
+                        </Text>
+
+                        <Text variant="bodyLarge" style={{ textAlign: 'center', marginBottom: 24, color: '#555', lineHeight: 24 }}>
+                            You are about to share a live tracking link.
+                            {'\n\n'}
+                            <Text style={{ fontWeight: 'bold', color: '#333' }}>Only share this with the intended recipient.</Text>
+                            {'\n'}
+                            They may be able to <Text style={{ color: theme.colors.primary, fontWeight: 'bold' }}>unlock the box</Text> depending on your settings.
+                        </Text>
+
+                        <Button
+                            mode="contained"
+                            onPress={performShare}
+                            style={{ width: '100%', marginBottom: 12, backgroundColor: theme.colors.primary }}
+                            contentStyle={{ paddingVertical: 6 }}
+                        >
+                            I Understand, Share Link
+                        </Button>
+
+                        <Button
+                            mode="outlined"
+                            onPress={() => setShareModalVisible(false)}
+                            style={{ width: '100%', borderColor: '#ddd' }}
+                            textColor="#777"
+                        >
+                            Cancel
+                        </Button>
+                    </View>
+                </Modal>
+            </Portal>
+
+            {/* Proof of Delivery Modal */}
+            <Portal>
+                <Modal visible={modalVisible} onDismiss={() => setModalVisible(false)} contentContainerStyle={styles.modalContainer}>
+                    <View style={styles.modalContent}>
+                        <IconButton icon="close" size={24} onPress={() => setModalVisible(false)} style={styles.closeButton} />
                         <Text variant="titleMedium" style={styles.modalTitle}>Delivery Proof</Text>
-                        {selectedImage && (
-                            <Image source={{ uri: selectedImage }} style={styles.proofImage} resizeMode="cover" />
-                        )}
+                        {/* Image removed from history, keeping modal structure if needed for active delivery later */}
+                        <Text>No proof image available.</Text>
                     </View>
                 </Modal>
             </Portal>
@@ -438,26 +530,7 @@ const styles = StyleSheet.create({
     actionLabel: {
         color: '#555',
     },
-    activityItem: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        padding: 16,
-        backgroundColor: 'white',
-        borderRadius: 12,
-        marginBottom: 10,
-    },
-    activityLeft: {
-        flexDirection: 'row',
-        alignItems: 'center',
-    },
-    activityIcon: {
-        width: 36,
-        height: 36,
-        borderRadius: 18,
-        justifyContent: 'center',
-        alignItems: 'center',
-    },
+
     fab: {
         position: 'absolute',
         margin: 16,
@@ -485,9 +558,79 @@ const styles = StyleSheet.create({
         fontWeight: 'bold',
         marginBottom: 16,
     },
-    proofImage: {
-        width: '100%',
-        height: 300,
+    activityCard: {
+        marginBottom: 12,
+        backgroundColor: 'white',
         borderRadius: 12,
+    },
+    activityContent: {
+        paddingVertical: 12,
+        paddingHorizontal: 16,
+    },
+    activityRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+    },
+    iconContainer: {
+        width: 40,
+        height: 40,
+        borderRadius: 20,
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginRight: 16,
+    },
+    activityInfo: {
+        flex: 1,
+    },
+    trackingId: {
+        fontWeight: 'bold',
+        color: '#333',
+    },
+    serviceType: {
+        color: '#777',
+    },
+    activityStatus: {
+        alignItems: 'flex-end',
+    },
+    dateTextCard: {
+        color: '#999',
+        fontSize: 11,
+        marginTop: 2,
+    },
+    bookActionCard: {
+        marginBottom: 24,
+        backgroundColor: '#009688', // Teal primary color (or use theme.colors.primary)
+        borderRadius: 16,
+        elevation: 4,
+    },
+    bookActionContent: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        paddingVertical: 12,
+    },
+    bookActionTextContainer: {
+        flex: 1,
+    },
+    bookActionTitle: {
+        color: 'white',
+        fontWeight: 'bold',
+        marginBottom: 4,
+    },
+    bookActionIcon: {
+        backgroundColor: 'white',
+        borderRadius: 25,
+        width: 50,
+        height: 50,
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    warningIconSurface: {
+        width: 80,
+        height: 80,
+        borderRadius: 40,
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginBottom: 8,
     },
 });

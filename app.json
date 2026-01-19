@@ -13,12 +13,6 @@
       "resizeMode": "contain",
       "backgroundColor": "#ffffff"
     },
-    "ios": {
-      "supportsTablet": true,
-      "infoPlist": {
-        "NSLocationWhenInUseUsageDescription": "This app uses your location to show local weather and delivery tracking."
-      }
-    },
     "android": {
       "package": "com.parcel.safe",
       "adaptiveIcon": {
@@ -30,20 +24,19 @@
         "ACCESS_COARSE_LOCATION",
         "ACCESS_FINE_LOCATION"
       ],
-      "googleServicesFile": "./google-services.json"
+      "googleServicesFile": "./google-services.json",
+      "config": {
+        "googleMaps": {
+          "apiKey": "AIzaSyA7DETBpsdPN6icfWi7PijCbpmLNWEZyTQ"
+        }
+      }
     },
     "web": {
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
-      "@react-native-google-signin/google-signin",
       "expo-location",
-      [
-        "react-native-maps",
-        {
-          "androidApiKey": ""
-        }
-      ]
+      "@react-native-google-signin/google-signin"
     ],
     "extra": {
       "eas": {

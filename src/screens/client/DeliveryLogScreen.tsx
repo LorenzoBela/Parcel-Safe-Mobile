@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, StyleSheet, FlatList, Image, TouchableOpacity } from 'react-native';
+import { View, StyleSheet, FlatList, Image, TouchableOpacity, ScrollView } from 'react-native';
 import { Text, Card, Searchbar, Chip, useTheme, Surface, IconButton } from 'react-native-paper';
 import { useNavigation } from '@react-navigation/native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -8,6 +8,12 @@ export default function DeliveryLogScreen() {
     const navigation = useNavigation<any>();
     const theme = useTheme();
     const [searchQuery, setSearchQuery] = useState('');
+    const [selectedFilter, setSelectedFilter] = useState('All');
+    const [showFilters, setShowFilters] = useState(false);
+    const [viewMode, setViewMode] = useState<'list' | 'grid'>('list');
+
+
+    const FILTERS = ['All', 'Delivered', 'In Transit', 'Cancelled', 'Tampered'];
 
     // Mock data with images and tampering cases
     const logs = [
@@ -17,13 +23,12 @@ export default function DeliveryLogScreen() {
             time: '2:30 PM',
             status: 'Delivered',
             rider: 'Lorenzo Bela',
-            type: 'Electronics Package',
+            serviceType: 'Standard Delivery',
             customer: 'Kean Guzon',
             address: '123 Rizal Park, Manila',
             price: '₱1,250',
             distance: '2.5 km',
             priority: 'High',
-            image: 'https://images.unsplash.com/photo-1566576912906-600aceeb7aef?ixlib=rb-1.2.1&auto=format&fit=crop&w=500&q=80'
         },
         {
             trk: 'TRK-8821-9024',
@@ -31,13 +36,12 @@ export default function DeliveryLogScreen() {
             time: '9:15 AM',
             status: 'Tampered',
             rider: 'Kean Guzon',
-            type: 'Office Documents',
+            serviceType: 'Express Delivery',
             customer: 'Robert Callorina',
             address: '456 Quezon Ave, QC',
             price: '₱150',
             distance: '5.1 km',
             priority: 'Normal',
-            image: 'https://images.unsplash.com/photo-1606168094336-42f9e9462f7f?ixlib=rb-1.2.1&auto=format&fit=crop&w=500&q=80'
         },
         {
             trk: 'TRK-8821-9025',
@@ -45,13 +49,12 @@ export default function DeliveryLogScreen() {
             time: '6:45 PM',
             status: 'Cancelled',
             rider: 'Robert Callorina',
-            type: 'Food Delivery',
+            serviceType: 'Standard Delivery',
             customer: 'Jeus Manigbas',
             address: '789 Makati Ave, Makati',
             price: '₱450',
             distance: '1.2 km',
             priority: 'High',
-            image: 'https://images.unsplash.com/photo-1595246140625-573b715d1128?ixlib=rb-1.2.1&auto=format&fit=crop&w=500&q=80'
         },
         {
             trk: 'TRK-8821-9026',
@@ -59,20 +62,22 @@ export default function DeliveryLogScreen() {
             time: '11:00 AM',
             status: 'Delivered',
             rider: 'Jeus Manigbas',
-            type: 'Clothing',
+            serviceType: 'Same Day Delivery',
             customer: 'Lorenzo Bela',
             address: '101 Intramuros, Manila',
             price: '₱890',
             distance: '8.2 km',
             priority: 'Normal',
-            image: 'https://images.unsplash.com/photo-1523381210434-271e8be1f52b?ixlib=rb-1.2.1&auto=format&fit=crop&w=500&q=80'
         },
     ];
 
-    const filteredLogs = logs.filter(log =>
-        log.trk.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        log.type.toLowerCase().includes(searchQuery.toLowerCase())
-    );
+    const filteredLogs = logs.filter(log => {
+        const matchesSearch = log.trk.toLowerCase().includes(searchQuery.toLowerCase());
+
+        const matchesFilter = selectedFilter === 'All' || log.status === selectedFilter;
+
+        return matchesSearch && matchesFilter;
+    });
 
     const getStatusColor = (status) => {
         switch (status) {
@@ -95,24 +100,37 @@ export default function DeliveryLogScreen() {
     };
 
     const renderItem = ({ item }) => (
-        <Card style={styles.card} mode="elevated" onPress={() => navigation.navigate('DeliveryDetail', { delivery: item })}>
+        <Card
+            style={[
+                styles.card,
+                viewMode === 'grid' ? styles.cardGrid : styles.cardList,
+                { backgroundColor: theme.colors.surface }
+            ]}
+            mode="elevated"
+            onPress={() => navigation.navigate('DeliveryDetail', { delivery: item })}
+        >
             <View style={styles.cardInner}>
-                {/* Image Thumbnail */}
-                <Image source={{ uri: item.image }} style={styles.thumbnail} />
-
                 <View style={styles.cardContent}>
                     <View style={styles.cardHeader}>
-                        <Text variant="titleSmall" style={{ fontWeight: 'bold', color: theme.colors.primary }}>{item.trk}</Text>
-                        <Chip
-                            icon={getStatusIcon(item.status)}
-                            textStyle={{ fontSize: 11, color: 'white', fontWeight: 'bold' }}
-                            style={{ backgroundColor: getStatusColor(item.status), height: 30, borderRadius: 15 }}
-                        >
-                            {item.status.toUpperCase()}
-                        </Chip>
+                        <View style={{ flex: 1 }}>
+                            <Text variant="titleMedium" style={{ fontWeight: 'bold', color: theme.colors.onSurface }} numberOfLines={1}>{item.trk}</Text>
+                            <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }} numberOfLines={1}>{item.serviceType}</Text>
+                        </View>
+                        {viewMode === 'list' && (
+                            <Chip
+                                icon={getStatusIcon(item.status)}
+                                textStyle={{ fontSize: 11, color: 'white', fontWeight: 'bold' }}
+                                style={{ backgroundColor: getStatusColor(item.status), height: 30, borderRadius: 15 }}
+                            >
+                                {item.status.toUpperCase()}
+                            </Chip>
+                        )}
                     </View>
 
-                    <Text variant="titleMedium" style={styles.itemName} numberOfLines={1}>{item.type}</Text>
+                    {/* Show status color bar for grid view instead of big chip to save space */}
+                    {viewMode === 'grid' && (
+                        <View style={{ height: 4, backgroundColor: getStatusColor(item.status), borderRadius: 2, marginBottom: 8, marginTop: 4 }} />
+                    )}
 
                     {item.status === 'Tampered' && (
                         <View style={styles.alertContainer}>
@@ -121,16 +139,22 @@ export default function DeliveryLogScreen() {
                         </View>
                     )}
 
-                    <View style={styles.detailsRow}>
-                        <Text variant="bodySmall" style={styles.detailText}>{item.date} • {item.time}</Text>
-                    </View>
+                    <View style={styles.divider} />
 
                     <View style={styles.footer}>
-                        <View style={styles.riderInfo}>
-                            <MaterialCommunityIcons name="motorbike" size={14} color="#666" />
-                            <Text variant="bodySmall" style={{ marginLeft: 4, color: '#666' }}>{item.rider}</Text>
+                        <View style={{ flex: 1 }}>
+                            <View style={styles.detailRow}>
+                                <MaterialCommunityIcons name="calendar" size={14} color="#888" />
+                                <Text variant="bodySmall" style={styles.detailText} numberOfLines={1}>{item.date}</Text>
+                            </View>
+                            {viewMode === 'list' && (
+                                <View style={[styles.detailRow, { marginTop: 4 }]}>
+                                    <MaterialCommunityIcons name="motorbike" size={14} color="#888" />
+                                    <Text variant="bodySmall" style={styles.detailText}>{item.rider}</Text>
+                                </View>
+                            )}
                         </View>
-                        <Text variant="titleSmall" style={{ fontWeight: 'bold' }}>{item.price}</Text>
+                        <Text variant="titleMedium" style={{ fontWeight: 'bold', color: theme.colors.primary }}>{item.price}</Text>
                     </View>
                 </View>
             </View>
@@ -138,30 +162,63 @@ export default function DeliveryLogScreen() {
     );
 
     return (
-        <View style={styles.container}>
-            <View style={styles.header}>
-                <Text variant="headlineSmall" style={styles.title}>Delivery History</Text>
-                <IconButton icon="filter-variant" onPress={() => console.log('Filter')} />
+        <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
+            <View style={[styles.header, { backgroundColor: theme.colors.surface }]}>
+                <Text variant="headlineSmall" style={[styles.title, { color: theme.colors.onSurface }]}>Delivery History</Text>
+                <View style={{ flexDirection: 'row' }}>
+                    <IconButton
+                        icon={showFilters ? "filter-off" : "filter-variant"}
+                        onPress={() => setShowFilters(!showFilters)}
+                        selected={showFilters}
+                    />
+                    <IconButton
+                        icon={viewMode === 'grid' ? "view-list" : "view-grid"}
+                        onPress={() => setViewMode(viewMode === 'list' ? 'grid' : 'list')}
+                    />
+                </View>
             </View>
 
             <Searchbar
-                placeholder="Search tracking ID or item..."
+                placeholder="Search tracking ID..."
                 onChangeText={setSearchQuery}
                 value={searchQuery}
-                style={styles.searchBar}
-                inputStyle={{ fontSize: 14 }}
+                style={[styles.searchBar, { backgroundColor: theme.colors.surface }]}
+                inputStyle={{ fontSize: 14, color: theme.colors.onSurface }}
+                iconColor={theme.colors.onSurfaceVariant}
+                placeholderTextColor={theme.colors.onSurfaceVariant}
             />
 
+            {showFilters && (
+                <View style={styles.filterContainer}>
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterScroll}>
+                        {FILTERS.map((filter) => (
+                            <Chip
+                                key={filter}
+                                selected={selectedFilter === filter}
+                                onPress={() => setSelectedFilter(filter)}
+                                style={[styles.filterChip, selectedFilter === filter && { backgroundColor: theme.colors.primaryContainer }]}
+                                showSelectedOverlay
+                            >
+                                {filter}
+                            </Chip>
+                        ))}
+                    </ScrollView>
+                </View>
+            )}
+
             <FlatList
+                key={viewMode} // Force re-render when switching modes
                 data={filteredLogs}
                 renderItem={renderItem}
                 keyExtractor={item => item.trk}
                 contentContainerStyle={styles.listContent}
                 showsVerticalScrollIndicator={false}
+                numColumns={viewMode === 'grid' ? 2 : 1}
+                columnWrapperStyle={viewMode === 'grid' ? { justifyContent: 'space-between' } : undefined}
                 ListEmptyComponent={
                     <View style={styles.emptyState}>
-                        <MaterialCommunityIcons name="package-variant-closed" size={60} color="#CCC" />
-                        <Text style={{ marginTop: 10, color: '#999' }}>No deliveries found</Text>
+                        <MaterialCommunityIcons name="package-variant-closed" size={60} color={theme.colors.onSurfaceVariant} />
+                        <Text style={{ marginTop: 10, color: theme.colors.onSurfaceVariant }}>No deliveries found</Text>
                     </View>
                 }
             />
@@ -195,36 +252,56 @@ const styles = StyleSheet.create({
     },
     listContent: {
         padding: 20,
-        paddingTop: 0,
+        paddingTop: 10,
+    },
+    filterContainer: {
+        marginBottom: 10,
+    },
+    filterScroll: {
+        paddingHorizontal: 20,
+    },
+    filterChip: {
+        marginRight: 8,
     },
     card: {
-        marginBottom: 16,
         backgroundColor: 'white',
         borderRadius: 12,
         overflow: 'hidden',
     },
+    cardList: {
+        marginBottom: 16,
+    },
+    cardGrid: {
+        flex: 0.48, // Slightly less than 50% to allow for spacing
+        marginBottom: 16,
+    },
     cardInner: {
         flexDirection: 'row',
     },
-    thumbnail: {
-        width: 100,
-        height: '100%',
-        backgroundColor: '#eee',
-    },
     cardContent: {
         flex: 1,
-        padding: 12,
+        padding: 16,
     },
     cardHeader: {
         flexDirection: 'row',
         justifyContent: 'space-between',
+        alignItems: 'flex-start',
+        marginBottom: 12,
+    },
+    divider: {
+        height: 1,
+        backgroundColor: '#F0F0F0',
+        marginVertical: 12,
+    },
+    detailRow: {
+        flexDirection: 'row',
         alignItems: 'center',
-        marginBottom: 4,
     },
-    itemName: {
-        fontWeight: 'bold',
-        marginBottom: 4,
+    detailText: {
+        color: '#666',
+        marginLeft: 6,
     },
+
     alertContainer: {
         flexDirection: 'row',
         alignItems: 'center',
@@ -236,12 +313,7 @@ const styles = StyleSheet.create({
         fontWeight: 'bold',
         marginLeft: 4,
     },
-    detailsRow: {
-        marginBottom: 8,
-    },
-    detailText: {
-        color: '#888',
-    },
+
     footer: {
         flexDirection: 'row',
         justifyContent: 'space-between',
