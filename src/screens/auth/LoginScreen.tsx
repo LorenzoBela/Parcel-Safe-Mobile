@@ -34,8 +34,28 @@ export default function LoginScreen() {
                 {/* Google Sign-In */}
                 <Button
                     mode="outlined"
-                    onPress={() => {
-                        navigation.navigate('DevRoleSelection');
+                    onPress={async () => {
+                        try {
+                            setLoading(true);
+                            console.log('Initiating Google Sign-In...');
+                            const result = await signInWithGoogleAndSyncProfile();
+                            console.log('Sign-in successful:', result.email, result.role);
+
+                            login(result);
+
+                            const role = result.role;
+                            if (role === 'customer') {
+                                navigation.replace('CustomerApp');
+                            } else {
+                                // Riders and Admins go to Role Selection
+                                navigation.replace('RoleSelection');
+                            }
+                        } catch (error: any) {
+                            console.error('Login failed:', error);
+                            alert(`Login failed: ${error.message}`);
+                        } finally {
+                            setLoading(false);
+                        }
                     }}
                     loading={loading}
                     disabled={!googleSignInAvailable}
@@ -50,9 +70,22 @@ export default function LoginScreen() {
                     <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant, marginTop: 6, textAlign: 'center' }}>
                         Google Sign-In is not available in this runtime. Use a dev client or native build.
                     </Text>
+
+                )}
+
+                {/* Dev Login Fallback */}
+                {(!googleSignInAvailable || __DEV__) && (
+                    <Button
+                        mode="text"
+                        onPress={() => navigation.navigate('DevRoleSelection')}
+                        style={{ marginTop: 20 }}
+                        textColor={theme.colors.secondary}
+                    >
+                        Dev Login
+                    </Button>
                 )}
             </View>
-        </KeyboardAvoidingView>
+        </KeyboardAvoidingView >
     );
 }
 

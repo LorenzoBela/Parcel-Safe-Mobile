@@ -10,6 +10,7 @@ import LoginScreen from '../screens/auth/LoginScreen';
 import RegisterScreen from '../screens/auth/RegisterScreen';
 import OTPScreen from '../screens/auth/OTPScreen';
 import DevRoleSelectionScreen from '../screens/auth/DevRoleSelectionScreen';
+import RoleSelectionScreen from '../screens/auth/RoleSelectionScreen';
 import BookServiceScreen from '../screens/client/BookServiceScreen';
 import SearchingRiderScreen from '../screens/client/SearchingRiderScreen';
 import RatesScreen from '../screens/client/RatesScreen';
@@ -116,9 +117,9 @@ const RiderNavigator = () => {
                 options={{ tabBarIcon: (props) => <TabIcon name="clipboard-list" {...props} /> }}
             />
             <Tab.Screen
-                name="Settings"
+                name="RiderSettings"
                 component={SettingsScreen}
-                options={{ tabBarIcon: (props) => <TabIcon name="cog" {...props} /> }}
+                options={{ tabBarIcon: (props) => <TabIcon name="cog" {...props} />, tabBarLabel: 'Settings' }}
             />
             <Tab.Screen
                 name="Profile"
@@ -161,6 +162,11 @@ const AdminNavigator = () => {
                 options={{ tabBarIcon: (props) => <TabIcon name="alert" {...props} /> }}
             />
             <Tab.Screen
+                name="Settings"
+                component={SettingsScreen}
+                options={{ tabBarIcon: (props) => <TabIcon name="cog" {...props} /> }}
+            />
+            <Tab.Screen
                 name="Profile"
                 component={ProfileScreen}
                 options={{ tabBarIcon: (props) => <TabIcon name="account" {...props} /> }}
@@ -176,6 +182,7 @@ export default function AppNavigator() {
                 <Stack.Screen name="Login" component={LoginScreen} />
                 <Stack.Screen name="Register" component={RegisterScreen} />
                 <Stack.Screen name="DevRoleSelection" component={DevRoleSelectionScreen} />
+                <Stack.Screen name="RoleSelection" component={RoleSelectionScreen} />
 
                 {/* Main App Flows (Tabs) */}
                 <Stack.Screen name="CustomerApp" component={CustomerNavigator} />
@@ -199,6 +206,8 @@ export default function AppNavigator() {
                 <Stack.Screen name="GlobalMap" component={GlobalMapScreen} />
                 <Stack.Screen name="TamperAlerts" component={TamperAlertsScreen} />
                 <Stack.Screen name="DeliveryRecords" component={DeliveryRecordsScreen} />
+                <Stack.Screen name="RiderSupport" component={require('../screens/rider/RiderSupportScreen').default} options={{ headerShown: false }} />
+                <Stack.Screen name="AdminRemoteUnlock" component={require('../screens/admin/AdminRemoteUnlockScreen').default} options={{ headerShown: false }} />
 
                 {/* Common Info Screens */}
                 <Stack.Screen name="HelpCenter" component={HelpCenterScreen} options={{ headerShown: true, title: 'Help Center' }} />

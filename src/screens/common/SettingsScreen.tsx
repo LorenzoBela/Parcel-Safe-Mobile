@@ -44,6 +44,13 @@ export default function SettingsScreen() {
                 />
                 <Divider />
                 <List.Item
+                    title="Rider Support"
+                    left={props => <List.Icon {...props} icon="face-agent" />}
+                    onPress={() => navigation.navigate('RiderSupport')}
+                    right={props => <List.Icon {...props} icon="chevron-right" />}
+                />
+                <Divider />
+                <List.Item
                     title="Terms of Service"
                     left={props => <List.Icon {...props} icon="file-document" />}
                     onPress={() => navigation.navigate('TermsOfService')}

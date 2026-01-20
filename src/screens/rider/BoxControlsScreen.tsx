@@ -15,6 +15,7 @@ import {
     OtpStatus,
     resetLockout,
 } from '../../services/firebaseClient';
+import { subscribeToAdminOverride, AdminOverrideState, getOverrideNotificationMessage } from '../../services/adminOverrideService';
 import { bleOtpService, BleBoxDevice, BleTransferResult } from '../../services/bleOtpService';
 
 // Demo box ID (would come from navigation params in production)
@@ -41,6 +42,9 @@ export default function BoxControlsScreen() {
 
     // EC-07: OTP Expiry State
     const [otpStatus, setOtpStatus] = useState<OtpStatus | null>(null);
+
+    // EC-77: Admin Override State
+    const [adminOverrideState, setAdminOverrideState] = useState<AdminOverrideState | null>(null);
 
     // EC-02: BLE OTP Transfer State
     const [showBleModal, setShowBleModal] = useState(false);
@@ -96,11 +100,22 @@ export default function BoxControlsScreen() {
             }
         });
 
+        // EC-77: Subscribe to admin override
+        const unsubscribeOverride = subscribeToAdminOverride(DEMO_BOX_ID, (state) => {
+            setAdminOverrideState(state);
+            if (state?.active && !state.processed) {
+                const msg = getOverrideNotificationMessage(state);
+                addLog(`ADMIN OVERRIDE: ${msg}`, "warning");
+                setIsLocked(false); // Reflect unlocked state
+            }
+        });
+
         return () => {
             unsubscribeBattery();
             unsubscribeTamper();
             unsubscribeLockout();
             unsubscribeOtpStatus();
+            unsubscribeOverride();
         };
     }, []);
 
@@ -305,6 +320,17 @@ export default function BoxControlsScreen() {
         <View style={styles.container}>
             <ScrollView contentContainerStyle={styles.scrollContent}>
 
+                {/* EC-77: Admin Override Alert Banner */}
+                {adminOverrideState?.active && !adminOverrideState.processed && (
+                    <Surface style={[styles.alertBanner, { backgroundColor: '#FF5722' }]} elevation={4}>
+                        <MaterialCommunityIcons name="lock-open-alert" size={24} color="white" />
+                        <View style={{ flex: 1, marginLeft: 12 }}>
+                            <Text style={styles.alertTitle}>ADMIN OVERRIDE</Text>
+                            <Text style={styles.alertText}>{getOverrideNotificationMessage(adminOverrideState)}</Text>
+                        </View>
+                    </Surface>
+                )}
+
                 {/* EC-18: Tamper Alert Banner */}
                 {tamperState?.detected && (
                     <Surface style={styles.alertBanner} elevation={4}>
@@ -319,10 +345,10 @@ export default function BoxControlsScreen() {
                 {/* EC-03: Low Battery Warning Banner */}
                 {batteryState?.lowBatteryWarning && (
                     <Surface style={[styles.warningBanner, batteryState.criticalBatteryWarning && styles.criticalBanner]} elevation={3}>
-                        <MaterialCommunityIcons 
-                            name="battery-alert" 
-                            size={24} 
-                            color={batteryState.criticalBatteryWarning ? "white" : "#7B341E"} 
+                        <MaterialCommunityIcons
+                            name="battery-alert"
+                            size={24}
+                            color={batteryState.criticalBatteryWarning ? "white" : "#7B341E"}
                         />
                         <View style={{ flex: 1, marginLeft: 12 }}>
                             <Text style={[styles.warningTitle, batteryState.criticalBatteryWarning && { color: 'white' }]}>
@@ -347,8 +373,8 @@ export default function BoxControlsScreen() {
                                 </Text>
                             </View>
                         </View>
-                        <Button 
-                            mode="contained" 
+                        <Button
+                            mode="contained"
                             onPress={handleResetLockout}
                             style={styles.resetButton}
                             buttonColor="#D32F2F"
@@ -389,11 +415,11 @@ export default function BoxControlsScreen() {
                 {/* Telemetry Grid */}
                 <Text variant="titleMedium" style={styles.sectionTitle}>Live Telemetry</Text>
                 <View style={styles.grid}>
-                    <TelemetryItem 
-                        icon={getBatteryIcon()} 
-                        label="Battery" 
-                        value={`${batteryState?.percentage ?? 85}%`} 
-                        color={getBatteryColor()} 
+                    <TelemetryItem
+                        icon={getBatteryIcon()}
+                        label="Battery"
+                        value={`${batteryState?.percentage ?? 85}%`}
+                        color={getBatteryColor()}
                     />
                     <TelemetryItem icon="thermometer" label="Temp" value={telemetry.temp} color="#FF9800" />
                     <TelemetryItem icon="wifi" label="Signal" value={telemetry.signal} color="#4CAF50" />
@@ -413,8 +439,8 @@ export default function BoxControlsScreen() {
                                 </Text>
                             </View>
                         </View>
-                        <Button 
-                            mode="contained" 
+                        <Button
+                            mode="contained"
                             onPress={handleBleTransfer}
                             style={{ marginTop: 12 }}
                             buttonColor="#2196F3"
@@ -495,9 +521,9 @@ export default function BoxControlsScreen() {
                     <Surface style={styles.modalContent} elevation={5}>
                         <View style={styles.modalHeader}>
                             <Text variant="titleLarge" style={{ fontWeight: 'bold' }}>BLE OTP Transfer</Text>
-                            <IconButton 
-                                icon="close" 
-                                size={24} 
+                            <IconButton
+                                icon="close"
+                                size={24}
                                 onPress={closeBleModal}
                             />
                         </View>
@@ -505,10 +531,10 @@ export default function BoxControlsScreen() {
                         <View style={styles.modalBody}>
                             {/* Status Icon */}
                             <View style={[styles.bleStatusIcon, {
-                                backgroundColor: 
+                                backgroundColor:
                                     bleStatus === 'success' ? '#E8F5E9' :
-                                    bleStatus === 'error' ? '#FFEBEE' :
-                                    '#E3F2FD'
+                                        bleStatus === 'error' ? '#FFEBEE' :
+                                            '#E3F2FD'
                             }]}>
                                 {bleStatus === 'scanning' || bleStatus === 'connecting' || bleStatus === 'transferring' ? (
                                     <ActivityIndicator size="large" color="#2196F3" />
@@ -524,10 +550,10 @@ export default function BoxControlsScreen() {
                             {/* Status Message */}
                             <Text variant="titleMedium" style={styles.bleStatusText}>
                                 {bleStatus === 'scanning' ? 'Scanning...' :
-                                 bleStatus === 'connecting' ? 'Connecting...' :
-                                 bleStatus === 'transferring' ? 'Transferring...' :
-                                 bleStatus === 'success' ? 'Success!' :
-                                 bleStatus === 'error' ? 'Failed' : 'Ready'}
+                                    bleStatus === 'connecting' ? 'Connecting...' :
+                                        bleStatus === 'transferring' ? 'Transferring...' :
+                                            bleStatus === 'success' ? 'Success!' :
+                                                bleStatus === 'error' ? 'Failed' : 'Ready'}
                             </Text>
                             <Text variant="bodyMedium" style={styles.bleMessage}>{bleMessage}</Text>
 

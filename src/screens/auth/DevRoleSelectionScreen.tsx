@@ -23,12 +23,11 @@ export default function DevRoleSelectionScreen() {
 
         login(mockUser);
 
-        if (role === 'admin') {
-            navigation.replace('AdminApp');
-        } else if (role === 'rider') {
-            navigation.replace('RiderApp');
-        } else {
+        if (role === 'customer') {
             navigation.replace('CustomerApp');
+        } else {
+            // For Dev Mode: We want to test the RoleSelection screen too
+            navigation.replace('RoleSelection');
         }
     };
 

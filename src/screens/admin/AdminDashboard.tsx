@@ -159,11 +159,19 @@ export default function AdminDashboard() {
                     </Button>
                     <Button
                         mode="contained"
+                        icon="lock-open-alert"
+                        style={[styles.quickLinkBtn, { backgroundColor: '#FF5722' }]}
+                        onPress={() => navigation.navigate('AdminRemoteUnlock')}
+                    >
+                        Unlock Box
+                    </Button>
+                    <Button
+                        mode="contained"
                         icon="checkbox-marked-circle-outline"
                         style={[styles.quickLinkBtn, { backgroundColor: '#FF9800' }]}
                         onPress={() => setOverrideModalVisible(true)}
                     >
-                        Override
+                        Complete Del.
                     </Button>
                 </ScrollView>
 

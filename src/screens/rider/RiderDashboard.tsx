@@ -28,6 +28,8 @@ import {
     showIncomingOrderNotification,
     addNotificationReceivedListener,
 } from '../../services/pushNotificationService';
+import CancellationModal from '../../components/modals/CancellationModal';
+import { requestCancellation, CancellationReason } from '../../services/cancellationService';
 
 export default function RiderDashboard() {
     const navigation = useNavigation<any>();
@@ -90,6 +92,10 @@ export default function RiderDashboard() {
     const [showOrderModal, setShowOrderModal] = useState(false);
     const [riderId] = useState('RIDER_001'); // Demo rider ID - in production, get from auth
     const [pushToken, setPushToken] = useState<string | null>(null);
+
+    // EC-32: Cancellation State
+    const [showCancelModal, setShowCancelModal] = useState(false);
+    const [cancelLoading, setCancelLoading] = useState(false);
 
     // Auto-start monitoring when component mounts (demo box ID)
     useEffect(() => {
@@ -336,6 +342,37 @@ export default function RiderDashboard() {
         setIncomingRequest(null);
     };
 
+    // EC-32: Handle Cancellation Submit
+    const handleCancellationSubmit = async (reason: CancellationReason, details: string) => {
+        setCancelLoading(true);
+        try {
+            const result = await requestCancellation({
+                deliveryId: nextDelivery.id,
+                boxId: 'BOX_001', // Demo box ID
+                reason,
+                reasonDetails: details,
+                riderId: riderId,
+                riderName: 'Juan Dela Cruz', // Demo name
+            });
+
+            if (result.success) {
+                setShowCancelModal(false);
+                Alert.alert(
+                    'Delivery Cancelled',
+                    'Cancellation processed successfully. Return OTP generated.',
+                    [{ text: 'OK' }]
+                );
+                // In a real app, refresh the list or navigate away
+            } else {
+                Alert.alert('Cancellation Failed', result.error || 'Unknown error');
+            }
+        } catch (err) {
+            Alert.alert('Error', 'An unexpected error occurred');
+        } finally {
+            setCancelLoading(false);
+        }
+    };
+
     const focusOnUser = () => {
         if (riderLocation && mapRef.current) {
             mapRef.current.animateToRegion({
@@ -524,12 +561,12 @@ export default function RiderDashboard() {
             <Surface style={[styles.actionIcon, { backgroundColor: color }]} elevation={2}>
                 <MaterialCommunityIcons name={icon} size={28} color="white" />
             </Surface>
-            <Text variant="labelMedium" style={styles.actionLabel}>{label}</Text>
+            <Text variant="labelMedium" style={[styles.actionLabel, { color: theme.colors.onSurface }]}>{label}</Text>
         </TouchableOpacity>
     );
 
     return (
-        <View style={styles.container}>
+        <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
             {/* Incoming Order Modal - overlays entire screen */}
             <IncomingOrderModal
                 visible={showOrderModal}
@@ -538,6 +575,14 @@ export default function RiderDashboard() {
                 onAccept={handleAcceptOrder}
                 onReject={handleRejectOrder}
                 onExpire={handleOrderExpire}
+            />
+
+            {/* EC-32: Cancellation Modal */}
+            <CancellationModal
+                visible={showCancelModal}
+                onDismiss={() => setShowCancelModal(false)}
+                onSubmit={handleCancellationSubmit}
+                loading={cancelLoading}
             />
 
             {/* Attractive Header */}
@@ -700,10 +745,10 @@ export default function RiderDashboard() {
                 )}
 
                 {/* Status Toggle */}
-                <View style={styles.statusToggleContainer}>
+                <View style={[styles.statusToggleContainer, { backgroundColor: theme.colors.surface }]}>
                     <View style={styles.statusContainer}>
                         <View style={[styles.statusDot, { backgroundColor: isOnline ? '#4CAF50' : '#9E9E9E' }]} />
-                        <Text variant="titleMedium" style={styles.statusText}>
+                        <Text variant="titleMedium" style={[styles.statusText, { color: theme.colors.onSurface }]}>
                             {isOnline ? 'You are Online' : 'You are Offline'}
                         </Text>
                     </View>
@@ -744,10 +789,10 @@ export default function RiderDashboard() {
 
                 {/* Quick Actions */}
                 <View style={styles.actionsGrid}>
-                    <QuickAction icon="qrcode-scan" label="Scan" onPress={() => console.log('Scan')} color="#4CAF50" />
+                    <QuickAction icon="cube-outline" label="Box Status" onPress={() => navigation.navigate('BoxControls')} color="#FF9800" />
                     <QuickAction icon="history" label="History" onPress={() => navigation.navigate('DeliveryRecords')} color="#2196F3" />
-                    <QuickAction icon="face-agent" label="Support" onPress={() => console.log('Support')} color="#9C27B0" />
-                    <QuickAction icon="cog" label="Settings" onPress={() => console.log('Settings')} color="#607D8B" />
+                    <QuickAction icon="face-agent" label="Support" onPress={() => navigation.navigate('RiderSupport')} color="#9C27B0" />
+                    <QuickAction icon="cog" label="Settings" onPress={() => navigation.navigate('RiderSettings')} color="#607D8B" />
                 </View>
 
                 {/* Next Delivery Card */}
@@ -756,34 +801,38 @@ export default function RiderDashboard() {
                     <View style={styles.mapContainer}>
                         {riderLocation ? (
                             <>
-                                <MapView
-                                    ref={mapRef}
-                                    style={styles.map}
-                                    initialRegion={{
-                                        latitude: riderLocation.coords.latitude,
-                                        longitude: riderLocation.coords.longitude,
-                                        latitudeDelta: 0.05,
-                                        longitudeDelta: 0.05,
-                                    }}
-                                >
-                                    <Marker
-                                        coordinate={{
+                                {/* <MapView
+                                        ref={mapRef}
+                                        style={styles.map}
+                                        initialRegion={{
                                             latitude: riderLocation.coords.latitude,
                                             longitude: riderLocation.coords.longitude,
+                                            latitudeDelta: 0.05,
+                                            longitudeDelta: 0.05,
                                         }}
-                                        title="You"
-                                        pinColor="blue"
-                                    />
-                                    <Marker
-                                        coordinate={destination}
-                                        title={destination.title}
-                                        description={destination.description}
-                                    />
-                                </MapView>
+                                    >
+                                        <Marker
+                                            coordinate={{
+                                                latitude: riderLocation.coords.latitude,
+                                                longitude: riderLocation.coords.longitude,
+                                            }}
+                                            title="You"
+                                            pinColor="blue"
+                                        />
+                                        <Marker
+                                            coordinate={destination}
+                                            title={destination.title}
+                                            description={destination.description}
+                                        />
+                                    </MapView> */}
+                                <View style={[styles.map, { backgroundColor: '#e1e1e1', justifyContent: 'center', alignItems: 'center' }]}>
+                                    <MaterialCommunityIcons name="map-marker-off" size={48} color="#757575" />
+                                    <Text style={{ color: '#757575', marginTop: 8 }}>Map Disabled (Crash Investigation)</Text>
+                                </View>
                                 <IconButton
                                     icon="crosshairs-gps"
                                     mode="contained"
-                                    containerColor="white"
+                                    containerColor={theme.colors.surface}
                                     iconColor={theme.colors.primary}
                                     size={20}
                                     style={styles.myLocationButton}
@@ -791,8 +840,8 @@ export default function RiderDashboard() {
                                 />
                             </>
                         ) : (
-                            <View style={styles.mapPlaceholder}>
-                                <Text>Loading Map...</Text>
+                            <View style={[styles.mapPlaceholder, { backgroundColor: theme.colors.surfaceVariant }]}>
+                                <Text style={{ color: theme.colors.onSurfaceVariant }}>Loading Map...</Text>
                             </View>
                         )}
                     </View>
@@ -829,6 +878,14 @@ export default function RiderDashboard() {
                             textColor={theme.colors.primary}
                         >
                             Details
+                        </Button>
+                        <Button
+                            mode="text"
+                            onPress={() => setShowCancelModal(true)}
+                            textColor={theme.colors.error}
+                            style={{ marginRight: 8 }}
+                        >
+                            Cancel
                         </Button>
                         <Button
                             mode="contained"
@@ -1017,7 +1074,7 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         marginBottom: 24,
         marginTop: 10,
-        backgroundColor: 'white',
+        // backgroundColor: 'white', // Handled by theme
         padding: 16,
         borderRadius: 16,
         elevation: 1,
@@ -1043,7 +1100,7 @@ const styles = StyleSheet.create({
     },
     jobCard: {
         marginBottom: 24,
-        backgroundColor: 'white',
+        // backgroundColor: 'white', // Handled by theme
         overflow: 'hidden',
         borderRadius: 16,
     },
@@ -1105,7 +1162,7 @@ const styles = StyleSheet.create({
         paddingTop: 0,
     },
     statusCard: {
-        backgroundColor: 'white',
+        // backgroundColor: 'white', // Handled by theme
         borderRadius: 16,
         padding: 16,
         marginBottom: 24,
@@ -1174,7 +1231,7 @@ const styles = StyleSheet.create({
         elevation: 1,
     },
     logsCard: {
-        backgroundColor: 'white',
+        // backgroundColor: 'white', // Handled by theme
         borderRadius: 16,
         padding: 16,
         maxHeight: 200,
@@ -1198,7 +1255,7 @@ const styles = StyleSheet.create({
         flex: 1,
     },
     gpsStatusCard: {
-        backgroundColor: 'white',
+        // backgroundColor: 'white', // Handled by theme
         borderRadius: 16,
         padding: 12,
         marginBottom: 16,

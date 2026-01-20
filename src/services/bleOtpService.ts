@@ -8,7 +8,6 @@
  * (e.g., box was in underground parking when delivery was assigned).
  */
 
-import { BleManager, Device, State, Characteristic } from 'react-native-ble-plx';
 import { Platform, PermissionsAndroid } from 'react-native';
 import { Buffer } from 'buffer';
 
@@ -22,6 +21,39 @@ const BLE_DEVICE_NAME_PREFIX = 'ParcelSafe-';
 const SCAN_TIMEOUT_MS = 15000;  // 15 seconds to find device
 const CONNECT_TIMEOUT_MS = 10000;  // 10 seconds to connect
 const WRITE_TIMEOUT_MS = 5000;  // 5 seconds for write operation
+
+// Helper for Expo Go compatibility
+let BleManager: any;
+let State: any;
+let isBleSupported = false;
+
+try {
+    const bleModule = require('react-native-ble-plx');
+    BleManager = bleModule.BleManager;
+    State = bleModule.State;
+    isBleSupported = true;
+} catch (error) {
+    console.log('[BLE] react-native-ble-plx not available (likely running in Expo Go)');
+    // Mock State enum to prevent undefined errors
+    State = {
+        PoweredOn: 'PoweredOn',
+        PoweredOff: 'PoweredOff',
+        Unauthorized: 'Unauthorized',
+        Unsupported: 'Unsupported',
+        Unknown: 'Unknown',
+    };
+
+    // Mock BleManager class
+    BleManager = class {
+        state() { return Promise.resolve(State.Unsupported); }
+        startDeviceScan() { console.log('[BLE Mock] Scanning...'); }
+        stopDeviceScan() { console.log('[BLE Mock] Scan stopped'); }
+        connectToDevice() { return Promise.reject(new Error('BLE not supported in Expo Go')); }
+        destroy() { }
+    };
+
+    isBleSupported = false;
+}
 
 // BLE Transfer Result
 export interface BleTransferResult {
@@ -51,8 +83,8 @@ export interface BleCallbacks {
 }
 
 class BleOtpService {
-    private manager: BleManager;
-    private connectedDevice: Device | null = null;
+    private manager: any; // Type as any to handle mock
+    private connectedDevice: any | null = null;
     private isScanning: boolean = false;
 
     constructor() {
@@ -63,9 +95,13 @@ class BleOtpService {
      * Check if Bluetooth is available and enabled
      */
     async checkBluetoothState(): Promise<{ available: boolean; enabled: boolean; message: string }> {
+        if (!isBleSupported) {
+            return { available: false, enabled: false, message: 'Bluetooth not supported in Expo Go' };
+        }
+
         try {
             const state = await this.manager.state();
-            
+
             switch (state) {
                 case State.PoweredOn:
                     return { available: true, enabled: true, message: 'Bluetooth is ready' };
@@ -92,7 +128,7 @@ class BleOtpService {
         }
 
         try {
-            const apiLevel = Platform.Version;
+            const apiLevel = Platform.Version as number;
 
             if (apiLevel >= 31) {
                 // Android 12+ requires BLUETOOTH_SCAN and BLUETOOTH_CONNECT
@@ -155,6 +191,27 @@ class BleOtpService {
             return [];
         }
 
+        if (!isBleSupported) {
+            console.log('[BLE] Scanning simulated in Expo Go');
+            callbacks?.onScanStart?.();
+
+            // Simulate finding a device
+            const scanPromise = new Promise<BleBoxDevice[]>(resolve => {
+                setTimeout(() => {
+                    const simulatedDevice = {
+                        id: 'SIMULATED_DEVICE_ID',
+                        name: 'ParcelSafe-001',
+                        rssi: -65,
+                        isConnectable: true
+                    };
+                    callbacks?.onDeviceFound?.(simulatedDevice);
+                    resolve([simulatedDevice]);
+                }, 2000);
+            });
+
+            return scanPromise;
+        }
+
         const foundDevices: BleBoxDevice[] = [];
         this.isScanning = true;
         callbacks?.onScanStart?.();
@@ -170,7 +227,7 @@ class BleOtpService {
             this.manager.startDeviceScan(
                 [BLE_SERVICE_UUID],
                 { allowDuplicates: false },
-                (error, device) => {
+                (error: any, device: any) => {
                     if (error) {
                         console.error('[BLE] Scan error:', error);
                         callbacks?.onError?.(error.message);
@@ -184,7 +241,7 @@ class BleOtpService {
                     if (device && device.name?.startsWith(BLE_DEVICE_NAME_PREFIX)) {
                         // Check if this is the target box (if specified)
                         const boxId = device.name.replace(BLE_DEVICE_NAME_PREFIX, '');
-                        
+
                         if (!targetBoxId || boxId === targetBoxId) {
                             const bleDevice: BleBoxDevice = {
                                 id: device.id,
@@ -217,7 +274,14 @@ class BleOtpService {
     /**
      * Connect to a Smart Top Box by device ID
      */
-    async connectToBox(deviceId: string, callbacks?: BleCallbacks): Promise<Device | null> {
+    async connectToBox(deviceId: string, callbacks?: BleCallbacks): Promise<any | null> {
+        if (!isBleSupported) {
+            callbacks?.onConnecting?.(deviceId);
+            await new Promise(resolve => setTimeout(resolve, 1500));
+            callbacks?.onConnected?.('ParcelSafe-001');
+            return { name: 'ParcelSafe-001', id: deviceId };
+        }
+
         try {
             callbacks?.onConnecting?.(deviceId);
             console.log(`[BLE] Connecting to ${deviceId}...`);
@@ -251,6 +315,13 @@ class BleOtpService {
         deliveryId: string,
         callbacks?: BleCallbacks
     ): Promise<BleTransferResult> {
+        if (!isBleSupported) {
+            callbacks?.onTransferring?.();
+            await new Promise(resolve => setTimeout(resolve, 2000));
+            callbacks?.onSuccess?.('ParcelSafe-001');
+            return { success: true, message: 'SIMULATED OTP TRANSFER SUCCESS', deviceName: 'ParcelSafe-001' };
+        }
+
         if (!this.connectedDevice) {
             return {
                 success: false,
@@ -283,7 +354,7 @@ class BleOtpService {
                 BLE_STATUS_CHAR_UUID
             );
 
-            const status = statusChar.value 
+            const status = statusChar.value
                 ? Buffer.from(statusChar.value, 'base64').toString('utf8')
                 : '';
 
@@ -333,11 +404,14 @@ class BleOtpService {
     ): Promise<BleTransferResult> {
         // 1. Check Bluetooth state
         const btState = await this.checkBluetoothState();
-        if (!btState.enabled) {
-            return {
-                success: false,
-                message: btState.message,
-            };
+        if (!btState.enabled && btState.message !== 'Bluetooth in Expo Go (Simulated)') {
+            // Continue if just Expo limitation, otherwise return error
+            if (isBleSupported || !btState.message.includes('Expo')) {
+                return {
+                    success: false,
+                    message: btState.message,
+                };
+            }
         }
 
         // 2. Request permissions
@@ -382,6 +456,8 @@ class BleOtpService {
      * Disconnect from current device
      */
     async disconnect(): Promise<void> {
+        if (!isBleSupported) return;
+
         if (this.connectedDevice) {
             try {
                 await this.connectedDevice.cancelConnection();
@@ -397,6 +473,8 @@ class BleOtpService {
      * Stop any ongoing scan
      */
     stopScan(): void {
+        if (!isBleSupported) return;
+
         if (this.isScanning) {
             this.manager.stopDeviceScan();
             this.isScanning = false;
@@ -408,6 +486,8 @@ class BleOtpService {
      * Clean up resources
      */
     destroy(): void {
+        if (!isBleSupported) return;
+
         this.stopScan();
         this.disconnect();
         this.manager.destroy();

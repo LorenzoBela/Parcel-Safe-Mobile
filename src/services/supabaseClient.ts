@@ -90,3 +90,12 @@ export async function getDeliveryByIdOrTracking(
     if (error || !data) return null;
     return data as Delivery;
 }
+
+/**
+ * Get the current authenticated user
+ */
+export async function getCurrentUser() {
+    if (!supabase) return null;
+    const { data: { user } } = await supabase.auth.getUser();
+    return user;
+}

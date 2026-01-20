@@ -8,7 +8,8 @@ export default function DeliveryRecordsScreen() {
     const theme = useTheme();
     const navigation = useNavigation<any>();
     const [searchQuery, setSearchQuery] = useState('');
-    const [filter, setFilter] = useState('All'); // All, Today, This Week
+    const [filter, setFilter] = useState('All'); // All, Today, Week, Month
+    const [viewMode, setViewMode] = useState<'list' | 'grid'>('list');
 
     // Mock Data for History
     const historyData = [
@@ -86,13 +87,33 @@ export default function DeliveryRecordsScreen() {
         }
     };
 
+    const parseDate = (dateStr) => {
+        // Parse "Dec 2, 2025" format
+        return new Date(dateStr);
+    };
+
+    // Mock "Current Date" as Dec 2, 2025 for demo purposes
+    const currentDate = new Date('2025-12-02');
+
     const filteredData = historyData.filter(item => {
         const matchesSearch = item.trk.toLowerCase().includes(searchQuery.toLowerCase()) ||
             item.customer.toLowerCase().includes(searchQuery.toLowerCase());
-        // Simple mock filter logic
-        const matchesFilter = filter === 'All' ||
-            (filter === 'Today' && item.date === 'Dec 2, 2025') ||
-            (filter === 'This Week');
+
+        const itemDate = parseDate(item.date);
+        let matchesFilter = true;
+
+        if (filter === 'Today') {
+            matchesFilter = item.date === 'Dec 2, 2025';
+        } else if (filter === 'This Week') {
+            // Simple week check (within 7 days back)
+            const diffTime = Math.abs(currentDate.getTime() - itemDate.getTime());
+            const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+            matchesFilter = diffDays <= 7;
+        } else if (filter === 'This Month') {
+            matchesFilter = itemDate.getMonth() === currentDate.getMonth() &&
+                itemDate.getFullYear() === currentDate.getFullYear();
+        }
+
         return matchesSearch && matchesFilter;
     });
 
@@ -101,12 +122,12 @@ export default function DeliveryRecordsScreen() {
         .reduce((sum, item) => sum + parseFloat(item.earnings.replace('₱', '')), 0);
 
     const renderItem = ({ item }) => (
-        <Card style={styles.card} mode="elevated" onPress={() => navigation.navigate('DeliveryDetail', { delivery: item })}>
+        <Card style={[styles.card, { backgroundColor: theme.colors.surface }]} mode="elevated" onPress={() => navigation.navigate('DeliveryDetail', { delivery: item })}>
             <Card.Content>
                 <View style={styles.cardHeader}>
                     <View>
                         <Text variant="titleMedium" style={{ fontWeight: 'bold' }}>{item.trk}</Text>
-                        <Text variant="bodySmall" style={{ color: '#888' }}>{item.date} • {item.time}</Text>
+                        <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>{item.date} • {item.time}</Text>
                     </View>
                     <View style={{ alignItems: 'flex-end' }}>
                         <Text variant="titleMedium" style={{ fontWeight: 'bold', color: theme.colors.primary }}>{item.earnings}</Text>
@@ -120,43 +141,68 @@ export default function DeliveryRecordsScreen() {
                     </View>
                 </View>
 
-                <View style={styles.divider} />
+                <View style={[styles.divider, { backgroundColor: theme.colors.outlineVariant }]} />
 
                 <View style={styles.row}>
                     <View style={styles.iconBox}>
-                        <MaterialCommunityIcons name="account" size={16} color="#555" />
+                        <MaterialCommunityIcons name="account" size={16} color={theme.colors.onSurfaceVariant} />
                     </View>
-                    <Text variant="bodyMedium" style={styles.rowText}>{item.customer}</Text>
+                    <Text variant="bodyMedium" style={[styles.rowText, { color: theme.colors.onSurface }]}>{item.customer}</Text>
                 </View>
 
                 <View style={styles.row}>
                     <View style={styles.iconBox}>
-                        <MaterialCommunityIcons name="map-marker" size={16} color="#555" />
+                        <MaterialCommunityIcons name="map-marker" size={16} color={theme.colors.onSurfaceVariant} />
                     </View>
-                    <Text variant="bodyMedium" numberOfLines={1} style={styles.rowText}>{item.address}</Text>
+                    <Text variant="bodyMedium" numberOfLines={1} style={[styles.rowText, { color: theme.colors.onSurface }]}>{item.address}</Text>
                 </View>
 
             </Card.Content>
         </Card>
     );
 
+    const renderGridItem = ({ item }) => (
+        <Card style={[styles.gridCard, { backgroundColor: theme.colors.surface }]} mode="elevated" onPress={() => navigation.navigate('DeliveryDetail', { delivery: item })}>
+            <Card.Content style={{ padding: 12 }}>
+                <Text variant="labelLarge" style={{ fontWeight: 'bold', fontSize: 12 }} numberOfLines={1}>{item.trk}</Text>
+                <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant, fontSize: 10, marginBottom: 8 }}>{item.date}</Text>
+
+                <Text variant="titleMedium" style={{ fontWeight: 'bold', color: theme.colors.primary, marginBottom: 4 }}>{item.earnings}</Text>
+
+                <View style={[styles.divider, { backgroundColor: theme.colors.outlineVariant }]} />
+
+                <Text numberOfLines={1} style={{ fontSize: 12, color: theme.colors.onSurface, fontWeight: 'bold' }}>{item.customer}</Text>
+                <Chip
+                    style={{ backgroundColor: getStatusColor(item.status) + '20', height: 20, marginTop: 4, alignSelf: 'flex-start' }}
+                    textStyle={{ color: getStatusColor(item.status), fontWeight: 'bold', fontSize: 9, lineHeight: 10 }}
+                    compact
+                >
+                    {item.status}
+                </Chip>
+            </Card.Content>
+        </Card>
+    );
+
     return (
-        <View style={styles.container}>
-            <View style={styles.header}>
+        <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
+            <View style={[styles.header, { backgroundColor: theme.colors.surface }]}>
                 <View style={styles.headerTop}>
                     <IconButton icon="arrow-left" onPress={() => navigation.goBack()} />
                     <Text variant="headlineSmall" style={{ fontWeight: 'bold' }}>History & Earnings</Text>
-                    <View style={{ width: 48 }} />
+                    <IconButton
+                        icon={viewMode === 'list' ? 'view-grid' : 'view-list'} // Toggle icon
+                        onPress={() => setViewMode(prev => prev === 'list' ? 'grid' : 'list')}
+                    />
                 </View>
 
                 {/* Summary Stats */}
                 <View style={styles.statsContainer}>
-                    <Surface style={styles.statCard} elevation={2}>
-                        <Text variant="labelMedium" style={{ color: '#666' }}>Total Jobs</Text>
+                    <Surface style={[styles.statCard, { backgroundColor: theme.colors.surface }]} elevation={2}>
+                        <Text variant="labelMedium" style={{ color: theme.colors.onSurfaceVariant }}>Total Jobs</Text>
                         <Text variant="headlineMedium" style={{ fontWeight: 'bold', color: '#2196F3' }}>{filteredData.length}</Text>
                     </Surface>
-                    <Surface style={styles.statCard} elevation={2}>
-                        <Text variant="labelMedium" style={{ color: '#666' }}>Total Earnings</Text>
+                    <Surface style={[styles.statCard, { backgroundColor: theme.colors.surface }]} elevation={2}>
+                        <Text variant="labelMedium" style={{ color: theme.colors.onSurfaceVariant }}>Total Earnings</Text>
                         <Text variant="headlineMedium" style={{ fontWeight: 'bold', color: '#4CAF50' }}>₱{totalEarnings.toFixed(2)}</Text>
                     </Surface>
                 </View>
@@ -167,18 +213,18 @@ export default function DeliveryRecordsScreen() {
                     placeholder="Search history..."
                     onChangeText={setSearchQuery}
                     value={searchQuery}
-                    style={styles.searchBar}
+                    style={[styles.searchBar, { backgroundColor: theme.colors.elevation.level1 }]}
                     inputStyle={{ minHeight: 0 }}
                 />
 
                 <View style={styles.filterContainer}>
-                    {['All', 'Today', 'This Week'].map((f) => (
+                    {['All', 'Today', 'This Week', 'This Month'].map((f) => (
                         <Chip
                             key={f}
                             selected={filter === f}
                             onPress={() => setFilter(f)}
-                            style={[styles.filterChip, filter === f && { backgroundColor: '#E3F2FD', borderColor: '#2196F3' }]}
-                            textStyle={{ color: filter === f ? '#2196F3' : '#666' }}
+                            style={[styles.filterChip, filter === f && { backgroundColor: theme.colors.primaryContainer, borderColor: theme.colors.primary }]}
+                            textStyle={{ color: filter === f ? theme.colors.onPrimaryContainer : theme.colors.onSurface }}
                             showSelectedOverlay
                         >
                             {f}
@@ -187,11 +233,14 @@ export default function DeliveryRecordsScreen() {
                 </View>
 
                 <FlatList
+                    key={viewMode} // Forces re-render when switching modes
                     data={filteredData}
-                    renderItem={renderItem}
+                    renderItem={viewMode === 'list' ? renderItem : renderGridItem}
                     keyExtractor={item => item.id}
                     contentContainerStyle={styles.listContent}
                     showsVerticalScrollIndicator={false}
+                    numColumns={viewMode === 'list' ? 1 : 2}
+                    columnWrapperStyle={viewMode === 'grid' ? { justifyContent: 'space-between' } : undefined}
                 />
             </View>
         </View>
@@ -201,10 +250,10 @@ export default function DeliveryRecordsScreen() {
 const styles = StyleSheet.create({
     container: {
         flex: 1,
-        backgroundColor: '#F7F9FC',
+        // backgroundColor: '#F7F9FC', // Handled by inline check relative to theme in root or ThemeProvider, removing hardcode
     },
     header: {
-        backgroundColor: 'white',
+        // backgroundColor: 'white', // Theme
         paddingBottom: 20,
         elevation: 2,
         borderBottomLeftRadius: 24,
@@ -239,7 +288,7 @@ const styles = StyleSheet.create({
     searchBar: {
         marginHorizontal: 20,
         marginBottom: 12,
-        backgroundColor: 'white',
+        // backgroundColor: 'white',
         elevation: 1,
         borderRadius: 12,
     },
@@ -250,9 +299,9 @@ const styles = StyleSheet.create({
     },
     filterChip: {
         marginRight: 8,
-        backgroundColor: 'white',
+        // backgroundColor: 'white',
         borderWidth: 1,
-        borderColor: '#eee',
+        // borderColor: '#eee',
     },
     listContent: {
         paddingHorizontal: 20,
@@ -260,8 +309,14 @@ const styles = StyleSheet.create({
     },
     card: {
         marginBottom: 12,
-        backgroundColor: 'white',
+        // backgroundColor: 'white',
         borderRadius: 12,
+    },
+    gridCard: {
+        marginBottom: 12,
+        // backgroundColor: 'white',
+        borderRadius: 12,
+        width: '48%',
     },
     cardHeader: {
         flexDirection: 'row',

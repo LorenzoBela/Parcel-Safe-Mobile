@@ -99,3 +99,23 @@ export function formatAdminId(adminId: string): string {
     if (adminId.length <= 20) return adminId;
     return `${adminId.substring(0, 8)}...${adminId.substring(adminId.length - 4)}`;
 }
+
+/**
+ * Trigger an admin override to unlock a box
+ */
+export async function triggerAdminOverride(
+    boxId: string,
+    adminId: string,
+    reason: string
+): Promise<void> {
+    const db = getFirebaseDatabase();
+    const overrideRef = ref(db, `boxes/${boxId}/admin_override`);
+
+    await set(overrideRef, {
+        active: true,
+        triggered_by: adminId,
+        triggered_at: serverTimestamp(),
+        reason: reason,
+        processed: false
+    });
+}

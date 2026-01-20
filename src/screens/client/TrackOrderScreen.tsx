@@ -5,11 +5,22 @@ import { Text, Card, Avatar, Button, IconButton, Surface, useTheme } from 'react
 import { useNavigation } from '@react-navigation/native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { subscribeToDisplay } from '../../services/firebaseClient';
+import {
+    subscribeToCancellation,
+    CancellationState,
+    formatCancellationReason
+} from '../../services/cancellationService';
+import * as Clipboard from 'expo-clipboard';
+import { Alert } from 'react-native';
 
 export default function TrackOrderScreen() {
     const navigation = useNavigation<any>();
     const theme = useTheme();
     const [displayStatus, setDisplayStatus] = useState<'OK' | 'DEGRADED' | 'FAILED'>('OK');
+    const [cancellation, setCancellation] = useState<CancellationState | null>(null);
+
+    // Mock Delivery ID (in real app, get from route params)
+    const deliveryId = 'TRK-8821-9023';
 
     // Mock coordinates
     const boxLocation = { latitude: 14.5995, longitude: 120.9842 };
@@ -25,13 +36,29 @@ export default function TrackOrderScreen() {
 
     useEffect(() => {
         // EC-86: Monitor display health
-        const unsubscribe = subscribeToDisplay('BOX_001', (displayState) => {
+        const unsubscribeDisplay = subscribeToDisplay('BOX_001', (displayState) => {
             if (displayState) {
                 setDisplayStatus(displayState.status);
             }
         });
-        return () => unsubscribe();
+
+        // EC-32: Monitor cancellation
+        const unsubscribeCancellation = subscribeToCancellation(deliveryId, (state) => {
+            setCancellation(state);
+        });
+
+        return () => {
+            unsubscribeDisplay();
+            unsubscribeCancellation();
+        };
     }, []);
+
+    const copyReturnOtp = async () => {
+        if (cancellation?.returnOtp) {
+            await Clipboard.setStringAsync(cancellation.returnOtp);
+            Alert.alert('Copied', 'Return OTP copied to clipboard');
+        }
+    };
 
     return (
         <View style={styles.container}>
@@ -94,8 +121,20 @@ export default function TrackOrderScreen() {
 
                 <View style={styles.statusHeader}>
                     <View>
-                        <Text variant="titleLarge" style={{ fontWeight: 'bold', color: theme.colors.onSurface }}>Arriving in 10 mins</Text>
-                        <Text variant="bodyMedium" style={{ color: theme.colors.onSurfaceVariant }}>On the way to your location</Text>
+                        {cancellation ? (
+                            <Text variant="titleLarge" style={{ fontWeight: 'bold', color: theme.colors.error }}>Delivery Cancelled</Text>
+                        ) : (
+                            <Text variant="titleLarge" style={{ fontWeight: 'bold', color: theme.colors.onSurface }}>Arriving in 10 mins</Text>
+                        )}
+
+                        {cancellation ? (
+                            <Text variant="bodyMedium" style={{ color: theme.colors.onSurfaceVariant }}>
+                                Reason: {formatCancellationReason(cancellation.reason)}
+                            </Text>
+                        ) : (
+                            <Text variant="bodyMedium" style={{ color: theme.colors.onSurfaceVariant }}>On the way to your location</Text>
+                        )}
+
                         {/* EC-86: Display hint when keypad unavailable */}
                         {displayStatus === 'FAILED' && (
                             <Text variant="bodySmall" style={{ color: theme.colors.error, marginTop: 4 }}>
@@ -103,10 +142,34 @@ export default function TrackOrderScreen() {
                             </Text>
                         )}
                     </View>
-                    <Surface style={styles.etaBadge} elevation={0}>
-                        <Text style={{ color: 'white', fontWeight: 'bold' }}>10 min</Text>
-                    </Surface>
+                    {!cancellation && (
+                        <Surface style={styles.etaBadge} elevation={0}>
+                            <Text style={{ color: 'white', fontWeight: 'bold' }}>10 min</Text>
+                        </Surface>
+                    )}
                 </View>
+
+                {/* EC-32: Cancellation Details & Return OTP */}
+                {cancellation && (
+                    <Surface style={[styles.cancellationCard, { backgroundColor: theme.colors.errorContainer }]} elevation={1}>
+                        <View style={styles.cancellationHeader}>
+                            <MaterialCommunityIcons name="alert-circle-outline" size={24} color={theme.colors.error} />
+                            <Text style={{ marginLeft: 8, color: theme.colors.onSurface, fontWeight: 'bold' }}>Return Authorization</Text>
+                        </View>
+                        <Text style={{ marginBottom: 12, color: theme.colors.onSurfaceVariant }}>
+                            Please provide this OTP to the rider to retrieve your package.
+                        </Text>
+
+                        <TouchableOpacity onPress={copyReturnOtp} activeOpacity={0.7}>
+                            <Surface style={styles.otpContainer} elevation={2}>
+                                <Text variant="displaySmall" style={{ letterSpacing: 4, fontWeight: 'bold', color: theme.colors.primary }}>
+                                    {cancellation.returnOtp}
+                                </Text>
+                                <MaterialCommunityIcons name="content-copy" size={20} color={theme.colors.primary} style={{ position: 'absolute', right: 16 }} />
+                            </Surface>
+                        </TouchableOpacity>
+                    </Surface>
+                )}
 
                 <View style={[styles.divider, { backgroundColor: theme.colors.outlineVariant }]} />
 
@@ -140,14 +203,16 @@ export default function TrackOrderScreen() {
                     </View>
                 </View>
 
-                <Button
-                    mode="contained"
-                    style={styles.viewOtpBtn}
-                    icon="lock-open"
-                    onPress={() => navigation.navigate('OTP')}
-                >
-                    View Secure OTP
-                </Button>
+                {!cancellation && (
+                    <Button
+                        mode="contained"
+                        style={styles.viewOtpBtn}
+                        icon="lock-open"
+                        onPress={() => navigation.navigate('OTP')}
+                    >
+                        View Secure OTP
+                    </Button>
+                )}
             </View>
         </View>
     );
@@ -224,5 +289,23 @@ const styles = StyleSheet.create({
     viewOtpBtn: {
         borderRadius: 12,
         paddingVertical: 6,
+    },
+    cancellationCard: {
+        padding: 16,
+        borderRadius: 12,
+        marginBottom: 20,
+    },
+    cancellationHeader: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        marginBottom: 8,
+    },
+    otpContainer: {
+        backgroundColor: 'white',
+        padding: 16,
+        borderRadius: 8,
+        alignItems: 'center',
+        justifyContent: 'center',
+        flexDirection: 'row',
     },
 });

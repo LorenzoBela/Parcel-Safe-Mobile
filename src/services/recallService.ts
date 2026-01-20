@@ -1,5 +1,5 @@
-import database from '@react-native-firebase/database';
-import { DATA_KEYS } from '../constants/firebaseKeys';
+import { getFirebaseDatabase } from './firebaseClient';
+import { ref, onValue, off } from 'firebase/database';
 
 /**
  * Service to handle Package Recall (EC-85)
@@ -8,6 +8,7 @@ import { DATA_KEYS } from '../constants/firebaseKeys';
 class RecallService {
     private static instance: RecallService;
     private recallListener: ((isRecalled: boolean, returnOtp: string | null) => void) | null = null;
+    private activeRef: any = null;
 
     private constructor() { }
 
@@ -27,9 +28,11 @@ class RecallService {
         if (!deliveryId) return;
 
         this.recallListener = callback;
+        const db = getFirebaseDatabase();
         const path = `deliveries/${deliveryId}/recall`;
+        this.activeRef = ref(db, path);
 
-        database().ref(path).on('value', (snapshot) => {
+        onValue(this.activeRef, (snapshot) => {
             const data = snapshot.val();
             if (data && data.is_recalled) {
                 // Return OTP might be null if not yet generated, but usually is sent with recall
@@ -45,9 +48,10 @@ class RecallService {
      * @param deliveryId 
      */
     public stopListening(deliveryId: string) {
-        if (!deliveryId) return;
-        const path = `deliveries/${deliveryId}/recall`;
-        database().ref(path).off();
+        if (!deliveryId || !this.activeRef) return;
+
+        off(this.activeRef);
+        this.activeRef = null;
         this.recallListener = null;
     }
 }

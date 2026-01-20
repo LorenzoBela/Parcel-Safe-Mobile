@@ -5,7 +5,8 @@
  * finding nearby available riders and dispatching notifications.
  */
 
-import database from '@react-native-firebase/database';
+import { getFirebaseDatabase } from './firebaseClient';
+import { ref, get, set, update, remove, onValue, off } from 'firebase/database';
 import { showIncomingOrderNotification } from './pushNotificationService';
 
 // Search radius in kilometers (as per user requirement)
@@ -123,9 +124,8 @@ export async function findNearbyRiders(
     radiusKm: number = SEARCH_RADIUS_KM
 ): Promise<RiderLocation[]> {
     try {
-        const snapshot = await database()
-            .ref('/online_riders')
-            .once('value');
+        const db = getFirebaseDatabase();
+        const snapshot = await get(ref(db, '/online_riders'));
 
         if (!snapshot.exists()) {
             return [];
@@ -174,21 +174,20 @@ export async function findNearbyRiders(
  */
 export async function createPendingBooking(request: BookingRequest): Promise<boolean> {
     try {
-        await database()
-            .ref(`/pending_bookings/${request.bookingId}`)
-            .set({
-                customer_id: request.customerId,
-                pickup_lat: request.pickupLat,
-                pickup_lng: request.pickupLng,
-                pickup_address: request.pickupAddress,
-                dropoff_lat: request.dropoffLat,
-                dropoff_lng: request.dropoffLng,
-                dropoff_address: request.dropoffAddress,
-                estimated_fare: request.estimatedFare,
-                status: 'SEARCHING',
-                accepted_by: null,
-                created_at: request.createdAt,
-            });
+        const db = getFirebaseDatabase();
+        await set(ref(db, `/pending_bookings/${request.bookingId}`), {
+            customer_id: request.customerId,
+            pickup_lat: request.pickupLat,
+            pickup_lng: request.pickupLng,
+            pickup_address: request.pickupAddress,
+            dropoff_lat: request.dropoffLat,
+            dropoff_lng: request.dropoffLng,
+            dropoff_address: request.dropoffAddress,
+            estimated_fare: request.estimatedFare,
+            status: 'SEARCHING',
+            accepted_by: null,
+            created_at: request.createdAt,
+        });
 
         return true;
     } catch (error) {
@@ -205,24 +204,23 @@ export async function sendOrderRequestToRider(
     request: RiderOrderRequest
 ): Promise<boolean> {
     try {
+        const db = getFirebaseDatabase();
         const requestId = `req_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 
-        await database()
-            .ref(`/rider_requests/${riderId}/${requestId}`)
-            .set({
-                booking_id: request.bookingId,
-                pickup_address: request.pickupAddress,
-                dropoff_address: request.dropoffAddress,
-                pickup_lat: request.pickupLat,
-                pickup_lng: request.pickupLng,
-                dropoff_lat: request.dropoffLat,
-                dropoff_lng: request.dropoffLng,
-                distance_to_pickup_km: request.distanceToPickupKm,
-                estimated_fare: request.estimatedFare,
-                expires_at: request.expiresAt,
-                customer_id: request.customerId,
-                status: 'PENDING',
-            });
+        await set(ref(db, `/rider_requests/${riderId}/${requestId}`), {
+            booking_id: request.bookingId,
+            pickup_address: request.pickupAddress,
+            dropoff_address: request.dropoffAddress,
+            pickup_lat: request.pickupLat,
+            pickup_lng: request.pickupLng,
+            dropoff_lat: request.dropoffLat,
+            dropoff_lng: request.dropoffLng,
+            distance_to_pickup_km: request.distanceToPickupKm,
+            estimated_fare: request.estimatedFare,
+            expires_at: request.expiresAt,
+            customer_id: request.customerId,
+            status: 'PENDING',
+        });
 
         return true;
     } catch (error) {
@@ -292,28 +290,23 @@ export async function acceptOrder(
     requestId: string
 ): Promise<boolean> {
     try {
+        const db = getFirebaseDatabase();
         // Update the pending booking
-        await database()
-            .ref(`/pending_bookings/${bookingId}`)
-            .update({
-                status: 'ACCEPTED',
-                accepted_by: riderId,
-                accepted_at: Date.now(),
-            });
+        await update(ref(db, `/pending_bookings/${bookingId}`), {
+            status: 'ACCEPTED',
+            accepted_by: riderId,
+            accepted_at: Date.now(),
+        });
 
         // Mark the request as accepted
-        await database()
-            .ref(`/rider_requests/${riderId}/${requestId}`)
-            .update({
-                status: 'ACCEPTED',
-            });
+        await update(ref(db, `/rider_requests/${riderId}/${requestId}`), {
+            status: 'ACCEPTED',
+        });
 
         // Mark rider as unavailable
-        await database()
-            .ref(`/online_riders/${riderId}`)
-            .update({
-                is_available: false,
-            });
+        await update(ref(db, `/online_riders/${riderId}`), {
+            is_available: false,
+        });
 
         return true;
     } catch (error) {
@@ -330,12 +323,11 @@ export async function rejectOrder(
     requestId: string
 ): Promise<boolean> {
     try {
-        // Remove the request
-        await database()
-            .ref(`/rider_requests/${riderId}/${requestId}`)
-            .update({
-                status: 'REJECTED',
-            });
+        const db = getFirebaseDatabase();
+        // Remove the request (or update status) (Logic in original was update status)
+        await update(ref(db, `/rider_requests/${riderId}/${requestId}`), {
+            status: 'REJECTED',
+        });
 
         return true;
     } catch (error) {
@@ -349,12 +341,11 @@ export async function rejectOrder(
  */
 export async function cancelBooking(bookingId: string): Promise<boolean> {
     try {
-        await database()
-            .ref(`/pending_bookings/${bookingId}`)
-            .update({
-                status: 'CANCELLED',
-                cancelled_at: Date.now(),
-            });
+        const db = getFirebaseDatabase();
+        await update(ref(db, `/pending_bookings/${bookingId}`), {
+            status: 'CANCELLED',
+            cancelled_at: Date.now(),
+        });
 
         return true;
     } catch (error) {
@@ -370,9 +361,10 @@ export function subscribeToBookingStatus(
     bookingId: string,
     callback: (status: string, riderId: string | null) => void
 ): () => void {
-    const ref = database().ref(`/pending_bookings/${bookingId}`);
+    const db = getFirebaseDatabase();
+    const statusRef = ref(db, `/pending_bookings/${bookingId}`);
 
-    const listener = ref.on('value', (snapshot) => {
+    const unsubscribe = onValue(statusRef, (snapshot) => {
         if (snapshot.exists()) {
             const data = snapshot.val();
             callback(data.status, data.accepted_by || null);
@@ -380,7 +372,7 @@ export function subscribeToBookingStatus(
     });
 
     // Return unsubscribe function
-    return () => ref.off('value', listener);
+    return () => off(statusRef);
 }
 
 /**
@@ -390,9 +382,10 @@ export function subscribeToRiderRequests(
     riderId: string,
     callback: (requests: Array<{ requestId: string; data: RiderOrderRequest }>) => void
 ): () => void {
-    const ref = database().ref(`/rider_requests/${riderId}`);
+    const db = getFirebaseDatabase();
+    const requestsRef = ref(db, `/rider_requests/${riderId}`);
 
-    const listener = ref.on('value', (snapshot) => {
+    const unsubscribe = onValue(requestsRef, (snapshot) => {
         if (!snapshot.exists()) {
             callback([]);
             return;
@@ -429,7 +422,7 @@ export function subscribeToRiderRequests(
     });
 
     // Return unsubscribe function
-    return () => ref.off('value', listener);
+    return () => off(requestsRef);
 }
 
 /**
@@ -443,6 +436,7 @@ export async function updateRiderStatus(
     pushToken?: string
 ): Promise<boolean> {
     try {
+        const db = getFirebaseDatabase();
         const updateData: any = {
             lat,
             lng,
@@ -454,9 +448,7 @@ export async function updateRiderStatus(
             updateData.push_token = pushToken;
         }
 
-        await database()
-            .ref(`/online_riders/${riderId}`)
-            .set(updateData);
+        await set(ref(db, `/online_riders/${riderId}`), updateData);
 
         return true;
     } catch (error) {
@@ -470,9 +462,8 @@ export async function updateRiderStatus(
  */
 export async function removeRiderFromOnline(riderId: string): Promise<boolean> {
     try {
-        await database()
-            .ref(`/online_riders/${riderId}`)
-            .remove();
+        const db = getFirebaseDatabase();
+        await remove(ref(db, `/online_riders/${riderId}`));
 
         return true;
     } catch (error) {
