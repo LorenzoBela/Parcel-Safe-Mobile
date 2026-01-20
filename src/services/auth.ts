@@ -111,6 +111,8 @@ export const signInWithGoogleAndSyncProfile = async (): Promise<AuthSessionResul
 
   const userId = authData.user.id;
   const fullNameFromGoogle = googleResult.name || authData.user.user_metadata?.full_name || undefined;
+  const emailFromGoogle = googleResult.email || authData.user.email;
+  const photoFromGoogle = googleResult.photo || authData.user.user_metadata?.avatar_url || authData.user.user_metadata?.picture;
 
   const { data: existingProfile, error: profileError } = await supabase
     .from('profiles')
@@ -130,7 +132,10 @@ export const signInWithGoogleAndSyncProfile = async (): Promise<AuthSessionResul
       .insert({
         id: userId,
         role: 'CUSTOMER',
-        full_name: fullNameFromGoogle || authData.user.email || null,
+        full_name: fullNameFromGoogle || emailFromGoogle || null,
+        email: emailFromGoogle,
+        avatar_url: photoFromGoogle,
+        updated_at: new Date().toISOString(),
       })
       .select('role, full_name')
       .single();
@@ -140,6 +145,15 @@ export const signInWithGoogleAndSyncProfile = async (): Promise<AuthSessionResul
     }
 
     profile = createdProfile;
+  } else if (photoFromGoogle) {
+    // Update avatar_url for existing users if they don't have one or if it changed
+    await supabase
+      .from('profiles')
+      .update({ 
+        avatar_url: photoFromGoogle,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', userId);
   }
 
   return {

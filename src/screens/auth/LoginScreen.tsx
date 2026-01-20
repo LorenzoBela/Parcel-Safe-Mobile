@@ -72,18 +72,6 @@ export default function LoginScreen() {
                     </Text>
 
                 )}
-
-                {/* Dev Login Fallback */}
-                {(!googleSignInAvailable || __DEV__) && (
-                    <Button
-                        mode="text"
-                        onPress={() => navigation.navigate('DevRoleSelection')}
-                        style={{ marginTop: 20 }}
-                        textColor={theme.colors.secondary}
-                    >
-                        Dev Login
-                    </Button>
-                )}
             </View>
         </KeyboardAvoidingView >
     );

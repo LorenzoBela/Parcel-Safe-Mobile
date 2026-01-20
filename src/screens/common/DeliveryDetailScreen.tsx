@@ -1,15 +1,16 @@
-import React from 'react';
+import React, { useEffect, useMemo } from 'react';
 import { View, StyleSheet, ScrollView, Image, Dimensions } from 'react-native';
 import { Text, Card, Button, useTheme, Chip, Surface, IconButton } from 'react-native-paper';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import MapView, { Marker, Polyline } from 'react-native-maps';
+import MapboxGL from '@rnmapbox/maps';
 
 export default function DeliveryDetailScreen() {
     const navigation = useNavigation<any>();
     const route = useRoute<any>();
     const theme = useTheme();
     const { delivery } = route.params;
+    const MAPBOX_TOKEN = process.env.EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN;
 
     // Mock coordinates for the map (Manila area)
     const deliveryLocation = {
@@ -39,6 +40,26 @@ export default function DeliveryDetailScreen() {
         }
     };
 
+    useEffect(() => {
+        if (MAPBOX_TOKEN) {
+            MapboxGL.setAccessToken(MAPBOX_TOKEN);
+            MapboxGL.setTelemetryEnabled(false);
+        }
+    }, [MAPBOX_TOKEN]);
+
+    const routeGeoJson = useMemo(() => ({
+        type: 'Feature' as const,
+        geometry: {
+            type: 'LineString' as const,
+            coordinates: [
+                [120.9794, 14.5831],
+                [120.9810, 14.5890],
+                [120.9830, 14.5950],
+                [deliveryLocation.longitude, deliveryLocation.latitude],
+            ],
+        },
+    }), [deliveryLocation.latitude, deliveryLocation.longitude]);
+
     return (
         <View style={styles.container}>
             <View style={styles.header}>
@@ -50,31 +71,50 @@ export default function DeliveryDetailScreen() {
             <ScrollView contentContainerStyle={styles.scrollContent}>
                 {/* Map Section */}
                 <View style={styles.mapContainer}>
-                    <MapView
-                        style={styles.map}
-                        initialRegion={deliveryLocation}
-                        scrollEnabled={true}
-                        zoomEnabled={true}
-                        pitchEnabled={true}
-                        rotateEnabled={true}
-                    >
-                        <Marker coordinate={deliveryLocation} title="Delivery Location" />
-                        <Marker
-                            coordinate={{ latitude: 14.5831, longitude: 120.9794 }}
-                            title="Start Point"
-                            pinColor="blue"
-                        />
-                        <Polyline
-                            coordinates={[
-                                { latitude: 14.5831, longitude: 120.9794 },
-                                { latitude: 14.5890, longitude: 120.9810 },
-                                { latitude: 14.5950, longitude: 120.9830 },
-                                { latitude: 14.5995, longitude: 120.9842 }
-                            ]}
-                            strokeColor={theme.colors.primary}
-                            strokeWidth={3}
-                        />
-                    </MapView>
+                    {MAPBOX_TOKEN ? (
+                        <MapboxGL.MapView
+                            style={styles.map}
+                            logoEnabled={false}
+                            attributionEnabled={false}
+                        >
+                            <MapboxGL.Camera
+                                zoomLevel={14}
+                                centerCoordinate={[deliveryLocation.longitude, deliveryLocation.latitude]}
+                            />
+
+                            <MapboxGL.ShapeSource id="delivery-route" shape={routeGeoJson}>
+                                <MapboxGL.LineLayer
+                                    id="delivery-route-line"
+                                    style={{
+                                        lineColor: theme.colors.primary,
+                                        lineWidth: 3,
+                                    }}
+                                />
+                            </MapboxGL.ShapeSource>
+
+                            <MapboxGL.PointAnnotation
+                                id="delivery-location"
+                                coordinate={[deliveryLocation.longitude, deliveryLocation.latitude]}
+                                title="Delivery Location"
+                            >
+                                <View style={styles.markerDot} />
+                            </MapboxGL.PointAnnotation>
+
+                            <MapboxGL.PointAnnotation
+                                id="delivery-start"
+                                coordinate={[120.9794, 14.5831]}
+                                title="Start Point"
+                            >
+                                <View style={[styles.markerDot, { backgroundColor: '#2196F3' }]} />
+                            </MapboxGL.PointAnnotation>
+                        </MapboxGL.MapView>
+                    ) : (
+                        <View style={[styles.map, styles.mapFallback]}>
+                            <Text style={{ color: theme.colors.onSurfaceVariant }}>
+                                Map unavailable: set EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN in .env
+                            </Text>
+                        </View>
+                    )}
                 </View>
 
                 {/* Status Card */}
@@ -195,6 +235,19 @@ const styles = StyleSheet.create({
     },
     map: {
         ...StyleSheet.absoluteFillObject,
+    },
+    mapFallback: {
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: '#f1f1f1',
+    },
+    markerDot: {
+        width: 14,
+        height: 14,
+        borderRadius: 7,
+        backgroundColor: '#4CAF50',
+        borderWidth: 2,
+        borderColor: 'white',
     },
     statusCard: {
         padding: 16,

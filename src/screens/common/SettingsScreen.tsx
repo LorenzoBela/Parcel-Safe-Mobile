@@ -1,18 +1,53 @@
-import React, { useState } from 'react';
+import React, { useState, useCallback } from 'react';
 import { View, StyleSheet, ScrollView } from 'react-native';
-import { Text, List, Switch, Divider, useTheme } from 'react-native-paper';
-import { useNavigation } from '@react-navigation/native';
+import { Text, List, Switch, Divider, useTheme, Avatar, Surface } from 'react-native-paper';
+import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { useAppTheme } from '../../context/ThemeContext';
+import { supabase } from '../../services/supabaseClient';
 
 export default function SettingsScreen() {
     const theme = useTheme();
     const { isDarkMode, toggleTheme } = useAppTheme();
     const navigation = useNavigation<any>();
     const [notifications, setNotifications] = useState(true);
+    const [profile, setProfile] = useState<any>(null);
 
+    const fetchProfile = async () => {
+        const { data: { user } } = await supabase!.auth.getUser();
+        if (user) {
+            const { data } = await supabase!
+                .from('profiles')
+                .select('*')
+                .eq('id', user.id)
+                .single();
+            setProfile(data);
+        }
+    };
+
+    useFocusEffect(
+        useCallback(() => {
+            fetchProfile();
+        }, [])
+    );
 
     return (
         <ScrollView style={[styles.container, { backgroundColor: theme.colors.background }]}>
+            {/* Profile Header */}
+            <Surface style={[styles.profileHeader, { backgroundColor: theme.colors.surface }]} elevation={1}>
+                <Avatar.Image 
+                    size={60} 
+                    source={{ uri: profile?.avatar_url || 'https://i.pravatar.cc/150?img=12' }} 
+                />
+                <View style={styles.profileInfo}>
+                    <Text variant="titleMedium" style={{ color: theme.colors.onSurface, fontWeight: 'bold' }}>
+                        {profile?.full_name || 'Loading...'}
+                    </Text>
+                    <Text variant="bodyMedium" style={{ color: theme.colors.onSurfaceVariant }}>
+                        {profile?.email || 'User'}
+                    </Text>
+                </View>
+            </Surface>
+
             <Text variant="headlineMedium" style={[styles.header, { color: theme.colors.onBackground }]}>Settings</Text>
 
             <List.Section>
@@ -76,8 +111,22 @@ const styles = StyleSheet.create({
     container: {
         flex: 1,
     },
+    profileHeader: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        padding: 16,
+        marginHorizontal: 16,
+        marginTop: 16,
+        marginBottom: 8,
+        borderRadius: 12,
+    },
+    profileInfo: {
+        marginLeft: 16,
+        flex: 1,
+    },
     header: {
         padding: 24,
+        paddingTop: 16,
         fontWeight: 'bold',
     },
     versionContainer: {

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { View, StyleSheet, Dimensions, TouchableOpacity } from 'react-native';
-import MapView, { Marker, Circle, Polyline } from 'react-native-maps';
+import MapboxGL from '@rnmapbox/maps';
 import { Text, Card, Avatar, Button, IconButton, Surface, useTheme } from 'react-native-paper';
 import { useNavigation } from '@react-navigation/native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -19,6 +19,8 @@ export default function TrackOrderScreen() {
     const [displayStatus, setDisplayStatus] = useState<'OK' | 'DEGRADED' | 'FAILED'>('OK');
     const [cancellation, setCancellation] = useState<CancellationState | null>(null);
 
+    const MAPBOX_TOKEN = process.env.EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN;
+
     // Mock Delivery ID (in real app, get from route params)
     const deliveryId = 'TRK-8821-9023';
 
@@ -35,6 +37,11 @@ export default function TrackOrderScreen() {
     };
 
     useEffect(() => {
+        if (MAPBOX_TOKEN) {
+            MapboxGL.setAccessToken(MAPBOX_TOKEN);
+            MapboxGL.setTelemetryEnabled(false);
+        }
+
         // EC-86: Monitor display health
         const unsubscribeDisplay = subscribeToDisplay('BOX_001', (displayState) => {
             if (displayState) {
@@ -60,53 +67,104 @@ export default function TrackOrderScreen() {
         }
     };
 
+    const routeGeoJson = {
+        type: 'Feature' as const,
+        geometry: {
+            type: 'LineString' as const,
+            coordinates: [
+                [riderLocation.longitude, riderLocation.latitude],
+                [boxLocation.longitude, boxLocation.latitude],
+                [destination.longitude, destination.latitude],
+            ],
+        },
+    };
+
+    const destinationPoint = {
+        type: 'Feature' as const,
+        geometry: {
+            type: 'Point' as const,
+            coordinates: [destination.longitude, destination.latitude],
+        },
+    };
+
     return (
         <View style={styles.container}>
-            <MapView
-                style={styles.map}
-                initialRegion={{
-                    latitude: 14.5995,
-                    longitude: 120.9842,
-                    latitudeDelta: 0.005,
-                    longitudeDelta: 0.005,
-                }}
-            >
-                {/* Route Line */}
-                <Polyline
-                    coordinates={[riderLocation, boxLocation, destination]}
-                    strokeColor={theme.colors.primary}
-                    strokeWidth={4}
-                />
+            {MAPBOX_TOKEN ? (
+                <MapboxGL.MapView
+                    style={styles.map}
+                    styleURL={theme.dark ? MapboxGL.StyleURL.Dark : MapboxGL.StyleURL.Light}
+                    logoEnabled={false}
+                    attributionEnabled={false}
+                >
+                    <MapboxGL.Camera
+                        zoomLevel={14}
+                        centerCoordinate={[boxLocation.longitude, boxLocation.latitude]}
+                    />
 
-                {/* Box Marker */}
-                <Marker coordinate={boxLocation} title="Your Parcel" description="Smart Box">
-                    <View style={styles.markerContainer}>
-                        <Avatar.Icon size={40} icon="package-variant" style={{ backgroundColor: 'orange' }} />
-                    </View>
-                </Marker>
+                    {/* Route Line */}
+                    <MapboxGL.ShapeSource id="route" shape={routeGeoJson}>
+                        <MapboxGL.LineLayer
+                            id="route-line"
+                            style={{
+                                lineColor: theme.colors.primary,
+                                lineWidth: 4,
+                            }}
+                        />
+                    </MapboxGL.ShapeSource>
 
-                {/* Rider Marker */}
-                <Marker coordinate={riderLocation} title="Rider" description={riderDetails.name}>
-                    <View style={styles.markerContainer}>
-                        <Avatar.Icon size={40} icon="motorbike" style={{ backgroundColor: theme.colors.primary }} />
-                    </View>
-                </Marker>
+                    {/* Box Marker */}
+                    <MapboxGL.PointAnnotation
+                        id="box-marker"
+                        coordinate={[boxLocation.longitude, boxLocation.latitude]}
+                        title="Your Parcel"
+                    >
+                        <View style={styles.markerContainer}>
+                            <Avatar.Icon size={40} icon="package-variant" style={{ backgroundColor: 'orange' }} />
+                        </View>
+                    </MapboxGL.PointAnnotation>
 
-                {/* Destination Marker */}
-                <Marker coordinate={destination} title="Destination">
-                    <View style={styles.markerContainer}>
-                        <MaterialCommunityIcons name="map-marker" size={40} color="#F44336" />
-                    </View>
-                </Marker>
+                    {/* Rider Marker */}
+                    <MapboxGL.PointAnnotation
+                        id="rider-marker"
+                        coordinate={[riderLocation.longitude, riderLocation.latitude]}
+                        title="Rider"
+                    >
+                        <View style={styles.markerContainer}>
+                            <Avatar.Icon size={40} icon="motorbike" style={{ backgroundColor: theme.colors.primary }} />
+                        </View>
+                    </MapboxGL.PointAnnotation>
 
-                {/* Geo-fence */}
-                <Circle
-                    center={destination}
-                    radius={50}
-                    strokeColor="rgba(76, 175, 80, 0.5)"
-                    fillColor="rgba(76, 175, 80, 0.1)"
-                />
-            </MapView>
+                    {/* Destination Marker */}
+                    <MapboxGL.PointAnnotation
+                        id="destination-marker"
+                        coordinate={[destination.longitude, destination.latitude]}
+                        title="Destination"
+                    >
+                        <View style={styles.markerContainer}>
+                            <MaterialCommunityIcons name="map-marker" size={40} color="#F44336" />
+                        </View>
+                    </MapboxGL.PointAnnotation>
+
+                    {/* Geo-fence */}
+                    <MapboxGL.ShapeSource id="destination" shape={destinationPoint}>
+                        <MapboxGL.CircleLayer
+                            id="destination-fence"
+                            style={{
+                                circleRadius: 20,
+                                circleColor: 'rgba(76, 175, 80, 0.1)',
+                                circleStrokeColor: 'rgba(76, 175, 80, 0.5)',
+                                circleStrokeWidth: 2,
+                            }}
+                        />
+                    </MapboxGL.ShapeSource>
+                </MapboxGL.MapView>
+            ) : (
+                <View style={[styles.map, styles.mapFallback]}>
+                    <Text style={{ color: theme.colors.onSurfaceVariant }}>
+                        Map unavailable: set EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN in .env
+                    </Text>
+                </View>
+            )}
 
             {/* Header Actions */}
             <View style={styles.headerActions}>
@@ -225,6 +283,11 @@ const styles = StyleSheet.create({
     map: {
         width: Dimensions.get('window').width,
         height: Dimensions.get('window').height,
+    },
+    mapFallback: {
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingHorizontal: 24,
     },
     headerActions: {
         position: 'absolute',

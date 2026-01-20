@@ -1,7 +1,7 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { View, StyleSheet, Dimensions, Alert, TouchableOpacity } from 'react-native';
 import { Text, TextInput, Button, useTheme, Card, DefaultTheme } from 'react-native-paper';
-import MapView, { Marker, PROVIDER_GOOGLE } from 'react-native-maps';
+import MapboxGL from '@rnmapbox/maps';
 import * as Location from 'expo-location';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
@@ -17,7 +17,7 @@ const INITIAL_REGION = {
 export default function BookServiceScreen() {
     const navigation = useNavigation<any>();
     const theme = useTheme();
-    const mapRef = useRef<MapView>(null);
+    const MAPBOX_TOKEN = process.env.EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN;
 
     const [pickupText, setPickupText] = useState('');
     const [dropoffText, setDropoffText] = useState('');
@@ -30,6 +30,13 @@ export default function BookServiceScreen() {
     const [activeField, setActiveField] = useState<'pickup' | 'dropoff'>('pickup');
 
     useEffect(() => {
+        if (MAPBOX_TOKEN) {
+            MapboxGL.setAccessToken(MAPBOX_TOKEN);
+            MapboxGL.setTelemetryEnabled(false);
+        }
+    }, [MAPBOX_TOKEN]);
+
+    useEffect(() => {
         (async () => {
             let { status } = await Location.requestForegroundPermissionsAsync();
             if (status !== 'granted') {
@@ -37,15 +44,6 @@ export default function BookServiceScreen() {
             }
 
             let location = await Location.getCurrentPositionAsync({});
-            const currentRegion = {
-                latitude: location.coords.latitude,
-                longitude: location.coords.longitude,
-                latitudeDelta: 0.01,
-                longitudeDelta: 0.01,
-            };
-
-            // Animate to user's location
-            mapRef.current?.animateToRegion(currentRegion, 1000);
 
             // Auto-set pickup to current location initially
             setPickupCoords(location.coords);
@@ -54,7 +52,10 @@ export default function BookServiceScreen() {
     }, []);
 
     const handleMapPress = (e: any) => {
-        const coords = e.nativeEvent.coordinate;
+        const coords = {
+            latitude: e.geometry.coordinates[1],
+            longitude: e.geometry.coordinates[0],
+        };
         if (activeField === 'pickup') {
             setPickupCoords(coords);
             setPickupText(`${coords.latitude.toFixed(4)}, ${coords.longitude.toFixed(4)}`);
@@ -83,26 +84,52 @@ export default function BookServiceScreen() {
     return (
         <View style={styles.container}>
             {/* Map Background */}
-            <MapView
-                ref={mapRef}
-                provider={PROVIDER_GOOGLE}
-                style={StyleSheet.absoluteFillObject}
-                initialRegion={INITIAL_REGION}
-                onPress={handleMapPress}
-                showsUserLocation={true}
-                showsMyLocationButton={true}
-            >
-                {pickupCoords && (
-                    <Marker coordinate={pickupCoords} title="Pickup" pinColor="green">
-                        <MaterialCommunityIcons name="map-marker" size={40} color="green" />
-                    </Marker>
-                )}
-                {dropoffCoords && (
-                    <Marker coordinate={dropoffCoords} title="Dropoff" pinColor="red">
-                        <MaterialCommunityIcons name="map-marker" size={40} color="red" />
-                    </Marker>
-                )}
-            </MapView>
+            {MAPBOX_TOKEN ? (
+                <MapboxGL.MapView
+                    style={StyleSheet.absoluteFillObject}
+                    onPress={handleMapPress}
+                    logoEnabled={false}
+                    attributionEnabled={false}
+                >
+                    <MapboxGL.Camera
+                        zoomLevel={14}
+                        centerCoordinate={pickupCoords
+                            ? [pickupCoords.longitude, pickupCoords.latitude]
+                            : [INITIAL_REGION.longitude, INITIAL_REGION.latitude]}
+                    />
+                    <MapboxGL.UserLocation visible />
+
+                    {pickupCoords && (
+                        <MapboxGL.PointAnnotation
+                            id="pickup-marker"
+                            coordinate={[pickupCoords.longitude, pickupCoords.latitude]}
+                            title="Pickup"
+                        >
+                            <View style={styles.markerContainer}>
+                                <MaterialCommunityIcons name="map-marker" size={40} color="green" />
+                            </View>
+                        </MapboxGL.PointAnnotation>
+                    )}
+
+                    {dropoffCoords && (
+                        <MapboxGL.PointAnnotation
+                            id="dropoff-marker"
+                            coordinate={[dropoffCoords.longitude, dropoffCoords.latitude]}
+                            title="Dropoff"
+                        >
+                            <View style={styles.markerContainer}>
+                                <MaterialCommunityIcons name="map-marker" size={40} color="red" />
+                            </View>
+                        </MapboxGL.PointAnnotation>
+                    )}
+                </MapboxGL.MapView>
+            ) : (
+                <View style={[StyleSheet.absoluteFillObject, styles.mapFallback]}>
+                    <Text style={{ color: theme.colors.onSurfaceVariant }}>
+                        Map unavailable: set EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN in .env
+                    </Text>
+                </View>
+            )}
 
             {/* Floating Input Card */}
             <View style={styles.inputContainer}>
@@ -187,6 +214,15 @@ export default function BookServiceScreen() {
 const styles = StyleSheet.create({
     container: {
         flex: 1,
+    },
+    markerContainer: {
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    mapFallback: {
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: '#f1f1f1',
     },
     inputContainer: {
         position: 'absolute',

@@ -1,0 +1,13 @@
+diff --git a/node_modules/react-native-reanimated/android/src/reactNativeVersionPatch/BorderRadiiDrawableUtils/latest/com/swmansion/reanimated/BorderRadiiDrawableUtils.java b/node_modules/react-native-reanimated/android/src/reactNativeVersionPatch/BorderRadiiDrawableUtils/latest/com/swmansion/reanimated/BorderRadiiDrawableUtils.java
+index 1234567..abcdefg 100644
+--- a/node_modules/react-native-reanimated/android/src/reactNativeVersionPatch/BorderRadiiDrawableUtils/latest/com/swmansion/reanimated/BorderRadiiDrawableUtils.java
++++ b/node_modules/react-native-reanimated/android/src/reactNativeVersionPatch/BorderRadiiDrawableUtils/latest/com/swmansion/reanimated/BorderRadiiDrawableUtils.java
+@@ -18,7 +18,7 @@ public class BorderRadiiDrawableUtils {
+         return LengthPercentage.undefined();
+       }
+ 
+-      return length.resolve(bounds.width(), bounds.height()).toPixelFromDIP().getHorizontal();
++      return length.resolve((float)bounds.width(), (float)bounds.height()).toPixelFromDIP().getHorizontal();
+     }
+ 
+     public static float getBorderRadius(Border border, Border.Edge edge, Rect bounds, Context context) {
