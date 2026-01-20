@@ -33,7 +33,7 @@ export default function DevRoleSelectionScreen() {
     };
 
     return (
-        <ScrollView contentContainerStyle={styles.container}>
+        <ScrollView contentContainerStyle={[styles.container, { backgroundColor: theme.colors.background }]}>
             <View style={styles.header}>
                 <MaterialCommunityIcons name="tools" size={60} color={theme.colors.primary} />
                 <Text variant="headlineMedium" style={[styles.title, { color: theme.colors.primary }]}>
@@ -81,7 +81,7 @@ const RoleCard = ({ title, icon, description, onPress, color }: any) => (
             left={(props) => <Avatar.Icon {...props} icon={icon} style={{ backgroundColor: color }} />}
         />
         <Card.Content>
-            <Text variant="bodyMedium" style={{ color: '#666' }}>
+            <Text variant="bodyMedium" style={{ color: useTheme().colors.onSurfaceVariant }}>
                 {description}
             </Text>
         </Card.Content>

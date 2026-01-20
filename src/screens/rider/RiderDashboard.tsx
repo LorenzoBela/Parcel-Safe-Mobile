@@ -13,6 +13,21 @@ import { offlineCache, PendingSync } from '../../services/offlineCache';
 import { isSpeedAnomaly, isClockSyncRequired, canAddToPhotoQueue, isGpsStale, SAFETY_CONSTANTS } from '../../services/SafetyLogic';
 import RecallService from '../../services/recallService';
 import NetInfo from '@react-native-community/netinfo';
+import IncomingOrderModal from '../../components/IncomingOrderModal';
+import {
+    subscribeToRiderRequests,
+    acceptOrder,
+    rejectOrder,
+    updateRiderStatus,
+    removeRiderFromOnline,
+    RiderOrderRequest
+} from '../../services/riderMatchingService';
+import {
+    registerForPushNotifications,
+    setupNotificationChannels,
+    showIncomingOrderNotification,
+    addNotificationReceivedListener,
+} from '../../services/pushNotificationService';
 
 export default function RiderDashboard() {
     const navigation = useNavigation<any>();
@@ -69,6 +84,12 @@ export default function RiderDashboard() {
 
     // EC-85: Recall State
     const [recallState, setRecallState] = useState<{ isRecalled: boolean; returnOtp: string | null }>({ isRecalled: false, returnOtp: null });
+
+    // Incoming Order State (for rider matching)
+    const [incomingRequest, setIncomingRequest] = useState<{ requestId: string; data: RiderOrderRequest } | null>(null);
+    const [showOrderModal, setShowOrderModal] = useState(false);
+    const [riderId] = useState('RIDER_001'); // Demo rider ID - in production, get from auth
+    const [pushToken, setPushToken] = useState<string | null>(null);
 
     // Auto-start monitoring when component mounts (demo box ID)
     useEffect(() => {
@@ -205,6 +226,115 @@ export default function RiderDashboard() {
         const interval = setInterval(checkSyncStatus, 10000); // Check every 10 seconds
         return () => clearInterval(interval);
     }, []);
+
+    // Subscribe to incoming order requests when rider is online
+    useEffect(() => {
+        if (!isOnline) {
+            // Remove from online riders when going offline
+            removeRiderFromOnline(riderId);
+            return;
+        }
+
+        // Setup push notifications
+        const initNotifications = async () => {
+            await setupNotificationChannels();
+            const token = await registerForPushNotifications();
+            if (token) {
+                setPushToken(token);
+            }
+        };
+        initNotifications();
+
+        // Update rider status as online with current location
+        const updateLocation = async () => {
+            if (riderLocation) {
+                await updateRiderStatus(
+                    riderId,
+                    riderLocation.coords.latitude,
+                    riderLocation.coords.longitude,
+                    true,
+                    pushToken || undefined
+                );
+            }
+        };
+        updateLocation();
+
+        // Subscribe to incoming order requests
+        const unsubscribeRequests = subscribeToRiderRequests(riderId, (requests) => {
+            if (requests.length > 0) {
+                // Show the first pending request
+                const latestRequest = requests[0];
+                setIncomingRequest(latestRequest);
+                setShowOrderModal(true);
+
+                // Show local notification
+                showIncomingOrderNotification(
+                    latestRequest.data.pickupAddress,
+                    latestRequest.data.dropoffAddress,
+                    latestRequest.data.estimatedFare,
+                    latestRequest.data.bookingId
+                );
+            } else {
+                setIncomingRequest(null);
+                setShowOrderModal(false);
+            }
+        });
+
+        // Listen for notifications while app is in foreground
+        const notificationListener = addNotificationReceivedListener((notification) => {
+            const data = notification.request.content.data;
+            if (data?.type === 'INCOMING_ORDER') {
+                // Notification handled by Firebase subscription above
+            }
+        });
+
+        return () => {
+            unsubscribeRequests();
+            notificationListener.remove();
+            removeRiderFromOnline(riderId);
+        };
+    }, [isOnline, riderLocation, riderId, pushToken]);
+
+    // Handle accepting an order
+    const handleAcceptOrder = async () => {
+        if (!incomingRequest) return;
+
+        const success = await acceptOrder(
+            riderId,
+            incomingRequest.data.bookingId,
+            incomingRequest.requestId
+        );
+
+        if (success) {
+            setShowOrderModal(false);
+            setIncomingRequest(null);
+            Alert.alert(
+                '✅ Order Accepted',
+                'Navigate to pickup location to collect the package.',
+                [{ text: 'Start Navigation', onPress: () => navigation.navigate('Arrival') }]
+            );
+        } else {
+            Alert.alert('Error', 'Failed to accept order. Please try again.');
+        }
+    };
+
+    // Handle rejecting an order
+    const handleRejectOrder = async () => {
+        if (!incomingRequest) return;
+
+        await rejectOrder(riderId, incomingRequest.requestId);
+        setShowOrderModal(false);
+        setIncomingRequest(null);
+    };
+
+    // Handle order request expiring
+    const handleOrderExpire = () => {
+        if (incomingRequest) {
+            rejectOrder(riderId, incomingRequest.requestId);
+        }
+        setShowOrderModal(false);
+        setIncomingRequest(null);
+    };
 
     const focusOnUser = () => {
         if (riderLocation && mapRef.current) {
@@ -400,6 +530,16 @@ export default function RiderDashboard() {
 
     return (
         <View style={styles.container}>
+            {/* Incoming Order Modal - overlays entire screen */}
+            <IncomingOrderModal
+                visible={showOrderModal}
+                request={incomingRequest?.data || null}
+                requestId={incomingRequest?.requestId || ''}
+                onAccept={handleAcceptOrder}
+                onReject={handleRejectOrder}
+                onExpire={handleOrderExpire}
+            />
+
             {/* Attractive Header */}
             <ImageBackground
                 source={{ uri: weatherImages[weather.condition] || weatherImages['Sunny'] }}

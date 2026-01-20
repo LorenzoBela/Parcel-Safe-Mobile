@@ -22,27 +22,34 @@ jest.mock('@expo/vector-icons', () => ({
     MaterialCommunityIcons: () => null,
 }));
 
-jest.mock('react-native-paper', () => ({
-    Text: ({ children }: any) => <>{children}</>,
-    Button: ({ children, onPress }: any) => <>{children}</>,
-    Surface: ({ children }: any) => <>{children}</>,
-    ProgressBar: () => null,
-    IconButton: () => null,
-    useTheme: () => ({
-        colors: {
-            background: 'white',
-            primary: 'blue',
-            surface: 'white',
-            onSurface: 'black',
-            onSurfaceVariant: 'gray',
-            outline: 'gray',
-            error: 'red',
-            secondaryContainer: 'gray'
-        },
-        dark: false
-    }),
-    Portal: ({ children }: any) => <>{children}</>,
-}));
+jest.mock('react-native-paper', () => {
+    const { Text, View } = require('react-native');
+    return {
+        Text: ({ children }: any) => <Text>{children}</Text>,
+        Button: ({ children, onPress }: any) => <Text onPress={onPress}>{children}</Text>,
+        Surface: ({ children }: any) => <View>{children}</View>,
+        ProgressBar: () => null,
+        IconButton: () => null,
+        useTheme: () => ({
+            colors: {
+                background: 'white',
+                primary: 'blue',
+                surface: 'white',
+                onSurface: 'black',
+                onSurfaceVariant: 'gray',
+                outline: 'gray',
+                error: 'red',
+                secondaryContainer: 'gray',
+                primaryContainer: 'lightblue',
+                surfaceDisabled: '#eee',
+                onSurfaceDisabled: '#999',
+                surfaceVariant: '#f2f2f2'
+            },
+            dark: false
+        }),
+        Portal: ({ children }: any) => <View>{children}</View>,
+    };
+});
 
 // Mock external library that might use native views
 jest.mock('react-native-confirmation-code-field', () => ({

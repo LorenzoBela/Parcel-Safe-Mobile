@@ -1,22 +1,57 @@
-import React from 'react';
-import { View, StyleSheet, ScrollView } from 'react-native';
+import React, { useState, useCallback } from 'react';
+import { View, StyleSheet, ScrollView, RefreshControl } from 'react-native';
+import { useFocusEffect } from '@react-navigation/native';
+import { supabase } from '../../services/supabaseClient';
 import { Text, Avatar, Button, List, Divider, useTheme } from 'react-native-paper';
 import { useNavigation } from '@react-navigation/native';
 
 export default function ProfileScreen() {
     const navigation = useNavigation<any>();
     const theme = useTheme();
+    const [profile, setProfile] = useState<any>(null);
+    const [refreshing, setRefreshing] = useState(false);
+
+    const fetchProfile = async () => {
+        const { data: { user } } = await supabase!.auth.getUser();
+        if (user) {
+            const { data } = await supabase!
+                .from('profiles')
+                .select('*')
+                .eq('id', user.id)
+                .single();
+            setProfile(data);
+        }
+    };
+
+    useFocusEffect(
+        useCallback(() => {
+            fetchProfile();
+        }, [])
+    );
+
+    const onRefresh = useCallback(async () => {
+        setRefreshing(true);
+        await fetchProfile();
+        setRefreshing(false);
+    }, []);
 
     return (
-        <ScrollView style={[styles.container, { backgroundColor: theme.colors.background }]}>
+        <ScrollView
+            style={[styles.container, { backgroundColor: theme.colors.background }]}
+            refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+        >
             <View style={[styles.header, { backgroundColor: theme.colors.surface }]}>
-                <Avatar.Image size={100} source={{ uri: 'https://i.pravatar.cc/150?img=12' }} />
-                <Text variant="headlineSmall" style={[styles.name, { color: theme.colors.onSurface }]}>Lorenzo Bela</Text>
-                <Text variant="bodyMedium" style={[styles.email, { color: theme.colors.onSurfaceVariant }]}>lorenzo.bela@example.com</Text>
+                <Avatar.Image size={100} source={{ uri: profile?.avatar_url || 'https://i.pravatar.cc/150?img=12' }} />
+                <Text variant="headlineSmall" style={[styles.name, { color: theme.colors.onSurface }]}>
+                    {profile?.full_name || 'Loading...'}
+                </Text>
+                <Text variant="bodyMedium" style={[styles.email, { color: theme.colors.onSurfaceVariant }]}>
+                    {profile?.email || 'User'}
+                </Text>
                 <Button
                     mode="outlined"
                     style={styles.editBtn}
-                    onPress={() => console.log('Edit Profile')}
+                    onPress={() => navigation.navigate('EditProfile')}
                     textColor={theme.colors.primary}
                 >
                     Edit Profile
@@ -28,24 +63,21 @@ export default function ProfileScreen() {
                     <List.Subheader>Account Info</List.Subheader>
                     <List.Item
                         title="Phone Number"
-                        description="+63 912 345 6789"
+                        description={profile?.phone_number || 'Not set'}
                         left={props => <List.Icon {...props} icon="phone" />}
                     />
                     <Divider />
                     <List.Item
                         title="Address"
-                        description="123 Rizal Park, Manila"
+                        description={profile?.home_address || 'Not set'}
                         left={props => <List.Icon {...props} icon="map-marker" />}
                     />
-                </List.Section>
-
-                <List.Section>
-                    <List.Subheader>Security</List.Subheader>
                     <List.Item
-                        title="Change Password"
-                        left={props => <List.Icon {...props} icon="lock" />}
-                        onPress={() => console.log('Change Password')}
+                        title="Saved Addresses"
+                        description="Manage your pickup/dropoff locations"
+                        left={props => <List.Icon {...props} icon="bookmark-multiple" />}
                         right={props => <List.Icon {...props} icon="chevron-right" />}
+                        onPress={() => navigation.navigate('SavedAddresses')}
                     />
                 </List.Section>
 

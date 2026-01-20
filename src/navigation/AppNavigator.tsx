@@ -39,6 +39,8 @@ import DeliveryDetailScreen from '../screens/common/DeliveryDetailScreen';
 import HelpCenterScreen from '../screens/common/HelpCenterScreen';
 import TermsOfServiceScreen from '../screens/common/TermsOfServiceScreen';
 import PrivacyPolicyScreen from '../screens/common/PrivacyPolicyScreen';
+import EditProfileScreen from '../screens/common/EditProfileScreen';
+import SavedAddressesScreen from '../screens/common/SavedAddressesScreen';
 
 const Stack = createStackNavigator();
 const Tab = createBottomTabNavigator();
@@ -202,6 +204,8 @@ export default function AppNavigator() {
                 <Stack.Screen name="HelpCenter" component={HelpCenterScreen} options={{ headerShown: true, title: 'Help Center' }} />
                 <Stack.Screen name="TermsOfService" component={TermsOfServiceScreen} options={{ headerShown: true, title: 'Terms of Service' }} />
                 <Stack.Screen name="PrivacyPolicy" component={PrivacyPolicyScreen} options={{ headerShown: true, title: 'Privacy Policy' }} />
+                <Stack.Screen name="EditProfile" component={EditProfileScreen} options={{ headerShown: true, title: 'Edit Profile' }} />
+                <Stack.Screen name="SavedAddresses" component={SavedAddressesScreen} options={{ headerShown: true, title: 'Saved Addresses' }} />
 
                 {/* EC-81: Theft Detection Screens */}
                 <Stack.Screen name="TheftAlert" component={TheftAlertScreen} options={{ headerShown: true, title: 'Box Security' }} />

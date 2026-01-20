@@ -1,5 +1,5 @@
 /**
- * @jest-environment jsdom
+ *
  * 
  * Unit tests for useLocationRedundancy React hook
  * Tests lifecycle management and state synchronization with redundancy manager

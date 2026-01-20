@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { View, StyleSheet, ScrollView, TouchableOpacity, ImageBackground, Image, Alert, RefreshControl, Share } from 'react-native';
-import { Text, Card, Button, FAB, useTheme, Avatar, Surface, Portal, Modal, IconButton } from 'react-native-paper';
+import { Text, Card, Button, useTheme, Avatar, Surface, Portal, Modal, IconButton } from 'react-native-paper';
 import { useNavigation } from '@react-navigation/native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import dayjs from 'dayjs';
@@ -165,7 +165,7 @@ export default function CustomerDashboard() {
     };
 
     return (
-        <View style={styles.container}>
+        <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
             {/* Attractive Header with Weather Background */}
             <ImageBackground
                 source={{ uri: weatherImages[weather.condition] || weatherImages['Sunny'] }}
@@ -322,12 +322,7 @@ export default function CustomerDashboard() {
 
             </ScrollView>
 
-            <FAB
-                icon="plus"
-                style={[styles.fab, { backgroundColor: theme.colors.primary }]}
-                color="white"
-                onPress={() => console.log('New Delivery Request')}
-            />
+
 
             {/* Premium Share Warning Modal */}
             <Portal>
@@ -431,7 +426,7 @@ const styles = StyleSheet.create({
     },
     weatherContainer: {
         alignItems: 'center',
-        backgroundColor: 'rgba(255,255,255,0.2)',
+        backgroundColor: 'rgba(0,0,0,0.4)',
         padding: 8,
         borderRadius: 12,
     },
@@ -531,13 +526,7 @@ const styles = StyleSheet.create({
         color: '#555',
     },
 
-    fab: {
-        position: 'absolute',
-        margin: 16,
-        right: 0,
-        bottom: 0,
-        borderRadius: 16,
-    },
+
     modalContainer: {
         backgroundColor: 'white',
         padding: 20,

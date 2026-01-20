@@ -1,24 +1,72 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { View, StyleSheet, Animated, Easing, Alert } from 'react-native';
-import { Text, Button, Surface, useTheme, Avatar } from 'react-native-paper';
+import { Text, Button, Surface, useTheme, ProgressBar } from 'react-native-paper';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import {
+    createPendingBooking,
+    notifyNearbyRiders,
+    subscribeToBookingStatus,
+    cancelBooking,
+    BookingRequest,
+    SEARCH_RADIUS_KM,
+} from '../../services/riderMatchingService';
+import {
+    registerForPushNotifications,
+    setupNotificationChannels,
+    startOngoingNotification,
+} from '../../services/pushNotificationService';
+
+// 5 minutes in milliseconds
+const SEARCH_TIMEOUT_MS = 5 * 60 * 1000;
+
+// Rotating status messages to show the app is actively looking
+const STATUS_MESSAGES = [
+    'Contacting nearby riders...',
+    'Searching for available drivers...',
+    'Checking rider availability...',
+    'Looking for the best match...',
+    `Scanning ${SEARCH_RADIUS_KM}km radius...`,
+    'Still searching for riders...',
+    'Hang tight! Almost there...',
+    'Searching in your area...',
+];
+
+// Generate a unique booking ID
+const generateBookingId = () => `BK_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 
 export default function SearchingRiderScreen() {
     const navigation = useNavigation<any>();
     const route = useRoute<any>();
     const theme = useTheme();
-    const [statusText, setStatusText] = useState('Contacting nearby riders...');
+    const [statusText, setStatusText] = useState(STATUS_MESSAGES[0]);
+    const [searchFailed, setSearchFailed] = useState(false);
+    const [progress, setProgress] = useState(0);
+    const [bookingId] = useState(generateBookingId());
+    const [notifiedRidersCount, setNotifiedRidersCount] = useState(0);
 
     // Animation constants
     const pulseAnim = useRef(new Animated.Value(0)).current;
+    const progressAnim = useRef(new Animated.Value(0)).current;
+    const statusIndex = useRef(0);
 
-    // booking details passed from previous screen
-    const { pickup, dropoff } = route.params || {};
+    // Booking details passed from previous screen
+    const {
+        pickup,
+        dropoff,
+        pickupLat = 14.5995, // Default Manila coords for demo
+        pickupLng = 120.9842,
+        dropoffLat = 14.5831,
+        dropoffLng = 120.9794,
+        estimatedFare = 85.00,
+        customerId = 'CUSTOMER_001', // In production, get from auth
+    } = route.params || {};
 
     useEffect(() => {
+        if (searchFailed) return; // Stop if search has failed
+
         // Start Pulse Animation
-        const startAnimation = () => {
+        const startPulseAnimation = () => {
             pulseAnim.setValue(0);
             Animated.loop(
                 Animated.timing(pulseAnim, {
@@ -30,24 +78,103 @@ export default function SearchingRiderScreen() {
             ).start();
         };
 
-        startAnimation();
+        startPulseAnimation();
 
-        // Simulate Matching Process
-        const timer1 = setTimeout(() => {
-            setStatusText('Rider found! Waiting for acceptance...');
-        }, 2000);
+        // Animate progress bar slowly over 5 minutes
+        Animated.timing(progressAnim, {
+            toValue: 1,
+            duration: SEARCH_TIMEOUT_MS,
+            easing: Easing.linear,
+            useNativeDriver: false,
+        }).start();
 
-        const timer2 = setTimeout(() => {
-            // Success! Navigate to TrackOrder (or a "Found" modal first)
-            // For now, let's go directly to TrackOrder to simulate flow
-            navigation.replace('TrackOrder', { bookingId: 'TEMP-BOOKING-123' });
-        }, 5000);
+        // Update progress state for ProgressBar component
+        const progressInterval = setInterval(() => {
+            setProgress((prev) => {
+                const newProgress = prev + (1 / (SEARCH_TIMEOUT_MS / 1000));
+                return Math.min(newProgress, 1);
+            });
+        }, 1000);
+
+        // Rotate status messages every 8 seconds to show activity
+        const statusInterval = setInterval(() => {
+            statusIndex.current = (statusIndex.current + 1) % STATUS_MESSAGES.length;
+            setStatusText(STATUS_MESSAGES[statusIndex.current]);
+        }, 8000);
+
+        // Setup push notifications for the customer
+        const initNotifications = async () => {
+            await setupNotificationChannels();
+            await registerForPushNotifications();
+        };
+        initNotifications();
+
+        // Create booking and notify nearby riders
+        const createBookingAndNotify = async () => {
+            const bookingRequest: BookingRequest = {
+                bookingId,
+                customerId,
+                pickupLat,
+                pickupLng,
+                pickupAddress: pickup || 'Pickup Location',
+                dropoffLat,
+                dropoffLng,
+                dropoffAddress: dropoff || 'Dropoff Location',
+                estimatedFare,
+                createdAt: Date.now(),
+            };
+
+            // Create the booking in Firebase
+            await createPendingBooking(bookingRequest);
+
+            // Notify riders within 3km radius
+            const result = await notifyNearbyRiders(bookingRequest);
+            setNotifiedRidersCount(result.notifiedCount);
+
+            if (result.notifiedCount === 0) {
+                // No riders available within 3km
+                setStatusText('No riders available nearby. Expanding search...');
+            }
+        };
+        createBookingAndNotify();
+
+        // Subscribe to booking status for when a rider accepts
+        const unsubscribeStatus = subscribeToBookingStatus(bookingId, async (status, riderId) => {
+            if (status === 'ACCEPTED' && riderId) {
+                // Rider accepted! Navigate to tracking
+                setStatusText('Rider found! Connecting...');
+
+                // Start ongoing notification for tracking
+                await startOngoingNotification(bookingId, 'RIDER_ASSIGNED');
+
+                // Small delay for UX, then navigate
+                setTimeout(() => {
+                    navigation.replace('TrackOrder', {
+                        bookingId,
+                        riderId,
+                        pickup,
+                        dropoff,
+                    });
+                }, 1500);
+            }
+        });
+
+        // 5 minute timeout - if no rider found, show failure state
+        const timeoutTimer = setTimeout(() => {
+            setSearchFailed(true);
+            setStatusText("We couldn't find a rider at this time");
+            progressAnim.stopAnimation();
+            cancelBooking(bookingId); // Cancel the pending booking
+        }, SEARCH_TIMEOUT_MS);
 
         return () => {
-            clearTimeout(timer1);
-            clearTimeout(timer2);
+            clearInterval(progressInterval);
+            clearInterval(statusInterval);
+            clearTimeout(timeoutTimer);
+            progressAnim.stopAnimation();
+            unsubscribeStatus();
         };
-    }, []);
+    }, [searchFailed]);
 
     const handleCancel = () => {
         Alert.alert(
@@ -64,6 +191,15 @@ export default function SearchingRiderScreen() {
         );
     };
 
+    const handleRetry = () => {
+        // Reset state and restart the search
+        setSearchFailed(false);
+        setProgress(0);
+        setStatusText(STATUS_MESSAGES[0]);
+        statusIndex.current = 0;
+        progressAnim.setValue(0);
+    };
+
     return (
         <View style={styles.container}>
             <View style={styles.content}>
@@ -71,7 +207,7 @@ export default function SearchingRiderScreen() {
                 {/* Radar/Pulse Animation Container */}
                 <View style={styles.radarContainer}>
                     {/* Multiple expanding circles for radar effect */}
-                    {[0, 1, 2].map((i) => {
+                    {!searchFailed && [0, 1, 2].map((i) => {
                         const opacity = pulseAnim.interpolate({
                             inputRange: [0, 1],
                             outputRange: [0.6, 0],
@@ -97,17 +233,44 @@ export default function SearchingRiderScreen() {
                         );
                     })}
 
-                    <Surface style={styles.centerIcon} elevation={4}>
-                        <MaterialCommunityIcons name="moped" size={40} color={theme.colors.primary} />
+                    <Surface style={[styles.centerIcon, searchFailed && { backgroundColor: '#fff0f0' }]} elevation={4}>
+                        <MaterialCommunityIcons
+                            name={searchFailed ? "moped-outline" : "moped"}
+                            size={40}
+                            color={searchFailed ? theme.colors.error : theme.colors.primary}
+                        />
                     </Surface>
                 </View>
 
-                <Text variant="headlineSmall" style={[styles.statusTitle, { color: theme.colors.primary }]}>
-                    Searching for Riders
+                <Text variant="headlineSmall" style={[styles.statusTitle, { color: searchFailed ? theme.colors.error : theme.colors.primary }]}>
+                    {searchFailed ? 'No Riders Available' : 'Searching for Riders'}
                 </Text>
                 <Text variant="bodyMedium" style={styles.statusSubtitle}>
                     {statusText}
                 </Text>
+
+                {/* Progress Bar - shows search is active without displaying a timer */}
+                {!searchFailed && (
+                    <View style={styles.progressContainer}>
+                        <ProgressBar
+                            progress={progress}
+                            color={theme.colors.primary}
+                            style={styles.progressBar}
+                        />
+                        <Text variant="bodySmall" style={styles.progressHint}>
+                            Searching in your area...
+                        </Text>
+                    </View>
+                )}
+
+                {/* Failure message with helpful info */}
+                {searchFailed && (
+                    <View style={styles.failureMessage}>
+                        <Text variant="bodyMedium" style={styles.failureText}>
+                            All riders in your area are currently busy. Please try again in a few moments.
+                        </Text>
+                    </View>
+                )}
 
                 <View style={styles.locationSummary}>
                     <View style={styles.row}>
@@ -124,14 +287,34 @@ export default function SearchingRiderScreen() {
             </View>
 
             <View style={styles.footer}>
-                <Button
-                    mode="contained-tonal"
-                    onPress={handleCancel}
-                    textColor={theme.colors.error}
-                    style={styles.cancelButton}
-                >
-                    Cancel Search
-                </Button>
+                {searchFailed ? (
+                    <View style={styles.footerButtons}>
+                        <Button
+                            mode="contained"
+                            onPress={handleRetry}
+                            style={styles.retryButton}
+                        >
+                            Try Again
+                        </Button>
+                        <Button
+                            mode="outlined"
+                            onPress={() => navigation.goBack()}
+                            textColor={theme.colors.onSurface}
+                            style={styles.goBackButton}
+                        >
+                            Go Back
+                        </Button>
+                    </View>
+                ) : (
+                    <Button
+                        mode="contained-tonal"
+                        onPress={handleCancel}
+                        textColor={theme.colors.error}
+                        style={styles.cancelButton}
+                    >
+                        Cancel Search
+                    </Button>
+                )}
             </View>
         </View>
     );
@@ -178,8 +361,35 @@ const styles = StyleSheet.create({
     },
     statusSubtitle: {
         color: '#666',
-        marginBottom: 32,
+        marginBottom: 24,
         textAlign: 'center',
+    },
+    progressContainer: {
+        width: '100%',
+        marginBottom: 24,
+        paddingHorizontal: 16,
+    },
+    progressBar: {
+        height: 6,
+        borderRadius: 3,
+    },
+    progressHint: {
+        textAlign: 'center',
+        color: '#888',
+        marginTop: 8,
+    },
+    failureMessage: {
+        width: '100%',
+        padding: 16,
+        backgroundColor: '#fff5f5',
+        borderRadius: 12,
+        marginBottom: 16,
+        borderWidth: 1,
+        borderColor: '#ffdddd',
+    },
+    failureText: {
+        textAlign: 'center',
+        color: '#666',
     },
     locationSummary: {
         width: '100%',
@@ -206,6 +416,15 @@ const styles = StyleSheet.create({
     footer: {
         padding: 24,
         paddingBottom: 40,
+    },
+    footerButtons: {
+        gap: 12,
+    },
+    retryButton: {
+        marginBottom: 0,
+    },
+    goBackButton: {
+        borderColor: '#ddd',
     },
     cancelButton: {
         borderColor: '#ffdddd',

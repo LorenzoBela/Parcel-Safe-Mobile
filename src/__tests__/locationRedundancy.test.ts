@@ -5,7 +5,7 @@ let mockBoxLocationCallback: ((location: any) => void) | null = null;
 let mockBoxStateCallback: ((state: any) => void) | null = null;
 let mockPhoneWatchCallback: ((location: any) => void) | null = null;
 
-const removePhoneWatch = jest.fn();
+const mockRemovePhoneWatch = jest.fn();
 
 jest.mock("expo-location", () => {
     return {
@@ -15,7 +15,7 @@ jest.mock("expo-location", () => {
         Accuracy: { Balanced: 3 },
         watchPositionAsync: jest.fn(async (_options: any, callback: any) => {
             mockPhoneWatchCallback = callback;
-            return { remove: removePhoneWatch };
+            return { remove: mockRemovePhoneWatch };
         }),
     };
 });
@@ -48,7 +48,7 @@ describe("locationRedundancy", () => {
     beforeEach(() => {
         jest.useFakeTimers();
         jest.setSystemTime(new Date(1_000_000));
-        removePhoneWatch.mockClear();
+        mockRemovePhoneWatch.mockClear();
         mockBoxLocationCallback = null;
         mockBoxStateCallback = null;
         mockPhoneWatchCallback = null;
@@ -96,7 +96,7 @@ describe("locationRedundancy", () => {
             },
         });
 
-        const { writePhoneLocation } = await import("../services/firebaseClient");
+        const { writePhoneLocation } = require("../services/firebaseClient");
         expect(writePhoneLocation).toHaveBeenCalledWith(
             "BOX_001",
             14.5995,
@@ -137,7 +137,7 @@ describe("locationRedundancy", () => {
             server_timestamp: Date.now(),
         });
 
-        expect(removePhoneWatch).not.toHaveBeenCalled();
+        expect(mockRemovePhoneWatch).not.toHaveBeenCalled();
         expect(locationRedundancy.getState().phoneGpsActive).toBe(true);
     });
 

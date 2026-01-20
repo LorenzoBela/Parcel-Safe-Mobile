@@ -17,7 +17,7 @@ export default function LoginScreen() {
     return (
         <KeyboardAvoidingView
             behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-            style={styles.container}
+            style={[styles.container, { backgroundColor: theme.colors.background }]}
         >
             <View style={styles.contentContainer}>
                 {/* Logo Section */}
@@ -26,7 +26,7 @@ export default function LoginScreen() {
                     <Text variant="headlineMedium" style={[styles.title, { color: theme.colors.primary }]}>
                         Parcel-Safe
                     </Text>
-                    <Text variant="bodyMedium" style={styles.subtitle}>
+                    <Text variant="bodyMedium" style={[styles.subtitle, { color: theme.colors.onSurfaceVariant }]}>
                         Secure Delivery Management
                     </Text>
                 </View>
@@ -47,7 +47,7 @@ export default function LoginScreen() {
                 </Button>
 
                 {!googleSignInAvailable && (
-                    <Text variant="bodySmall" style={{ color: '#666', marginTop: 6, textAlign: 'center' }}>
+                    <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant, marginTop: 6, textAlign: 'center' }}>
                         Google Sign-In is not available in this runtime. Use a dev client or native build.
                     </Text>
                 )}
