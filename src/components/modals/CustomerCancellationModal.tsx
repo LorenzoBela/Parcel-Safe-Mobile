@@ -7,7 +7,7 @@
 
 import React, { useState } from 'react';
 import { View, StyleSheet, ScrollView } from 'react-native';
-import { Modal, Portal, Text, Button, RadioButton, TextInput, useTheme, Surface } from 'react-native-paper';
+import { Modal, Portal, Text, Button, RadioButton, TextInput, useTheme, Surface, TouchableRipple } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import {
     CustomerCancellationReason,
@@ -100,27 +100,44 @@ export default function CustomerCancellationModal({
                                         borderColor: reason === option.value
                                             ? theme.colors.primary
                                             : 'transparent',
+                                        overflow: 'hidden', // Required for ripple
                                     }
                                 ]}
                                 elevation={0}
                             >
-                                <RadioButton.Android value={option.value} color={theme.colors.primary} />
-                                <MaterialCommunityIcons
-                                    name={option.icon as any}
-                                    size={20}
-                                    color={reason === option.value ? theme.colors.primary : theme.colors.onSurfaceVariant}
-                                    style={{ marginRight: 8 }}
-                                />
-                                <Text
-                                    variant="bodyMedium"
-                                    style={{
-                                        flex: 1,
-                                        color: reason === option.value ? theme.colors.primary : theme.colors.onSurface,
-                                        fontWeight: reason === option.value ? 'bold' : 'normal',
-                                    }}
+                                <TouchableRipple
+                                    onPress={() => setReason(option.value)}
+                                    style={styles.reasonRipple}
                                 >
-                                    {formatCustomerCancellationReason(option.value)}
-                                </Text>
+                                    <View style={styles.reasonContent}>
+                                        <RadioButton.Android
+                                            value={option.value}
+                                            color={theme.colors.primary}
+                                            // Pass onPress to RadioButton too or let event bubble?
+                                            // RadioButton.Android doesn't accept onPress in the same way when in Group context usually, 
+                                            // but checking prop handling. 
+                                            // Actually better to just have the ripple handle it.
+                                            status={reason === option.value ? 'checked' : 'unchecked'}
+                                            onPress={() => setReason(option.value)}
+                                        />
+                                        <MaterialCommunityIcons
+                                            name={option.icon as any}
+                                            size={20}
+                                            color={reason === option.value ? theme.colors.primary : theme.colors.onSurfaceVariant}
+                                            style={{ marginRight: 8 }}
+                                        />
+                                        <Text
+                                            variant="bodyMedium"
+                                            style={{
+                                                flex: 1,
+                                                color: reason === option.value ? theme.colors.primary : theme.colors.onSurface,
+                                                fontWeight: reason === option.value ? 'bold' : 'normal',
+                                            }}
+                                        >
+                                            {formatCustomerCancellationReason(option.value)}
+                                        </Text>
+                                    </View>
+                                </TouchableRipple>
                             </Surface>
                         ))}
                     </RadioButton.Group>
@@ -206,12 +223,17 @@ const styles = StyleSheet.create({
         marginBottom: 20,
     },
     reasonOption: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        padding: 12,
         borderRadius: 12,
         marginBottom: 8,
         borderWidth: 2,
+        padding: 0, // Reset padding for Ripple
+    },
+    reasonRipple: {
+        padding: 12,
+    },
+    reasonContent: {
+        flexDirection: 'row',
+        alignItems: 'center',
     },
     input: {
         marginTop: 12,

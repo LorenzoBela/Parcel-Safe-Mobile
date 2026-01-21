@@ -61,6 +61,15 @@ import { bleOtpService, BleBoxDevice } from '../../services/bleOtpService';
 // EC-32: Cancellation Service
 import CancellationModal from '../../components/modals/CancellationModal';
 import { requestCancellation, CancellationReason } from '../../services/cancellationService';
+import ReassignmentAlertModal from '../../components/ReassignmentAlertModal';
+import {
+    subscribeToReassignment,
+    ReassignmentState,
+    getReassignmentType,
+    startAutoAckTimer,
+    acknowledgeReassignment,
+    isReassignmentPending
+} from '../../services/deliveryReassignmentService';
 
 interface RouteParams {
     deliveryId: string;
@@ -125,6 +134,11 @@ export default function ArrivalScreen() {
     // EC-32: Cancellation State
     const [showCancelModal, setShowCancelModal] = useState(false);
     const [cancelLoading, setCancelLoading] = useState(false);
+
+    // EC-78: Delivery Reassignment State
+    const [reassignmentState, setReassignmentState] = useState<ReassignmentState | null>(null);
+    const [showReassignmentModal, setShowReassignmentModal] = useState(false);
+    const riderId = 'RIDER_001'; // Should be dynamic in prod
 
     // EC-15: Background location starts automatically when screen mounts
     useEffect(() => {
@@ -461,6 +475,53 @@ export default function ArrivalScreen() {
         }
     };
 
+    // EC-78: Subscribe to Reassignment Updates
+    useEffect(() => {
+        // Use params.boxId if available, or fallback to 'BOX_001' for demo
+        const targetBoxId = params.boxId || 'BOX_001';
+        const unsubscribe = subscribeToReassignment(targetBoxId, (state) => {
+            setReassignmentState(state);
+        });
+        return unsubscribe;
+    }, [params.boxId]);
+
+    // EC-78: Handle Reassignment Modal and Timer
+    useEffect(() => {
+        if (reassignmentState && isReassignmentPending(reassignmentState)) {
+            const type = getReassignmentType(reassignmentState, riderId);
+            if (type) {
+                setShowReassignmentModal(true);
+                // Start auto-ack timer associated with this screen's context
+                const cleanup = startAutoAckTimer(params.boxId || 'BOX_001', riderId, reassignmentState, () => {
+                    handlePostAcknowledge(type);
+                });
+                return cleanup;
+            }
+        } else {
+            setShowReassignmentModal(false);
+        }
+    }, [reassignmentState, riderId, params.boxId]);
+
+    const handleReassignmentAcknowledge = async () => {
+        if (reassignmentState) {
+            await acknowledgeReassignment(params.boxId || 'BOX_001', riderId);
+            const type = getReassignmentType(reassignmentState, riderId);
+            handlePostAcknowledge(type);
+        }
+    };
+
+    const handlePostAcknowledge = (type: 'outgoing' | 'incoming' | null) => {
+        setShowReassignmentModal(false);
+        if (type === 'outgoing') {
+            // Delivery reassigned AWAY from this rider
+            Alert.alert(
+                'Delivery Reassigned',
+                'This delivery has been assigned to another rider. Returning to dashboard.',
+                [{ text: 'OK', onPress: () => navigation.navigate('RiderDashboard') }]
+            );
+        }
+    };
+
     // Render different UI based on wait timer state
     const renderWaitingUI = () => (
         <Card style={styles.waitCard}>
@@ -783,6 +844,14 @@ export default function ArrivalScreen() {
                 onDismiss={() => setShowCancelModal(false)}
                 onSubmit={handleCancellationSubmit}
                 loading={cancelLoading}
+            />
+
+            {/* EC-78: Reassignment Alert Modal */}
+            <ReassignmentAlertModal
+                visible={showReassignmentModal}
+                state={reassignmentState}
+                type={getReassignmentType(reassignmentState, riderId)}
+                onAcknowledge={handleReassignmentAcknowledge}
             />
         </ScrollView>
     );

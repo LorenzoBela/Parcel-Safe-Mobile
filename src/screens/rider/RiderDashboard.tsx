@@ -30,6 +30,15 @@ import {
 } from '../../services/pushNotificationService';
 import CancellationModal from '../../components/modals/CancellationModal';
 import { requestCancellation, CancellationReason } from '../../services/cancellationService';
+import ReassignmentAlertModal from '../../components/ReassignmentAlertModal';
+import {
+    subscribeToReassignment,
+    ReassignmentState,
+    getReassignmentType,
+    startAutoAckTimer,
+    acknowledgeReassignment,
+    isReassignmentPending
+} from '../../services/deliveryReassignmentService';
 
 export default function RiderDashboard() {
     const navigation = useNavigation<any>();
@@ -96,6 +105,10 @@ export default function RiderDashboard() {
     // EC-32: Cancellation State
     const [showCancelModal, setShowCancelModal] = useState(false);
     const [cancelLoading, setCancelLoading] = useState(false);
+
+    // EC-78: Delivery Reassignment State
+    const [reassignmentState, setReassignmentState] = useState<ReassignmentState | null>(null);
+    const [showReassignmentModal, setShowReassignmentModal] = useState(false);
 
     // Auto-start monitoring when component mounts (demo box ID)
     useEffect(() => {
@@ -300,6 +313,40 @@ export default function RiderDashboard() {
             removeRiderFromOnline(riderId);
         };
     }, [isOnline, riderLocation, riderId, pushToken]);
+
+    // EC-78: Subscribe to Reassignment Updates
+    useEffect(() => {
+        const boxId = 'BOX_001'; // Demo Box ID
+        const unsubscribe = subscribeToReassignment(boxId, (state) => {
+            setReassignmentState(state);
+        });
+        return unsubscribe;
+    }, []);
+
+    // EC-78: Handle Reassignment Modal and Timer
+    useEffect(() => {
+        if (reassignmentState && isReassignmentPending(reassignmentState)) {
+            const type = getReassignmentType(reassignmentState, riderId);
+            if (type) {
+                setShowReassignmentModal(true);
+                // Start auto-ack timer
+                const cleanup = startAutoAckTimer('BOX_001', riderId, reassignmentState, () => {
+                    setShowReassignmentModal(false);
+                    // Alert provided by service callback or state update logic can go here
+                });
+                return cleanup;
+            }
+        } else {
+            setShowReassignmentModal(false);
+        }
+    }, [reassignmentState, riderId]);
+
+    const handleReassignmentAcknowledge = async () => {
+        if (reassignmentState) {
+            await acknowledgeReassignment('BOX_001', riderId);
+            setShowReassignmentModal(false);
+        }
+    };
 
     // Handle accepting an order
     const handleAcceptOrder = async () => {
@@ -580,12 +627,19 @@ export default function RiderDashboard() {
                 onExpire={handleOrderExpire}
             />
 
-            {/* EC-32: Cancellation Modal */}
             <CancellationModal
                 visible={showCancelModal}
                 onDismiss={() => setShowCancelModal(false)}
                 onSubmit={handleCancellationSubmit}
                 loading={cancelLoading}
+            />
+
+            {/* EC-78: Reassignment Alert Modal */}
+            <ReassignmentAlertModal
+                visible={showReassignmentModal}
+                state={reassignmentState}
+                type={getReassignmentType(reassignmentState, riderId)}
+                onAcknowledge={handleReassignmentAcknowledge}
             />
 
             {/* Attractive Header */}
@@ -621,6 +675,25 @@ export default function RiderDashboard() {
                     <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
                 }
             >
+                {/* EC-78: Reassignment Pending Banner (Persistent if Modal Dismissed) */}
+                {reassignmentState && isReassignmentPending(reassignmentState) && !showReassignmentModal && (
+                    <Surface style={[styles.warningBanner, { backgroundColor: '#FFF3E0', marginBottom: 16 }]} elevation={4}>
+                        <MaterialCommunityIcons
+                            name={getReassignmentType(reassignmentState, riderId) === 'outgoing' ? "swap-horizontal" : "account-switch"}
+                            size={24}
+                            color="#FF9800"
+                        />
+                        <View style={{ flex: 1, marginLeft: 12 }}>
+                            <Text style={[styles.bannerTitle, { color: '#E65100' }]}>
+                                {getReassignmentType(reassignmentState, riderId) === 'outgoing' ? 'REASSIGNMENT PENDING' : 'NEW ASSIGNMENT'}
+                            </Text>
+                            <Text style={[styles.bannerText, { color: '#EF6C00' }]}>
+                                Action required for delivery update.
+                            </Text>
+                        </View>
+                        <Button mode="text" onPress={() => setShowReassignmentModal(true)} textColor="#E65100">View</Button>
+                    </Surface>
+                )}
                 {/* EC-18: Tamper Alert Banner */}
                 {tamperState?.detected && (
                     <Surface style={styles.tamperBanner} elevation={4}>
