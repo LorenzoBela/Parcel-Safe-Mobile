@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { View, StyleSheet, Dimensions, TouchableOpacity } from 'react-native';
-import MapboxGL from '@rnmapbox/maps';
+import MapboxGL, { isMapboxNativeAvailable, MapFallback } from '../../components/map/MapboxWrapper';
 import { Text, Card, Avatar, Button, IconButton, Surface, useTheme } from 'react-native-paper';
 import { useNavigation } from '@react-navigation/native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -77,6 +77,7 @@ export default function TrackOrderScreen() {
                 [destination.longitude, destination.latitude],
             ],
         },
+        properties: {},
     };
 
     const destinationPoint = {
@@ -85,6 +86,7 @@ export default function TrackOrderScreen() {
             type: 'Point' as const,
             coordinates: [destination.longitude, destination.latitude],
         },
+        properties: {},
     };
 
     return (

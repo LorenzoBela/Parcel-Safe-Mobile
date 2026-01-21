@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { View, StyleSheet, Dimensions, Alert, TouchableOpacity } from 'react-native';
 import { Text, TextInput, Button, useTheme, Card, DefaultTheme } from 'react-native-paper';
-import MapboxGL from '@rnmapbox/maps';
+import MapboxGL, { isMapboxNativeAvailable, MapFallback } from '../../components/map/MapboxWrapper';
 import * as Location from 'expo-location';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
