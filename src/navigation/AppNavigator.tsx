@@ -28,6 +28,8 @@ import DeliveryCompletionScreen from '../screens/rider/DeliveryCompletionScreen'
 import DeliveryRecordsScreen from '../screens/rider/DeliveryRecordsScreen';
 import TheftAlertScreen from '../screens/rider/TheftAlertScreen';
 import TrackMyBoxScreen from '../screens/rider/TrackMyBoxScreen';
+import CancellationConfirmationScreen from '../screens/rider/CancellationConfirmationScreen';
+import ReturnPackageScreen from '../screens/rider/ReturnPackageScreen';
 
 import AdminDashboard from '../screens/admin/AdminDashboard';
 import GlobalMapScreen from '../screens/admin/GlobalMapScreen';
@@ -219,6 +221,11 @@ export default function AppNavigator() {
                 {/* EC-81: Theft Detection Screens */}
                 <Stack.Screen name="TheftAlert" component={TheftAlertScreen} options={{ headerShown: true, title: 'Box Security' }} />
                 <Stack.Screen name="TrackMyBox" component={TrackMyBoxScreen} options={{ headerShown: true, title: 'Track My Box' }} />
+
+                {/* EC-32: Cancellation Screens */}
+                <Stack.Screen name="CancellationConfirmation" component={CancellationConfirmationScreen} options={{ headerShown: true, title: 'Cancellation Confirmed' }} />
+                <Stack.Screen name="ReturnPackage" component={ReturnPackageScreen} options={{ headerShown: true, title: 'Return Package' }} />
+                <Stack.Screen name="CustomerCancellationConfirm" component={require('../screens/client/CustomerCancellationConfirmScreen').default} options={{ headerShown: true, title: 'Order Cancelled' }} />
             </Stack.Navigator>
         </NavigationContainer>
     );

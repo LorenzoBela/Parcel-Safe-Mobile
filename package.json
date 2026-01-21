@@ -19,12 +19,6 @@
     "ios": "expo run:ios",
     "test": "jest",
     "postinstall": "patch-package"
-<<<<<<< HEAD
-=======
-  },
-  "overrides": {
-    "react-native-reanimated": "3.16.6"
->>>>>>> e95967a54c81788ae4477fab4d11efcabeea62d0
   },
   "dependencies": {
     "@expo/vector-icons": "^15.0.3",
@@ -73,7 +67,7 @@
     "react-native-gesture-handler": "~2.28.0",
     "react-native-maps": "1.20.1",
     "react-native-paper": "^5.14.5",
-    "react-native-reanimated": "^4.2.1",
+    "react-native-reanimated": "^4.0.0",
     "react-native-safe-area-context": "^5.6.2",
     "react-native-screens": "4.16.0",
     "react-native-svg": "15.12.1",

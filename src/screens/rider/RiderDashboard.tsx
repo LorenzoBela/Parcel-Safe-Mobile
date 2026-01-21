@@ -357,12 +357,15 @@ export default function RiderDashboard() {
 
             if (result.success) {
                 setShowCancelModal(false);
-                Alert.alert(
-                    'Delivery Cancelled',
-                    'Cancellation processed successfully. Return OTP generated.',
-                    [{ text: 'OK' }]
-                );
-                // In a real app, refresh the list or navigate away
+                // Navigate to confirmation screen with return OTP
+                navigation.navigate('CancellationConfirmation', {
+                    deliveryId: nextDelivery.id,
+                    returnOtp: result.returnOtp,
+                    reason: reason,
+                    reasonDetails: details,
+                    senderName: nextDelivery.customer,
+                    pickupAddress: nextDelivery.address, // In real app, use actual pickup address
+                });
             } else {
                 Alert.alert('Cancellation Failed', result.error || 'Unknown error');
             }

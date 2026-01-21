@@ -58,6 +58,10 @@ import {
 
 import { bleOtpService, BleBoxDevice } from '../../services/bleOtpService';
 
+// EC-32: Cancellation Service
+import CancellationModal from '../../components/modals/CancellationModal';
+import { requestCancellation, CancellationReason } from '../../services/cancellationService';
+
 interface RouteParams {
     deliveryId: string;
     boxId: string;
@@ -117,6 +121,10 @@ export default function ArrivalScreen() {
     const [showBleModal, setShowBleModal] = useState(false);
     const [bleStatus, setBleStatus] = useState<'idle' | 'scanning' | 'connecting' | 'transferring' | 'success' | 'error'>('idle');
     const [bleMessage, setBleMessage] = useState('');
+
+    // EC-32: Cancellation State
+    const [showCancelModal, setShowCancelModal] = useState(false);
+    const [cancelLoading, setCancelLoading] = useState(false);
 
     // EC-15: Background location starts automatically when screen mounts
     useEffect(() => {
@@ -271,7 +279,7 @@ export default function ArrivalScreen() {
 
         // Start wait timer (with or without photo)
         let newState = startWaitTimer(waitTimerState, Date.now());
-        
+
         if (photoUri) {
             newState = recordArrivalPhoto(newState, photoUri);
         }
@@ -417,6 +425,39 @@ export default function ArrivalScreen() {
             setAddressReason('');
         } else {
             Alert.alert('Error', 'Failed to submit address update.');
+        }
+    };
+
+    // EC-32: Handle Cancellation Submit
+    const handleCancellationSubmit = async (reason: CancellationReason, details: string) => {
+        setCancelLoading(true);
+        try {
+            const result = await requestCancellation({
+                deliveryId: params.deliveryId,
+                boxId: params.boxId,
+                reason,
+                reasonDetails: details,
+                riderId: 'RIDER_001', // Would come from auth in production
+                riderName: params.riderName || 'Rider',
+            });
+
+            if (result.success) {
+                setShowCancelModal(false);
+                navigation.navigate('CancellationConfirmation', {
+                    deliveryId: params.deliveryId,
+                    returnOtp: result.returnOtp,
+                    reason: reason,
+                    reasonDetails: details,
+                    senderName: 'Customer', // Would come from delivery data
+                    pickupAddress: params.targetAddress,
+                });
+            } else {
+                Alert.alert('Cancellation Failed', result.error || 'Unknown error');
+            }
+        } catch (err) {
+            Alert.alert('Error', 'An unexpected error occurred');
+        } finally {
+            setCancelLoading(false);
         }
     };
 
@@ -624,6 +665,25 @@ export default function ArrivalScreen() {
                 </Card.Content>
             </Card>
 
+            {/* EC-32: Cancel Delivery Card */}
+            <Card style={styles.cancelCard}>
+                <Card.Content>
+                    <Text style={styles.infoTitle}>⚠️ Need to Cancel?</Text>
+                    <Text style={styles.infoText}>
+                        If you cannot complete this delivery, you can cancel and return the package.
+                    </Text>
+                    <Button
+                        mode="outlined"
+                        onPress={() => setShowCancelModal(true)}
+                        icon="cancel"
+                        textColor="#ef4444"
+                        style={{ marginTop: 12, borderColor: '#ef4444' }}
+                    >
+                        Cancel Delivery
+                    </Button>
+                </Card.Content>
+            </Card>
+
             {/* EC-02: BLE Transfer Modal */}
             <Portal>
                 <Modal
@@ -645,10 +705,10 @@ export default function ArrivalScreen() {
 
                     <Text style={styles.bleStatusText}>
                         {bleStatus === 'scanning' ? 'Scanning...' :
-                         bleStatus === 'connecting' ? 'Connecting...' :
-                         bleStatus === 'transferring' ? 'Transferring...' :
-                         bleStatus === 'success' ? 'Success!' :
-                         bleStatus === 'error' ? 'Failed' : 'Ready'}
+                            bleStatus === 'connecting' ? 'Connecting...' :
+                                bleStatus === 'transferring' ? 'Transferring...' :
+                                    bleStatus === 'success' ? 'Success!' :
+                                        bleStatus === 'error' ? 'Failed' : 'Ready'}
                     </Text>
                     <Text style={styles.bleMessageText}>{bleMessage}</Text>
 
@@ -716,6 +776,14 @@ export default function ArrivalScreen() {
                     </View>
                 </Modal>
             </Portal>
+
+            {/* EC-32: Cancellation Modal */}
+            <CancellationModal
+                visible={showCancelModal}
+                onDismiss={() => setShowCancelModal(false)}
+                onSubmit={handleCancellationSubmit}
+                loading={cancelLoading}
+            />
         </ScrollView>
     );
 }
@@ -927,12 +995,18 @@ const styles = StyleSheet.create({
         color: '#3B82F6',
         fontSize: 12,
     },
-    // EC-02: BLE Card and Modal
     bleCard: {
         marginTop: 16,
         backgroundColor: '#EFF6FF',
         borderLeftWidth: 4,
         borderLeftColor: '#3B82F6',
+    },
+    // EC-32: Cancel Card
+    cancelCard: {
+        marginTop: 16,
+        backgroundColor: '#FEF2F2',
+        borderLeftWidth: 4,
+        borderLeftColor: '#EF4444',
     },
     bleModal: {
         backgroundColor: 'white',

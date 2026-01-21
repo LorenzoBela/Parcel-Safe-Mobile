@@ -1,10 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { View, StyleSheet, Dimensions, TouchableOpacity } from 'react-native';
-<<<<<<< HEAD
+import { View, StyleSheet, Dimensions, TouchableOpacity, Alert } from 'react-native';
 import MapboxGL, { isMapboxNativeAvailable, MapFallback } from '../../components/map/MapboxWrapper';
-=======
-import MapView, { Marker, Circle, Polyline } from 'react-native-maps';
->>>>>>> e95967a54c81788ae4477fab4d11efcabeea62d0
 import { Text, Card, Avatar, Button, IconButton, Surface, useTheme } from 'react-native-paper';
 import { useNavigation } from '@react-navigation/native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -12,16 +8,26 @@ import { subscribeToDisplay } from '../../services/firebaseClient';
 import {
     subscribeToCancellation,
     CancellationState,
-    formatCancellationReason
+    formatCancellationReason,
+    DeliveryStatus,
+    canCustomerCancel,
+    requestCustomerCancellation,
+    CustomerCancellationReason,
 } from '../../services/cancellationService';
 import * as Clipboard from 'expo-clipboard';
-import { Alert } from 'react-native';
+import CustomerCancellationModal from '../../components/modals/CustomerCancellationModal';
 
 export default function TrackOrderScreen() {
     const navigation = useNavigation<any>();
     const theme = useTheme();
     const [displayStatus, setDisplayStatus] = useState<'OK' | 'DEGRADED' | 'FAILED'>('OK');
     const [cancellation, setCancellation] = useState<CancellationState | null>(null);
+    const [showCancelModal, setShowCancelModal] = useState(false);
+    const [cancelLoading, setCancelLoading] = useState(false);
+
+    // Mock data - in real app, get from route params or state
+    const deliveryStatus = DeliveryStatus.ASSIGNED; // Example: before pickup
+    const customerId = 'cust_123';
 
     const MAPBOX_TOKEN = process.env.EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN;
 
@@ -71,7 +77,40 @@ export default function TrackOrderScreen() {
         }
     };
 
-<<<<<<< HEAD
+    // Customer cancellation handler
+    const handleCancellationSubmit = async (reason: CustomerCancellationReason, details: string) => {
+        setCancelLoading(true);
+        try {
+            const result = await requestCustomerCancellation(
+                {
+                    deliveryId,
+                    customerId,
+                    reason,
+                    reasonDetails: details,
+                },
+                deliveryStatus
+            );
+
+            if (result.success) {
+                setShowCancelModal(false);
+                navigation.navigate('CustomerCancellationConfirm', {
+                    deliveryId,
+                    reason,
+                    reasonDetails: details,
+                    refundStatus: result.refundStatus,
+                });
+            } else {
+                Alert.alert('Cancellation Failed', result.error || 'Unable to cancel order');
+            }
+        } catch (err) {
+            Alert.alert('Error', 'An unexpected error occurred');
+        } finally {
+            setCancelLoading(false);
+        }
+    };
+
+    const canCancelResult = canCustomerCancel(deliveryStatus);
+
     const routeGeoJson = {
         type: 'Feature' as const,
         geometry: {
@@ -94,8 +133,6 @@ export default function TrackOrderScreen() {
         properties: {},
     };
 
-=======
->>>>>>> e95967a54c81788ae4477fab4d11efcabeea62d0
     return (
         <View style={styles.container}>
             {MAPBOX_TOKEN ? (
@@ -280,7 +317,28 @@ export default function TrackOrderScreen() {
                         View Secure OTP
                     </Button>
                 )}
+
+                {/* Customer Cancel Button - Only show if cancellation is allowed */}
+                {!cancellation && canCancelResult.canCancel && (
+                    <Button
+                        mode="outlined"
+                        style={styles.cancelBtn}
+                        icon="close-circle"
+                        textColor={theme.colors.error}
+                        onPress={() => setShowCancelModal(true)}
+                    >
+                        Cancel Order
+                    </Button>
+                )}
             </View>
+
+            {/* Customer Cancellation Modal */}
+            <CustomerCancellationModal
+                visible={showCancelModal}
+                onDismiss={() => setShowCancelModal(false)}
+                onSubmit={handleCancellationSubmit}
+                loading={cancelLoading}
+            />
         </View>
     );
 }
@@ -379,5 +437,10 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         justifyContent: 'center',
         flexDirection: 'row',
+    },
+    cancelBtn: {
+        marginTop: 12,
+        borderRadius: 12,
+        borderColor: '#EF4444',
     },
 });

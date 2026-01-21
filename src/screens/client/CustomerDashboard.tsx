@@ -8,6 +8,11 @@ import { useAppTheme } from '../../context/ThemeContext'; // Import custom hook 
 import * as Location from 'expo-location';
 import { CustomerHardwareBanner } from '../../components';
 import { subscribeToDisplay } from '../../services/firebaseClient';
+import {
+    subscribeToCancellation,
+    CancellationState,
+    formatCancellationReason
+} from '../../services/cancellationService';
 
 export default function CustomerDashboard() {
     const navigation = useNavigation<any>();
@@ -18,6 +23,10 @@ export default function CustomerDashboard() {
     const [locationName, setLocationName] = useState('Locating...');
     const [refreshing, setRefreshing] = useState(false);
     const [displayStatus, setDisplayStatus] = useState<'OK' | 'DEGRADED' | 'FAILED'>('OK');
+    const [cancellation, setCancellation] = useState<CancellationState | null>(null);
+
+    // Mock delivery ID - in real app, get from active delivery state
+    const activeDeliveryId = 'TRK-8821-9023';
 
     const handleShare = () => {
         setShareModalVisible(true);
@@ -83,6 +92,14 @@ export default function CustomerDashboard() {
         });
         return () => unsubscribe();
     }, []);
+
+    // EC-32: Monitor cancellation state for active delivery
+    useEffect(() => {
+        const unsubscribe = subscribeToCancellation(activeDeliveryId, (state) => {
+            setCancellation(state);
+        });
+        return () => unsubscribe();
+    }, [activeDeliveryId]);
 
     const onRefresh = useCallback(async () => {
         setRefreshing(true);
@@ -212,6 +229,31 @@ export default function CustomerDashboard() {
 
                 {/* EC-86: Display failure notification */}
                 <CustomerHardwareBanner displayStatus={displayStatus} />
+
+                {/* EC-32: Cancellation Alert Banner */}
+                {cancellation && !cancellation.packageRetrieved && (
+                    <TouchableOpacity
+                        onPress={() => navigation.navigate('TrackOrder')}
+                        activeOpacity={0.8}
+                    >
+                        <Surface style={[styles.cancellationBanner, { backgroundColor: theme.colors.errorContainer }]} elevation={2}>
+                            <View style={styles.cancellationBannerContent}>
+                                <View style={[styles.cancellationIcon, { backgroundColor: theme.colors.error }]}>
+                                    <MaterialCommunityIcons name="alert-circle" size={24} color="white" />
+                                </View>
+                                <View style={{ flex: 1, marginLeft: 12 }}>
+                                    <Text variant="titleSmall" style={{ fontWeight: 'bold', color: theme.colors.error }}>
+                                        Delivery Cancelled
+                                    </Text>
+                                    <Text variant="bodySmall" style={{ color: theme.colors.onErrorContainer }}>
+                                        {formatCancellationReason(cancellation.reason)} • Tap to view return OTP
+                                    </Text>
+                                </View>
+                                <MaterialCommunityIcons name="chevron-right" size={24} color={theme.colors.error} />
+                            </View>
+                        </Surface>
+                    </TouchableOpacity>
+                )}
 
                 {/* Active Delivery Card */}
                 <Text variant="titleMedium" style={[styles.sectionTitle, { color: theme.colors.onSurface }]}>Active Delivery</Text>
@@ -621,5 +663,23 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
         alignItems: 'center',
         marginBottom: 8,
+    },
+    // EC-32: Cancellation Banner
+    cancellationBanner: {
+        borderRadius: 12,
+        marginBottom: 16,
+        overflow: 'hidden',
+    },
+    cancellationBannerContent: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        padding: 16,
+    },
+    cancellationIcon: {
+        width: 40,
+        height: 40,
+        borderRadius: 20,
+        justifyContent: 'center',
+        alignItems: 'center',
     },
 });

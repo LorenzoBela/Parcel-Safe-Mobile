@@ -22,14 +22,30 @@ const initMapbox = () => {
     try {
         // Attempt to require the native module
         const module = require('@rnmapbox/maps');
+        console.log('[MapboxWrapper] Module loaded:', !!module);
+        console.log('[MapboxWrapper] Module keys:', module ? Object.keys(module).slice(0, 10) : 'none');
+
         MapboxGLModule = module.default || module;
+        console.log('[MapboxWrapper] MapboxGLModule:', !!MapboxGLModule);
+        console.log('[MapboxWrapper] MapboxGLModule keys:', MapboxGLModule ? Object.keys(MapboxGLModule).slice(0, 15) : 'none');
 
         // Test if native code is actually available by checking a key property
-        if (MapboxGLModule && typeof MapboxGLModule.setAccessToken === 'function') {
+        const hasSetAccessToken = MapboxGLModule && typeof MapboxGLModule.setAccessToken === 'function';
+        console.log('[MapboxWrapper] hasSetAccessToken:', hasSetAccessToken);
+
+        if (hasSetAccessToken) {
             // Do a deeper check - try to access MapView
-            if (MapboxGLModule.MapView) {
+            const hasMapView = !!MapboxGLModule.MapView;
+            console.log('[MapboxWrapper] hasMapView:', hasMapView);
+
+            if (hasMapView) {
                 isMapboxAvailable = true;
+                console.log('[MapboxWrapper] ✓ Native module detected as AVAILABLE');
+            } else {
+                console.log('[MapboxWrapper] ✗ MapView component not found');
             }
+        } else {
+            console.log('[MapboxWrapper] ✗ setAccessToken function not found, typeof:', typeof MapboxGLModule?.setAccessToken);
         }
     } catch (error) {
         console.log('[MapboxWrapper] @rnmapbox/maps not available:', error);

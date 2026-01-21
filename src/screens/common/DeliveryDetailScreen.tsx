@@ -3,11 +3,7 @@ import { View, StyleSheet, ScrollView, Image, Dimensions } from 'react-native';
 import { Text, Card, Button, useTheme, Chip, Surface, IconButton } from 'react-native-paper';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-<<<<<<< HEAD
 import MapboxGL, { isMapboxNativeAvailable, MapFallback } from '../../components/map/MapboxWrapper';
-=======
-import MapView, { Marker, Polyline } from 'react-native-maps';
->>>>>>> e95967a54c81788ae4477fab4d11efcabeea62d0
 
 export default function DeliveryDetailScreen() {
     const navigation = useNavigation<any>();

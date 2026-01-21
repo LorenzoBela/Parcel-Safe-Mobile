@@ -1,11 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { View, StyleSheet, Dimensions, Alert, TouchableOpacity } from 'react-native';
 import { Text, TextInput, Button, useTheme, Card, DefaultTheme } from 'react-native-paper';
-<<<<<<< HEAD
 import MapboxGL, { isMapboxNativeAvailable, MapFallback } from '../../components/map/MapboxWrapper';
-=======
-import MapView, { Marker, PROVIDER_GOOGLE } from 'react-native-maps';
->>>>>>> e95967a54c81788ae4477fab4d11efcabeea62d0
 import * as Location from 'expo-location';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
