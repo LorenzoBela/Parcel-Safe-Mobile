@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { View, StyleSheet, Dimensions, TouchableOpacity } from 'react-native';
-import MapboxGL, { isMapboxNativeAvailable, MapFallback } from '../../components/map/MapboxWrapper';
+import MapView, { Marker, Circle, Polyline } from 'react-native-maps';
 import { Text, Card, Avatar, Button, IconButton, Surface, useTheme } from 'react-native-paper';
 import { useNavigation } from '@react-navigation/native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -65,28 +65,6 @@ export default function TrackOrderScreen() {
             await Clipboard.setStringAsync(cancellation.returnOtp);
             Alert.alert('Copied', 'Return OTP copied to clipboard');
         }
-    };
-
-    const routeGeoJson = {
-        type: 'Feature' as const,
-        geometry: {
-            type: 'LineString' as const,
-            coordinates: [
-                [riderLocation.longitude, riderLocation.latitude],
-                [boxLocation.longitude, boxLocation.latitude],
-                [destination.longitude, destination.latitude],
-            ],
-        },
-        properties: {},
-    };
-
-    const destinationPoint = {
-        type: 'Feature' as const,
-        geometry: {
-            type: 'Point' as const,
-            coordinates: [destination.longitude, destination.latitude],
-        },
-        properties: {},
     };
 
     return (
