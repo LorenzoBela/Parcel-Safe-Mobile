@@ -19,6 +19,12 @@
     "ios": "expo run:ios",
     "test": "jest",
     "postinstall": "patch-package"
+<<<<<<< HEAD
+=======
+  },
+  "overrides": {
+    "react-native-reanimated": "3.16.6"
+>>>>>>> e95967a54c81788ae4477fab4d11efcabeea62d0
   },
   "dependencies": {
     "@expo/vector-icons": "^15.0.3",

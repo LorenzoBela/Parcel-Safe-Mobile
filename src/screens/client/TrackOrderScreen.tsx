@@ -1,6 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { View, StyleSheet, Dimensions, TouchableOpacity } from 'react-native';
+<<<<<<< HEAD
 import MapboxGL, { isMapboxNativeAvailable, MapFallback } from '../../components/map/MapboxWrapper';
+=======
+import MapView, { Marker, Circle, Polyline } from 'react-native-maps';
+>>>>>>> e95967a54c81788ae4477fab4d11efcabeea62d0
 import { Text, Card, Avatar, Button, IconButton, Surface, useTheme } from 'react-native-paper';
 import { useNavigation } from '@react-navigation/native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -67,6 +71,7 @@ export default function TrackOrderScreen() {
         }
     };
 
+<<<<<<< HEAD
     const routeGeoJson = {
         type: 'Feature' as const,
         geometry: {
@@ -89,6 +94,8 @@ export default function TrackOrderScreen() {
         properties: {},
     };
 
+=======
+>>>>>>> e95967a54c81788ae4477fab4d11efcabeea62d0
     return (
         <View style={styles.container}>
             {MAPBOX_TOKEN ? (
