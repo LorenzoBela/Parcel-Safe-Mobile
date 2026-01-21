@@ -1,0 +1,108 @@
+diff --git a/node_modules/react-native-reanimated/Common/cpp/reanimated/CSS/interpolation/transforms/TransformOperationInterpolator.h b/node_modules/react-native-reanimated/Common/cpp/reanimated/CSS/interpolation/transforms/TransformOperationInterpolator.h
+index 5e0e4a2..f0a8a6b 100644
+--- a/node_modules/react-native-reanimated/Common/cpp/reanimated/CSS/interpolation/transforms/TransformOperationInterpolator.h
++++ b/node_modules/react-native-reanimated/Common/cpp/reanimated/CSS/interpolation/transforms/TransformOperationInterpolator.h
+@@ -6,11 +6,12 @@
+ #include <reanimated/CSS/interpolation/operations/StyleOperationInterpolator.h>
+ #include <reanimated/CSS/interpolation/transforms/operations/matrix.h>
+ #include <reanimated/CSS/interpolation/transforms/operations/perspective.h>
+ 
+ #include <memory>
++#include <type_traits>
+ 
+ namespace reanimated::css {
+ 
+ // Base implementation for simple operations
+-template <typename TOperation>
++template <typename TOperation, typename Enable = void>
+ class TransformOperationInterpolator : public StyleOperationInterpolator {
+  public:
+   using StyleOperationInterpolator::StyleOperationInterpolator;
+@@ -51,8 +52,9 @@
+ };
+ 
+ // Specialization for resolvable operations
+-template <ResolvableOp TOperation>
+-class TransformOperationInterpolator<TOperation> : public StyleOperationInterpolator {
++template <typename TOperation>
++class TransformOperationInterpolator<TOperation, std::enable_if_t<ResolvableOp<TOperation>>>
++    : public StyleOperationInterpolator {
+  public:
+   TransformOperationInterpolator(
+	  const std::shared_ptr<TOperation> &defaultOperation,
+@@ -63,7 +65,7 @@
+   std::shared_ptr<StyleOperation> resolveOperation(
+	  const std::shared_ptr<StyleOperation> &operation,
+	  const StyleOperationsInterpolationContext &context) const override;
+ 
++ protected:
+   const ResolvableValueInterpolatorConfig config_;
+ 
+   ResolvableValueInterpolationContext getResolvableValueContext(
+@@ -71,6 +72,7 @@
+	  const StyleOperationsInterpolationContext &context) const;
+ };
+ 
+ } // namespace reanimated::css
+diff --git a/node_modules/react-native-reanimated/Common/cpp/reanimated/CSS/interpolation/transforms/TransformOperationInterpolator.cpp b/node_modules/react-native-reanimated/Common/cpp/reanimated/CSS/interpolation/transforms/TransformOperationInterpolator.cpp
+index 1c0fe62..f1d6b84 100644
+--- a/node_modules/react-native-reanimated/Common/cpp/reanimated/CSS/interpolation/transforms/TransformOperationInterpolator.cpp
++++ b/node_modules/react-native-reanimated/Common/cpp/reanimated/CSS/interpolation/transforms/TransformOperationInterpolator.cpp
+@@ -12,8 +12,8 @@
+ namespace reanimated::css {
+ 
+ // Base implementation for simple operations
+-template <typename TOperation>
+-std::unique_ptr<StyleOperation> TransformOperationInterpolator<TOperation>::interpolate(
++template <typename TOperation, typename Enable>
++std::unique_ptr<StyleOperation> TransformOperationInterpolator<TOperation, Enable>::interpolate(
+	double progress,
+	const std::shared_ptr<StyleOperation> &from,
+	const std::shared_ptr<StyleOperation> &to,
+@@ -111,8 +111,9 @@
+ template TransformMatrix3D TransformOperationInterpolator<MatrixOperation>::interpolateMatrix<TransformMatrix3D>(
+	double,
+	const TransformMatrix::Shared &,
+	const TransformMatrix::Shared &) const;
+ 
+ // Specialization for resolvable operations
+-template <ResolvableOp TOperation>
+-TransformOperationInterpolator<TOperation>::TransformOperationInterpolator(
++template <typename TOperation>
++TransformOperationInterpolator<TOperation, std::enable_if_t<ResolvableOp<TOperation>>>::TransformOperationInterpolator(
+	const std::shared_ptr<TOperation> &defaultOperation,
+	ResolvableValueInterpolatorConfig config)
+	: StyleOperationInterpolator(defaultOperation), config_(std::move(config)) {}
+ 
+-template <ResolvableOp TOperation>
+-std::unique_ptr<StyleOperation> TransformOperationInterpolator<TOperation>::interpolate(
++template <typename TOperation>
++std::unique_ptr<StyleOperation> TransformOperationInterpolator<TOperation, std::enable_if_t<ResolvableOp<TOperation>>>::interpolate(
+	double progress,
+	const std::shared_ptr<StyleOperation> &from,
+	const std::shared_ptr<StyleOperation> &to,
+	const StyleOperationsInterpolationContext &context) const {
+@@ -127,8 +128,9 @@
+   return std::make_unique<TOperation>(
+	  fromOp.value.interpolate(progress, toOp.value, getResolvableValueContext(context)));
+ }
+ 
+-template <ResolvableOp TOperation>
+-std::shared_ptr<StyleOperation> TransformOperationInterpolator<TOperation>::resolveOperation(
++template <typename TOperation>
++std::shared_ptr<StyleOperation> TransformOperationInterpolator<TOperation, std::enable_if_t<ResolvableOp<TOperation>>>::resolveOperation(
+	const std::shared_ptr<StyleOperation> &operation,
+	const StyleOperationsInterpolationContext &context) const {
+   const auto &resolvableOp = std::static_pointer_cast<TOperation>(operation);
+@@ -143,8 +145,9 @@
+ 
+   return std::make_shared<TOperation>(resolved.value());
+ }
+ 
+-template <ResolvableOp TOperation>
+-ResolvableValueInterpolationContext TransformOperationInterpolator<TOperation>::getResolvableValueContext(
++template <typename TOperation>
++ResolvableValueInterpolationContext TransformOperationInterpolator<TOperation, std::enable_if_t<ResolvableOp<TOperation>>>::getResolvableValueContext(
+	const StyleOperationsInterpolationContext &context) const {
+   return ResolvableValueInterpolationContext{
+	  .node = context.node,

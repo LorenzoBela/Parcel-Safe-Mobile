@@ -11,11 +11,11 @@
  * Firebase Path: /boxes/{mac_address}/theft_status
  */
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { View, StyleSheet, Dimensions, TouchableOpacity } from 'react-native';
 import { Text, Surface, Chip, useTheme, ActivityIndicator, IconButton } from 'react-native-paper';
 import { useRoute } from '@react-navigation/native';
-import MapView, { Marker, Polyline, PROVIDER_GOOGLE, AnimatedRegion } from 'react-native-maps';
+import MapboxGL, { isMapboxNativeAvailable, MapFallback } from '../../components/map/MapboxWrapper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import dayjs from 'dayjs';
 import relativeTime from 'dayjs/plugin/relativeTime';
@@ -33,7 +33,7 @@ const { width, height } = Dimensions.get('window');
 export default function TrackMyBoxScreen() {
     const route = useRoute<any>();
     const theme = useTheme();
-    const mapRef = useRef<MapView>(null);
+    const MAPBOX_TOKEN = process.env.EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN;
 
     const boxId = route.params?.boxId || 'BOX_001';
 
@@ -48,6 +48,14 @@ export default function TrackMyBoxScreen() {
     const [loading, setLoading] = useState(true);
     const [showHistory, setShowHistory] = useState(true);
     const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
+    const [mapCenter, setMapCenter] = useState<[number, number]>([120.9842, 14.5995]);
+
+    useEffect(() => {
+        if (MAPBOX_TOKEN) {
+            MapboxGL.setAccessToken(MAPBOX_TOKEN);
+            MapboxGL.setTelemetryEnabled(false);
+        }
+    }, [MAPBOX_TOKEN]);
 
     // Subscribe to live location
     useEffect(() => {
@@ -61,16 +69,7 @@ export default function TrackMyBoxScreen() {
                 });
                 setLastUpdate(new Date());
                 setLoading(false);
-
-                // Animate map to new location
-                if (mapRef.current) {
-                    mapRef.current.animateToRegion({
-                        latitude: location.lat,
-                        longitude: location.lng,
-                        latitudeDelta: 0.01,
-                        longitudeDelta: 0.01,
-                    }, 500);
-                }
+                setMapCenter([location.lng, location.lat]);
             }
         });
 
@@ -96,13 +95,8 @@ export default function TrackMyBoxScreen() {
 
     // Center map on current location
     const centerOnBox = () => {
-        if (currentLocation && mapRef.current) {
-            mapRef.current.animateToRegion({
-                latitude: currentLocation.lat,
-                longitude: currentLocation.lng,
-                latitudeDelta: 0.01,
-                longitudeDelta: 0.01,
-            }, 500);
+        if (currentLocation) {
+            setMapCenter([currentLocation.lng, currentLocation.lat]);
         }
     };
 
@@ -113,10 +107,31 @@ export default function TrackMyBoxScreen() {
     };
 
     // Create polyline coordinates from history
-    const historyCoordinates = locationHistory.map(entry => ({
-        latitude: entry.lat,
-        longitude: entry.lng,
-    }));
+    const historyLineCoordinates = useMemo(
+        () => locationHistory.map(entry => [entry.lng, entry.lat]),
+        [locationHistory]
+    );
+
+    const historyLineGeoJson = useMemo(() => ({
+        type: 'Feature' as const,
+        geometry: {
+            type: 'LineString' as const,
+            coordinates: historyLineCoordinates,
+        },
+    }), [historyLineCoordinates]);
+
+    const historyPointsGeoJson = useMemo(() => ({
+        type: 'FeatureCollection' as const,
+        features: locationHistory.map((entry, index) => ({
+            type: 'Feature' as const,
+            id: `history-${index}`,
+            geometry: {
+                type: 'Point' as const,
+                coordinates: [entry.lng, entry.lat],
+            },
+            properties: {},
+        })),
+    }), [locationHistory]);
 
     if (loading && !currentLocation) {
         return (
@@ -130,62 +145,70 @@ export default function TrackMyBoxScreen() {
     return (
         <View style={styles.container}>
             {/* Map */}
-            <MapView
-                ref={mapRef}
-                style={styles.map}
-                initialRegion={currentLocation ? {
-                    latitude: currentLocation.lat,
-                    longitude: currentLocation.lng,
-                    latitudeDelta: 0.02,
-                    longitudeDelta: 0.02,
-                } : {
-                    latitude: 14.5995,
-                    longitude: 120.9842,
-                    latitudeDelta: 0.1,
-                    longitudeDelta: 0.1,
-                }}
-            >
-                {/* Location History Trail */}
-                {showHistory && historyCoordinates.length > 1 && (
-                    <Polyline
-                        coordinates={historyCoordinates}
-                        strokeColor="#2196F3"
-                        strokeWidth={3}
-                        lineDashPattern={[5, 5]}
+            {MAPBOX_TOKEN ? (
+                <MapboxGL.MapView
+                    style={styles.map}
+                    logoEnabled={false}
+                    attributionEnabled={false}
+                >
+                    <MapboxGL.Camera
+                        zoomLevel={14}
+                        centerCoordinate={currentLocation ? [currentLocation.lng, currentLocation.lat] : mapCenter}
+                        animationMode="easeTo"
+                        animationDuration={500}
                     />
-                )}
 
-                {/* History Points */}
-                {showHistory && locationHistory.map((entry, index) => (
-                    <Marker
-                        key={`history-${index}`}
-                        coordinate={{ latitude: entry.lat, longitude: entry.lng }}
-                        anchor={{ x: 0.5, y: 0.5 }}
-                    >
-                        <View style={styles.historyDot} />
-                    </Marker>
-                ))}
-
-                {/* Current Location Marker */}
-                {currentLocation && (
-                    <Marker
-                        coordinate={{
-                            latitude: currentLocation.lat,
-                            longitude: currentLocation.lng,
-                        }}
-                        anchor={{ x: 0.5, y: 0.5 }}
-                        rotation={currentLocation.heading}
-                    >
-                        <View style={styles.boxMarker}>
-                            <MaterialCommunityIcons
-                                name="cube"
-                                size={24}
-                                color="white"
+                    {/* Location History Trail */}
+                    {showHistory && historyLineCoordinates.length > 1 && (
+                        <MapboxGL.ShapeSource id="history-line" shape={historyLineGeoJson}>
+                            <MapboxGL.LineLayer
+                                id="history-line-layer"
+                                style={{
+                                    lineColor: '#2196F3',
+                                    lineWidth: 3,
+                                    lineDasharray: [2, 2],
+                                }}
                             />
-                        </View>
-                    </Marker>
-                )}
-            </MapView>
+                        </MapboxGL.ShapeSource>
+                    )}
+
+                    {/* History Points */}
+                    {showHistory && locationHistory.length > 0 && (
+                        <MapboxGL.ShapeSource id="history-points" shape={historyPointsGeoJson}>
+                            <MapboxGL.CircleLayer
+                                id="history-points-layer"
+                                style={{
+                                    circleColor: '#2196F3',
+                                    circleRadius: 3,
+                                    circleOpacity: 0.8,
+                                }}
+                            />
+                        </MapboxGL.ShapeSource>
+                    )}
+
+                    {/* Current Location Marker */}
+                    {currentLocation && (
+                        <MapboxGL.PointAnnotation
+                            id="current-location"
+                            coordinate={[currentLocation.lng, currentLocation.lat]}
+                        >
+                            <View style={styles.boxMarker}>
+                                <MaterialCommunityIcons
+                                    name="cube"
+                                    size={24}
+                                    color="white"
+                                />
+                            </View>
+                        </MapboxGL.PointAnnotation>
+                    )}
+                </MapboxGL.MapView>
+            ) : (
+                <View style={[styles.map, styles.mapFallback]}>
+                    <Text style={{ color: theme.colors.onSurfaceVariant }}>
+                        Map unavailable: set EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN in .env
+                    </Text>
+                </View>
+            )}
 
             {/* Status Card */}
             <Surface style={styles.statusCard} elevation={4}>
@@ -288,6 +311,11 @@ const styles = StyleSheet.create({
     map: {
         width: width,
         height: height,
+    },
+    mapFallback: {
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: '#f1f1f1',
     },
     statusCard: {
         position: 'absolute',

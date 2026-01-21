@@ -15,11 +15,11 @@
       },
       "oauth_client": [
         {
-          "client_id": "535049149934-ts7a7b7id7ukvi84n55sschfe31vqjp8.apps.googleusercontent.com",
+          "client_id": "535049149934-g1cv044idvttqc7j0lacihnoh1885pc2.apps.googleusercontent.com",
           "client_type": 1,
           "android_info": {
             "package_name": "com.parcel.safe",
-            "certificate_hash": "724e29dca49375951fcf978082a7d49cbb2a9765"
+            "certificate_hash": "5e8f16062ea3cd2c4a0d547876baa6f38cabf625"
           }
         },
         {

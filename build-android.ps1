@@ -1,13 +1,74 @@
 # Android Build Script for Parcel Safe App
-# This script cleans and builds the Android app
+# This script syncs files from editing location to build location, then cleans and builds the Android app
 
 Write-Host "====================================" -ForegroundColor Cyan
 Write-Host "Parcel Safe Android Build Script" -ForegroundColor Cyan
 Write-Host "====================================" -ForegroundColor Cyan
 Write-Host ""
 
+# Define source and destination paths
+$SOURCE_DIR = "C:\Users\Lorenzo Bela\Downloads\Thesis 24-25 Smart Top Box\mobile"
+$DEST_DIR = "C:\Dev\TopBox\mobile"
+
+# Step 0: Sync files from editing location to build location
+Write-Host "`nStep 0: Syncing files from editing location to build location..." -ForegroundColor Yellow
+Write-Host "  Source: $SOURCE_DIR" -ForegroundColor Gray
+Write-Host "  Destination: $DEST_DIR" -ForegroundColor Gray
+
+
+# Ensure destination directory exists
+if (-not (Test-Path $DEST_DIR)) {
+    Write-Host "  Creating destination directory..." -ForegroundColor Gray
+    New-Item -ItemType Directory -Path $DEST_DIR -Force | Out-Null
+}
+
+# Use robocopy to mirror directories (excludes node_modules and build artifacts for efficiency)
+$robocopyArgs = @(
+    $SOURCE_DIR,
+    $DEST_DIR,
+    "/MIR",              # Mirror mode (sync deletions too)
+    "/R:2",              # Retry 2 times on failed copies
+    "/W:3",              # Wait 3 seconds between retries
+    "/MT:8",             # Multi-threaded (8 threads)
+    "/XD",               # Exclude directories
+    "node_modules",
+    "android\build",
+    "android\app\build",
+    "android\app\.cxx",
+    "android\.gradle",
+    ".expo",
+    ".git",
+    "/XF",               # Exclude files
+    "*.log",
+    "*.lock",
+    ".DS_Store",
+    "/NFL",              # No file list (less verbose)
+    "/NDL",              # No directory list (less verbose)
+    "/NP",               # No progress (less verbose)
+    "/NS",               # No size (less verbose)
+    "/NC",               # No class (less verbose)
+    "/BYTES"             # Print sizes in bytes
+)
+
+robocopy @robocopyArgs
+$robocopyExitCode = $LASTEXITCODE
+
+# Robocopy exit codes: 0-7 are success, 8+ are errors
+if ($robocopyExitCode -ge 8) {
+    Write-Host "[ERROR] File sync failed with exit code $robocopyExitCode" -ForegroundColor Red
+    exit $robocopyExitCode
+} else {
+    Write-Host "[OK] Files synced successfully (exit code: $robocopyExitCode)" -ForegroundColor Green
+}
+
+# Change to build directory for all subsequent operations
+Set-Location $DEST_DIR
+Write-Host "[OK] Switched to build directory: $DEST_DIR" -ForegroundColor Green
+Write-Host ""
+
+
 # Check and enable Windows long path support if needed
-Write-Host "`nStep 0a: Checking Windows long path support..." -ForegroundColor Yellow
+Write-Host "`nStep 1: Checking Windows long path support..." -ForegroundColor Yellow
 try {
     $longPathsEnabled = Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem" -Name "LongPathsEnabled" -ErrorAction SilentlyContinue
     if ($longPathsEnabled.LongPathsEnabled -ne 1) {
@@ -27,8 +88,8 @@ try {
     Write-Host "[WARN] Could not check long path support status" -ForegroundColor DarkYellow
 }
 
-# Set project root (derived from script location so the repo can be moved/renamed safely)
-$PROJECT_ROOT = $PSScriptRoot
+# Set project root to build directory (not script location, since we're syncing)
+$PROJECT_ROOT = $DEST_DIR
 $ANDROID_DIR = Join-Path $PROJECT_ROOT "android"
 
 #region agent log
@@ -68,8 +129,8 @@ Write-AgentLog -HypothesisId "H1" -Message "env snapshot" -Data @{
 }
 #endregion
 
-# Step 0: Toolchain sanity (JDK + Android SDK)
-Write-Host "`nStep 0: Toolchain sanity..." -ForegroundColor Yellow
+# Step 2: Toolchain sanity (JDK + Android SDK)
+Write-Host "`nStep 2: Toolchain sanity..." -ForegroundColor Yellow
 
 # Try to infer ANDROID_HOME/ANDROID_SDK_ROOT from android/local.properties if missing
 $localPropsPathEarly = "$ANDROID_DIR\local.properties"
@@ -77,13 +138,64 @@ $sdkDirEarly = $null
 if (Test-Path $localPropsPathEarly) {
     $sdkLineEarly = Get-Content $localPropsPathEarly | Where-Object { $_ -match '^sdk\.dir=' } | Select-Object -First 1
     if ($sdkLineEarly) {
-        $sdkDirEarly = $sdkLineEarly -replace '^sdk\.dir=', ''
+        # Remove the property name and unescape Java properties format (\\: -> :, \\ -> \)
+        $sdkDirEarly = $sdkLineEarly -replace '^sdk\.dir=', '' -replace '\\:', ':' -replace '\\\\', '\'
     }
 }
 if ((!$env:ANDROID_HOME -or !$env:ANDROID_SDK_ROOT) -and $sdkDirEarly) {
     if (-not $env:ANDROID_HOME) { $env:ANDROID_HOME = $sdkDirEarly }
     if (-not $env:ANDROID_SDK_ROOT) { $env:ANDROID_SDK_ROOT = $sdkDirEarly }
     Write-Host "[OK] Android SDK inferred from local.properties: $sdkDirEarly" -ForegroundColor Green
+    
+    # Add platform-tools to PATH if not already there (for adb command)
+    $platformTools = Join-Path $sdkDirEarly "platform-tools"
+    if ((Test-Path $platformTools) -and ($env:Path -notlike "*$platformTools*")) {
+        $env:Path = "$platformTools;$env:Path"
+        Write-Host "[OK] Added Android platform-tools to PATH" -ForegroundColor Green
+    }
+
+    # Set NDK path (prefer 26.1.10909125 if installed, otherwise use newest available)
+    $preferredNdkVersion = "26.1.10909125"
+    $ndkRoot = Join-Path $sdkDirEarly "ndk"
+    $ndkDir = $null
+
+    function Test-NdkValid {
+        param([string]$Path)
+        return (Test-Path (Join-Path $Path "source.properties"))
+    }
+
+    if (Test-Path $ndkRoot) {
+        $preferredCandidate = Join-Path $ndkRoot $preferredNdkVersion
+        if ((Test-Path $preferredCandidate) -and (Test-NdkValid $preferredCandidate)) {
+            $ndkDir = $preferredCandidate
+        } else {
+            $ndkDir = Get-ChildItem -Path $ndkRoot -Directory | Sort-Object Name -Descending |
+                Where-Object { Test-NdkValid $_.FullName } |
+                Select-Object -First 1 | ForEach-Object { $_.FullName }
+        }
+    }
+
+    if ($ndkDir) {
+        $env:ANDROID_NDK_HOME = $ndkDir
+        $env:NDK_HOME = $ndkDir
+
+        # Ensure local.properties has ndk.dir pointing at the selected NDK (use forward slashes)
+        $ndkDirForProps = $ndkDir -replace '\\', '/'
+        $ndkLine = "ndk.dir=$ndkDirForProps"
+        if (Test-Path $localPropsPathEarly) {
+            $localPropsContent = Get-Content $localPropsPathEarly
+            if ($localPropsContent -match '^ndk\.dir=') {
+                $localPropsContent = $localPropsContent -replace '^ndk\.dir=.*', $ndkLine
+            } else {
+                $localPropsContent += $ndkLine
+            }
+            $localPropsContent | Set-Content $localPropsPathEarly
+        }
+
+        Write-Host "[OK] Using NDK: $ndkDir" -ForegroundColor Green
+    } else {
+        Write-Host "[WARN] No NDK installation found under $ndkRoot" -ForegroundColor DarkYellow
+    }
 }
 
 # Prefer Android Studio embedded JBR (Java 17) if JAVA_HOME is missing or points to Java 8
@@ -122,12 +234,10 @@ Write-AgentLog -HypothesisId "H7" -Message "toolchain inferred" -Data @{
 }
 #endregion
 
-# Change to project directory
-Set-Location $PROJECT_ROOT
-Write-Host "[OK] Changed to project directory: $PROJECT_ROOT" -ForegroundColor Green
+# We're already in the project directory from the sync step above
 
-# Step 1: Clean build directories
-Write-Host "`nStep 1: Cleaning build directories..." -ForegroundColor Yellow
+# Step 3: Clean build directories
+Write-Host "`nStep 3: Cleaning build directories..." -ForegroundColor Yellow
 
 $cleanupPaths = @(
     "$ANDROID_DIR\app\.cxx",
@@ -145,8 +255,8 @@ foreach ($path in $cleanupPaths) {
 }
 Write-Host "[OK] Build directories cleaned" -ForegroundColor Green
 
-# Step 2: Clean Gradle cache (optional but recommended)
-Write-Host "`nStep 2: Cleaning Gradle cache..." -ForegroundColor Yellow
+# Step 4: Clean Gradle cache (optional but recommended)
+Write-Host "`nStep 4: Cleaning Gradle cache..." -ForegroundColor Yellow
 Set-Location $ANDROID_DIR
 $gradleCleanExit = $null
 if (Test-Path ".\gradlew.bat") {
@@ -164,17 +274,15 @@ Write-AgentLog -HypothesisId "H3" -Message "gradle clean result" -Data @{
 #endregion
 Set-Location $PROJECT_ROOT
 
-# Step 3: Ensure node_modules are fresh
-Write-Host "`nStep 3: Checking node_modules..." -ForegroundColor Yellow
-$nodeModulesExists = Test-Path "$PROJECT_ROOT\node_modules"
-$npmInstallExit = $null
-if (!$nodeModulesExists) {
-    Write-Host "  Installing dependencies..." -ForegroundColor Gray
-    npm install
-    $npmInstallExit = $LASTEXITCODE
-} else {
-    Write-Host "[OK] node_modules exists" -ForegroundColor Green
-}
+# Step 5: Ensure node_modules are fresh
+Write-Host "`nStep 5: Ensuring node_modules are up to date..." -ForegroundColor Yellow
+
+# Always reinstall in build directory to ensure correct versions
+Write-Host "  Installing dependencies..." -ForegroundColor Gray
+npm install
+$npmInstallExit = $LASTEXITCODE
+
+Write-Host "[OK] Dependencies installed" -ForegroundColor Green
 #region agent log
 Write-AgentLog -HypothesisId "H4" -Message "node modules check" -Data @{
     exists        = $nodeModulesExists
@@ -183,8 +291,8 @@ Write-AgentLog -HypothesisId "H4" -Message "node modules check" -Data @{
 }
 #endregion
 
-# Step 4: Pre-build checks
-Write-Host "`nStep 4: Running pre-build checks..." -ForegroundColor Yellow
+# Step 6: Pre-build checks
+Write-Host "`nStep 6: Running pre-build checks..." -ForegroundColor Yellow
 
 # Check if Android SDK is available
 if ($env:ANDROID_HOME) {
@@ -199,7 +307,8 @@ $sdkDir = $null
 if (Test-Path $localPropsPath) {
     $sdkLine = Get-Content $localPropsPath | Where-Object { $_ -match '^sdk\.dir=' } | Select-Object -First 1
     if ($sdkLine) {
-        $sdkDir = $sdkLine -replace '^sdk\.dir=', ''
+        # Remove the property name and unescape Java properties format (\\: -> :, \\ -> \)
+        $sdkDir = $sdkLine -replace '^sdk\.dir=', '' -replace '\\:', ':' -replace '\\\\', '\'
     }
 }
 Write-AgentLog -HypothesisId "H2" -Message "local.properties status" -Data @{
@@ -226,7 +335,7 @@ Write-AgentLog -HypothesisId "H5" -Message "java version check" -Data @{
 }
 #endregion
 
-# Step 5: Build the Android app
+# Step 7: Build the Android app
 Write-Host "`n====================================" -ForegroundColor Cyan
 Write-Host "Starting Android build..." -ForegroundColor Cyan
 Write-Host "====================================" -ForegroundColor Cyan
