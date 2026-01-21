@@ -25,11 +25,18 @@ export default function CancellationModal({ visible, onDismiss, onSubmit, loadin
         onSubmit(reason, details);
     };
 
+    const handleDismiss = () => {
+        setReason(CancellationReason.CUSTOMER_UNAVAILABLE);
+        setDetails('');
+        setError('');
+        onDismiss();
+    };
+
     const reasons = Object.values(CancellationReason);
 
     return (
         <Portal>
-            <Modal visible={visible} onDismiss={onDismiss} contentContainerStyle={[styles.container, { backgroundColor: theme.colors.surface }]}>
+            <Modal visible={visible} onDismiss={handleDismiss} contentContainerStyle={[styles.container, { backgroundColor: theme.colors.surface }]}>
                 <Text variant="headlineSmall" style={styles.title}>Cancel Delivery</Text>
                 <Text variant="bodyMedium" style={{ marginBottom: 16 }}>
                     Please select a reason for cancellation. This will be recorded and the sender will be notified.
@@ -63,7 +70,7 @@ export default function CancellationModal({ visible, onDismiss, onSubmit, loadin
                 {!!error && <HelperText type="error">{error}</HelperText>}
 
                 <View style={styles.actions}>
-                    <Button mode="text" onPress={onDismiss} style={{ marginRight: 8 }} disabled={loading}>
+                    <Button mode="text" onPress={handleDismiss} style={{ marginRight: 8 }} disabled={loading}>
                         Dismiss
                     </Button>
                     <Button

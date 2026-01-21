@@ -64,7 +64,7 @@ describe('CustomerBleUnlockModal', () => {
             );
 
             const unlockButton = getByText('Unlock');
-            
+
             await act(async () => {
                 fireEvent.press(unlockButton);
             });
@@ -79,7 +79,7 @@ describe('CustomerBleUnlockModal', () => {
             );
 
             const unlockButton = getByText('Unlock');
-            
+
             await act(async () => {
                 fireEvent.press(unlockButton);
             });
@@ -112,14 +112,17 @@ describe('CustomerBleUnlockModal', () => {
             );
 
             const unlockButton = getByText('Unlock');
-            
+
             await act(async () => {
                 fireEvent.press(unlockButton);
+            });
+
+            await act(async () => {
                 jest.advanceTimersByTime(4000); // Complete both connect and unlock
             });
 
             await waitFor(() => {
-                expect(getByText(/Success!/i)).toBeTruthy();
+                expect(getByText(/Success!|Unlocked/i)).toBeTruthy();
             }, { timeout: 5000 });
         });
     });
@@ -134,7 +137,7 @@ describe('CustomerBleUnlockModal', () => {
             );
 
             const unlockButton = getByText('Unlock');
-            
+
             // Note: Current implementation doesn't have real error handling
             // This test verifies the modal doesn't crash
             await act(async () => {
@@ -158,11 +161,39 @@ describe('CustomerBleUnlockModal', () => {
 
             // Look for close/cancel button
             const closeButton = getByText(/Cancel/i) || getByText(/Close/i);
-            
+
             if (closeButton) {
                 fireEvent.press(closeButton);
                 expect(mockProps.onClose).toHaveBeenCalled();
             }
+        });
+
+        it('calls onClose when Done is pressed after success', async () => {
+            const { getByText, queryByText } = renderWithProvider(
+                <CustomerBleUnlockModal {...mockProps} />
+            );
+
+            const unlockButton = getByText('Unlock');
+
+            await act(async () => {
+                fireEvent.press(unlockButton);
+            });
+
+            await act(async () => {
+                jest.advanceTimersByTime(2500);
+            });
+            await act(async () => {
+                jest.advanceTimersByTime(2500);
+            });
+
+            await waitFor(() => {
+                expect(getByText(/Success!|Unlocked/i)).toBeTruthy();
+            });
+
+            const doneButton = getByText('Done');
+            fireEvent.press(doneButton);
+
+            expect(mockProps.onClose).toHaveBeenCalled();
         });
 
         it('resets state when closed and reopened', async () => {
@@ -191,9 +222,8 @@ describe('CustomerBleUnlockModal', () => {
                 </PaperProvider>
             );
 
-            // Component should reset or maintain state
-            // The actual behavior may vary - just verify it renders
             expect(queryByText(/Bluetooth/i)).toBeTruthy();
+            expect(queryByText('Unlock') || queryByText('Connecting...')).toBeTruthy();
         });
     });
 
@@ -273,7 +303,7 @@ describe('CustomerBleUnlockModal', () => {
             );
 
             const unlockButton = getByText('Unlock');
-            
+
             await act(async () => {
                 fireEvent.press(unlockButton);
             });

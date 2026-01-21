@@ -110,5 +110,60 @@ describe('IncomingOrderModal', () => {
         expect(mockProps.onExpire).toHaveBeenCalled();
     });
 
+    it('updates countdown text as time passes', () => {
+        const nowSpy = jest.spyOn(Date, 'now').mockReturnValue(1000000);
+        const timedRequest = { ...mockRequest, expiresAt: 1000000 + 30000 };
+
+        const { getByText } = renderWithProvider(
+            <IncomingOrderModal {...mockProps} request={timedRequest} />
+        );
+
+        expect(getByText('30s remaining')).toBeTruthy();
+
+        act(() => {
+            jest.advanceTimersByTime(1000);
+        });
+
+        expect(getByText('29s remaining')).toBeTruthy();
+        nowSpy.mockRestore();
+    });
+
+    it('calls onExpire only once', () => {
+        renderWithProvider(<IncomingOrderModal {...mockProps} />);
+
+        act(() => {
+            jest.advanceTimersByTime(32000);
+        });
+
+        act(() => {
+            jest.advanceTimersByTime(1000);
+        });
+
+        expect(mockProps.onExpire).toHaveBeenCalled();
+    });
+
+    it('vibrates when modal becomes visible', () => {
+        renderWithProvider(<IncomingOrderModal {...mockProps} />);
+
+        const { Vibration } = require('react-native');
+        expect(Vibration.vibrate).toHaveBeenCalled();
+    });
+
+    it('formats currency for zero and large fares', () => {
+        const { getByText, rerender } = renderWithProvider(
+            <IncomingOrderModal {...mockProps} request={{ ...mockRequest, estimatedFare: 0 }} />
+        );
+
+        expect(getByText('₱0.00')).toBeTruthy();
+
+        rerender(
+            <PaperProvider>
+                <IncomingOrderModal {...mockProps} request={{ ...mockRequest, estimatedFare: 9999.9 }} />
+            </PaperProvider>
+        );
+
+        expect(getByText('₱9999.90')).toBeTruthy();
+    });
+
 
 });

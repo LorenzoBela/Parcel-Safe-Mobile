@@ -1,5 +1,6 @@
 import React from 'react';
 import { render, fireEvent } from '@testing-library/react-native';
+import { StyleSheet } from 'react-native';
 import { HardwareAlertBanner, HardwareAlertList } from '../../components/HardwareAlertBanner';
 import { HardwareAlert } from '../../services/hardwareStatusService';
 
@@ -50,6 +51,21 @@ describe('HardwareAlertBanner', () => {
         const { queryByText } = render(<HardwareAlertBanner alert={mockAlert} showAction={false} />);
         expect(queryByText('Charge device')).toBeNull();
     });
+
+    it('applies severity colors for warning alerts', () => {
+        const warningAlert: HardwareAlert = { ...mockAlert, severity: 'warning', title: 'Warning Alert' };
+        const { UNSAFE_getAllByType } = render(<HardwareAlertBanner alert={warningAlert} />);
+
+        const views = UNSAFE_getAllByType(require('react-native').View);
+        const container = views.find((view: any) => {
+            const style = StyleSheet.flatten(view.props.style);
+            return style?.backgroundColor && style?.borderColor;
+        });
+
+        const style = StyleSheet.flatten(container.props.style);
+        expect(style.backgroundColor).toBe('#fef3c7');
+        expect(style.borderColor).toBe('#f59e0b');
+    });
 });
 
 describe('HardwareAlertList', () => {
@@ -78,5 +94,18 @@ describe('HardwareAlertList', () => {
         fireEvent.press(dismissBtns[0]); // Press first one
 
         expect(onDismiss).toHaveBeenCalledWith('1');
+    });
+
+    it('hides action text when showAction is false', () => {
+        const alertsWithAction: HardwareAlert[] = [
+            { id: '1', title: 'A1', message: 'M1', severity: 'info', timestamp: 0, type: 'solenoid', action: 'Do action' },
+        ];
+
+        const { queryByText } = render(
+            <HardwareAlertList alerts={alertsWithAction} showAction={false} />
+        );
+
+        expect(queryByText('M1')).toBeTruthy();
+        expect(queryByText('Do action')).toBeNull();
     });
 });

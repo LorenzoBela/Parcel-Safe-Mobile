@@ -1,5 +1,6 @@
 import React from 'react';
 import { render } from '@testing-library/react-native';
+import { StyleSheet } from 'react-native';
 import { Provider as PaperProvider } from 'react-native-paper';
 import CustomerHardwareBanner from '../../components/CustomerHardwareBanner';
 
@@ -136,33 +137,41 @@ describe('CustomerHardwareBanner', () => {
 
     describe('Visual Styling', () => {
         it('applies correct background color for FAILED status', () => {
-            const { getByText } = renderWithProvider(
+            const { getByText, UNSAFE_getByType } = renderWithProvider(
                 <CustomerHardwareBanner displayStatus="FAILED" />
             );
 
             const title = getByText('Use Your Phone to Unlock');
             expect(title).toBeTruthy();
-            // #E3F2FD (light blue) background
+            const surface = UNSAFE_getByType(require('react-native-paper').Surface);
+            const style = StyleSheet.flatten(surface.props.style);
+            expect(style.backgroundColor).toBe('#E3F2FD');
+            expect(style.borderLeftColor).toBe('#1976D2');
         });
 
         it('applies correct background color for DEGRADED status', () => {
-            const { getByText } = renderWithProvider(
+            const { getByText, UNSAFE_getByType } = renderWithProvider(
                 <CustomerHardwareBanner displayStatus="DEGRADED" />
             );
 
             const title = getByText('Display May Be Hard to Read');
             expect(title).toBeTruthy();
-            // #FFF9C4 (light yellow) background
+            const surface = UNSAFE_getByType(require('react-native-paper').Surface);
+            const style = StyleSheet.flatten(surface.props.style);
+            expect(style.backgroundColor).toBe('#FFF9C4');
+            expect(style.borderLeftColor).toBe('#F57C00');
         });
 
         it('has border for visual emphasis', () => {
-            const { getByText } = renderWithProvider(
+            const { getByText, UNSAFE_getByType } = renderWithProvider(
                 <CustomerHardwareBanner displayStatus="FAILED" />
             );
 
             const title = getByText('Use Your Phone to Unlock');
             expect(title).toBeTruthy();
-            // Should have left border for emphasis
+            const surface = UNSAFE_getByType(require('react-native-paper').Surface);
+            const style = StyleSheet.flatten(surface.props.style);
+            expect(style.borderLeftColor).toBe('#1976D2');
         });
     });
 
@@ -264,6 +273,14 @@ describe('CustomerHardwareBanner', () => {
                 </PaperProvider>
             );
             expect(queryByText('Display May Be Hard to Read')).toBeNull();
+        });
+
+        it('falls back to degraded styling for unknown status', () => {
+            const { getByText } = renderWithProvider(
+                <CustomerHardwareBanner displayStatus={'UNKNOWN' as any} />
+            );
+
+            expect(getByText('Display May Be Hard to Read')).toBeTruthy();
         });
     });
 });

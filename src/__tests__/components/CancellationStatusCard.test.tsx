@@ -126,7 +126,7 @@ describe('CancellationStatusCard', () => {
 
         it('calls onNavigateToReturn when button is pressed', () => {
             const mockNavigate = jest.fn();
-            const { queryByText } = renderWithProvider(
+            const { getByText } = renderWithProvider(
                 <CancellationStatusCard 
                     cancellation={mockCancellation} 
                     onNavigateToReturn={mockNavigate}
@@ -134,8 +134,9 @@ describe('CancellationStatusCard', () => {
                 />
             );
 
-            // Component may not show return button in all states - verify it renders
-            expect(queryByText(/Delivery Cancelled/i)).toBeTruthy();
+            const navigateButton = getByText('Navigate to Return Location');
+            fireEvent.press(navigateButton);
+            expect(mockNavigate).toHaveBeenCalled();
         });
     });
 
@@ -265,8 +266,7 @@ describe('CancellationStatusCard', () => {
                 />
             );
 
-            // Should still render but might show expired status
-            expect(getByText('Delivery Cancelled')).toBeTruthy();
+            expect(getByText('Return OTP has expired. Please contact support.')).toBeTruthy();
         });
     });
 });

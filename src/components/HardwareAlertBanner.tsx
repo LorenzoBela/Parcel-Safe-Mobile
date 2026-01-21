@@ -88,9 +88,10 @@ export function HardwareAlertBanner({
 interface HardwareAlertListProps {
     alerts: HardwareAlert[];
     onDismiss?: (alertId: string) => void;
+    showAction?: boolean;
 }
 
-export function HardwareAlertList({ alerts, onDismiss }: HardwareAlertListProps) {
+export function HardwareAlertList({ alerts, onDismiss, showAction = true }: HardwareAlertListProps) {
     if (alerts.length === 0) return null;
 
     return (
@@ -100,6 +101,7 @@ export function HardwareAlertList({ alerts, onDismiss }: HardwareAlertListProps)
                     key={alert.id}
                     alert={alert}
                     onDismiss={onDismiss ? () => onDismiss(alert.id) : undefined}
+                    showAction={showAction}
                 />
             ))}
         </View>

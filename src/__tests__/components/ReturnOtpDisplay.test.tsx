@@ -77,4 +77,25 @@ describe('ReturnOtpDisplay', () => {
         const { queryByText } = renderWithProvider(<ReturnOtpDisplay {...mockProps} showValidity={false} />);
         expect(queryByText(/Valid for/)).toBeNull();
     });
+
+    it('does not require onCopy to be provided', async () => {
+        const { getByText } = renderWithProvider(
+            <ReturnOtpDisplay otp="222333" issuedAt={Date.now()} />
+        );
+
+        await act(async () => {
+            fireEvent.press(getByText('222333'));
+        });
+
+        expect(Clipboard.setStringAsync).toHaveBeenCalledWith('222333');
+        expect(Alert.alert).toHaveBeenCalledWith('Copied!', 'OTP copied to clipboard');
+    });
+
+    it('hides validity in compact mode when showValidity is false', () => {
+        const { queryByText } = renderWithProvider(
+            <ReturnOtpDisplay {...mockProps} compact={true} showValidity={false} />
+        );
+
+        expect(queryByText(/Valid for/)).toBeNull();
+    });
 });

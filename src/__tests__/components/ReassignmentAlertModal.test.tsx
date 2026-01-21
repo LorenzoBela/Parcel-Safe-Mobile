@@ -96,6 +96,58 @@ describe('ReassignmentAlertModal UI/UX', () => {
         expect(mockAcknowledge).toHaveBeenCalledTimes(1);
     });
 
+    it('shows formatted countdown text', () => {
+        const { getByText } = render(
+            <ReassignmentAlertModal
+                visible={true}
+                state={mockState}
+                type="incoming"
+                onAcknowledge={mockAcknowledge}
+            />
+        );
+
+        expect(getByText(/Auto-acknowledge in 0:30/)).toBeTruthy();
+    });
+
+    it('requests remaining time on mount', () => {
+        render(
+            <ReassignmentAlertModal
+                visible={true}
+                state={mockState}
+                type="outgoing"
+                onAcknowledge={mockAcknowledge}
+            />
+        );
+
+        expect(getRemainingAutoAckSeconds).toHaveBeenCalledWith(mockState);
+    });
+
+    it('returns null when state is missing', () => {
+        const { toJSON } = render(
+            <ReassignmentAlertModal
+                visible={true}
+                state={null}
+                type="outgoing"
+                onAcknowledge={mockAcknowledge}
+            />
+        );
+
+        expect(toJSON()).toBeNull();
+    });
+
+    it('returns null when type is missing', () => {
+        const { toJSON } = render(
+            <ReassignmentAlertModal
+                visible={true}
+                state={mockState}
+                type={null}
+                onAcknowledge={mockAcknowledge}
+            />
+        );
+
+        expect(toJSON()).toBeNull();
+    });
+
 
 
 

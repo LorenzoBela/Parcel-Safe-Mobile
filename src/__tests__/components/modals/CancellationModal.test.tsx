@@ -245,6 +245,23 @@ describe('CancellationModal (Rider)', () => {
                 'Test details'
             );
         });
+
+        it('submits selected reason', () => {
+            const { getByText } = renderWithProvider(
+                <CancellationModal {...mockProps} />
+            );
+
+            const damagedOption = getByText(/Package Damaged/i);
+            fireEvent.press(damagedOption);
+
+            const confirmButton = getByText('Confirm Cancellation');
+            fireEvent.press(confirmButton);
+
+            expect(mockProps.onSubmit).toHaveBeenCalledWith(
+                CancellationReason.PACKAGE_DAMAGED,
+                ''
+            );
+        });
     });
 
     describe('Loading State', () => {
@@ -269,6 +286,17 @@ describe('CancellationModal (Rider)', () => {
             // Verify buttons exist and modal handles loading state
             expect(dismissButton).toBeTruthy();
             expect(confirmButton).toBeTruthy();
+        });
+
+        it('does not submit when loading is true', () => {
+            const { getByText } = renderWithProvider(
+                <CancellationModal {...mockProps} loading={true} />
+            );
+
+            const confirmButton = getByText('Confirm Cancellation');
+            fireEvent.press(confirmButton);
+
+            expect(mockProps.onSubmit).not.toHaveBeenCalled();
         });
 
         it('enables buttons when not loading', () => {
@@ -353,6 +381,37 @@ describe('CancellationModal (Rider)', () => {
             // Should show error for whitespace-only details
             expect(getByText(/Please provide details/)).toBeTruthy();
             expect(mockProps.onSubmit).not.toHaveBeenCalled();
+        });
+
+        it('resets selection and details after dismiss', () => {
+            const { getByText, getByPlaceholderText, rerender } = renderWithProvider(
+                <CancellationModal {...mockProps} />
+            );
+
+            const otherOption = getByText(/Other/i);
+            fireEvent.press(otherOption);
+
+            const detailsInput = getByPlaceholderText(/Optional/);
+            fireEvent.changeText(detailsInput, 'Some details');
+
+            const dismissButton = getByText('Dismiss');
+            fireEvent.press(dismissButton);
+
+            mockProps.onSubmit.mockClear();
+
+            rerender(
+                <PaperProvider>
+                    <CancellationModal {...mockProps} visible={true} />
+                </PaperProvider>
+            );
+
+            const confirmButton = getByText('Confirm Cancellation');
+            fireEvent.press(confirmButton);
+
+            expect(mockProps.onSubmit).toHaveBeenCalledWith(
+                CancellationReason.CUSTOMER_UNAVAILABLE,
+                ''
+            );
         });
     });
 });

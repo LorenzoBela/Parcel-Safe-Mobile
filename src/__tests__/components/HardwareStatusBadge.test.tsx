@@ -1,5 +1,6 @@
 import React from 'react';
 import { render, fireEvent } from '@testing-library/react-native';
+import { StyleSheet } from 'react-native';
 import { HardwareStatusBadge, StatusDot } from '../../components/HardwareStatusBadge';
 import { OverallHealthStatus } from '../../services/hardwareStatusService';
 
@@ -147,6 +148,16 @@ describe('HardwareStatusBadge', () => {
 
             // Small size shows status name, not full text
             expect(getByText('HEALTHY')).toBeTruthy();
+        });
+
+        it('hides text for small size when showText is false', () => {
+            const { queryByText, getByText } = render(
+                <HardwareStatusBadge status="HEALTHY" size="small" showText={false} />
+            );
+
+            expect(getByText('✓')).toBeTruthy();
+            expect(queryByText('HEALTHY')).toBeNull();
+            expect(queryByText('All Systems OK')).toBeNull();
         });
     });
 
@@ -355,6 +366,18 @@ describe('StatusDot', () => {
                 expect(view).toBeTruthy();
             });
         });
+
+        it('applies width, height, and border radius based on size', () => {
+            const { UNSAFE_getByType } = render(
+                <StatusDot status="HEALTHY" size={18} />
+            );
+
+            const view = UNSAFE_getByType(require('react-native').View);
+            const style = StyleSheet.flatten(view.props.style);
+            expect(style.width).toBe(18);
+            expect(style.height).toBe(18);
+            expect(style.borderRadius).toBe(9);
+        });
     });
 
     describe('Pulse Animation', () => {
@@ -374,6 +397,16 @@ describe('StatusDot', () => {
 
             const view = UNSAFE_getByType(require('react-native').View);
             expect(view).toBeTruthy();
+        });
+
+        it('adds pulse style for non-healthy statuses when enabled', () => {
+            const { UNSAFE_getByType } = render(
+                <StatusDot status="CRITICAL" pulse={true} />
+            );
+
+            const view = UNSAFE_getByType(require('react-native').View);
+            const style = StyleSheet.flatten(view.props.style);
+            expect(style.opacity).toBe(0.8);
         });
     });
 });

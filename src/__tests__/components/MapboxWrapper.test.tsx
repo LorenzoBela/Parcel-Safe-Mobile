@@ -122,6 +122,15 @@ describe('MapboxWrapper', () => {
             expect(mapView.props.attributionEnabled).toBe(false);
         });
 
+        it('passes testID to MapView', () => {
+            const { getByTestId } = render(
+                <SafeMapView testID="custom-map" />
+            );
+
+            const mapView = getByTestId('custom-map');
+            expect(mapView).toBeTruthy();
+        });
+
         it('renders children inside MapView', () => {
             const { getByText } = render(
                 <SafeMapView>
