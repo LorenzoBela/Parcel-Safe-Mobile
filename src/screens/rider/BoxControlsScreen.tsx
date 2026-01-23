@@ -14,6 +14,8 @@ import {
     subscribeToOtpStatus,
     OtpStatus,
     resetLockout,
+    subscribeToPower,
+    PowerState,
 } from '../../services/firebaseClient';
 import { subscribeToAdminOverride, AdminOverrideState, getOverrideNotificationMessage } from '../../services/adminOverrideService';
 import { bleOtpService, BleBoxDevice, BleTransferResult } from '../../services/bleOtpService';
@@ -51,6 +53,9 @@ export default function BoxControlsScreen() {
     const [bleStatus, setBleStatus] = useState<'idle' | 'scanning' | 'connecting' | 'transferring' | 'success' | 'error'>('idle');
     const [bleMessage, setBleMessage] = useState('');
     const [foundDevices, setFoundDevices] = useState<BleBoxDevice[]>([]);
+
+    // EC-90: Power State for solenoid blocking
+    const [powerState, setPowerState] = useState<PowerState | null>(null);
 
     // Telemetry State (now enhanced with real data)
     const [telemetry, setTelemetry] = useState({
@@ -110,12 +115,21 @@ export default function BoxControlsScreen() {
             }
         });
 
+        // EC-90: Subscribe to power state
+        const unsubscribePower = subscribeToPower(DEMO_BOX_ID, (state) => {
+            setPowerState(state);
+            if (state?.solenoid_blocked) {
+                addLog("🔋 VOLTAGE CRITICAL - Unlock disabled", "error");
+            }
+        });
+
         return () => {
             unsubscribeBattery();
             unsubscribeTamper();
             unsubscribeLockout();
             unsubscribeOtpStatus();
             unsubscribeOverride();
+            unsubscribePower();
         };
     }, []);
 
@@ -159,6 +173,16 @@ export default function BoxControlsScreen() {
     };
 
     const toggleLock = () => {
+        // EC-90: Block unlock if solenoid is blocked due to low voltage
+        if (isLocked && powerState?.solenoid_blocked) {
+            Alert.alert(
+                '🔋 Low Voltage',
+                `Battery voltage too low (${powerState.voltage.toFixed(1)}V). Cannot unlock until battery is charged.`,
+                [{ text: 'OK' }]
+            );
+            return;
+        }
+
         const action = !isLocked ? "LOCKED" : "UNLOCKED";
         setIsLocked(!isLocked);
         addLog(`Manual Override: Box ${action}`, action === 'LOCKED' ? 'success' : 'warning');

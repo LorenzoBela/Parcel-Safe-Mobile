@@ -94,10 +94,12 @@ jest.mock('../../../services/firebaseClient', () => ({
     subscribeToBattery: jest.fn(() => () => undefined),
     subscribeToTamper: jest.fn(() => () => undefined),
     subscribeToLocation: jest.fn(() => () => undefined),
+    subscribeToPower: jest.fn(() => () => undefined),
     subscribeToKeypad: jest.fn(() => () => undefined),
     subscribeToHinge: jest.fn(() => () => undefined),
     subscribeToLockout: jest.fn(() => () => undefined),
     subscribeToOtpStatus: jest.fn(() => () => undefined),
+    subscribeToResourceConflict: jest.fn(() => () => undefined), // Added missing mock
     resetLockout: jest.fn(() => Promise.resolve()),
 }));
 
@@ -244,6 +246,17 @@ jest.mock('../../../services/backgroundLocationService', () => ({
     stopBackgroundLocation: jest.fn(() => Promise.resolve()),
     isBackgroundLocationRunning: jest.fn(() => false),
     subscribeToBackgroundLocationState: jest.fn(() => () => undefined),
+}));
+
+jest.mock('../../../services/tokenRefreshService', () => ({
+    checkTokenHealth: jest.fn(() => Promise.resolve({
+        isValid: true,
+        isExpired: false,
+        token: 'mock-token'
+    })),
+    startTokenRefreshService: jest.fn(),
+    stopTokenRefreshService: jest.fn(),
+    formatTimeUntilExpiry: jest.fn(() => '30:00'), // Added missing mock
 }));
 
 const renderWithProvider = (component: React.ReactElement) =>

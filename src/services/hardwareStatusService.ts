@@ -9,6 +9,8 @@
  * - EC-82: Keypad Stuck
  * - EC-83: Hinge Damage
  * - EC-86: Display Failure
+ * - EC-90: Low Voltage / Brownout
+ * - EC-91: Resource Conflict
  * 
  * Used by riders to monitor box health during deliveries.
  */
@@ -20,6 +22,8 @@ import {
     subscribeToKeypad,
     subscribeToHinge,
     subscribeToDisplay,
+    subscribeToPower,
+    subscribeToResourceConflict,
     clearRebootFlag,
     SolenoidState,
     CameraState,
@@ -27,6 +31,8 @@ import {
     KeypadState,
     HingeState,
     DisplayState,
+    PowerState,
+    ResourceConflictState,
     SolenoidStatusType,
     CameraStatusType,
 } from './firebaseClient';
@@ -42,13 +48,15 @@ export interface HardwareHealth {
     keypad: KeypadState | null;
     hinge: HingeState | null;
     display: DisplayState | null;
+    power: PowerState | null;  // EC-90
+    resourceConflict: ResourceConflictState | null;  // EC-91
     overallStatus: OverallHealthStatus;
     alerts: HardwareAlert[];
 }
 
 export interface HardwareAlert {
     id: string;
-    type: 'solenoid' | 'camera' | 'reboot' | 'keypad' | 'hinge' | 'display';
+    type: 'solenoid' | 'camera' | 'reboot' | 'keypad' | 'hinge' | 'display' | 'power' | 'resource';
     severity: 'info' | 'warning' | 'error' | 'critical';
     title: string;
     message: string;

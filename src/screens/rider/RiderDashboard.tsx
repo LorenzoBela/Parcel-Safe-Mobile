@@ -39,6 +39,17 @@ import {
     acknowledgeReassignment,
     isReassignmentPending
 } from '../../services/deliveryReassignmentService';
+// EC-89: Token Refresh
+import { SessionExpiryBanner } from '../../components/SessionExpiryBanner';
+import {
+    startTokenRefreshService,
+    stopTokenRefreshService,
+    getTokenStatus,
+    TokenStatus,
+    forceTokenRefresh,
+} from '../../services/tokenRefreshService';
+// EC-90: Power State
+import { subscribeToPower, PowerState, isSolenoidBlockedByVoltage } from '../../services/firebaseClient';
 
 export default function RiderDashboard() {
     const navigation = useNavigation<any>();
@@ -109,6 +120,12 @@ export default function RiderDashboard() {
     // EC-78: Delivery Reassignment State
     const [reassignmentState, setReassignmentState] = useState<ReassignmentState | null>(null);
     const [showReassignmentModal, setShowReassignmentModal] = useState(false);
+
+    // EC-89: Token Refresh State
+    const [tokenStatus, setTokenStatus] = useState<TokenStatus>('HEALTHY');
+
+    // EC-90: Power State
+    const [powerState, setPowerState] = useState<PowerState | null>(null);
 
     // Auto-start monitoring when component mounts (demo box ID)
     useEffect(() => {
@@ -340,6 +357,47 @@ export default function RiderDashboard() {
             setShowReassignmentModal(false);
         }
     }, [reassignmentState, riderId]);
+
+    // EC-89: Token Refresh Service
+    useEffect(() => {
+        startTokenRefreshService({
+            onStatusChange: (status) => {
+                setTokenStatus(status);
+            },
+            onRefreshFailed: (attempts) => {
+                Alert.alert(
+                    '⚠️ Session Issue',
+                    `Authentication refresh failed after ${attempts} attempts. Please re-login if issues persist.`,
+                    [{ text: 'OK' }]
+                );
+            },
+            onForceRelogin: () => {
+                Alert.alert(
+                    '🔒 Session Expired',
+                    'Your session has expired. Please log in again.',
+                    [{ text: 'Log In', onPress: () => navigation.navigate('Login') }]
+                );
+            },
+        });
+
+        return () => stopTokenRefreshService();
+    }, [navigation]);
+
+    // EC-90: Subscribe to Power State
+    useEffect(() => {
+        const unsubscribePower = subscribeToPower('BOX_001', (state) => {
+            setPowerState(state);
+            if (state?.solenoid_blocked) {
+                Alert.alert(
+                    '🔋 Low Battery Alert',
+                    `Box battery is critically low (${state.voltage.toFixed(1)}V). Unlock is disabled until charged.`,
+                    [{ text: 'OK' }]
+                );
+            }
+        });
+
+        return () => unsubscribePower();
+    }, []);
 
     const handleReassignmentAcknowledge = async () => {
         if (reassignmentState) {
@@ -694,6 +752,12 @@ export default function RiderDashboard() {
                         <Button mode="text" onPress={() => setShowReassignmentModal(true)} textColor="#E65100">View</Button>
                     </Surface>
                 )}
+
+                {/* EC-89: Session Expiry Banner */}
+                <SessionExpiryBanner
+                    status={tokenStatus}
+                    onReloginRequired={() => navigation.navigate('Login')}
+                />
                 {/* EC-18: Tamper Alert Banner */}
                 {tamperState?.detected && (
                     <Surface style={styles.tamperBanner} elevation={4}>

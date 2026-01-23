@@ -1263,6 +1263,142 @@ export function getDistinctOtpCodes(deliveries: RiderDeliveryInfo[]): Map<string
     return otpMap;
 }
 
+// ==================== EC-89: Token Health Monitoring ====================
+
+export type TokenStatus = 'HEALTHY' | 'EXPIRING' | 'EXPIRED' | 'REFRESHING' | 'FAILED';
+
+export interface TokenHealthState {
+    token_age_ms: number;
+    refresh_attempts: number;
+    last_refresh_at: number;
+    status: TokenStatus;
+    rider_id: string;
+    expires_at?: number;
+    error_message?: string;
+    timestamp?: number;
+}
+
+/**
+ * EC-89: Subscribe to rider's token health state
+ * Used for admin monitoring of rider session status
+ */
+export function subscribeToTokenHealth(
+    riderId: string,
+    callback: (state: TokenHealthState | null) => void
+): () => void {
+    const db = getFirebaseDatabase();
+    const healthRef = ref(db, `riders/${riderId}/token_health`);
+
+    const unsubscribe = onValue(healthRef, (snapshot) => {
+        const data = snapshot.val();
+        callback(data as TokenHealthState | null);
+    });
+
+    return () => off(healthRef);
+}
+
+// ==================== EC-90: Power State Monitoring (Brownout Actuation) ====================
+
+export type PowerStatus = 'HEALTHY' | 'WARNING' | 'CRITICAL' | 'DEAD';
+
+export interface PowerState {
+    voltage: number;
+    status: PowerStatus;
+    solenoid_blocked: boolean;
+    low_voltage_since?: number;
+    last_successful_unlock_voltage?: number;
+    timestamp: number;
+}
+
+/**
+ * EC-90: Subscribe to box power state
+ * Monitors voltage levels and solenoid blocking status
+ */
+export function subscribeToPower(
+    boxId: string,
+    callback: (state: PowerState | null) => void
+): () => void {
+    const db = getFirebaseDatabase();
+    const powerRef = ref(db, `hardware/${boxId}/power`);
+
+    const unsubscribe = onValue(powerRef, (snapshot) => {
+        const data = snapshot.val();
+        callback(data as PowerState | null);
+    });
+
+    return () => off(powerRef);
+}
+
+/**
+ * EC-90: Get human-readable power status message
+ */
+export function getPowerStatusMessage(state: PowerState | null): string {
+    if (!state) return 'Power status unknown';
+
+    switch (state.status) {
+        case 'HEALTHY':
+            return `Battery OK (${state.voltage.toFixed(1)}V)`;
+        case 'WARNING':
+            return `Low battery warning (${state.voltage.toFixed(1)}V)`;
+        case 'CRITICAL':
+            return `Battery too low to unlock (${state.voltage.toFixed(1)}V)`;
+        case 'DEAD':
+            return 'Battery critically low';
+        default:
+            return 'Power status unknown';
+    }
+}
+
+/**
+ * EC-90: Check if solenoid is blocked due to low voltage
+ */
+export function isSolenoidBlockedByVoltage(state: PowerState | null): boolean {
+    return state?.solenoid_blocked === true;
+}
+
+// ==================== EC-91: Resource Conflict Monitoring ====================
+
+export interface ResourceConflictState {
+    in_critical_section: boolean;
+    queued_events: number;
+    last_conflict_at?: number;
+    wdt_resets: number;
+    timestamp: number;
+}
+
+/**
+ * EC-91: Subscribe to resource conflict state
+ * Monitors SPI bus conflicts between camera and keypad
+ */
+export function subscribeToResourceConflict(
+    boxId: string,
+    callback: (state: ResourceConflictState | null) => void
+): () => void {
+    const db = getFirebaseDatabase();
+    const conflictRef = ref(db, `hardware/${boxId}/resource_conflict`);
+
+    const unsubscribe = onValue(conflictRef, (snapshot) => {
+        const data = snapshot.val();
+        callback(data as ResourceConflictState | null);
+    });
+
+    return () => off(conflictRef);
+}
+
+/**
+ * EC-91: Check if box is currently in critical section (busy)
+ */
+export function isBoxBusy(state: ResourceConflictState | null): boolean {
+    return state?.in_critical_section === true;
+}
+
+/**
+ * EC-91: Get count of queued keypad events
+ */
+export function getQueuedEventCount(state: ResourceConflictState | null): number {
+    return state?.queued_events ?? 0;
+}
+
 export { ref, onValue, off, set, serverTimestamp };
 export type { Database, DatabaseReference };
 

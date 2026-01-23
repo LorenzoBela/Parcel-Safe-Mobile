@@ -2,10 +2,10 @@
  * Hardware Status Screen
  * 
  * Full-page view of box hardware health for riders.
- * Shows EC-21, EC-22, EC-23, EC-25 status and alerts.
+ * Shows EC-21, EC-22, EC-23, EC-25, EC-90, EC-91 status and alerts.
  */
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
     View,
     Text,
@@ -18,6 +18,7 @@ import {
 import { useHardwareStatus } from '../../hooks/useHardwareStatus';
 import { HardwareAlertList } from '../../components/HardwareAlertBanner';
 import { HardwareStatusBadge, StatusDot } from '../../components/HardwareStatusBadge';
+import { subscribeToPower, PowerState, subscribeToResourceConflict, ResourceConflictState } from '../../services/firebaseClient';
 
 interface HardwareStatusScreenProps {
     route: {
@@ -32,6 +33,12 @@ interface HardwareStatusScreenProps {
 export default function HardwareStatusScreen({ route, navigation }: HardwareStatusScreenProps) {
     const { boxId, deliveryId } = route.params;
     const [refreshing, setRefreshing] = useState(false);
+
+    // EC-90: Power State
+    const [powerState, setPowerState] = useState<PowerState | null>(null);
+
+    // EC-91: Resource Conflict State
+    const [resourceConflict, setResourceConflict] = useState<ResourceConflictState | null>(null);
 
     const {
         health,
@@ -49,6 +56,18 @@ export default function HardwareStatusScreen({ route, navigation }: HardwareStat
         acknowledgeReboot,
         refresh,
     } = useHardwareStatus(boxId, deliveryId);
+
+    // EC-90: Subscribe to Power State
+    useEffect(() => {
+        const unsubscribe = subscribeToPower(boxId, setPowerState);
+        return () => unsubscribe();
+    }, [boxId]);
+
+    // EC-91: Subscribe to Resource Conflict State
+    useEffect(() => {
+        const unsubscribe = subscribeToResourceConflict(boxId, setResourceConflict);
+        return () => unsubscribe();
+    }, [boxId]);
 
     const onRefresh = async () => {
         setRefreshing(true);
@@ -327,6 +346,76 @@ export default function HardwareStatusScreen({ route, navigation }: HardwareStat
                                         <Text style={styles.acknowledgeText}>Acknowledge</Text>
                                     </TouchableOpacity>
                                 </>
+                            )}
+                        </View>
+                    </View>
+
+                    {/* EC-90: Power / Battery */}
+                    <View style={styles.componentCard}>
+                        <View style={styles.componentHeader}>
+                            <Text style={styles.componentIcon}>🔋</Text>
+                            <Text style={styles.componentTitle}>Battery / Power</Text>
+                            <StatusDot
+                                status={
+                                    powerState?.solenoid_blocked ? 'CRITICAL' :
+                                        powerState?.status === 'WARNING' ? 'WARNING' :
+                                            'HEALTHY'
+                                }
+                            />
+                        </View>
+                        <View style={styles.componentDetails}>
+                            <DetailRow
+                                label="Voltage"
+                                value={powerState ? `${powerState.voltage.toFixed(1)}V` : '-- V'}
+                                valueColor={
+                                    powerState?.status === 'CRITICAL' || powerState?.status === 'DEAD' ? '#ef4444' :
+                                        powerState?.status === 'WARNING' ? '#eab308' : undefined
+                                }
+                            />
+                            <DetailRow
+                                label="Status"
+                                value={powerState?.status || 'UNKNOWN'}
+                            />
+                            {powerState?.solenoid_blocked && (
+                                <DetailRow
+                                    label="Unlock"
+                                    value="BLOCKED - Low Voltage"
+                                    valueColor="#ef4444"
+                                />
+                            )}
+                        </View>
+                    </View>
+
+                    {/* EC-91: Resource Conflict */}
+                    <View style={styles.componentCard}>
+                        <View style={styles.componentHeader}>
+                            <Text style={styles.componentIcon}>⚙️</Text>
+                            <Text style={styles.componentTitle}>Resource Status</Text>
+                            <StatusDot
+                                status={
+                                    resourceConflict?.in_critical_section ? 'WARNING' :
+                                        (resourceConflict?.wdt_resets || 0) > 0 ? 'WARNING' :
+                                            'HEALTHY'
+                                }
+                            />
+                        </View>
+                        <View style={styles.componentDetails}>
+                            <DetailRow
+                                label="Status"
+                                value={resourceConflict?.in_critical_section ? 'Box Busy' : 'Ready'}
+                            />
+                            {resourceConflict?.queued_events !== undefined && resourceConflict.queued_events > 0 && (
+                                <DetailRow
+                                    label="Queued Events"
+                                    value={resourceConflict.queued_events.toString()}
+                                />
+                            )}
+                            {resourceConflict?.wdt_resets !== undefined && resourceConflict.wdt_resets > 0 && (
+                                <DetailRow
+                                    label="WDT Resets"
+                                    value={resourceConflict.wdt_resets.toString()}
+                                    valueColor="#eab308"
+                                />
                             )}
                         </View>
                     </View>
