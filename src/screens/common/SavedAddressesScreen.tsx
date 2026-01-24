@@ -4,12 +4,15 @@ import { Text, Button, useTheme, Surface, IconButton, TextInput, Portal, Modal, 
 import { useNavigation } from '@react-navigation/native';
 import { supabase } from '../../services/supabaseClient';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import LocationPicker, { LocationData } from '../../components/LocationPicker';
 
 interface SavedAddress {
     id: string;
     label: string; // e.g., "Home", "Office"
     address: string;
     details?: string; // e.g., "Unit 402"
+    latitude?: number;
+    longitude?: number;
 }
 
 export default function SavedAddressesScreen() {
@@ -25,6 +28,10 @@ export default function SavedAddressesScreen() {
     const [addressText, setAddressText] = useState('');
     const [details, setDetails] = useState('');
     const [saving, setSaving] = useState(false);
+    const [locationCoords, setLocationCoords] = useState<{ latitude: number; longitude: number } | null>(null);
+    
+    // Location Picker State
+    const [showLocationPicker, setShowLocationPicker] = useState(false);
 
     useEffect(() => {
         fetchAddresses();
@@ -88,7 +95,8 @@ export default function SavedAddressesScreen() {
             id: editingId || Date.now().toString(),
             label,
             address: addressText,
-            details
+            details,
+            ...(locationCoords && { latitude: locationCoords.latitude, longitude: locationCoords.longitude })
         };
 
         let updatedList;
@@ -130,6 +138,11 @@ export default function SavedAddressesScreen() {
         setLabel(addr.label);
         setAddressText(addr.address);
         setDetails(addr.details || '');
+        if (addr.latitude && addr.longitude) {
+            setLocationCoords({ latitude: addr.latitude, longitude: addr.longitude });
+        } else {
+            setLocationCoords(null);
+        }
         setModalVisible(true);
     };
 
@@ -143,6 +156,7 @@ export default function SavedAddressesScreen() {
         setLabel('');
         setAddressText('');
         setDetails('');
+        setLocationCoords(null);
     };
 
     return (
@@ -177,6 +191,12 @@ export default function SavedAddressesScreen() {
                             {addr.details ? (
                                 <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant, marginTop: 4 }}>Note: {addr.details}</Text>
                             ) : null}
+                            {addr.latitude && addr.longitude ? (
+                                <View style={styles.locationTag}>
+                                    <MaterialCommunityIcons name="map-marker-check" size={14} color={theme.colors.primary} />
+                                    <Text variant="bodySmall" style={{ color: theme.colors.primary, marginLeft: 4 }}>Location saved</Text>
+                                </View>
+                            ) : null}
                         </Surface>
                     ))
                 )}
@@ -206,14 +226,34 @@ export default function SavedAddressesScreen() {
                         style={styles.input}
                     />
 
-                    <TextInput
-                        label="Full Address"
-                        value={addressText}
-                        onChangeText={setAddressText}
-                        mode="outlined"
-                        multiline
-                        style={styles.input}
-                    />
+                    <View>
+                        <TextInput
+                            label="Full Address"
+                            value={addressText}
+                            onChangeText={setAddressText}
+                            mode="outlined"
+                            multiline
+                            style={styles.input}
+                            right={
+                                <TextInput.Icon
+                                    icon="map"
+                                    onPress={() => setShowLocationPicker(true)}
+                                />
+                            }
+                        />
+                        {locationCoords && (
+                            <View style={styles.locationIndicator}>
+                                <MaterialCommunityIcons
+                                    name="check-circle"
+                                    size={16}
+                                    color={theme.colors.primary}
+                                />
+                                <Text variant="bodySmall" style={{ color: theme.colors.primary, marginLeft: 4 }}>
+                                    Location coordinates saved
+                                </Text>
+                            </View>
+                        )}
+                    </View>
 
                     <TextInput
                         label="Additional Details (Optional)"
@@ -230,6 +270,24 @@ export default function SavedAddressesScreen() {
                     </View>
                 </Modal>
             </Portal>
+
+            <LocationPicker
+                visible={showLocationPicker}
+                onDismiss={() => setShowLocationPicker(false)}
+                onLocationSelected={(location: LocationData) => {
+                    setAddressText(location.address);
+                    setLocationCoords({
+                        latitude: location.latitude,
+                        longitude: location.longitude,
+                    });
+                }}
+                initialLocation={
+                    locationCoords && addressText
+                        ? { ...locationCoords, address: addressText }
+                        : undefined
+                }
+                title="Select Address"
+            />
         </View>
     );
 }
@@ -285,5 +343,17 @@ const styles = StyleSheet.create({
     modalActions: {
         flexDirection: 'row',
         marginTop: 8,
-    }
+    },
+    locationTag: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        marginTop: 8,
+    },
+    locationIndicator: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        marginTop: -12,
+        marginBottom: 8,
+        marginLeft: 12,
+    },
 });

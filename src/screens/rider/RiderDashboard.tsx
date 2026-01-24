@@ -5,7 +5,7 @@ import { useNavigation } from '@react-navigation/native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import dayjs from 'dayjs';
 import * as Location from 'expo-location';
-import MapView, { Marker, PROVIDER_GOOGLE } from 'react-native-maps';
+import MapboxGL, { isMapboxNativeAvailable, MapFallback } from '../../components/map/MapboxWrapper';
 import LottieView from 'lottie-react-native';
 import { useLocationRedundancy, getStatusMessage, getStatusColor } from '../../hooks/useLocationRedundancy';
 import { subscribeToBattery, BatteryState, subscribeToTamper, TamperState, subscribeToLocation, LocationData, subscribeToKeypad, KeypadState, subscribeToHinge, HingeState } from '../../services/firebaseClient';
@@ -62,8 +62,12 @@ export default function RiderDashboard() {
     const [distance, setDistance] = useState<string>('Calculating...');
     const [isLocked, setIsLocked] = useState(true);
     const [logs, setLogs] = useState<{ time: string; message: string; type: string }[]>([]);
-    const mapRef = useRef<MapView>(null);
     const animationRef = useRef<LottieView>(null);
+
+    const MAPBOX_TOKEN = process.env.EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN;
+
+    // Route data for map
+    const [routeGeometry, setRouteGeometry] = useState<any>(null);
 
     // EC-03: Battery Monitoring
     const [batteryState, setBatteryState] = useState<BatteryState | null>(null);
@@ -481,17 +485,6 @@ export default function RiderDashboard() {
         }
     };
 
-    const focusOnUser = () => {
-        if (riderLocation && mapRef.current) {
-            mapRef.current.animateToRegion({
-                latitude: riderLocation.coords.latitude,
-                longitude: riderLocation.coords.longitude,
-                latitudeDelta: 0.05,
-                longitudeDelta: 0.05,
-            }, 1000);
-        }
-    };
-
     // Fixed destination for demo (e.g., Rizal Park, Manila)
     const destination = {
         latitude: 14.5831,
@@ -506,6 +499,51 @@ export default function RiderDashboard() {
         }, 1000);
         return () => clearInterval(timer);
     }, []);
+
+    // Initialize Mapbox
+    useEffect(() => {
+        if (MAPBOX_TOKEN) {
+            MapboxGL.setAccessToken(MAPBOX_TOKEN);
+            MapboxGL.setTelemetryEnabled(false);
+        }
+    }, [MAPBOX_TOKEN]);
+
+    // Fetch route from Mapbox Directions API
+    const fetchRoute = useCallback(async () => {
+        if (!riderLocation || !MAPBOX_TOKEN) {
+            setRouteGeometry(null);
+            return;
+        }
+
+        const destination = {
+            latitude: 14.5831,
+            longitude: 120.9794,
+        };
+
+        try {
+            const url = `https://api.mapbox.com/directions/v5/mapbox/driving/${riderLocation.coords.longitude},${riderLocation.coords.latitude};${destination.longitude},${destination.latitude}?geometries=geojson&access_token=${MAPBOX_TOKEN}`;
+            
+            const response = await fetch(url);
+            const data = await response.json();
+
+            if (data.routes && data.routes.length > 0) {
+                const route = data.routes[0];
+                setRouteGeometry(route.geometry);
+                
+                // Update distance with actual route distance
+                const distanceKm = (route.distance / 1000).toFixed(2);
+                setDistance(`${distanceKm} km`);
+            }
+        } catch (error) {
+            console.error('Route calculation error:', error);
+            setRouteGeometry(null);
+        }
+    }, [riderLocation, MAPBOX_TOKEN]);
+
+    // Calculate route when rider location changes
+    useEffect(() => {
+        fetchRoute();
+    }, [fetchRoute]);
 
     // Simulated System Logs
     useEffect(() => {
@@ -639,6 +677,21 @@ export default function RiderDashboard() {
         address: '123 Rizal Park, Manila',
         customer: 'Lorenzo Bela',
         time: '15 mins',
+        phone: '+63 912 345 6789',
+        pickupAddress: '456 SM Mall of Asia, Pasay',
+        pickupTime: dayjs().add(15, 'minutes').format('h:mm A'),
+        dropoffTime: dayjs().add(45, 'minutes').format('h:mm A'),
+        fare: '₱250.00',
+        distance: distance || '8.5 km',
+        estimatedTime: '30 mins',
+        packageType: 'Electronics',
+        weight: '2.5 kg',
+        priority: 'High',
+        specialInstructions: 'Please handle with care. Fragile items inside.',
+        pickupLat: 14.5360,
+        pickupLng: 120.9823,
+        dropoffLat: destination.latitude,
+        dropoffLng: destination.longitude,
     };
 
     const boxStatus = {
@@ -939,49 +992,100 @@ export default function RiderDashboard() {
                 <Text variant="titleMedium" style={styles.sectionTitle}>Current Job</Text>
                 <Card style={styles.jobCard} mode="elevated">
                     <View style={styles.mapContainer}>
-                        {riderLocation ? (
-                            <>
-                                {/* <MapView
-                                        ref={mapRef}
-                                        style={styles.map}
-                                        initialRegion={{
-                                            latitude: riderLocation.coords.latitude,
-                                            longitude: riderLocation.coords.longitude,
-                                            latitudeDelta: 0.05,
-                                            longitudeDelta: 0.05,
+                        {riderLocation && MAPBOX_TOKEN ? (
+                            <MapboxGL.MapView
+                                style={styles.map}
+                                logoEnabled={false}
+                                attributionEnabled={false}
+                                styleURL={MapboxGL.StyleURL.Street}
+                                scrollEnabled={true}
+                                pitchEnabled={true}
+                                rotateEnabled={true}
+                                zoomEnabled={true}
+                            >
+                                <MapboxGL.Camera
+                                    zoomLevel={14}
+                                    centerCoordinate={[riderLocation.coords.longitude, riderLocation.coords.latitude]}
+                                    animationMode="easeTo"
+                                    animationDuration={500}
+                                />
+
+                                {/* Rider Location Marker */}
+                                <MapboxGL.PointAnnotation
+                                    id="rider-location"
+                                    coordinate={[riderLocation.coords.longitude, riderLocation.coords.latitude]}
+                                    title="Your Location"
+                                >
+                                    <View style={{
+                                        width: 30,
+                                        height: 30,
+                                        borderRadius: 15,
+                                        backgroundColor: '#2196F3',
+                                        justifyContent: 'center',
+                                        alignItems: 'center',
+                                        borderWidth: 3,
+                                        borderColor: 'white',
+                                        shadowColor: '#000',
+                                        shadowOffset: { width: 0, height: 2 },
+                                        shadowOpacity: 0.3,
+                                        shadowRadius: 3,
+                                        elevation: 5,
+                                    }}>
+                                        <MaterialCommunityIcons name="navigation" size={16} color="white" />
+                                    </View>
+                                </MapboxGL.PointAnnotation>
+
+                                {/* Destination Marker */}
+                                <MapboxGL.PointAnnotation
+                                    id="destination"
+                                    coordinate={[destination.longitude, destination.latitude]}
+                                    title={destination.title}
+                                >
+                                    <View style={{
+                                        width: 30,
+                                        height: 30,
+                                        borderRadius: 15,
+                                        backgroundColor: '#F44336',
+                                        justifyContent: 'center',
+                                        alignItems: 'center',
+                                        borderWidth: 3,
+                                        borderColor: 'white',
+                                        shadowColor: '#000',
+                                        shadowOffset: { width: 0, height: 2 },
+                                        shadowOpacity: 0.3,
+                                        shadowRadius: 3,
+                                        elevation: 5,
+                                    }}>
+                                        <MaterialCommunityIcons name="map-marker" size={20} color="white" />
+                                    </View>
+                                </MapboxGL.PointAnnotation>
+
+                                {/* Route Line - Actual Route from Mapbox Directions API */}
+                                {routeGeometry && (
+                                    <MapboxGL.ShapeSource
+                                        id="route-line"
+                                        shape={{
+                                            type: 'Feature',
+                                            geometry: routeGeometry,
+                                            properties: {},
                                         }}
                                     >
-                                        <Marker
-                                            coordinate={{
-                                                latitude: riderLocation.coords.latitude,
-                                                longitude: riderLocation.coords.longitude,
+                                        <MapboxGL.LineLayer
+                                            id="route-line-layer"
+                                            style={{
+                                                lineColor: '#2196F3',
+                                                lineWidth: 4,
+                                                lineOpacity: 0.8,
                                             }}
-                                            title="You"
-                                            pinColor="blue"
                                         />
-                                        <Marker
-                                            coordinate={destination}
-                                            title={destination.title}
-                                            description={destination.description}
-                                        />
-                                    </MapView> */}
-                                <View style={[styles.map, { backgroundColor: '#e1e1e1', justifyContent: 'center', alignItems: 'center' }]}>
-                                    <MaterialCommunityIcons name="map-marker-off" size={48} color="#757575" />
-                                    <Text style={{ color: '#757575', marginTop: 8 }}>Map Disabled (Crash Investigation)</Text>
-                                </View>
-                                <IconButton
-                                    icon="crosshairs-gps"
-                                    mode="contained"
-                                    containerColor={theme.colors.surface}
-                                    iconColor={theme.colors.primary}
-                                    size={20}
-                                    style={styles.myLocationButton}
-                                    onPress={focusOnUser}
-                                />
-                            </>
+                                    </MapboxGL.ShapeSource>
+                                )}
+                            </MapboxGL.MapView>
                         ) : (
                             <View style={[styles.mapPlaceholder, { backgroundColor: theme.colors.surfaceVariant }]}>
-                                <Text style={{ color: theme.colors.onSurfaceVariant }}>Loading Map...</Text>
+                                <Text style={{ color: theme.colors.onSurfaceVariant }}>
+                                    {MAPBOX_TOKEN ? 'Loading Map...' : 'Map unavailable: configure MAPBOX_ACCESS_TOKEN'}
+                                </Text>
                             </View>
                         )}
                     </View>
@@ -1014,7 +1118,7 @@ export default function RiderDashboard() {
                         <Button
                             mode="outlined"
                             style={{ flex: 1, marginRight: 8 }}
-                            onPress={() => navigation.navigate('AssignedDeliveries')}
+                            onPress={() => navigation.navigate('JobDetail', { job: nextDelivery })}
                             textColor={theme.colors.primary}
                         >
                             Details

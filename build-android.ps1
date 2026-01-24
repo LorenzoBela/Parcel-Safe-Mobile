@@ -154,10 +154,23 @@ if ((!$env:ANDROID_HOME -or !$env:ANDROID_SDK_ROOT) -and $sdkDirEarly) {
         Write-Host "[OK] Added Android platform-tools to PATH" -ForegroundColor Green
     }
 
-    # Set NDK path (prefer 26.1.10909125 if installed, otherwise use newest available)
-    $preferredNdkVersion = "26.1.10909125"
+    # Set NDK path (prefer 27.2.12479018 for C++20 std::format support; otherwise use newest available)
+    $preferredNdkVersion = "27.2.12479018"
     $ndkRoot = Join-Path $sdkDirEarly "ndk"
     $ndkDir = $null
+
+    function Get-SdkManagerPath {
+        param([string]$SdkRoot)
+        $candidates = @(
+            Join-Path $SdkRoot "cmdline-tools\latest\bin\sdkmanager.bat",
+            Join-Path $SdkRoot "cmdline-tools\bin\sdkmanager.bat",
+            Join-Path $SdkRoot "tools\bin\sdkmanager.bat"
+        )
+        foreach ($c in $candidates) {
+            if (Test-Path $c) { return $c }
+        }
+        return $null
+    }
 
     function Test-NdkValid {
         param([string]$Path)
@@ -166,12 +179,41 @@ if ((!$env:ANDROID_HOME -or !$env:ANDROID_SDK_ROOT) -and $sdkDirEarly) {
 
     if (Test-Path $ndkRoot) {
         $preferredCandidate = Join-Path $ndkRoot $preferredNdkVersion
+
+        if ((Test-Path $preferredCandidate) -and -not (Test-NdkValid $preferredCandidate)) {
+            Write-Host "[WARN] NDK $preferredNdkVersion exists but is missing source.properties. Removing broken folder..." -ForegroundColor DarkYellow
+            try {
+                Remove-Item -Recurse -Force $preferredCandidate -ErrorAction Stop
+            } catch {
+                Write-Host "[WARN] Failed to remove broken NDK folder: $preferredCandidate" -ForegroundColor DarkYellow
+            }
+        }
+
         if ((Test-Path $preferredCandidate) -and (Test-NdkValid $preferredCandidate)) {
             $ndkDir = $preferredCandidate
         } else {
-            $ndkDir = Get-ChildItem -Path $ndkRoot -Directory | Sort-Object Name -Descending |
-                Where-Object { Test-NdkValid $_.FullName } |
-                Select-Object -First 1 | ForEach-Object { $_.FullName }
+            $sdkManager = Get-SdkManagerPath -SdkRoot $sdkDirEarly
+            if ($sdkManager) {
+                Write-Host "[INFO] Installing NDK $preferredNdkVersion via sdkmanager..." -ForegroundColor Yellow
+                try {
+                    $env:ANDROID_SDK_ROOT = $sdkDirEarly
+                    $env:ANDROID_HOME = $sdkDirEarly
+                    # Accept licenses and install the preferred NDK
+                    "y" | & $sdkManager "ndk;$preferredNdkVersion" | Out-Host
+                } catch {
+                    Write-Host "[WARN] Failed to install NDK $preferredNdkVersion via sdkmanager." -ForegroundColor DarkYellow
+                }
+            } else {
+                Write-Host "[WARN] sdkmanager not found. Please install NDK $preferredNdkVersion in Android SDK Manager." -ForegroundColor DarkYellow
+            }
+
+            if ((Test-Path $preferredCandidate) -and (Test-NdkValid $preferredCandidate)) {
+                $ndkDir = $preferredCandidate
+            } else {
+                $ndkDir = Get-ChildItem -Path $ndkRoot -Directory | Sort-Object Name -Descending |
+                    Where-Object { Test-NdkValid $_.FullName } |
+                    Select-Object -First 1 | ForEach-Object { $_.FullName }
+            }
         }
     }
 
@@ -194,7 +236,9 @@ if ((!$env:ANDROID_HOME -or !$env:ANDROID_SDK_ROOT) -and $sdkDirEarly) {
 
         Write-Host "[OK] Using NDK: $ndkDir" -ForegroundColor Green
     } else {
-        Write-Host "[WARN] No NDK installation found under $ndkRoot" -ForegroundColor DarkYellow
+        Write-Host "[ERROR] No valid NDK installation found under $ndkRoot" -ForegroundColor Red
+        Write-Host "[INFO] Install NDK $preferredNdkVersion in Android SDK Manager and re-run." -ForegroundColor Yellow
+        exit 1
     }
 }
 
@@ -244,7 +288,8 @@ $cleanupPaths = @(
     "$ANDROID_DIR\app\build",
     "$ANDROID_DIR\build",
     "$PROJECT_ROOT\node_modules\expo-modules-core\android\.cxx",
-    "$PROJECT_ROOT\node_modules\expo-modules-core\android\build"
+    "$PROJECT_ROOT\node_modules\expo-modules-core\android\build",
+    "$PROJECT_ROOT\node_modules\react-native-reanimated"
 )
 
 foreach ($path in $cleanupPaths) {
@@ -279,8 +324,12 @@ Write-Host "`nStep 5: Ensuring node_modules are up to date..." -ForegroundColor 
 
 # Always reinstall in build directory to ensure correct versions
 Write-Host "  Installing dependencies..." -ForegroundColor Gray
-npm install
+npm install --force
 $npmInstallExit = $LASTEXITCODE
+if ($npmInstallExit -ne 0) {
+    Write-Host "[ERROR] npm install failed with exit code $npmInstallExit" -ForegroundColor Red
+    exit $npmInstallExit
+}
 
 Write-Host "[OK] Dependencies installed" -ForegroundColor Green
 #region agent log

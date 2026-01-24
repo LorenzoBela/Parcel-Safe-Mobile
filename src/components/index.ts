@@ -19,3 +19,7 @@ export {
 // Customer Hardware Components (EC-86)
 export { default as CustomerHardwareBanner } from './CustomerHardwareBanner';
 export { default as CustomerBleUnlockModal } from './CustomerBleUnlockModal';
+
+// Location Components
+export { default as LocationPicker } from './LocationPicker';
+export type { LocationData } from './LocationPicker';

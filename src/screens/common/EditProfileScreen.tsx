@@ -1,8 +1,10 @@
-import React, { useState, useEffect } from 'react';
+﻿import React, { useState, useEffect } from 'react';
 import { View, StyleSheet, ScrollView, Alert, KeyboardAvoidingView, Platform } from 'react-native';
 import { TextInput, Button, useTheme, Surface, Text } from 'react-native-paper';
 import { useNavigation } from '@react-navigation/native';
 import { supabase } from '../../services/supabaseClient';
+import LocationPicker, { LocationData } from '../../components/LocationPicker';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
 
 export default function EditProfileScreen() {
     const theme = useTheme();
@@ -14,6 +16,10 @@ export default function EditProfileScreen() {
     const [fullName, setFullName] = useState('');
     const [phoneNumber, setPhoneNumber] = useState('');
     const [homeAddress, setHomeAddress] = useState('');
+    const [homeLocation, setHomeLocation] = useState<{ latitude: number; longitude: number } | null>(null);
+    
+    // Location Picker State
+    const [showLocationPicker, setShowLocationPicker] = useState(false);
 
     useEffect(() => {
         fetchProfile();
@@ -36,7 +42,24 @@ export default function EditProfileScreen() {
             if (data) {
                 setFullName(data.full_name || '');
                 setPhoneNumber(data.phone_number || '');
-                setHomeAddress(data.home_address || '');
+                
+                // Parse home address if it contains location data
+                if (data.home_address) {
+                    try {
+                        const parsed = JSON.parse(data.home_address);
+                        if (parsed.address) {
+                            setHomeAddress(parsed.address);
+                            if (parsed.latitude && parsed.longitude) {
+                                setHomeLocation({ latitude: parsed.latitude, longitude: parsed.longitude });
+                            }
+                        } else {
+                            setHomeAddress(data.home_address);
+                        }
+                    } catch {
+                        // If not JSON, use as plain text
+                        setHomeAddress(data.home_address);
+                    }
+                }
             }
         } catch (error: any) {
             console.error('Error fetching profile:', error);
@@ -52,17 +75,26 @@ export default function EditProfileScreen() {
             const { data: { user } } = await supabase!.auth.getUser();
             if (!user) throw new Error('No user logged in');
 
+            // Store home address with location data if available
+            const homeAddressData = homeLocation
+                ? JSON.stringify({
+                    address: homeAddress,
+                    latitude: homeLocation.latitude,
+                    longitude: homeLocation.longitude,
+                })
+                : homeAddress;
+
             const updates = {
-                id: user.id,
                 full_name: fullName,
                 phone_number: phoneNumber,
-                home_address: homeAddress,
+                home_address: homeAddressData,
                 updated_at: new Date().toISOString(),
             };
 
             const { error } = await supabase!
                 .from('profiles')
-                .upsert(updates);
+                .update(updates)
+                .eq('id', user.id);
 
             if (error) throw error;
 
@@ -115,17 +147,37 @@ export default function EditProfileScreen() {
                         placeholder="+63 9xx xxx xxxx"
                     />
 
-                    <TextInput
-                        label="Home Address"
-                        value={homeAddress}
-                        onChangeText={setHomeAddress}
-                        mode="outlined"
-                        style={[styles.input, styles.textArea]}
-                        disabled={loading}
-                        multiline
-                        numberOfLines={3}
-                        left={<TextInput.Icon icon="map-marker" />}
-                    />
+                    <View>
+                        <TextInput
+                            label="Home Address"
+                            value={homeAddress}
+                            onChangeText={setHomeAddress}
+                            mode="outlined"
+                            style={[styles.input, styles.textArea]}
+                            disabled={loading}
+                            multiline
+                            numberOfLines={3}
+                            left={<TextInput.Icon icon="map-marker" />}
+                            right={
+                                <TextInput.Icon
+                                    icon="map"
+                                    onPress={() => setShowLocationPicker(true)}
+                                />
+                            }
+                        />
+                        {homeLocation && (
+                            <View style={styles.locationIndicator}>
+                                <MaterialCommunityIcons
+                                    name="check-circle"
+                                    size={16}
+                                    color={theme.colors.primary}
+                                />
+                                <Text variant="bodySmall" style={{ color: theme.colors.primary, marginLeft: 4 }}>
+                                    Location saved
+                                </Text>
+                            </View>
+                        )}
+                    </View>
                 </Surface>
 
                 <View style={styles.actionContainer}>
@@ -150,6 +202,24 @@ export default function EditProfileScreen() {
                     </Button>
                 </View>
             </ScrollView>
+
+            <LocationPicker
+                visible={showLocationPicker}
+                onDismiss={() => setShowLocationPicker(false)}
+                onLocationSelected={(location: LocationData) => {
+                    setHomeAddress(location.address);
+                    setHomeLocation({
+                        latitude: location.latitude,
+                        longitude: location.longitude,
+                    });
+                }}
+                initialLocation={
+                    homeLocation && homeAddress
+                        ? { ...homeLocation, address: homeAddress }
+                        : undefined
+                }
+                title="Select Home Address"
+            />
         </KeyboardAvoidingView>
     );
 }
@@ -175,7 +245,7 @@ const styles = StyleSheet.create({
         backgroundColor: 'transparent',
     },
     textArea: {
-        minHeight: 80, // Ensure visual height for multiline
+        minHeight: 80,
     },
     actionContainer: {
         marginBottom: 20,
@@ -187,5 +257,12 @@ const styles = StyleSheet.create({
     cancelButton: {
         borderRadius: 8,
         borderWidth: 1,
+    },
+    locationIndicator: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        marginTop: -12,
+        marginBottom: 8,
+        marginLeft: 12,
     },
 });

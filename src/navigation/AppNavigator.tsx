@@ -30,6 +30,7 @@ import TheftAlertScreen from '../screens/rider/TheftAlertScreen';
 import TrackMyBoxScreen from '../screens/rider/TrackMyBoxScreen';
 import CancellationConfirmationScreen from '../screens/rider/CancellationConfirmationScreen';
 import ReturnPackageScreen from '../screens/rider/ReturnPackageScreen';
+import JobDetailScreen from '../screens/rider/JobDetailScreen';
 
 import AdminDashboard from '../screens/admin/AdminDashboard';
 import GlobalMapScreen from '../screens/admin/GlobalMapScreen';
@@ -202,6 +203,7 @@ export default function AppNavigator() {
                 <Stack.Screen name="DeliveryDetail" component={DeliveryDetailScreen} />
                 <Stack.Screen name="PhotoAudit" component={PhotoAuditScreen} />
                 <Stack.Screen name="AssignedDeliveries" component={AssignedDeliveriesScreen} />
+                <Stack.Screen name="JobDetail" component={JobDetailScreen} options={{ headerShown: false }} />
                 <Stack.Screen name="BoxControls" component={BoxControlsScreen} />
                 <Stack.Screen name="Arrival" component={ArrivalScreen} />
                 <Stack.Screen name="DeliveryCompletion" component={DeliveryCompletionScreen} />
