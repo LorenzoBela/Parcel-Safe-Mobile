@@ -18,6 +18,7 @@ import {
     subscribeToKeypad,
     subscribeToHinge,
     subscribeToDisplay,
+    subscribeToLockHealth, // EC-96
     clearRebootFlag,
     SolenoidState,
     CameraState,
@@ -25,6 +26,7 @@ import {
     KeypadState,
     HingeState,
     DisplayState,
+    LockHealthState, // EC-96
     HardwareHealth,
     HardwareAlert,
     OverallHealthStatus,
@@ -73,6 +75,7 @@ export function useHardwareStatus(
     const [keypadState, setKeypadState] = useState<KeypadState | null>(null);
     const [hingeState, setHingeState] = useState<HingeState | null>(null);
     const [displayState, setDisplayState] = useState<DisplayState | null>(null);
+    const [lockHealthState, setLockHealthState] = useState<LockHealthState | null>(null);
     const [isLoading, setIsLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [dismissedAlerts, setDismissedAlerts] = useState<Set<string>>(new Set());
@@ -128,6 +131,11 @@ export function useHardwareStatus(
                 checkLoaded();
             });
 
+            const unsubLockHealth = subscribeToLockHealth(boxId, (state) => {
+                setLockHealthState(state);
+                // checkLoaded(); // Optional if we consider it critical
+            });
+
             return () => {
                 unsubSolenoid();
                 unsubCamera();
@@ -135,6 +143,7 @@ export function useHardwareStatus(
                 unsubKeypad();
                 unsubHinge();
                 unsubDisplay();
+                unsubLockHealth();
             };
         } catch (err) {
             setError(err instanceof Error ? err.message : 'Failed to subscribe to hardware status');
@@ -150,13 +159,19 @@ export function useHardwareStatus(
         keypad: keypadState,
         hinge: hingeState,
         display: displayState,
+        lockHealth: lockHealthState, // EC-96
+        power: null, // TODO: Add power state
+        resourceConflict: null, // TODO: Add resource state
         overallStatus: getOverallHealthStatus({
             solenoid: solenoidState,
             camera: cameraState,
             reboot: rebootState,
             keypad: keypadState,
             hinge: hingeState,
-            display: displayState
+            display: displayState,
+            lockHealth: lockHealthState, // EC-96
+            power: null,
+            resourceConflict: null,
         }),
         alerts: [],
     };

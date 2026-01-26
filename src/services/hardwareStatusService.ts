@@ -24,6 +24,7 @@ import {
     subscribeToDisplay,
     subscribeToPower,
     subscribeToResourceConflict,
+    subscribeToLockHealth, // EC-96
     clearRebootFlag,
     SolenoidState,
     CameraState,
@@ -35,6 +36,7 @@ import {
     ResourceConflictState,
     SolenoidStatusType,
     CameraStatusType,
+    LockHealthState, // EC-96
 } from './firebaseClient';
 
 // ==================== Types ====================
@@ -50,6 +52,7 @@ export interface HardwareHealth {
     display: DisplayState | null;
     power: PowerState | null;  // EC-90
     resourceConflict: ResourceConflictState | null;  // EC-91
+    lockHealth: LockHealthState | null; // EC-96
     overallStatus: OverallHealthStatus;
     alerts: HardwareAlert[];
 }
@@ -135,6 +138,19 @@ export function generateAlerts(health: Partial<HardwareHealth>, deliveryId?: str
             message: 'Lock mechanism failed - box is unsecured. Do not use for deliveries.',
             action: 'Report to support immediately',
             timestamp: health.solenoid.timestamp || now,
+        });
+    }
+
+    // EC-96: Solenoid Overheated
+    if (health.lockHealth?.overheated) {
+        alerts.push({
+            id: 'ec96-solenoid-overheated',
+            type: 'solenoid',
+            severity: 'error',
+            title: 'Lock Mechanism Overheated',
+            message: 'Solenoid coil temperature too high. Actuation temporarily blocked.',
+            action: 'Wait for cool down',
+            timestamp: health.lockHealth.timestamp || now,
         });
     }
 
@@ -284,6 +300,15 @@ export function isBoxSafeForDelivery(health: Partial<HardwareHealth>): {
         };
     }
 
+    // EC-96: Overheated (not strictly unsafe to *use*, but unsafe to *actuate*, so maybe just warning? 
+    // Actually if it's overheated we can't lock/unlock so it's unsafe for delivery operation.)
+    if (health.lockHealth?.overheated) {
+        return {
+            safe: false,
+            reason: 'Lock mechanism overheated - operation blocked',
+        };
+    }
+
     // EC-21: Stuck closed (delivery possible but risky)
     if (health.solenoid?.status === 'STUCK_CLOSED') {
         return {
@@ -420,7 +445,9 @@ export {
     subscribeToReboot,
     subscribeToKeypad,
     subscribeToHinge,
+    subscribeToDisplay, // Fix missing export
     clearRebootFlag,
+    subscribeToLockHealth, // EC-96
 };
 
 export type {
@@ -429,6 +456,8 @@ export type {
     RebootState,
     KeypadState,
     HingeState,
+    DisplayState,
     SolenoidStatusType,
     CameraStatusType,
+    LockHealthState, // EC-96
 };

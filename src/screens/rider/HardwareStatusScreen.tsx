@@ -162,9 +162,9 @@ export default function HardwareStatusScreen({ route, navigation }: HardwareStat
                             <Text style={styles.componentTitle}>Lock Mechanism</Text>
                             <StatusDot
                                 status={
-                                    health.solenoid?.status === 'OK' ? 'HEALTHY' :
+                                    health.solenoid?.status === 'OK' && !health.lockHealth?.overheated ? 'HEALTHY' :
                                         health.solenoid?.status === 'STUCK_OPEN' ? 'OUT_OF_SERVICE' :
-                                            health.solenoid?.status === 'STUCK_CLOSED' ? 'CRITICAL' :
+                                            health.solenoid?.status === 'STUCK_CLOSED' || health.lockHealth?.overheated ? 'CRITICAL' :
                                                 'HEALTHY'
                                 }
                             />
@@ -184,6 +184,13 @@ export default function HardwareStatusScreen({ route, navigation }: HardwareStat
                                 <DetailRow
                                     label="Service Status"
                                     value="OUT OF SERVICE"
+                                    valueColor="#ef4444"
+                                />
+                            )}
+                            {health.lockHealth?.overheated && (
+                                <DetailRow
+                                    label="Temperature"
+                                    value="OVERHEATED"
                                     valueColor="#ef4444"
                                 />
                             )}

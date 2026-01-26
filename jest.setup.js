@@ -1,3 +1,12 @@
+// Silence all console logs during tests
+global.console = {
+    ...console,
+    log: jest.fn(),
+    info: jest.fn(),
+    warn: jest.fn(),
+    error: jest.fn(),
+    debug: jest.fn(),
+};
 
 // Mock Firebase
 jest.mock('@react-native-firebase/database', () => {
@@ -132,3 +141,19 @@ jest.mock('expo-image-picker', () => ({
     MediaTypeOptions: { Images: 'Images' },
     requestCameraPermissionsAsync: jest.fn(() => Promise.resolve({ status: 'granted' })),
 }), { virtual: true });
+
+// Mock Mapbox
+jest.mock('@rnmapbox/maps', () => {
+    const React = require('react');
+    const { View } = require('react-native');
+    return {
+        __esModule: true,
+        default: {
+            StyleURL: { Street: 'mapbox://styles/mapbox/streets-v11' },
+            Camera: (props) => React.createElement(View, { ...props, testID: 'Mapbox.Camera' }),
+            PointAnnotation: (props) => React.createElement(View, { ...props, testID: 'Mapbox.PointAnnotation' }),
+            MapView: (props) => React.createElement(View, { ...props, testID: 'Mapbox.MapView' }),
+            processColor: () => 'color',
+        },
+    };
+}, { virtual: true });

@@ -16,6 +16,11 @@ import {
     resetLockout,
     subscribeToPower,
     PowerState,
+    subscribeToFaceAuthStatus, // EC-97
+    startFaceScan, // EC-97
+    FaceAuthStatus, // EC-97
+    subscribeToLockHealth, // EC-96
+    LockHealthState, // EC-96
 } from '../../services/firebaseClient';
 import { subscribeToAdminOverride, AdminOverrideState, getOverrideNotificationMessage } from '../../services/adminOverrideService';
 import { bleOtpService, BleBoxDevice, BleTransferResult } from '../../services/bleOtpService';
@@ -56,6 +61,12 @@ export default function BoxControlsScreen() {
 
     // EC-90: Power State for solenoid blocking
     const [powerState, setPowerState] = useState<PowerState | null>(null);
+
+    // EC-97: Face Auth State
+    const [faceAuthStatus, setFaceAuthStatus] = useState<FaceAuthStatus>('IDLE');
+
+    // EC-96: Lock Health (Thermal)
+    const [lockHealth, setLockHealth] = useState<LockHealthState | null>(null);
 
     // Telemetry State (now enhanced with real data)
     const [telemetry, setTelemetry] = useState({
@@ -123,6 +134,30 @@ export default function BoxControlsScreen() {
             }
         });
 
+        // EC-97: Subscribe to Face Auth Status
+        const unsubscribeFaceAuth = subscribeToFaceAuthStatus(DEMO_BOX_ID, (status) => {
+            setFaceAuthStatus(status || 'IDLE');
+
+            if (status === 'AUTHENTICATED') {
+                setIsLocked(false);
+                addLog("Face ID Verified - Box Unlocked", "success");
+            } else if (status === 'TIMEOUT_REMOVE_HELMET') {
+                Alert.alert("Face Scan Failed", "Please remove helmet and try again.");
+                addLog("Face Scan Timeout - Helmet detected?", "warning");
+            } else if (status === 'FAILED_USE_OTP') {
+                Alert.alert("Face Scan Failed", "Please use OTP to unlock.");
+                addLog("Face Scan Failed - Use OTP", "error");
+            }
+        });
+
+        // EC-96: Subscribe to Lock Health
+        const unsubscribeLockHealth = subscribeToLockHealth(DEMO_BOX_ID, (state) => {
+            setLockHealth(state);
+            if (state?.overheated) {
+                addLog("🔥 Solenoid Overheated - Actuation Blocked", "error");
+            }
+        });
+
         return () => {
             unsubscribeBattery();
             unsubscribeTamper();
@@ -130,6 +165,8 @@ export default function BoxControlsScreen() {
             unsubscribeOtpStatus();
             unsubscribeOverride();
             unsubscribePower();
+            unsubscribeFaceAuth();
+            unsubscribeLockHealth();
         };
     }, []);
 
@@ -178,6 +215,16 @@ export default function BoxControlsScreen() {
             Alert.alert(
                 '🔋 Low Voltage',
                 `Battery voltage too low (${powerState.voltage.toFixed(1)}V). Cannot unlock until battery is charged.`,
+                [{ text: 'OK' }]
+            );
+            return;
+        }
+
+        // EC-96: Block unlock if solenoid is overheated
+        if (lockHealth?.overheated) {
+            Alert.alert(
+                '🔥 System Overheated',
+                'Lock mechanism is too hot. Please wait for it to cool down.',
                 [{ text: 'OK' }]
             );
             return;
@@ -340,6 +387,21 @@ export default function BoxControlsScreen() {
         </Surface>
     );
 
+    // EC-97: Face Unlock Handler
+    const handleFaceUnlock = async () => {
+        if (lockHealth?.overheated) {
+            Alert.alert('🔥 System Overheated', 'Wait for cool down.');
+            return;
+        }
+
+        try {
+            addLog("Starting Face Scan...", "info");
+            await startFaceScan(DEMO_BOX_ID);
+        } catch (error) {
+            addLog("Failed to start face scan", "error");
+        }
+    };
+
     return (
         <View style={styles.container}>
             <ScrollView contentContainerStyle={styles.scrollContent}>
@@ -471,6 +533,33 @@ export default function BoxControlsScreen() {
                             icon="bluetooth-transfer"
                         >
                             Send OTP via Bluetooth
+                        </Button>
+                    </Card.Content>
+                </Card>
+
+                {/* EC-97: Face Unlock Card */}
+                <Text variant="titleMedium" style={styles.sectionTitle}>Biometric Access</Text>
+                <Card style={[styles.controlsCard, { marginBottom: 24 }]}>
+                    <Card.Content>
+                        <View style={styles.bleInfo}>
+                            <MaterialCommunityIcons name="face-recognition" size={32} color={faceAuthStatus === 'SEARCHING' ? '#FF9800' : '#673AB7'} />
+                            <View style={{ flex: 1, marginLeft: 12 }}>
+                                <Text variant="titleMedium" style={{ fontWeight: 'bold' }}>Face Unlock</Text>
+                                <Text variant="bodySmall" style={{ color: '#666' }}>
+                                    {faceAuthStatus === 'SEARCHING' ? 'Scanning...' : 'Scan face to unlock without OTP'}
+                                </Text>
+                            </View>
+                        </View>
+                        <Button
+                            mode="contained"
+                            onPress={handleFaceUnlock}
+                            loading={faceAuthStatus === 'SEARCHING'}
+                            disabled={faceAuthStatus === 'SEARCHING' || !isLocked}
+                            style={{ marginTop: 12 }}
+                            buttonColor="#673AB7"
+                            icon="face-recognition"
+                        >
+                            {faceAuthStatus === 'SEARCHING' ? 'Scanning...' : 'Start Face Scan'}
                         </Button>
                     </Card.Content>
                 </Card>
@@ -618,7 +707,7 @@ export default function BoxControlsScreen() {
                     </Surface>
                 </View>
             </Modal>
-        </View>
+        </View >
     );
 }
 

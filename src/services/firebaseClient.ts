@@ -1399,6 +1399,61 @@ export function getQueuedEventCount(state: ResourceConflictState | null): number
     return state?.queued_events ?? 0;
 }
 
+// ==================== EC-96: Lock Health (Thermal) ====================
+export interface LockHealthState {
+    overheated: boolean;
+    status: 'NORMAL' | 'OVERHEATED';
+    timestamp: number;
+}
+
+/**
+ * Subscribe to lock health updates (EC-96)
+ */
+export function subscribeToLockHealth(
+    boxId: string,
+    callback: (state: LockHealthState | null) => void
+): () => void {
+    const db = getFirebaseDatabase();
+    const healthRef = ref(db, `hardware/${boxId}/lock_health`);
+
+    const unsubscribe = onValue(healthRef, (snapshot) => {
+        const data = snapshot.val();
+        callback(data as LockHealthState | null);
+    });
+
+    return () => off(healthRef);
+}
+
+// ==================== EC-97: Face Auth Status ====================
+export type FaceAuthStatus = 'IDLE' | 'SEARCHING' | 'AUTHENTICATED' | 'TIMEOUT_REMOVE_HELMET' | 'FAILED_USE_OTP';
+
+/**
+ * Subscribe to Face Auth status updates (EC-97)
+ */
+export function subscribeToFaceAuthStatus(
+    boxId: string,
+    callback: (status: FaceAuthStatus | null) => void
+): () => void {
+    const db = getFirebaseDatabase();
+    const statusRef = ref(db, `hardware/${boxId}/face_auth_status`);
+
+    const unsubscribe = onValue(statusRef, (snapshot) => {
+        const data = snapshot.val();
+        callback((data as FaceAuthStatus) || 'IDLE');
+    });
+
+    return () => off(statusRef);
+}
+
+/**
+ * Send command to start Face Scan (EC-97)
+ */
+export async function startFaceScan(boxId: string): Promise<void> {
+    const db = getFirebaseDatabase();
+    const cmdRef = ref(db, `hardware/${boxId}/start_face_scan`);
+    await set(cmdRef, true);
+}
+
 export { ref, onValue, off, set, serverTimestamp };
 export type { Database, DatabaseReference };
 
