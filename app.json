@@ -57,7 +57,8 @@
         {
           "autolinkEnabled": true
         }
-      ]
+      ],
+      "./scripts/withAndroidManifestHelpers.js"
     ],
     "extra": {
       "eas": {
