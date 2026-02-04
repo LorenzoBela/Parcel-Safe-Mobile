@@ -4,19 +4,26 @@
  * Handles push notification registration, local notifications,
  * and ongoing/persistent status notifications for delivery tracking.
  * 
+ * Now integrated with Firebase Cloud Messaging (FCM) for reliable
+ * background notification delivery.
+ * 
  * NOTE: Push notifications require a development build (not Expo Go).
  * In Expo Go, notifications will be simulated with console logs.
  */
 
 import { Platform } from 'react-native';
 import { supabase } from './supabaseClient';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
-// Conditionally import expo-notifications (may not be available in Expo Go)
+// Conditionally import modules
 let Notifications: any = null;
+let messaging: any = null;
+
 try {
     Notifications = require('expo-notifications');
+    messaging = require('@react-native-firebase/messaging').default;
 } catch (error) {
-    console.log('[DEV] expo-notifications not available - using console simulation');
+    console.log('[DEV] Native modules not available - using console simulation');
 }
 
 // Flag to track if native notifications are available (lazy detection)
@@ -131,41 +138,85 @@ export async function setupNotificationChannels(): Promise<void> {
 
 /**
  * Request notification permissions and get push token
+ * Now uses Firebase Cloud Messaging (FCM)
  */
 export async function registerForPushNotifications(): Promise<string | null> {
-    if (!checkNotificationsAvailable()) {
+    if (!checkNotificationsAvailable() || !messaging) {
         console.log('[DEV] Push notifications simulated - requires development build');
         return 'SIMULATED_TOKEN_DEV';
     }
 
     try {
-        // Check existing permissions
-        const { status: existingStatus } = await Notifications.getPermissionsAsync();
-        let finalStatus = existingStatus;
+        // Request FCM permission (Android 13+)
+        const authStatus = await messaging().requestPermission();
+        const enabled = authStatus === messaging.AuthorizationStatus.AUTHORIZED ||
+                       authStatus === messaging.AuthorizationStatus.PROVISIONAL;
 
-        // Request permissions if not already granted
-        if (existingStatus !== 'granted') {
-            const { status } = await Notifications.requestPermissionsAsync();
-            finalStatus = status;
-        }
-
-        if (finalStatus !== 'granted') {
-            console.warn('Push notification permission not granted');
+        if (!enabled) {
+            console.warn('FCM permission not granted');
             return null;
         }
 
-        // Get the Expo push token
-        const tokenData = await Notifications.getExpoPushTokenAsync({
-            projectId: undefined, // Will use projectId from app.json
-        });
+        // Get the FCM token
+        const fcmToken = await messaging().getToken();
+        console.log('FCM Push token:', fcmToken);
 
-        console.log('Push token:', tokenData.data);
-        return tokenData.data;
+        // Save token to AsyncStorage
+        await AsyncStorage.setItem('fcm_token', fcmToken);
+
+        // Also get Expo push token if available (for backup)
+        try {
+            if (Notifications) {
+                const tokenData = await Notifications.getExpoPushTokenAsync({
+                    projectId: undefined, // Will use projectId from app.json
+                });
+                console.log('Expo Push token:', tokenData.data);
+            }
+        } catch (expoError) {
+            console.log('Expo push token not available:', expoError);
+        }
+
+        return fcmToken;
     } catch (error) {
         console.warn('Failed to register for push notifications:', error);
         nativeNotificationsAvailable = false;
         return 'SIMULATED_TOKEN_DEV';
     }
+}
+
+/**
+ * Get current FCM token
+ */
+export async function getFCMToken(): Promise<string | null> {
+    try {
+        const token = await AsyncStorage.getItem('fcm_token');
+        if (token) {
+            return token;
+        }
+
+        // If not cached, get new token
+        return await registerForPushNotifications();
+    } catch (error) {
+        console.error('Failed to get FCM token:', error);
+        return null;
+    }
+}
+
+/**
+ * Handle FCM token refresh
+ */
+export function onTokenRefresh(callback: (token: string) => void): () => void {
+    if (!messaging) {
+        return () => {};
+    }
+
+    const unsubscribe = messaging().onTokenRefresh(async (newToken: string) => {
+        console.log('FCM token refreshed:', newToken);
+        await AsyncStorage.setItem('fcm_token', newToken);
+        callback(newToken);
+    });
+
+    return unsubscribe;
 }
 
 /**
