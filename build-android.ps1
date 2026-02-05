@@ -6,6 +6,128 @@ Write-Host "Parcel Safe Android Build Script" -ForegroundColor Cyan
 Write-Host "====================================" -ForegroundColor Cyan
 Write-Host ""
 
+#region Pre-Flight Check Functions
+function Test-ToolVersion {
+    param(
+        [string]$ToolName,
+        [scriptblock]$VersionCommand,
+        [string]$RequiredPattern,
+        [string]$Description
+    )
+    try {
+        $version = & $VersionCommand 2>&1 | Out-String
+        if ($version -match $RequiredPattern) {
+            Write-Host "[OK] $ToolName validated: $($matches[0])" -ForegroundColor Green
+            return $true
+        } else {
+            Write-Host "[WARN] $ToolName version mismatch. Found: $version" -ForegroundColor DarkYellow
+            Write-Host "      Expected: $Description" -ForegroundColor Gray
+            return $false
+        }
+    } catch {
+        Write-Host "[WARN] $ToolName not found or failed to check version" -ForegroundColor DarkYellow
+        return $false
+    }
+}
+
+function Invoke-GradleDaemonCleanup {
+    param([string]$ProjectPath)
+    Write-Host "[INFO] Stopping Gradle daemons and cleaning old caches..." -ForegroundColor Yellow
+    
+    try {
+        # Stop all Gradle daemons
+        Push-Location (Join-Path $ProjectPath "android")
+        .\gradlew --stop 2>&1 | Out-Null
+        Pop-Location
+        Write-Host "[OK] Gradle daemons stopped" -ForegroundColor Green
+    } catch {
+        Write-Host "[WARN] Could not stop Gradle daemons: $_" -ForegroundColor DarkYellow
+    }
+    
+    # Clean old Gradle cache files (keep recent ones)
+    try {
+        $gradleCache = Join-Path $env:USERPROFILE ".gradle\caches"
+        if (Test-Path $gradleCache) {
+            $oldCaches = Get-ChildItem $gradleCache -Directory -ErrorAction SilentlyContinue |
+                Where-Object { $_.LastWriteTime -lt (Get-Date).AddDays(-14) }
+            if ($oldCaches) {
+                $oldCaches | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+                Write-Host "[OK] Cleaned $($oldCaches.Count) old Gradle cache folders (>14 days)" -ForegroundColor Green
+            }
+        }
+    } catch {
+        Write-Host "[WARN] Could not clean old Gradle caches: $_" -ForegroundColor DarkYellow
+    }
+}
+
+function Test-AndroidEnvironment {
+    param([string]$SdkPath)
+    
+    $issues = @()
+    
+    # Check critical SDK components
+    $requiredComponents = @(
+        @{Path="platform-tools"; Name="Android Platform Tools"},
+        @{Path="build-tools"; Name="Android Build Tools"},
+        @{Path="platforms"; Name="Android Platforms"}
+    )
+    
+    foreach ($component in $requiredComponents) {
+        $componentPath = Join-Path $SdkPath $component.Path
+        if (-not (Test-Path $componentPath)) {
+            $issues += "$($component.Name) not found at: $componentPath"
+        }
+    }
+    
+    if ($issues.Count -gt 0) {
+        Write-Host "[WARN] Android SDK issues detected:" -ForegroundColor DarkYellow
+        $issues | ForEach-Object { Write-Host "      - $_" -ForegroundColor Gray }
+        return $false
+    } else {
+        Write-Host "[OK] Android SDK components verified" -ForegroundColor Green
+        return $true
+    }
+}
+
+function Invoke-SmartCleanup {
+    param(
+        [string]$ProjectPath,
+        [switch]$DeepClean
+    )
+    
+    Write-Host "[INFO] Cleaning build artifacts..." -ForegroundColor Yellow
+    
+    $cleanPaths = @(
+        "android\.gradle",
+        "android\app\build",
+        "android\app\.cxx",
+        "android\build"
+    )
+    
+    if ($DeepClean) {
+        $cleanPaths += @(
+            "node_modules\.cache",
+            ".expo"
+        )
+    }
+    
+    $cleaned = 0
+    foreach ($relativePath in $cleanPaths) {
+        $fullPath = Join-Path $ProjectPath $relativePath
+        if (Test-Path $fullPath) {
+            try {
+                Remove-Item -Recurse -Force $fullPath -ErrorAction Stop
+                $cleaned++
+            } catch {
+                Write-Host "[WARN] Could not remove $relativePath" -ForegroundColor DarkYellow
+            }
+        }
+    }
+    
+    Write-Host "[OK] Cleaned $cleaned build artifact folders" -ForegroundColor Green
+}
+#endregion
+
 # Define source and destination paths
 $SOURCE_DIR = "C:\Users\Lorenzo Bela\Downloads\Thesis 24-25 Smart Top Box\mobile"
 $DEST_DIR = "C:\Dev\TopBox\mobile"
@@ -129,8 +251,35 @@ Write-AgentLog -HypothesisId "H1" -Message "env snapshot" -Data @{
 }
 #endregion
 
-# Step 2: Toolchain sanity (JDK + Android SDK)
-Write-Host "`nStep 2: Toolchain sanity..." -ForegroundColor Yellow
+# Step 2: Pre-Flight Environment Validation
+Write-Host "`nStep 2: Pre-Flight Environment Validation..." -ForegroundColor Yellow
+
+# Check Node.js version (React Native 0.81.5 requires Node 16+)
+Test-ToolVersion -ToolName "Node.js" `
+    -VersionCommand { node --version } `
+    -RequiredPattern "v(1[6-9]|2\d)\." `
+    -Description "Node.js 16.x or higher"
+
+# Check Java/JDK version (React Native 0.81.5 requires JDK 11 or 17)
+$javaCheck = Test-ToolVersion -ToolName "Java JDK" `
+    -VersionCommand { javac -version } `
+    -RequiredPattern "javac (11|17|21)\." `
+    -Description "JDK 11, 17, or 21"
+
+if (-not $javaCheck) {
+    Write-Host "[WARN] JDK version might cause build issues. Recommended: JDK 17" -ForegroundColor DarkYellow
+}
+
+# Clean Gradle daemons and old caches
+Invoke-GradleDaemonCleanup -ProjectPath $PROJECT_ROOT
+
+# Step 2.1: Toolchain sanity (JDK + Android SDK)
+Write-Host "`nStep 2.1: Toolchain sanity (JDK + Android SDK)..." -ForegroundColor Yellow
+
+# Force CMake/NDK to use shared libc++ to avoid missing stdlib symbols at link time
+$env:ANDROID_STL = "c++_shared"
+$env:CMAKE_ANDROID_STL_TYPE = "c++_shared"
+Write-Host "[OK] Android STL set to: $env:ANDROID_STL" -ForegroundColor Green
 
 # Try to infer ANDROID_HOME/ANDROID_SDK_ROOT from android/local.properties if missing
 $localPropsPathEarly = "$ANDROID_DIR\local.properties"
@@ -138,14 +287,38 @@ $sdkDirEarly = $null
 if (Test-Path $localPropsPathEarly) {
     $sdkLineEarly = Get-Content $localPropsPathEarly | Where-Object { $_ -match '^sdk\.dir=' } | Select-Object -First 1
     if ($sdkLineEarly) {
-        # Remove the property name and unescape Java properties format (\\: -> :, \\ -> \)
-        $sdkDirEarly = $sdkLineEarly -replace '^sdk\.dir=', '' -replace '\\:', ':' -replace '\\\\', '\'
+        # Guard against malformed line that accidentally contains ndk.dir as well
+        $sdkLineEarly = $sdkLineEarly -replace 'ndk\.dir=.*', ''
+        # Remove the property name and unescape Java properties format (\\: -> :, \\ -> \, \  -> space)
+        $sdkDirEarly = $sdkLineEarly -replace '^sdk\.dir=', '' -replace '\\:', ':' -replace '\\ ', ' ' -replace '\\\\', '\'
     }
+}
+
+function Update-LocalPropertiesPaths {
+    param(
+        [string]$Path,
+        [string]$SdkDir,
+        [string]$NdkDir
+    )
+    $lines = @()
+    if (Test-Path $Path) {
+        $lines = Get-Content $Path
+    }
+    $lines = $lines | Where-Object { $_ -notmatch '^sdk\.dir=' -and $_ -notmatch '^ndk\.dir=' }
+    if ($SdkDir) { $lines += ("sdk.dir=" + ($SdkDir -replace '\\', '/')) }
+    if ($NdkDir) { $lines += ("ndk.dir=" + ($NdkDir -replace '\\', '/')) }
+    Set-Content -Path $Path -Value $lines
 }
 if ((!$env:ANDROID_HOME -or !$env:ANDROID_SDK_ROOT) -and $sdkDirEarly) {
     if (-not $env:ANDROID_HOME) { $env:ANDROID_HOME = $sdkDirEarly }
     if (-not $env:ANDROID_SDK_ROOT) { $env:ANDROID_SDK_ROOT = $sdkDirEarly }
     Write-Host "[OK] Android SDK inferred from local.properties: $sdkDirEarly" -ForegroundColor Green
+
+    # Validate Android SDK components
+    Test-AndroidEnvironment -SdkPath $sdkDirEarly
+
+    # Normalize sdk.dir in local.properties for the build directory
+    Update-LocalPropertiesPaths -Path $localPropsPathEarly -SdkDir $sdkDirEarly -NdkDir $null
     
     # Add platform-tools to PATH if not already there (for adb command)
     $platformTools = Join-Path $sdkDirEarly "platform-tools"
@@ -154,7 +327,7 @@ if ((!$env:ANDROID_HOME -or !$env:ANDROID_SDK_ROOT) -and $sdkDirEarly) {
         Write-Host "[OK] Added Android platform-tools to PATH" -ForegroundColor Green
     }
 
-    # Set NDK path (prefer 27.2.12479018 for C++20 std::format support; otherwise use newest available)
+    # Set NDK path (prefer 27.2.12479018 for C++20 std::format support)
     $preferredNdkVersion = "27.2.12479018"
     $ndkRoot = Join-Path $sdkDirEarly "ndk"
     $ndkDir = $null
@@ -220,18 +393,41 @@ if ((!$env:ANDROID_HOME -or !$env:ANDROID_SDK_ROOT) -and $sdkDirEarly) {
     if ($ndkDir) {
         $env:ANDROID_NDK_HOME = $ndkDir
         $env:NDK_HOME = $ndkDir
+        
+        # Verify NDK is valid and report version
+        $ndkSourceProps = Join-Path $ndkDir "source.properties"
+        if (Test-Path $ndkSourceProps) {
+            $ndkVersion = (Get-Content $ndkSourceProps | Where-Object { $_ -match "^Pkg.Revision" } | Select-Object -First 1) -replace "^Pkg.Revision\s*=\s*", ""
+            Write-Host "[OK] NDK verified: $ndkVersion (supports c++_shared STL)" -ForegroundColor Green
+            
+            # Warn if using very old NDK (< 25.x) which might have STL issues
+            if ($ndkVersion -match "^(\d+)\.") {
+                $majorVersion = [int]$matches[1]
+                if ($majorVersion -lt 25) {
+                    Write-Host "[WARN] NDK version $ndkVersion is older than 25.x. Recommend upgrading for better c++_shared support" -ForegroundColor DarkYellow
+                }
+            }
+        }
 
         # Ensure local.properties has ndk.dir pointing at the selected NDK (use forward slashes)
         $ndkDirForProps = $ndkDir -replace '\\', '/'
         $ndkLine = "ndk.dir=$ndkDirForProps"
         if (Test-Path $localPropsPathEarly) {
             $localPropsContent = Get-Content $localPropsPathEarly
-            if ($localPropsContent -match '^ndk\.dir=') {
-                $localPropsContent = $localPropsContent -replace '^ndk\.dir=.*', $ndkLine
-            } else {
-                $localPropsContent += $ndkLine
+            $normalized = @()
+            foreach ($line in $localPropsContent) {
+                if ($line -match '^sdk\.dir=.*ndk\.dir=') {
+                    $parts = $line -split 'ndk\.dir='
+                    $sdkPart = $parts[0].TrimEnd()
+                    if ($sdkPart) { $normalized += $sdkPart }
+                    if ($parts.Count -gt 1) { $normalized += ("ndk.dir=" + $parts[1]) }
+                } else {
+                    $normalized += $line
+                }
             }
-            $localPropsContent | Set-Content $localPropsPathEarly
+            $normalized = $normalized | Where-Object { $_ -notmatch '^ndk\.dir=' }
+            $normalized += $ndkLine
+            Set-Content -Path $localPropsPathEarly -Value $normalized
         }
 
         Write-Host "[OK] Using NDK: $ndkDir" -ForegroundColor Green
@@ -239,6 +435,185 @@ if ((!$env:ANDROID_HOME -or !$env:ANDROID_SDK_ROOT) -and $sdkDirEarly) {
         Write-Host "[ERROR] No valid NDK installation found under $ndkRoot" -ForegroundColor Red
         Write-Host "[INFO] Install NDK $preferredNdkVersion in Android SDK Manager and re-run." -ForegroundColor Yellow
         exit 1
+    }
+}
+
+# Save working config snapshot for future builds
+Write-Host "`nStep 2.5: Saving working build config..." -ForegroundColor Yellow
+$configPath = Join-Path $PROJECT_ROOT "build-config.json"
+$configData = [ordered]@{
+    timestamp           = (Get-Date).ToString("o")
+    projectRoot         = $PROJECT_ROOT
+    androidDir          = $ANDROID_DIR
+    androidSdkRoot      = $env:ANDROID_SDK_ROOT
+    androidHome         = $env:ANDROID_HOME
+    androidNdkHome       = $env:ANDROID_NDK_HOME
+    ndkHome             = $env:NDK_HOME
+    javaHome            = $env:JAVA_HOME
+    nodeBinary          = $env:NODE_BINARY
+    androidStl          = $env:ANDROID_STL
+    cmakeAndroidStlType = $env:CMAKE_ANDROID_STL_TYPE
+}
+try {
+    $configData | ConvertTo-Json -Depth 5 | Set-Content -Path $configPath -Encoding UTF8
+    Write-Host "[OK] Saved build config to: $configPath" -ForegroundColor Green
+} catch {
+    Write-Host "[WARN] Failed to save build config snapshot" -ForegroundColor DarkYellow
+}
+
+# Step 2.6: Apply known working build fixes (Gradle + CMake patches)
+Write-Host "`nStep 2.6: Applying working build fixes..." -ForegroundColor Yellow
+
+function Ensure-LineInFile {
+    param(
+        [string]$Path,
+        [string]$MatchRegex,
+        [string]$LineToSet
+    )
+    if (-not (Test-Path $Path)) { return }
+    $content = Get-Content -Path $Path
+    $matched = $false
+    $newContent = @()
+    foreach ($line in $content) {
+        if ($line -match $MatchRegex) {
+            $newContent += $LineToSet
+            $matched = $true
+        } else {
+            $newContent += $line
+        }
+    }
+    if (-not $matched) { $newContent += $LineToSet }
+    Set-Content -Path $Path -Value $newContent
+}
+
+function Ensure-BlockAfterLine {
+    param(
+        [string]$Path,
+        [string]$AnchorRegex,
+        [string]$BlockText,
+        [string]$BlockMarker
+    )
+    if (-not (Test-Path $Path)) { return }
+    $raw = Get-Content -Path $Path -Raw
+    if ($raw -match [regex]::Escape($BlockMarker)) { return }
+    $lines = Get-Content -Path $Path
+    $output = @()
+    foreach ($line in $lines) {
+        $output += $line
+        if ($line -match $AnchorRegex) {
+            $output += $BlockText
+        }
+    }
+    Set-Content -Path $Path -Value $output
+}
+
+function Ensure-CMakeLibCppShared {
+    param(
+        [string]$Path,
+        [string]$TargetName
+    )
+    if (-not (Test-Path $Path)) { return }
+    $raw = Get-Content -Path $Path -Raw
+
+    # Ensure linker flags
+    # Sanitize accidental backticks from previous runs
+    $raw = $raw -replace '`cmake_minimum_required', 'cmake_minimum_required'
+    $raw = $raw -replace '`n', "`n"
+
+    if ($raw -notmatch 'CMAKE_SHARED_LINKER_FLAGS') {
+        $insert = "string(APPEND CMAKE_SHARED_LINKER_FLAGS `" -lc++_shared`")`nstring(APPEND CMAKE_EXE_LINKER_FLAGS `" -lc++_shared`")`n"
+        $raw = [regex]::Replace($raw, '(cmake_minimum_required\([^\)]*\)\s*)', { $args[0].Groups[1].Value + $insert })
+    }
+
+    # Ensure find_library + fallback
+    if ($raw -notmatch 'find_library\(CPP_SHARED_LIB c\+\+_shared\)') {
+        $raw = $raw -replace '(find_library\([^\n]*log[^\n]*\)\s*)', "`$1find_library(CPP_SHARED_LIB c++_shared)`n`nif(NOT CPP_SHARED_LIB)`n  set(CPP_SHARED_LIB c++_shared)`nendif()`n"
+        if ($raw -notmatch 'find_library\(CPP_SHARED_LIB c\+\+_shared\)') {
+            $raw = "find_library(CPP_SHARED_LIB c++_shared)`n`nif(NOT CPP_SHARED_LIB)`n  set(CPP_SHARED_LIB c++_shared)`nendif()`n`n" + $raw
+        }
+    } elseif ($raw -notmatch 'if\(NOT CPP_SHARED_LIB\)') {
+        $raw = $raw -replace '(find_library\(CPP_SHARED_LIB c\+\+_shared\)\s*)', "`$1`nif(NOT CPP_SHARED_LIB)`n  set(CPP_SHARED_LIB c++_shared)`nendif()`n"
+    }
+
+    # Ensure target_link_options
+    if ($raw -notmatch 'target_link_options\(') {
+        $raw += "`n`ntarget_link_options(${TargetName} PRIVATE `"-lc++_shared`")`n"
+    } elseif ($raw -notmatch 'lc\+\+_shared') {
+        $raw += "`n`ntarget_link_options(${TargetName} PRIVATE `"-lc++_shared`")`n"
+    }
+
+    Set-Content -Path $Path -Value $raw
+}
+
+# Enforce Gradle STL flags
+$gradleProps = Join-Path $ANDROID_DIR "gradle.properties"
+Ensure-LineInFile -Path $gradleProps -MatchRegex '^android\.cmake\.arguments=' -LineToSet 'android.cmake.arguments=-DANDROID_STL=c++_shared -DCMAKE_ANDROID_STL_TYPE=c++_shared'
+
+# Enforce root build.gradle subproject CMake args
+$rootBuildGradle = Join-Path $ANDROID_DIR "build.gradle"
+$cmakeBlock = @(
+'// BEGIN libcxx-shared-fix',
+'def configureAndroidCmake = { Project project ->',
+'  project.android.defaultConfig {',
+'    externalNativeBuild {',
+'      cmake {',
+'        arguments "-DANDROID_STL=c++_shared",',
+'                  "-DCMAKE_ANDROID_STL_TYPE=c++_shared",',
+'                  "-DCMAKE_SHARED_LINKER_FLAGS=-lc++_shared",',
+'                  "-DCMAKE_EXE_LINKER_FLAGS=-lc++_shared"',
+'      }',
+'    }',
+'  }',
+'}',
+'subprojects { project ->',
+'  project.plugins.withId("com.android.application") {',
+'    configureAndroidCmake(project)',
+'  }',
+'  project.plugins.withId("com.android.library") {',
+'    configureAndroidCmake(project)',
+'  }',
+'}',
+'// END libcxx-shared-fix'
+)
+Ensure-BlockAfterLine -Path $rootBuildGradle -AnchorRegex 'apply plugin: "com.facebook.react.rootproject"' -BlockText $cmakeBlock -BlockMarker '// BEGIN libcxx-shared-fix'
+
+# Patch common native modules in node_modules (if present)
+$expoCmake = Join-Path $PROJECT_ROOT "node_modules\expo-modules-core\android\CMakeLists.txt"
+Ensure-CMakeLibCppShared -Path $expoCmake -TargetName '${PACKAGE_NAME}'
+
+$workletsCmake = Join-Path $PROJECT_ROOT "node_modules\react-native-worklets\android\CMakeLists.txt"
+Ensure-CMakeLibCppShared -Path $workletsCmake -TargetName 'worklets'
+
+$gestureCmake = Join-Path $PROJECT_ROOT "node_modules\react-native-gesture-handler\android\src\main\jni\CMakeLists.txt"
+Ensure-CMakeLibCppShared -Path $gestureCmake -TargetName '${PACKAGE_NAME}'
+
+Write-Host "[OK] Working build fixes applied" -ForegroundColor Green
+
+# Step 2.7: Verify working build fixes
+Write-Host "`nStep 2.7: Verifying working build fixes..." -ForegroundColor Yellow
+
+function Test-FileContains {
+    param(
+        [string]$Path,
+        [string]$Pattern
+    )
+    if (-not (Test-Path $Path)) { return $false }
+    $raw = Get-Content -Path $Path -Raw
+    return ($raw -match $Pattern)
+}
+
+$checkResults = [ordered]@{}
+$checkResults["gradle.properties ANDROID_STL"] = Test-FileContains -Path $gradleProps -Pattern 'android\.cmake\.arguments=.*ANDROID_STL=c\+\+_shared'
+$checkResults["root build.gradle libcxx-shared-fix"] = Test-FileContains -Path $rootBuildGradle -Pattern 'BEGIN libcxx-shared-fix'
+$checkResults["expo-modules-core CMake libc++_shared"] = Test-FileContains -Path $expoCmake -Pattern 'c\+\+_shared'
+$checkResults["worklets CMake libc++_shared"] = Test-FileContains -Path $workletsCmake -Pattern 'c\+\+_shared'
+$checkResults["gesture-handler CMake libc++_shared"] = Test-FileContains -Path $gestureCmake -Pattern 'c\+\+_shared'
+
+foreach ($key in $checkResults.Keys) {
+    if ($checkResults[$key]) {
+        Write-Host "[OK] $key" -ForegroundColor Green
+    } else {
+        Write-Host "[WARN] $key" -ForegroundColor DarkYellow
     }
 }
 
@@ -283,21 +658,9 @@ Write-AgentLog -HypothesisId "H7" -Message "toolchain inferred" -Data @{
 # Step 3: Clean build directories
 Write-Host "`nStep 3: Cleaning build directories..." -ForegroundColor Yellow
 
-$cleanupPaths = @(
-    "$ANDROID_DIR\app\.cxx",
-    "$ANDROID_DIR\app\build",
-    "$ANDROID_DIR\build",
-    "$PROJECT_ROOT\node_modules\expo-modules-core\android\.cxx",
-    "$PROJECT_ROOT\node_modules\expo-modules-core\android\build",
-    "$PROJECT_ROOT\node_modules\react-native-reanimated"
-)
+# Use smart cleanup function
+Invoke-SmartCleanup -ProjectPath $PROJECT_ROOT
 
-foreach ($path in $cleanupPaths) {
-    if (Test-Path $path) {
-        Write-Host "  Removing: $path" -ForegroundColor Gray
-        Remove-Item -Recurse -Force $path -ErrorAction SilentlyContinue
-    }
-}
 Write-Host "[OK] Build directories cleaned" -ForegroundColor Green
 
 # Step 4: Clean Gradle cache (optional but recommended)
@@ -356,6 +719,8 @@ $sdkDir = $null
 if (Test-Path $localPropsPath) {
     $sdkLine = Get-Content $localPropsPath | Where-Object { $_ -match '^sdk\.dir=' } | Select-Object -First 1
     if ($sdkLine) {
+        # Guard against malformed line that accidentally contains ndk.dir as well
+        $sdkLine = $sdkLine -replace 'ndk\.dir=.*', ''
         # Remove the property name and unescape Java properties format (\\: -> :, \\ -> \)
         $sdkDir = $sdkLine -replace '^sdk\.dir=', '' -replace '\\:', ':' -replace '\\\\', '\'
     }
@@ -390,6 +755,36 @@ Write-Host "Starting Android build..." -ForegroundColor Cyan
 Write-Host "====================================" -ForegroundColor Cyan
 Write-Host ""
 
+# Ensure a healthy adb connection before build
+function Test-ConnectedAndroidDevice {
+    param([string]$SdkRoot)
+    if (-not $SdkRoot) { return $true }
+    $adbPath = Join-Path $SdkRoot "platform-tools\adb.exe"
+    if (-not (Test-Path $adbPath)) { return $true }
+    $devices = & $adbPath devices
+    $deviceLines = $devices | Where-Object { $_ -match "\t" }
+    foreach ($line in $deviceLines) {
+        $parts = $line -split "\t"
+        if ($parts.Count -ge 2 -and $parts[1] -eq "device") { return $true }
+    }
+    return $false
+}
+
+if (-not (Test-ConnectedAndroidDevice -SdkRoot $env:ANDROID_SDK_ROOT)) {
+    $adbPath = Join-Path $env:ANDROID_SDK_ROOT "platform-tools\adb.exe"
+    if (Test-Path $adbPath) {
+        Write-Host "[WARN] No active Android device found. Restarting adb..." -ForegroundColor DarkYellow
+        & $adbPath kill-server | Out-Null
+        Start-Sleep -Seconds 2
+        & $adbPath start-server | Out-Null
+        Start-Sleep -Seconds 2
+    }
+    if (-not (Test-ConnectedAndroidDevice -SdkRoot $env:ANDROID_SDK_ROOT)) {
+        Write-Host "[ERROR] No connected Android device/emulator. Please start an emulator or connect a device, then re-run." -ForegroundColor Red
+        exit 1
+    }
+}
+
 #region agent log
 Write-AgentLog -HypothesisId "H3" -Message "pre-build context" -Data @{
     workingDir    = (Get-Location).Path
@@ -406,10 +801,56 @@ Write-AgentLog -HypothesisId "H6" -Message "expo run result" -Data @{
     exitCode = $expoExitCode
 }
 #endregion
-if ($expoExitCode -ne 0) {
-    Write-Host "Build failed with exit code $expoExitCode" -ForegroundColor Red
-}
 
 Write-Host "`n====================================" -ForegroundColor Cyan
 Write-Host "Build process completed!" -ForegroundColor Cyan
 Write-Host "====================================" -ForegroundColor Cyan
+
+# Post-build verification
+if ($expoExitCode -eq 0) {
+    Write-Host "`n[OK] Build succeeded!" -ForegroundColor Green
+    
+    # Check for APK output
+    $apkSearchPaths = @(
+        "$ANDROID_DIR\app\build\outputs\apk\debug\*.apk",
+        "$ANDROID_DIR\app\build\outputs\apk\release\*.apk"
+    )
+    
+    $foundApks = @()
+    foreach ($pattern in $apkSearchPaths) {
+        $apks = Get-ChildItem -Path $pattern -ErrorAction SilentlyContinue
+        if ($apks) {
+            $foundApks += $apks
+        }
+    }
+    
+    if ($foundApks.Count -gt 0) {
+        Write-Host "`nGenerated APKs:" -ForegroundColor Green
+        foreach ($apk in $foundApks) {
+            $sizeInMB = [math]::Round($apk.Length / 1MB, 2)
+            Write-Host "  - $($apk.Name) ($sizeInMB MB)" -ForegroundColor Gray
+            Write-Host "    Path: $($apk.FullName)" -ForegroundColor DarkGray
+        }
+    }
+    
+    # Verify critical configuration is still in place
+    Write-Host "`nVerifying build configuration..." -ForegroundColor Yellow
+    $gradleProps = Join-Path $ANDROID_DIR "gradle.properties"
+    if (Test-Path $gradleProps) {
+        $content = Get-Content $gradleProps -Raw
+        if ($content -match "android\.cmake\.arguments=-DANDROID_STL=c\+\+_shared") {
+            Write-Host "[OK] gradle.properties STL configuration intact" -ForegroundColor Green
+        } else {
+            Write-Host "[WARN] gradle.properties STL configuration missing" -ForegroundColor DarkYellow
+        }
+    }
+    
+} else {
+    Write-Host "`n[ERROR] Build failed with exit code $expoExitCode" -ForegroundColor Red
+    Write-Host "`nTroubleshooting tips:" -ForegroundColor Yellow
+    Write-Host "  1. Check if all NDK/SDK components are installed" -ForegroundColor Gray
+    Write-Host "  2. Verify JDK version is compatible (11, 17, or 21)" -ForegroundColor Gray
+    Write-Host "  3. Try running: .\gradlew clean in android\ folder" -ForegroundColor Gray
+    Write-Host "  4. Check build logs above for specific error messages" -ForegroundColor Gray
+    exit $expoExitCode
+}

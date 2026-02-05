@@ -9,10 +9,37 @@ import { createClient, SupabaseClient } from '@supabase/supabase-js';
 const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL || '';
 const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || '';
 
-// Create client only if credentials are provided
+// Create client only if credentials are provided with custom fetch options
 export const supabase: SupabaseClient | null =
     supabaseUrl && supabaseAnonKey
-        ? createClient(supabaseUrl, supabaseAnonKey)
+        ? createClient(supabaseUrl, supabaseAnonKey, {
+            auth: {
+                persistSession: true,
+                autoRefreshToken: true,
+                detectSessionInUrl: false,
+            },
+            global: {
+                fetch: async (url, options = {}) => {
+                    const controller = new AbortController();
+                    const timeoutId = setTimeout(() => controller.abort(), 30000); // 30s timeout
+                    
+                    try {
+                        const response = await fetch(url, {
+                            ...options,
+                            signal: controller.signal,
+                        });
+                        clearTimeout(timeoutId);
+                        return response;
+                    } catch (error: any) {
+                        clearTimeout(timeoutId);
+                        if (error.name === 'AbortError') {
+                            throw new Error('Request timeout - please check your internet connection');
+                        }
+                        throw error;
+                    }
+                },
+            },
+        })
         : null;
 
 // ==================== Types ====================

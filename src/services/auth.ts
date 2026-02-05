@@ -100,68 +100,94 @@ export const signInWithGoogleAndSyncProfile = async (): Promise<AuthSessionResul
     throw new Error('Supabase is not configured. Set EXPO_PUBLIC_SUPABASE_URL and EXPO_PUBLIC_SUPABASE_ANON_KEY.');
   }
 
-  const { data: authData, error: authError } = await supabase.auth.signInWithIdToken({
-    provider: 'google',
-    token: googleResult.idToken,
-  });
+  // Retry logic for network failures
+  let lastError: any;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      console.log(`Auth attempt ${attempt}/3...`);
+      
+      const { data: authData, error: authError } = await supabase.auth.signInWithIdToken({
+        provider: 'google',
+        token: googleResult.idToken,
+      });
 
-  if (authError || !authData?.user) {
-    throw authError || new Error('Failed to create Supabase session.');
-  }
+      if (authError || !authData?.user) {
+        throw authError || new Error('Failed to create Supabase session.');
+      }
 
-  const userId = authData.user.id;
-  const fullNameFromGoogle = googleResult.name || authData.user.user_metadata?.full_name || undefined;
-  const emailFromGoogle = googleResult.email || authData.user.email;
-  const photoFromGoogle = googleResult.photo || authData.user.user_metadata?.avatar_url || authData.user.user_metadata?.picture;
+      const userId = authData.user.id;
+      const fullNameFromGoogle = googleResult.name || authData.user.user_metadata?.full_name || undefined;
+      const emailFromGoogle = googleResult.email || authData.user.email;
+      const photoFromGoogle = googleResult.photo || authData.user.user_metadata?.avatar_url || authData.user.user_metadata?.picture;
 
-  const { data: existingProfile, error: profileError } = await supabase
-    .from('profiles')
-    .select('role, full_name')
-    .eq('id', userId)
-    .maybeSingle();
+      const { data: existingProfile, error: profileError } = await supabase
+        .from('profiles')
+        .select('role, full_name')
+        .eq('id', userId)
+        .maybeSingle();
 
-  if (profileError) {
-    throw profileError;
-  }
+      if (profileError) {
+        throw profileError;
+      }
 
-  let profile = existingProfile;
+      let profile = existingProfile;
 
-  if (!profile) {
-    const { data: createdProfile, error: createError } = await supabase
-      .from('profiles')
-      .insert({
-        id: userId,
-        role: 'CUSTOMER',
-        full_name: fullNameFromGoogle || emailFromGoogle || null,
-        email: emailFromGoogle,
-        avatar_url: photoFromGoogle,
-        updated_at: new Date().toISOString(),
-      })
-      .select('role, full_name')
-      .single();
+      if (!profile) {
+        const { data: createdProfile, error: createError } = await supabase
+          .from('profiles')
+          .insert({
+            id: userId,
+            role: 'CUSTOMER',
+            full_name: fullNameFromGoogle || emailFromGoogle || null,
+            email: emailFromGoogle,
+            avatar_url: photoFromGoogle,
+            updated_at: new Date().toISOString(),
+          })
+          .select('role, full_name')
+          .single();
 
-    if (createError) {
-      throw createError;
+        if (createError) {
+          throw createError;
+        }
+
+        profile = createdProfile;
+      } else if (photoFromGoogle) {
+        // Update avatar_url for existing users if they don't have one or if it changed
+        await supabase
+          .from('profiles')
+          .update({ 
+            avatar_url: photoFromGoogle,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', userId);
+      }
+
+      console.log('Authentication successful!');
+      return {
+        ...googleResult,
+        userId,
+        role: mapRole(profile?.role),
+        fullName: profile?.full_name || fullNameFromGoogle,
+      };
+    } catch (error: any) {
+      lastError = error;
+      const isNetworkError = 
+        error?.message?.includes('Network request failed') ||
+        error?.message?.includes('timeout') ||
+        error?.message?.includes('fetch') ||
+        error?.code === 'NETWORK_ERROR';
+      
+      if (isNetworkError && attempt < 3) {
+        console.log(`Network error on attempt ${attempt}, retrying in ${attempt * 1000}ms...`);
+        await new Promise(resolve => setTimeout(resolve, attempt * 1000));
+        continue;
+      }
+      
+      throw error;
     }
-
-    profile = createdProfile;
-  } else if (photoFromGoogle) {
-    // Update avatar_url for existing users if they don't have one or if it changed
-    await supabase
-      .from('profiles')
-      .update({ 
-        avatar_url: photoFromGoogle,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', userId);
   }
-
-  return {
-    ...googleResult,
-    userId,
-    role: mapRole(profile?.role),
-    fullName: profile?.full_name || fullNameFromGoogle,
-  };
+  
+  throw lastError || new Error('Authentication failed after 3 attempts');
 };
 
 export const signOut = async () => {

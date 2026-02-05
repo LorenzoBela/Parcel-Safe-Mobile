@@ -312,6 +312,36 @@ async function startForegroundService(): Promise<void> {
     }
 
     try {
+        // CRITICAL: Check location permissions before starting FGS with type "location"
+        // Android 14+ (API 34+) requires location permissions to be granted at runtime
+        const { PermissionsAndroid } = require('react-native');
+        
+        const coarseGranted = await PermissionsAndroid.check(
+            PermissionsAndroid.PERMISSIONS.ACCESS_COARSE_LOCATION
+        );
+        const fineGranted = await PermissionsAndroid.check(
+            PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION
+        );
+        
+        if (!coarseGranted && !fineGranted) {
+            // Request location permissions
+            const granted = await PermissionsAndroid.request(
+                PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
+                {
+                    title: 'Location Permission',
+                    message: 'Parcel Safe needs location access to track deliveries',
+                    buttonNeutral: 'Ask Me Later',
+                    buttonNegative: 'Cancel',
+                    buttonPositive: 'OK',
+                }
+            );
+            
+            if (granted !== PermissionsAndroid.RESULTS.GRANTED) {
+                console.error('[BackgroundService] Location permission denied - cannot start foreground service');
+                throw new Error('Location permission required for foreground service');
+            }
+        }
+
         const options = {
             taskName: 'Parcel Safe Background Service',
             taskTitle: 'Parcel Safe - Ready for Orders',
@@ -334,6 +364,7 @@ async function startForegroundService(): Promise<void> {
         console.log('[BackgroundService] Foreground service started');
     } catch (error) {
         console.error('[BackgroundService] Foreground service error:', error);
+        throw error; // Re-throw to prevent silent failures
     }
 }
 

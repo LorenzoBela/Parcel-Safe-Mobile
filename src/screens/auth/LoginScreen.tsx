@@ -8,7 +8,8 @@ import {
     useColorScheme,
     StatusBar,
     SafeAreaView,
-    ActivityIndicator
+    ActivityIndicator,
+    Alert
 } from 'react-native';
 import { Text } from 'react-native-paper';
 import { useNavigation } from '@react-navigation/native';
@@ -64,7 +65,26 @@ export default function LoginScreen() {
             }
         } catch (error: any) {
             console.error('Login failed:', error);
-            alert(`Login failed: ${error.message}`);
+            
+            let errorMessage = 'Login failed. Please try again.';
+            
+            if (error?.message?.includes('Network request failed') || 
+                error?.message?.includes('timeout') ||
+                error?.code === 'NETWORK_ERROR') {
+                errorMessage = 'Network connection failed. Please check your internet connection and try again.';
+            } else if (error?.message?.includes('cancelled')) {
+                errorMessage = 'Sign-in was cancelled.';
+            } else if (error?.message) {
+                errorMessage = `Login failed: ${error.message}`;
+            }
+            
+            Alert.alert(
+                'Authentication Error',
+                errorMessage,
+                [
+                    { text: 'OK', style: 'default' }
+                ]
+            );
         } finally {
             setLoading(false);
         }

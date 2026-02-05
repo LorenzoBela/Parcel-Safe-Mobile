@@ -43,6 +43,8 @@ const AppContent = () => {
   const [appState, setAppState] = useState(AppState.currentState);
 
   useEffect(() => {
+    let cleanupFunctions = [];
+
     // Initialize background services when app starts
     const initializeServices = async () => {
       if (!initializeBackgroundServices) {
@@ -65,6 +67,7 @@ const AppContent = () => {
             console.log('[App] New order received:', data);
           }
         });
+        cleanupFunctions.push(unsubscribeBackgroundEvents);
 
         // Subscribe to new order events
         // Note: This requires the user to be logged in as a rider
@@ -73,6 +76,7 @@ const AppContent = () => {
           console.log('[App] New order callback:', order);
           // You can navigate to order screen or show in-app alert
         });
+        cleanupFunctions.push(unsubscribeOrders);
 
         // Listen for notification taps
         const notificationResponseSubscription = Notifications.addNotificationResponseReceivedListener(
@@ -86,15 +90,9 @@ const AppContent = () => {
             }
           }
         );
+        cleanupFunctions.push(() => notificationResponseSubscription.remove());
 
         console.log('[App] Background services initialized successfully');
-
-        // Cleanup on unmount
-        return () => {
-          unsubscribeBackgroundEvents();
-          unsubscribeOrders();
-          notificationResponseSubscription.remove();
-        };
       } catch (error) {
         console.error('[App] Failed to initialize background services:', error);
         
@@ -122,6 +120,14 @@ const AppContent = () => {
 
     return () => {
       subscription.remove();
+      // Call all cleanup functions
+      cleanupFunctions.forEach(cleanup => {
+        try {
+          if (cleanup) cleanup();
+        } catch (error) {
+          console.error('[App] Cleanup error:', error);
+        }
+      });
     };
   }, []);
 
