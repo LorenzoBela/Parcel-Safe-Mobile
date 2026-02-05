@@ -4,7 +4,10 @@
  * Provides database access for delivery management and admin functions.
  */
 
-import { createClient, SupabaseClient } from '@supabase/supabase-js';
+import 'react-native-url-polyfill/auto';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { createClient, SupabaseClient, processLock } from '@supabase/supabase-js';
+import axios from 'axios';
 
 const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL || '';
 const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || '';
@@ -14,28 +17,106 @@ export const supabase: SupabaseClient | null =
     supabaseUrl && supabaseAnonKey
         ? createClient(supabaseUrl, supabaseAnonKey, {
             auth: {
+                storage: AsyncStorage,
                 persistSession: true,
                 autoRefreshToken: true,
                 detectSessionInUrl: false,
+                lock: processLock,
             },
             global: {
-                fetch: async (url, options = {}) => {
-                    const controller = new AbortController();
-                    const timeoutId = setTimeout(() => controller.abort(), 30000); // 30s timeout
-                    
-                    try {
-                        const response = await fetch(url, {
-                            ...options,
-                            signal: controller.signal,
-                        });
-                        clearTimeout(timeoutId);
-                        return response;
-                    } catch (error: any) {
-                        clearTimeout(timeoutId);
-                        if (error.name === 'AbortError') {
-                            throw new Error('Request timeout - please check your internet connection');
+                fetch: async (url, options) => {
+                    const urlStr = url.toString();
+
+                    // Normalize headers
+                    const headers: Record<string, string> = {
+                        'Accept': 'application/json',
+                        'Content-Type': 'application/json' // Force correct content type
+                    };
+
+                    if (options?.headers) {
+                        if (typeof options.headers.forEach === 'function') {
+                            options.headers.forEach((value: string, key: string) => {
+                                headers[key] = value;
+                            });
+                        } else {
+                            Object.assign(headers, options.headers);
                         }
-                        throw error;
+                    }
+
+                    // Ensure JSON content type (override any charset variants)
+                    headers['Content-Type'] = 'application/json';
+
+                    // Handle body: Axios prefers objects for JSON
+                    let requestData = options?.body;
+                    if (typeof requestData === 'string') {
+                        try {
+                            requestData = JSON.parse(requestData);
+                        } catch (e) {
+                            // Keep as string if not valid JSON
+                        }
+                    }
+
+                    console.log(`[Supabase] Fetching: ${urlStr}`);
+                    console.log('[Supabase] Headers:', JSON.stringify(headers));
+                    console.log('[Supabase] Body length:', requestData ? JSON.stringify(requestData).length : 0);
+
+                    try {
+                        const result = await axios({
+                            url: urlStr,
+                            method: (options?.method as string) || 'GET',
+                            headers: headers as any,
+                            data: requestData,
+                            validateStatus: () => true, // resolve promise for all status codes
+                            timeout: 30000,
+                        });
+
+                        // Convert axios response to fetch Response
+                        const responseBody = typeof result.data === 'object' ? JSON.stringify(result.data) : result.data;
+                        const responseHeaders = new Headers();
+                        if (result.headers) {
+                            Object.entries(result.headers).forEach(([key, value]) => {
+                                if (value !== undefined && value !== null) {
+                                    responseHeaders.append(key, Array.isArray(value) ? value.join(', ') : String(value));
+                                }
+                            });
+                        }
+
+                        return new Response(responseBody, {
+                            status: result.status,
+                            statusText: result.statusText,
+                            headers: responseHeaders,
+                        });
+                    } catch (error: any) {
+                        console.error('[Supabase] Request Failed:', {
+                            url: urlStr,
+                            message: error.message,
+                            code: error.code,
+                            status: error.response?.status
+                        });
+
+                        // Fallback to native fetch (in case axios/XHR fails on this device)
+                        try {
+                            const fallback = await fetch(urlStr, {
+                                method: options?.method || 'GET',
+                                headers,
+                                body: options?.body as any,
+                            });
+                            return fallback;
+                        } catch (fallbackError: any) {
+                            console.error('[Supabase] Native fetch failed:', fallbackError?.message || fallbackError);
+                        }
+
+                        // Diagnostic: Check if we can reach Google
+                        try {
+                            console.log('[Diagnostics] Pinging google.com...');
+                            await axios.head('https://www.google.com', { timeout: 5000 });
+                            console.log('[Diagnostics] Google is reachable. Internet is OK.');
+                        } catch (diagError: any) {
+                            console.error('[Diagnostics] Google ping failed:', diagError.message);
+                            console.error('Possible Causes: No Internet, SSL Date Issue, Emulator Network Blocked.');
+                        }
+
+                        throw new TypeError('Network request failed');
                     }
                 },
             },

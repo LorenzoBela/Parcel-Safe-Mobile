@@ -92,8 +92,25 @@ export const signInWithGoogle = async (): Promise<GoogleSignInResult> => {
   }
 };
 
+import { AppState } from 'react-native';
+
 export const signInWithGoogleAndSyncProfile = async (): Promise<AuthSessionResult> => {
   const googleResult = await signInWithGoogle();
+
+  // Wait for app to be active to ensure network is ready (fix for "Network request failed" when backgrounded)
+  if (AppState.currentState !== 'active') {
+    console.log('Waiting for app to become active before Supabase auth...');
+    await new Promise<void>((resolve) => {
+      const subscription = AppState.addEventListener('change', (nextAppState) => {
+        if (nextAppState === 'active') {
+          subscription.remove();
+          resolve();
+        }
+      });
+    });
+    console.log('App is active, proceeding...');
+  }
+
   const supabase = await getSupabaseClient();
 
   if (!supabase) {
@@ -105,7 +122,7 @@ export const signInWithGoogleAndSyncProfile = async (): Promise<AuthSessionResul
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
       console.log(`Auth attempt ${attempt}/3...`);
-      
+
       const { data: authData, error: authError } = await supabase.auth.signInWithIdToken({
         provider: 'google',
         token: googleResult.idToken,
@@ -155,7 +172,7 @@ export const signInWithGoogleAndSyncProfile = async (): Promise<AuthSessionResul
         // Update avatar_url for existing users if they don't have one or if it changed
         await supabase
           .from('profiles')
-          .update({ 
+          .update({
             avatar_url: photoFromGoogle,
             updated_at: new Date().toISOString(),
           })
@@ -171,22 +188,22 @@ export const signInWithGoogleAndSyncProfile = async (): Promise<AuthSessionResul
       };
     } catch (error: any) {
       lastError = error;
-      const isNetworkError = 
+      const isNetworkError =
         error?.message?.includes('Network request failed') ||
         error?.message?.includes('timeout') ||
         error?.message?.includes('fetch') ||
         error?.code === 'NETWORK_ERROR';
-      
+
       if (isNetworkError && attempt < 3) {
         console.log(`Network error on attempt ${attempt}, retrying in ${attempt * 1000}ms...`);
         await new Promise(resolve => setTimeout(resolve, attempt * 1000));
         continue;
       }
-      
+
       throw error;
     }
   }
-  
+
   throw lastError || new Error('Authentication failed after 3 attempts');
 };
 
