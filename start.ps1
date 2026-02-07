@@ -82,6 +82,10 @@ param(
 )
 $ErrorActionPreference = "Continue"
 
+# Configuration
+$SOURCE_DIR = "C:\Users\Lorenzo Bela\Downloads\Thesis 24-25 Smart Top Box\mobile"
+$BUILD_DIR  = "C:\Dev\TopBox\mobile"
+
 # Quick startup banner
 Write-Host "Parcel Safe v3.0 - Intelligent Dev Launcher" -ForegroundColor DarkCyan
 
@@ -289,23 +293,22 @@ function Test-ProcessMemory {
 function Test-LockfileIntegrity {
     param([string]$ProjectPath)
     
-    if (-not (Test-Path "$ProjectPath\package-lock.json")) {
-        Write-Host "[WARNING] No package-lock.json found" -ForegroundColor Yellow
-        return $true # Not critical, proceed
+    $lockPath = "$ProjectPath\package-lock.json"
+    if (-not (Test-Path $lockPath)) {
+        return $true # Missing is fine, will be handled by install check
     }
     
     # Check for corrupted lockfile
     try {
-        $lockContent = Get-Content "$ProjectPath\package-lock.json" -Raw | ConvertFrom-Json
-        if (-not $lockContent.lockfileVersion) {
-            Write-Host "[WARNING] package-lock.json may be corrupted" -ForegroundColor Yellow
-            return $false
-        }
+        $lockContent = Get-Content $lockPath -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+        if (-not $lockContent.lockfileVersion) { throw "Missing lockfileVersion" }
         if ($Verbose) { Write-Host "[OK] Lockfile integrity verified" -ForegroundColor Green }
         return $true
     } catch {
-        Write-Host "[ERROR] package-lock.json is corrupted!" -ForegroundColor Red
-        return $false
+        Write-Host "[WARNING] package-lock.json is corrupted: $($_.Exception.Message)" -ForegroundColor Yellow
+        Write-Host "[FIX] Deleting corrupted lockfile to allow regeneration..." -ForegroundColor Cyan
+        Remove-Item $lockPath -Force -ErrorAction SilentlyContinue
+        return $true # Proceed, as it's now "missing" which is a valid state for install
     }
 }
 
@@ -740,9 +743,6 @@ Write-Host ""
 # ============================================
 # STEP 2: INTELLIGENT FILE SYNC
 # ============================================
-
-$SOURCE_DIR = "C:\Users\Lorenzo Bela\Downloads\Thesis 24-25 Smart Top Box\mobile"
-$BUILD_DIR  = "C:\Dev\TopBox\mobile"
 
 Write-Host "[SYNC] Analyzing files..." -ForegroundColor Yellow
 

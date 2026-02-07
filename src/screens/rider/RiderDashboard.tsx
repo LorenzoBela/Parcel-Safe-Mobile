@@ -72,7 +72,6 @@ export default function RiderDashboard() {
     const [riderLocation, setRiderLocation] = useState<Location.LocationObject | null>(null);
     const [distance, setDistance] = useState<string>('Calculating...');
     const [isLocked, setIsLocked] = useState(true);
-    const [logs, setLogs] = useState<{ time: string; message: string; type: string }[]>([]);
     const animationRef = useRef<LottieView>(null);
 
     const MAPBOX_TOKEN = process.env.EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN;
@@ -203,7 +202,7 @@ export default function RiderDashboard() {
         const unsubscribeNetInfo = NetInfo
             ? NetInfo.addEventListener(state => {
                 setIsOffline(!state.isConnected);
-              })
+            })
             : null;
 
         // EC-08: Subscribe to GPS location for spoofing detection
@@ -548,14 +547,14 @@ export default function RiderDashboard() {
 
         try {
             const url = `https://api.mapbox.com/directions/v5/mapbox/driving/${riderLocation.coords.longitude},${riderLocation.coords.latitude};${destination.longitude},${destination.latitude}?geometries=geojson&access_token=${MAPBOX_TOKEN}`;
-            
+
             const response = await fetch(url);
             const data = await response.json();
 
             if (data.routes && data.routes.length > 0) {
                 const route = data.routes[0];
                 setRouteGeometry(route.geometry);
-                
+
                 // Update distance with actual route distance
                 const distanceKm = (route.distance / 1000).toFixed(2);
                 setDistance(`${distanceKm} km`);
@@ -571,28 +570,7 @@ export default function RiderDashboard() {
         fetchRoute();
     }, [fetchRoute]);
 
-    // Simulated System Logs
-    useEffect(() => {
-        const addLog = (message: string, type: string = 'info') => {
-            setLogs(prev => [{ time: dayjs().format('HH:mm:ss'), message, type }, ...prev].slice(0, 50));
-        };
 
-        addLog("System initialized. Monitoring sensors...", "system");
-
-        const logInterval = setInterval(() => {
-            const events = [
-                "Heartbeat signal received from Box",
-                "GPS signal stable",
-                "Battery voltage normal (12.4V)",
-                "Temperature check: 28°C (Normal)",
-                "Connection verified: 4G LTE"
-            ];
-            const randomEvent = events[Math.floor(Math.random() * events.length)];
-            addLog(randomEvent, "system");
-        }, 8000); // Add a log every 8 seconds
-
-        return () => clearInterval(logInterval);
-    }, []);
 
     useEffect(() => {
         if (animationRef.current) {
@@ -630,7 +608,25 @@ export default function RiderDashboard() {
         }
 
         try {
-            let location = await Location.getCurrentPositionAsync({});
+            // EC-FIX: Try to get last known position first for immediate UI feedback
+            const lastKnown = await Location.getLastKnownPositionAsync({});
+            if (lastKnown) {
+                setRiderLocation(lastKnown);
+
+                // Calculate initial distance with cached location
+                const dist = calculateDistance(
+                    lastKnown.coords.latitude,
+                    lastKnown.coords.longitude,
+                    destination.latitude,
+                    destination.longitude
+                );
+                setDistance(`${dist} km`);
+            }
+
+            // Then fetch fresh high-accuracy location
+            let location = await Location.getCurrentPositionAsync({
+                accuracy: Location.Accuracy.Balanced,
+            });
             setRiderLocation(location);
 
             // Calculate distance
@@ -678,11 +674,7 @@ export default function RiderDashboard() {
                     text: isLocked ? "Unlock" : "Lock", onPress: () => {
                         setIsLocked(!isLocked);
                         const action = !isLocked ? "LOCKED" : "UNLOCKED";
-                        setLogs(prev => [{
-                            time: dayjs().format('HH:mm:ss'),
-                            message: `Manual Override: Box ${action}`,
-                            type: action === 'LOCKED' ? 'success' : 'warning'
-                        }, ...prev]);
+                        // Logs removed as per request
                     }
                 }
             ]
@@ -1260,22 +1252,7 @@ export default function RiderDashboard() {
                     </Button>
                 </Surface>
 
-                {/* Real-Time Logs */}
-                <Text variant="titleMedium" style={styles.sectionTitle}>System Logs</Text>
-                <Surface style={styles.logsCard} elevation={1}>
-                    {logs.length === 0 ? (
-                        <Text style={{ color: '#999', textAlign: 'center', padding: 20 }}>No logs available</Text>
-                    ) : (
-                        logs.slice(0, 5).map((log, index) => (
-                            <View key={index} style={styles.logItem}>
-                                <Text style={styles.logTime}>{log.time}</Text>
-                                <Text numberOfLines={1} style={[styles.logMessage, { color: log.type === 'warning' ? '#D32F2F' : log.type === 'success' ? '#388E3C' : '#444' }]}>
-                                    {log.message}
-                                </Text>
-                            </View>
-                        ))
-                    )}
-                </Surface>
+
 
             </ScrollView >
         </View >
@@ -1534,30 +1511,7 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         elevation: 1,
     },
-    logsCard: {
-        // backgroundColor: 'white', // Handled by theme
-        borderRadius: 16,
-        padding: 16,
-        maxHeight: 200,
-        overflow: 'hidden', // Ensure content doesn't bleed out
-    },
-    logItem: {
-        flexDirection: 'row',
-        marginBottom: 8,
-        borderBottomWidth: 1,
-        borderBottomColor: '#F5F5F5',
-        paddingBottom: 4,
-    },
-    logTime: {
-        fontSize: 12,
-        color: '#999',
-        width: 60,
-        fontFamily: 'monospace',
-    },
-    logMessage: {
-        fontSize: 12,
-        flex: 1,
-    },
+
     gpsStatusCard: {
         // backgroundColor: 'white', // Handled by theme
         borderRadius: 16,

@@ -13,6 +13,8 @@ try {
   console.warn('Google Sign-In module not available in this runtime');
 }
 
+import { getAuth, GoogleAuthProvider, signInWithCredential, signOut as firebaseSignOut } from 'firebase/auth';
+
 const getSupabaseClient = async () => {
   const { supabase } = await import('./supabaseClient');
   return supabase;
@@ -109,6 +111,19 @@ export const signInWithGoogleAndSyncProfile = async (): Promise<AuthSessionResul
       });
     });
     console.log('App is active, proceeding...');
+  }
+
+  // Authenticate with Firebase using the Google ID Token
+  try {
+    console.log('Authenticating with Firebase...');
+    const auth = getAuth();
+    const credential = GoogleAuthProvider.credential(googleResult.idToken);
+    await signInWithCredential(auth, credential);
+    console.log('Firebase authentication successful!');
+  } catch (firebaseError) {
+    console.error('Firebase authentication failed:', firebaseError);
+    // Continue - we don't want to block Supabase login if Firebase fails, 
+    // but the rider dashboard might show session expired.
   }
 
   const supabase = await getSupabaseClient();
@@ -215,6 +230,8 @@ export const signOut = async () => {
 
   try {
     await GoogleSignin.signOut();
+    const auth = getAuth();
+    await firebaseSignOut(auth);
   } catch (error) {
     console.error('Error signing out:', error);
   }
