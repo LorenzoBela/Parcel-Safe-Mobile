@@ -456,7 +456,7 @@ export default function BoxControlsScreen() {
                 )}
 
                 {/* EC-77: Admin Override Alert Banner */}
-                {adminOverrideState?.active && !adminOverrideState.processed && (
+                {isPaired && adminOverrideState?.active && !adminOverrideState.processed && (
                     <Surface style={[styles.alertBanner, { backgroundColor: '#FF5722' }]} elevation={4}>
                         <MaterialCommunityIcons name="lock-open-alert" size={24} color="white" />
                         <View style={{ flex: 1, marginLeft: 12 }}>
@@ -467,7 +467,7 @@ export default function BoxControlsScreen() {
                 )}
 
                 {/* EC-18: Tamper Alert Banner */}
-                {tamperState?.detected && (
+                {isPaired && tamperState?.detected && (
                     <Surface style={styles.alertBanner} elevation={4}>
                         <MaterialCommunityIcons name="alert-decagram" size={24} color="white" />
                         <View style={{ flex: 1, marginLeft: 12 }}>
@@ -478,7 +478,7 @@ export default function BoxControlsScreen() {
                 )}
 
                 {/* EC-03: Low Battery Warning Banner */}
-                {batteryState?.lowBatteryWarning && (
+                {isPaired && batteryState?.lowBatteryWarning && (
                     <Surface style={[styles.warningBanner, batteryState.criticalBatteryWarning && styles.criticalBanner]} elevation={3}>
                         <MaterialCommunityIcons
                             name="battery-alert"
@@ -497,7 +497,7 @@ export default function BoxControlsScreen() {
                 )}
 
                 {/* EC-04: OTP Lockout Status Card */}
-                {lockoutState?.active && (
+                {isPaired && lockoutState?.active && (
                     <Surface style={styles.lockoutCard} elevation={3}>
                         <View style={styles.lockoutHeader}>
                             <MaterialCommunityIcons name="lock-alert" size={28} color="#D32F2F" />
@@ -521,7 +521,7 @@ export default function BoxControlsScreen() {
                 )}
 
                 {/* EC-07: OTP Expiry Warning */}
-                {otpStatus?.otp_expired && (
+                {isPaired && otpStatus?.otp_expired && (
                     <Surface style={styles.expiryCard} elevation={2}>
                         <MaterialCommunityIcons name="clock-alert" size={24} color="#FF9800" />
                         <View style={{ flex: 1, marginLeft: 12 }}>
@@ -534,16 +534,16 @@ export default function BoxControlsScreen() {
                 {/* Header Animation */}
                 <View style={styles.headerContainer}>
                     <MaterialCommunityIcons
-                        name={isLocked ? "shield-check" : "shield-alert"}
+                        name={!isPaired ? "link-variant-off" : (isLocked ? "shield-check" : "shield-alert")}
                         size={100}
-                        color={isLocked ? "#4CAF50" : "#F44336"}
+                        color={!isPaired ? "#9E9E9E" : (isLocked ? "#4CAF50" : "#F44336")}
                         style={{ marginBottom: 10 }}
                     />
                     <Text variant="headlineSmall" style={{ fontWeight: 'bold', marginTop: 10 }}>
-                        {isLocked ? "System Secure" : "System Unlocked"}
+                        {!isPaired ? "No Box Connected" : (isLocked ? "System Secure" : "System Unlocked")}
                     </Text>
-                    <Text variant="bodyMedium" style={{ color: isLocked ? '#4CAF50' : '#F44336' }}>
-                        {isLocked ? "Lock Engaged" : "Lock Disengaged"}
+                    <Text variant="bodyMedium" style={{ color: !isPaired ? '#757575' : (isLocked ? '#4CAF50' : '#F44336') }}>
+                        {!isPaired ? "Pair to view status" : (isLocked ? "Lock Engaged" : "Lock Disengaged")}
                     </Text>
                 </View>
 
@@ -551,89 +551,117 @@ export default function BoxControlsScreen() {
                 <Text variant="titleMedium" style={styles.sectionTitle}>Live Telemetry</Text>
                 <View style={styles.grid}>
                     <TelemetryItem
-                        icon={getBatteryIcon()}
+                        icon={isPaired ? getBatteryIcon() : "battery-unknown"}
                         label="Battery"
-                        value={`${batteryState?.percentage ?? 85}%`}
-                        color={getBatteryColor()}
+                        value={isPaired ? `${batteryState?.percentage ?? 85}%` : '--%'}
+                        color={isPaired ? getBatteryColor() : '#BDBDBD'}
                     />
-                    <TelemetryItem icon="thermometer" label="Temp" value={telemetry.temp} color="#FF9800" />
-                    <TelemetryItem icon="wifi" label="Signal" value={telemetry.signal} color="#4CAF50" />
-                    <TelemetryItem icon="sync" label="Last Sync" value={telemetry.sync} color="#9C27B0" />
+                    <TelemetryItem
+                        icon="thermometer"
+                        label="Temp"
+                        value={isPaired ? telemetry.temp : '--°C'}
+                        color={isPaired ? "#FF9800" : '#BDBDBD'}
+                    />
+                    <TelemetryItem
+                        icon="wifi"
+                        label="Signal"
+                        value={isPaired ? telemetry.signal : '-- dBm'}
+                        color={isPaired ? "#4CAF50" : '#BDBDBD'}
+                    />
+                    <TelemetryItem
+                        icon="sync"
+                        label="Last Sync"
+                        value={isPaired ? telemetry.sync : '--'}
+                        color={isPaired ? "#9C27B0" : '#BDBDBD'}
+                    />
                 </View>
 
-                {/* EC-02: BLE OTP Transfer */}
-                <Text variant="titleMedium" style={styles.sectionTitle}>Offline Mode</Text>
-                <Card style={styles.bleCard}>
-                    <Card.Content>
-                        <View style={styles.bleInfo}>
-                            <MaterialCommunityIcons name="bluetooth" size={32} color="#2196F3" />
-                            <View style={{ flex: 1, marginLeft: 12 }}>
-                                <Text variant="titleMedium" style={{ fontWeight: 'bold' }}>BLE OTP Transfer</Text>
-                                <Text variant="bodySmall" style={{ color: '#666' }}>
-                                    Use when box was offline during assignment
-                                </Text>
-                            </View>
-                        </View>
-                        <Button
-                            mode="contained"
-                            onPress={handleBleTransfer}
-                            style={{ marginTop: 12 }}
-                            buttonColor="#2196F3"
-                            icon="bluetooth-transfer"
-                        >
-                            Send OTP via Bluetooth
-                        </Button>
-                    </Card.Content>
-                </Card>
-
-                {/* EC-97: Face Unlock Card */}
-                <Text variant="titleMedium" style={styles.sectionTitle}>Biometric Access</Text>
-                <Card style={[styles.controlsCard, { marginBottom: 24 }]}>
-                    <Card.Content>
-                        <View style={styles.bleInfo}>
-                            <MaterialCommunityIcons name="face-recognition" size={32} color={faceAuthStatus === 'SEARCHING' ? '#FF9800' : '#673AB7'} />
-                            <View style={{ flex: 1, marginLeft: 12 }}>
-                                <Text variant="titleMedium" style={{ fontWeight: 'bold' }}>Face Unlock</Text>
-                                <Text variant="bodySmall" style={{ color: '#666' }}>
-                                    {faceAuthStatus === 'SEARCHING' ? 'Scanning...' : 'Scan face to unlock without OTP'}
-                                </Text>
-                            </View>
-                        </View>
-                        <Button
-                            mode="contained"
-                            onPress={handleFaceUnlock}
-                            loading={faceAuthStatus === 'SEARCHING'}
-                            disabled={faceAuthStatus === 'SEARCHING' || !isLocked}
-                            style={{ marginTop: 12 }}
-                            buttonColor="#673AB7"
-                            icon="face-recognition"
-                        >
-                            {faceAuthStatus === 'SEARCHING' ? 'Scanning...' : 'Start Face Scan'}
-                        </Button>
-                    </Card.Content>
-                </Card>
-
-                {/* Controls */}
-                <Text variant="titleMedium" style={styles.sectionTitle}>Advanced Actions</Text>
+                {/* EC-ENHANCE: Grouped Smart Box Controls */}
+                <Text variant="titleMedium" style={styles.sectionTitle}>Smart Box Controls</Text>
                 <Card style={styles.controlsCard}>
                     <Card.Content>
+                        {/* 1. Biometric Access */}
+                        <View style={styles.controlRow}>
+                            <View style={[styles.iconContainer, !isPaired && { backgroundColor: '#F0F0F0', opacity: 0.5 }]}>
+                                <MaterialCommunityIcons
+                                    name="face-recognition"
+                                    size={28}
+                                    color={!isPaired ? '#BDBDBD' : (faceAuthStatus === 'SEARCHING' ? '#FF9800' : '#673AB7')}
+                                />
+                            </View>
+                            <View style={styles.controlInfo}>
+                                <Text variant="titleMedium" style={{ fontWeight: 'bold', color: !isPaired ? '#9E9E9E' : 'black' }}>Face Unlock</Text>
+                                <Text variant="bodySmall" style={{ color: !isPaired ? '#BDBDBD' : '#666' }}>
+                                    {isPaired ? (faceAuthStatus === 'SEARCHING' ? 'Scanning...' : 'Scan face to unlock') : 'Requires pairing'}
+                                </Text>
+                            </View>
+                            <Button
+                                mode="contained-tonal"
+                                onPress={handleFaceUnlock}
+                                loading={faceAuthStatus === 'SEARCHING'}
+                                disabled={!isPaired || faceAuthStatus === 'SEARCHING' || !isLocked}
+                                style={{ alignSelf: 'center' }}
+                            >
+                                {faceAuthStatus === 'SEARCHING' ? 'Scan' : 'Start'}
+                            </Button>
+                        </View>
+
+                        <Divider style={styles.divider} />
+
+                        {/* 2. BLE OTP Transfer */}
+                        <View style={styles.controlRow}>
+                            <View style={[styles.iconContainer, !isPaired && { backgroundColor: '#F0F0F0', opacity: 0.5 }]}>
+                                <MaterialCommunityIcons name="bluetooth" size={28} color={!isPaired ? '#BDBDBD' : "#2196F3"} />
+                            </View>
+                            <View style={styles.controlInfo}>
+                                <Text variant="titleMedium" style={{ fontWeight: 'bold', color: !isPaired ? '#9E9E9E' : 'black' }}>BLE OTP</Text>
+                                <Text variant="bodySmall" style={{ color: !isPaired ? '#BDBDBD' : '#666' }}>
+                                    {isPaired ? 'Offline transfer' : 'Requires pairing'}
+                                </Text>
+                            </View>
+                            <Button
+                                mode="contained-tonal"
+                                onPress={handleBleTransfer}
+                                disabled={!isPaired}
+                                style={{ alignSelf: 'center' }}
+                            >
+                                Send
+                            </Button>
+                        </View>
+
+                        <Divider style={styles.divider} />
+
+                        {/* 3. Manual Lock Control */}
+                        <Text variant="labelMedium" style={{ marginTop: 8, marginBottom: 8, color: theme.colors.outline }}>Manual Override</Text>
                         <Button
                             mode="contained"
                             onPress={toggleLock}
-                            style={[styles.button, { backgroundColor: isLocked ? '#4CAF50' : '#F44336' }]}
+                            disabled={!isPaired}
+                            style={[
+                                styles.button,
+                                {
+                                    backgroundColor: !isPaired ? '#E0E0E0' : (isLocked ? '#4CAF50' : '#F44336'),
+                                    marginBottom: 16
+                                }
+                            ]}
                             icon={isLocked ? "lock" : "lock-open"}
+                            contentStyle={{ height: 48 }}
                         >
-                            {isLocked ? "Unlock Box" : "Lock Box"}
+                            {isPaired ? (isLocked ? "Unlock Box" : "Lock Box") : "Controls Disabled"}
                         </Button>
 
+                        <Divider style={styles.divider} />
+
+                        {/* 4. System Maintenance */}
+                        <Text variant="labelMedium" style={{ marginTop: 8, marginBottom: 8, color: theme.colors.outline }}>System Maintenance</Text>
                         <View style={styles.row}>
                             <Button
                                 mode="outlined"
                                 onPress={handleReboot}
                                 loading={rebooting}
-                                disabled={rebooting}
-                                style={[styles.button, { flex: 1, marginRight: 8, borderColor: '#FF9800' }]}
-                                textColor="#FF9800"
+                                disabled={!isPaired || rebooting}
+                                style={[styles.button, { flex: 1, marginRight: 8, borderColor: !isPaired ? '#E0E0E0' : '#FF9800' }]}
+                                textColor={!isPaired ? '#BDBDBD' : "#FF9800"}
                                 icon="restart"
                             >
                                 Reboot
@@ -642,8 +670,9 @@ export default function BoxControlsScreen() {
                                 mode="outlined"
                                 onLongPress={handleEmergencyOpen}
                                 delayLongPress={1000}
-                                style={[styles.button, { flex: 1, borderColor: '#D32F2F' }]}
-                                textColor="#D32F2F"
+                                disabled={!isPaired}
+                                style={[styles.button, { flex: 1, borderColor: !isPaired ? '#E0E0E0' : '#D32F2F' }]}
+                                textColor={!isPaired ? '#BDBDBD' : "#D32F2F"}
                                 icon="alert"
                             >
                                 Emergency
@@ -656,18 +685,24 @@ export default function BoxControlsScreen() {
                 {/* Detailed Logs */}
                 <Text variant="titleMedium" style={styles.sectionTitle}>System Event Log</Text>
                 <Surface style={styles.logContainer} elevation={2}>
-                    {logs.map((log, index) => (
-                        <View key={index} style={styles.logRow}>
-                            <Text style={styles.logTime}>{log.time}</Text>
-                            <Text style={[styles.logMessage, {
-                                color: log.type === 'error' ? '#D32F2F' :
-                                    log.type === 'warning' ? '#FF9800' :
-                                        log.type === 'success' ? '#388E3C' : '#333'
-                            }]}>
-                                {log.message}
-                            </Text>
+                    {isPaired ? (
+                        logs.map((log, index) => (
+                            <View key={index} style={styles.logRow}>
+                                <Text style={styles.logTime}>{log.time}</Text>
+                                <Text style={[styles.logMessage, {
+                                    color: log.type === 'error' ? '#D32F2F' :
+                                        log.type === 'warning' ? '#FF9800' :
+                                            log.type === 'success' ? '#388E3C' : '#333'
+                                }]}>
+                                    {log.message}
+                                </Text>
+                            </View>
+                        ))
+                    ) : (
+                        <View style={{ alignItems: 'center', justifyContent: 'center', height: 100 }}>
+                            <Text style={{ color: '#666', fontStyle: 'italic' }}>No logs available (Unpaired)</Text>
                         </View>
-                    ))}
+                    )}
                 </Surface>
 
             </ScrollView>
@@ -802,7 +837,30 @@ const styles = StyleSheet.create({
     controlsCard: {
         backgroundColor: 'white',
         borderRadius: 16,
+        elevation: 2,
         marginBottom: 24,
+    },
+    controlRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingVertical: 8,
+    },
+    iconContainer: {
+        width: 40,
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginRight: 12,
+        backgroundColor: '#F5F5F5',
+        height: 40,
+        borderRadius: 20,
+    },
+    controlInfo: {
+        flex: 1,
+        justifyContent: 'center',
+    },
+    divider: {
+        marginVertical: 12,
+        backgroundColor: '#E0E0E0',
     },
     button: {
         marginBottom: 12,

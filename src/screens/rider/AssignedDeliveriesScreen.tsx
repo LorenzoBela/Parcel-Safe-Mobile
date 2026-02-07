@@ -5,6 +5,7 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import CancellationModal from '../../components/modals/CancellationModal';
 import { requestCancellation, CancellationReason } from '../../services/cancellationService';
+import dayjs from 'dayjs';
 
 export default function AssignedDeliveriesScreen() {
     const theme = useTheme();
@@ -12,8 +13,11 @@ export default function AssignedDeliveriesScreen() {
     const [searchQuery, setSearchQuery] = useState('');
 
     const [filter, setFilter] = useState('All'); // All, Pending, Completed
+    const [dateFilter, setDateFilter] = useState('All'); // All, Today, Tomorrow, Week
+    const [showFilters, setShowFilters] = useState(false); // Collapsible filter state
+
     const [refreshing, setRefreshing] = useState(false);
-    const [viewMode, setViewMode] = useState<'list' | 'grid'>('list'); // New State
+    const [viewMode, setViewMode] = useState<'list' | 'grid'>('list');
 
     // EC-32: Cancellation State
     const [showCancelModal, setShowCancelModal] = useState(false);
@@ -35,6 +39,7 @@ export default function AssignedDeliveriesScreen() {
             dropoff_lng: 120.9794,
             type: 'Electronics',
             status: 'Pending',
+            date: dayjs().format('YYYY-MM-DD'), // Today
             time: '10:30 AM',
             distance: '2.5 km',
             priority: 'High',
@@ -53,6 +58,7 @@ export default function AssignedDeliveriesScreen() {
             dropoff_lng: 121.0384,
             type: 'Documents',
             status: 'In Transit',
+            date: dayjs().format('YYYY-MM-DD'), // Today
             time: '11:45 AM',
             distance: '5.1 km',
             priority: 'Normal',
@@ -71,6 +77,7 @@ export default function AssignedDeliveriesScreen() {
             dropoff_lng: 121.0244,
             type: 'Fragile',
             status: 'Completed',
+            date: dayjs().subtract(1, 'day').format('YYYY-MM-DD'), // Yesterday
             time: '09:15 AM',
             distance: '8.2 km',
             priority: 'Normal',
@@ -89,6 +96,7 @@ export default function AssignedDeliveriesScreen() {
             dropoff_lng: 120.9768,
             type: 'Food',
             status: 'Pending',
+            date: dayjs().add(1, 'day').format('YYYY-MM-DD'), // Tomorrow
             time: '01:00 PM',
             distance: '1.2 km',
             priority: 'High',
@@ -141,8 +149,6 @@ export default function AssignedDeliveriesScreen() {
                 setShowCancelModal(false);
                 setSelectedDelivery(null);
                 Alert.alert('Success', 'Delivery cancelled successfully.');
-                // Update local state to reflect cancellation (switch to Cancelled status if we had one, or remove)
-                // For now, we just show alert
             } else {
                 Alert.alert('Error', result.error || 'Cancellation failed');
             }
@@ -165,8 +171,24 @@ export default function AssignedDeliveriesScreen() {
     const filteredDeliveries = deliveries.filter(item => {
         const matchesSearch = item.trk.toLowerCase().includes(searchQuery.toLowerCase()) ||
             item.customer.toLowerCase().includes(searchQuery.toLowerCase());
-        const matchesFilter = filter === 'All' || item.status === filter || (filter === 'Pending' && item.status === 'In Transit');
-        return matchesSearch && matchesFilter;
+        const matchesStatus = filter === 'All' || item.status === filter || (filter === 'Pending' && item.status === 'In Transit');
+
+        let matchesDate = true;
+        const itemDate = dayjs(item.date);
+        const today = dayjs();
+
+        if (dateFilter === 'Today') {
+            matchesDate = itemDate.isSame(today, 'day');
+        } else if (dateFilter === 'Tomorrow') {
+            matchesDate = itemDate.isSame(today.add(1, 'day'), 'day');
+        } else if (dateFilter === 'Week') {
+            // Check if within current week (Sunday to Saturday)
+            // Or next 7 days? Let's assume current week for now or just next 7 days.
+            // Let's use startOf('week') to endOf('week')
+            matchesDate = itemDate.isAfter(today.startOf('week').subtract(1, 'day')) && itemDate.isBefore(today.endOf('week').add(1, 'day'));
+        }
+
+        return matchesSearch && matchesStatus && matchesDate;
     });
 
     const renderItem = ({ item }) => (
@@ -194,13 +216,6 @@ export default function AssignedDeliveriesScreen() {
                     </View>
                     <View style={{ flex: 1 }}>
                         <Text variant="titleMedium" style={{ fontWeight: 'bold' }}>{item.customer}</Text>
-                        <View style={styles.detailRow}>
-                            <MaterialCommunityIcons name="package-variant" size={14} color={theme.colors.onSurfaceVariant} />
-                            <Text variant="bodySmall" style={[styles.detailText, { color: theme.colors.onSurfaceVariant }]}>{item.type}</Text>
-                            {item.priority === 'High' && (
-                                <Badge size={16} style={{ backgroundColor: '#F44336', marginLeft: 8 }}>High Priority</Badge>
-                            )}
-                        </View>
                     </View>
                 </View>
 
@@ -211,8 +226,10 @@ export default function AssignedDeliveriesScreen() {
 
                 <View style={styles.metaContainer}>
                     <View style={styles.metaItem}>
-                        <MaterialCommunityIcons name="clock-outline" size={16} color={theme.colors.onSurfaceVariant} />
-                        <Text style={[styles.metaText, { color: theme.colors.onSurfaceVariant }]}>{item.time}</Text>
+                        <MaterialCommunityIcons name="calendar-clock" size={16} color={theme.colors.onSurfaceVariant} />
+                        <Text style={[styles.metaText, { color: theme.colors.onSurfaceVariant }]}>
+                            {dayjs(item.date).format('MMM D')} • {item.time}
+                        </Text>
                     </View>
                     <View style={styles.metaItem}>
                         <MaterialCommunityIcons name="map-marker-distance" size={16} color={theme.colors.onSurfaceVariant} />
@@ -232,12 +249,12 @@ export default function AssignedDeliveriesScreen() {
                 </Button>
                 {(item.status === 'Pending' || item.status === 'In Transit') && (
                     <Button
-                        mode="text"
+                        mode="contained"
                         onPress={() => {
                             setSelectedDelivery(item);
                             setShowCancelModal(true);
                         }}
-                        textColor={theme.colors.error}
+                        buttonColor={theme.colors.error}
                         style={{ marginRight: 8 }}
                     >
                         Cancel
@@ -272,7 +289,6 @@ export default function AssignedDeliveriesScreen() {
             <Card.Content style={{ padding: 12 }}>
                 <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 }}>
                     <Badge size={16} style={{ backgroundColor: getStatusColor(item.status), alignSelf: 'flex-start' }}>{item.status}</Badge>
-                    {item.priority === 'High' && <MaterialCommunityIcons name="alert-circle" size={16} color="#F44336" />}
                 </View>
 
                 <Text variant="titleSmall" style={{ fontWeight: 'bold' }} numberOfLines={1}>{item.customer}</Text>
@@ -286,7 +302,9 @@ export default function AssignedDeliveriesScreen() {
                 </View>
 
                 <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 4 }}>
-                    <Text style={{ fontSize: 10, color: theme.colors.onSurfaceVariant }}>{item.time}</Text>
+                    <Text style={{ fontSize: 10, color: theme.colors.onSurfaceVariant }}>
+                        {dayjs(item.date).format('MM/DD')} • {item.time}
+                    </Text>
                     <Text style={{ fontSize: 10, color: theme.colors.onSurfaceVariant }}>{item.distance}</Text>
                 </View>
             </Card.Content>
@@ -296,66 +314,106 @@ export default function AssignedDeliveriesScreen() {
     return (
         <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
             <View style={[styles.header, { backgroundColor: theme.colors.surface }]}>
-                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
                     <View>
-                        <Text variant="headlineSmall" style={{ fontWeight: 'bold' }}>My Queue</Text>
-                        <Text variant="bodyMedium" style={{ color: theme.colors.onSurfaceVariant }}>{filteredDeliveries.length} Active Jobs</Text>
+                        <Text variant="headlineMedium" style={{ fontWeight: 'bold', color: theme.colors.onSurface }}>Assigned Deliveries</Text>
+                        <Text variant="bodyMedium" style={{ color: theme.colors.onSurfaceVariant }}>{dayjs().format('dddd, MMM D')}</Text>
                     </View>
-                    <IconButton
-                        icon={viewMode === 'list' ? 'view-grid' : 'view-list'}
-                        mode="contained-tonal"
-                        onPress={() => setViewMode(prev => prev === 'list' ? 'grid' : 'list')}
-                    />
+                    <View style={{ flexDirection: 'row' }}>
+                        <IconButton
+                            icon={viewMode === 'list' ? 'view-grid' : 'view-list'}
+                            onPress={() => setViewMode(viewMode === 'list' ? 'grid' : 'list')}
+                        />
+                        <IconButton
+                            icon={showFilters ? 'filter-off' : 'filter'}
+                            mode={showFilters ? 'contained' : 'outlined'}
+                            onPress={() => setShowFilters(!showFilters)}
+                        />
+                    </View>
                 </View>
-            </View>
 
+                <Searchbar
+                    placeholder="Search tracking # or customer"
+                    onChangeText={onChangeSearch}
+                    value={searchQuery}
+                    style={styles.searchbar}
+                    elevation={1}
+                />
 
-            <Searchbar
-                placeholder="Search tracking # or name"
-                onChangeText={onChangeSearch}
-                value={searchQuery}
-                style={[styles.searchBar, { backgroundColor: theme.colors.elevation.level1 }]}
-                inputStyle={{ minHeight: 0 }} // Fix for some paper versions
-            />
+                {/* Collapsible Filters */}
+                {showFilters && (
+                    <View style={styles.filterSection}>
+                        <Text variant="labelMedium" style={{ marginBottom: 8, color: theme.colors.onSurfaceVariant }}>Status</Text>
+                        <View style={styles.filterRow}>
+                            {['All', 'Pending', 'Completed'].map((status) => (
+                                <Chip
+                                    key={status}
+                                    selected={filter === status}
+                                    onPress={() => setFilter(status)}
+                                    style={styles.filterChip}
+                                    showSelectedOverlay
+                                >
+                                    {status}
+                                </Chip>
+                            ))}
+                        </View>
 
-            <View style={styles.filterContainer}>
-                {['All', 'Pending', 'Completed'].map((f) => (
-                    <Chip
-                        key={f}
-                        selected={filter === f}
-                        onPress={() => setFilter(f)}
-                        style={[styles.filterChip, filter === f && { backgroundColor: theme.colors.primaryContainer }, { borderColor: theme.colors.outline }]}
-                        textStyle={{ color: filter === f ? theme.colors.onPrimaryContainer : theme.colors.onSurface }}
-                        showSelectedOverlay
-                    >
-                        {f}
-                    </Chip>
-                ))}
-            </View>
+                        <View style={{ height: 12 }} />
 
-            <FlatList
-                key={viewMode} // Force re-render on mode change
-                data={filteredDeliveries}
-                renderItem={viewMode === 'list' ? renderItem : renderGridItem}
-                keyExtractor={item => item.id}
-                numColumns={viewMode === 'grid' ? 2 : 1}
-                contentContainerStyle={styles.listContent}
-                columnWrapperStyle={viewMode === 'grid' ? { justifyContent: 'space-between' } : undefined}
-                refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
-                ListEmptyComponent={
-                    <View style={styles.emptyState}>
-                        <MaterialCommunityIcons name="package-variant-closed" size={60} color="#ccc" />
-                        <Text style={{ color: '#999', marginTop: 10 }}>No deliveries found</Text>
+                        <Text variant="labelMedium" style={{ marginBottom: 8, color: theme.colors.onSurfaceVariant }}>Date</Text>
+                        <View style={styles.filterRow}>
+                            {['All', 'Today', 'Tomorrow', 'Week'].map((dateOpt) => (
+                                <Chip
+                                    key={dateOpt}
+                                    selected={dateFilter === dateOpt}
+                                    onPress={() => setDateFilter(dateOpt)}
+                                    style={styles.filterChip}
+                                    showSelectedOverlay
+                                >
+                                    {dateOpt}
+                                </Chip>
+                            ))}
+                        </View>
                     </View>
-                }
-            />
+                )}
+            </View>
+
+            {/* List Content */}
+            {viewMode === 'list' ? (
+                <FlatList
+                    data={filteredDeliveries}
+                    renderItem={renderItem}
+                    keyExtractor={item => item.id}
+                    contentContainerStyle={styles.listContent}
+                    refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+                    ListEmptyComponent={
+                        <View style={styles.emptyState}>
+                            <MaterialCommunityIcons name="package-variant-closed" size={64} color={theme.colors.onSurfaceVariant} />
+                            <Text variant="bodyLarge" style={{ color: theme.colors.onSurfaceVariant, marginTop: 16 }}>No deliveries found</Text>
+                        </View>
+                    }
+                />
+            ) : (
+                <FlatList
+                    data={filteredDeliveries}
+                    renderItem={renderGridItem}
+                    keyExtractor={item => item.id}
+                    numColumns={2}
+                    columnWrapperStyle={{ justifyContent: 'space-between' }}
+                    contentContainerStyle={styles.listContent}
+                    refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+                    ListEmptyComponent={
+                        <View style={styles.emptyState}>
+                            <MaterialCommunityIcons name="package-variant-closed" size={64} color={theme.colors.onSurfaceVariant} />
+                            <Text variant="bodyLarge" style={{ color: theme.colors.onSurfaceVariant, marginTop: 16 }}>No deliveries found</Text>
+                        </View>
+                    }
+                />
+            )}
 
             <CancellationModal
                 visible={showCancelModal}
-                onDismiss={() => {
-                    setShowCancelModal(false);
-                    setSelectedDelivery(null);
-                }}
+                onDismiss={() => setShowCancelModal(false)}
                 onSubmit={handleCancellationSubmit}
                 loading={cancelLoading}
             />
@@ -366,38 +424,40 @@ export default function AssignedDeliveriesScreen() {
 const styles = StyleSheet.create({
     container: {
         flex: 1,
-        backgroundColor: '#F7F9FC',
     },
     header: {
         padding: 20,
         paddingBottom: 10,
-        // backgroundColor: 'white', // Handled by theme
+        elevation: 4,
+        borderBottomLeftRadius: 24,
+        borderBottomRightRadius: 24,
+        zIndex: 1,
     },
-    searchBar: {
-        marginHorizontal: 20,
+    searchbar: {
         marginBottom: 10,
-        // backgroundColor: 'white', // Handled by theme
-        elevation: 1,
         borderRadius: 10,
+        backgroundColor: '#f0f0f0'
     },
-    filterContainer: {
+    filterSection: {
+        marginTop: 10,
+        paddingTop: 10,
+        borderTopWidth: 1,
+        borderTopColor: '#eee',
+    },
+    filterRow: {
         flexDirection: 'row',
-        paddingHorizontal: 20,
-        marginBottom: 10,
+        flexWrap: 'wrap',
     },
     filterChip: {
         marginRight: 8,
-        // backgroundColor: 'white',
-        borderWidth: 1,
-        // borderColor: '#eee',
+        marginBottom: 8,
     },
     listContent: {
         padding: 20,
-        paddingTop: 10,
+        paddingTop: 20,
     },
     card: {
         marginBottom: 16,
-        // backgroundColor: 'white', // Handled by theme
         borderRadius: 12,
     },
     cardHeader: {
@@ -413,7 +473,6 @@ const styles = StyleSheet.create({
     trkText: {
         fontWeight: 'bold',
         marginLeft: 8,
-        color: '#333',
     },
     divider: {
         height: 1,
@@ -438,15 +497,6 @@ const styles = StyleSheet.create({
         color: '#2196F3',
         fontWeight: 'bold',
         fontSize: 18,
-    },
-    detailRow: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        marginTop: 2,
-    },
-    detailText: {
-        color: '#666',
-        marginLeft: 4,
     },
     addressContainer: {
         flexDirection: 'row',
@@ -486,8 +536,7 @@ const styles = StyleSheet.create({
     },
     gridCard: {
         marginBottom: 12,
-        // backgroundColor: 'white', // Handled by theme
         borderRadius: 12,
-        width: '48%', // Approx half width with spacing
+        width: '48%',
     },
 });

@@ -955,13 +955,18 @@ export default function RiderDashboard() {
                     </Surface>
                 )}
 
-                {/* Status Toggle */}
+                {/* Status Toggle - EC-ENHANCE: Clear Offline/Online distinction */}
                 <View style={[styles.statusToggleContainer, { backgroundColor: theme.colors.surface }]}>
                     <View style={styles.statusContainer}>
                         <View style={[styles.statusDot, { backgroundColor: isOnline ? '#4CAF50' : '#9E9E9E' }]} />
-                        <Text variant="titleMedium" style={[styles.statusText, { color: theme.colors.onSurface }]}>
-                            {isOnline ? 'You are Online' : 'You are Offline'}
-                        </Text>
+                        <View>
+                            <Text variant="titleMedium" style={[styles.statusText, { color: theme.colors.onSurface }]}>
+                                {isOnline ? 'You are Online' : 'You are Offline'}
+                            </Text>
+                            <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
+                                {isOnline ? 'Receiving orders' : 'Browsing mode only'}
+                            </Text>
+                        </View>
                     </View>
                     <Switch value={isOnline} onValueChange={setIsOnline} trackColor={{ true: "#4CAF50", false: "#767577" }} />
                 </View>
@@ -1176,9 +1181,9 @@ export default function RiderDashboard() {
                             Details
                         </Button>
                         <Button
-                            mode="text"
+                            mode="contained"
                             onPress={() => setShowCancelModal(true)}
-                            textColor={theme.colors.error}
+                            buttonColor={theme.colors.error}
                             style={{ marginRight: 8 }}
                         >
                             Cancel
@@ -1202,18 +1207,26 @@ export default function RiderDashboard() {
                     <View style={styles.unlockContainer}>
                         <View style={styles.unlockInfo}>
                             <Text variant="titleMedium" style={{ fontWeight: 'bold' }}>Lock Mechanism</Text>
-                            <Text variant="bodyMedium" style={{ color: isLocked ? '#4CAF50' : '#F44336' }}>
-                                {isLocked ? 'Securely Locked' : 'Unlocked'}
+                            <Text variant="bodyMedium" style={{ color: !isPaired ? '#9E9E9E' : (isLocked ? '#4CAF50' : '#F44336') }}>
+                                {!isPaired ? 'No Box Connected' : (isLocked ? 'Securely Locked' : 'Unlocked')}
                             </Text>
                         </View>
                         <TouchableOpacity
-                            style={[styles.unlockButton, { backgroundColor: isLocked ? '#E8F5E9' : '#FFEBEE', borderWidth: 1, borderColor: isLocked ? '#4CAF50' : '#F44336' }]}
+                            style={[
+                                styles.unlockButton,
+                                {
+                                    backgroundColor: !isPaired ? '#F5F5F5' : (isLocked ? '#E8F5E9' : '#FFEBEE'),
+                                    borderWidth: 1,
+                                    borderColor: !isPaired ? '#E0E0E0' : (isLocked ? '#4CAF50' : '#F44336')
+                                }
+                            ]}
                             onPress={toggleLock}
+                            disabled={!isPaired}
                         >
                             <MaterialCommunityIcons
-                                name={isLocked ? "shield-lock" : "shield-lock-open"}
+                                name={!isPaired ? "shield-off-outline" : (isLocked ? "shield-lock" : "shield-lock-open")}
                                 size={40}
-                                color={isLocked ? "#4CAF50" : "#F44336"}
+                                color={!isPaired ? "#BDBDBD" : (isLocked ? "#4CAF50" : "#F44336")}
                             />
                         </TouchableOpacity>
                     </View>
@@ -1221,15 +1234,23 @@ export default function RiderDashboard() {
                     <View style={styles.divider} />
 
                     <View style={styles.statusRow}>
-                        <View style={[styles.statusIconContainer, { backgroundColor: getBatteryColor() + '20' }]}>
-                            <MaterialCommunityIcons name={getBatteryIcon() as any} size={24} color={getBatteryColor()} />
+                        <View style={[styles.statusIconContainer, { backgroundColor: isPaired ? getBatteryColor() + '20' : '#F5F5F5' }]}>
+                            <MaterialCommunityIcons
+                                name={isPaired ? getBatteryIcon() as any : "battery-unknown"}
+                                size={24}
+                                color={isPaired ? getBatteryColor() : '#BDBDBD'}
+                            />
                         </View>
                         <View style={styles.statusInfo}>
                             <Text variant="titleSmall">Battery Level</Text>
                             <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4 }}>
-                                <ProgressBar progress={boxStatus.battery} color={getBatteryColor()} style={styles.progressBar} />
-                                <Text variant="labelSmall" style={{ marginLeft: 8, fontWeight: 'bold', color: getBatteryColor() }}>
-                                    {batteryState?.percentage ?? 85}%
+                                <ProgressBar
+                                    progress={isPaired ? boxStatus.battery : 0}
+                                    color={isPaired ? getBatteryColor() : '#E0E0E0'}
+                                    style={styles.progressBar}
+                                />
+                                <Text variant="labelSmall" style={{ marginLeft: 8, fontWeight: 'bold', color: isPaired ? getBatteryColor() : '#9E9E9E' }}>
+                                    {isPaired ? `${batteryState?.percentage ?? 85}%` : '--%'}
                                 </Text>
                             </View>
                         </View>
@@ -1238,18 +1259,39 @@ export default function RiderDashboard() {
                     <View style={styles.divider} />
 
                     <View style={styles.statusRow}>
-                        <View style={[styles.statusIconContainer, { backgroundColor: '#F3E5F5' }]}>
-                            <MaterialCommunityIcons name="bluetooth" size={24} color="#9C27B0" />
+                        <View style={[styles.statusIconContainer, { backgroundColor: isPaired ? '#F3E5F5' : '#F5F5F5' }]}>
+                            <MaterialCommunityIcons
+                                name={isPaired ? "bluetooth" : "bluetooth-off"}
+                                size={24}
+                                color={isPaired ? "#9C27B0" : "#BDBDBD"}
+                            />
                         </View>
                         <View style={styles.statusInfo}>
                             <Text variant="titleSmall">Connection</Text>
-                            <Text variant="bodySmall" style={{ color: '#666' }}>{boxStatus.connection} • {boxStatus.signal}</Text>
+                            <Text variant="bodySmall" style={{ color: '#666' }}>
+                                {isPaired ? `${boxStatus.connection} • ${boxStatus.signal}` : 'Not Connected'}
+                            </Text>
                         </View>
                     </View>
 
-                    <Button mode="outlined" style={{ marginTop: 16 }} onPress={() => navigation.navigate('BoxControls')}>
-                        Advanced Controls
-                    </Button>
+                    <View style={{ flexDirection: 'row', marginTop: 16, gap: 8 }}>
+                        {!isPaired && (
+                            <Button
+                                mode="contained"
+                                style={{ flex: 1 }}
+                                onPress={() => navigation.navigate('PairBox')}
+                            >
+                                Pair Box
+                            </Button>
+                        )}
+                        <Button
+                            mode="outlined"
+                            style={{ flex: 1 }}
+                            onPress={() => navigation.navigate('BoxControls')}
+                        >
+                            Advanced Controls
+                        </Button>
+                    </View>
                 </Surface>
 
 

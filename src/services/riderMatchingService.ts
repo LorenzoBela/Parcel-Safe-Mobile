@@ -6,7 +6,7 @@
  */
 
 import { getFirebaseDatabase } from './firebaseClient';
-import { ref, get, set, update, remove, onValue, off } from 'firebase/database';
+import { ref, get, set, update, remove, onValue, off, onDisconnect } from 'firebase/database';
 import { showIncomingOrderNotification } from './pushNotificationService';
 
 // Search radius in kilometers (as per user requirement)
@@ -448,7 +448,17 @@ export async function updateRiderStatus(
             updateData.push_token = pushToken;
         }
 
-        await set(ref(db, `/online_riders/${riderId}`), updateData);
+        const riderRef = ref(db, `/online_riders/${riderId}`);
+        await set(riderRef, updateData);
+
+        // EC-ENHANCE: Ensure rider is removed if they disconnect unexpectedly (Deadman Switch)
+        // This prevents "Zombie Riders" who are offline but still receiving orders
+        if (isAvailable) {
+            await onDisconnect(riderRef).remove();
+        } else {
+            // If explicitly setting to unavailable, cancel the onDisconnect op
+            await onDisconnect(riderRef).cancel();
+        }
 
         return true;
     } catch (error) {
@@ -463,7 +473,13 @@ export async function updateRiderStatus(
 export async function removeRiderFromOnline(riderId: string): Promise<boolean> {
     try {
         const db = getFirebaseDatabase();
-        await remove(ref(db, `/online_riders/${riderId}`));
+        const riderRef = ref(db, `/online_riders/${riderId}`);
+
+        // Remove immediately
+        await remove(riderRef);
+
+        // Cancel the onDisconnect listener since we've handled it manually
+        await onDisconnect(riderRef).cancel();
 
         return true;
     } catch (error) {
