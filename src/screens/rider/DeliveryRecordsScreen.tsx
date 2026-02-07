@@ -25,8 +25,12 @@ export default function DeliveryRecordsScreen() {
             type: 'Electronics',
             distance: '2.5 km',
             priority: 'High',
+            pickup_lat: 14.5547,
+            pickup_lng: 121.0244,
             lat: 14.5831,
             lng: 120.9794,
+            dropoff_lat: 14.5831,
+            dropoff_lng: 120.9794,
             image: 'https://via.placeholder.com/300' // Mock image
         },
         {
@@ -41,8 +45,12 @@ export default function DeliveryRecordsScreen() {
             type: 'Documents',
             distance: '5.1 km',
             priority: 'Normal',
+            pickup_lat: 14.5995,
+            pickup_lng: 120.9842,
             lat: 14.6409,
             lng: 121.0384,
+            dropoff_lat: 14.6409,
+            dropoff_lng: 121.0384,
             image: 'https://via.placeholder.com/300'
         },
         {
@@ -57,8 +65,12 @@ export default function DeliveryRecordsScreen() {
             type: 'Fragile',
             distance: '8.2 km',
             priority: 'Normal',
+            pickup_lat: 14.5831,
+            pickup_lng: 120.9794,
             lat: 14.5547,
             lng: 121.0244,
+            dropoff_lat: 14.5547,
+            dropoff_lng: 121.0244,
             image: 'https://via.placeholder.com/300'
         },
         {
@@ -73,8 +85,12 @@ export default function DeliveryRecordsScreen() {
             type: 'Food',
             distance: '1.2 km',
             priority: 'High',
+            pickup_lat: 14.6004,
+            pickup_lng: 120.9900,
             lat: 14.5905,
             lng: 120.9768,
+            dropoff_lat: 14.5905,
+            dropoff_lng: 120.9768,
             image: 'https://via.placeholder.com/300'
         },
     ];

@@ -12,7 +12,13 @@ import { subscribeToBattery, BatteryState, subscribeToTamper, TamperState, subsc
 import { offlineCache, PendingSync } from '../../services/offlineCache';
 import { isSpeedAnomaly, isClockSyncRequired, canAddToPhotoQueue, isGpsStale, SAFETY_CONSTANTS } from '../../services/SafetyLogic';
 import RecallService from '../../services/recallService';
-import NetInfo from '@react-native-community/netinfo';
+// NetInfo - conditionally imported to prevent startup crashes
+let NetInfo: any = null;
+try {
+    NetInfo = require('@react-native-community/netinfo').default;
+} catch (error) {
+    if (__DEV__) console.log('[RiderDashboard] NetInfo not available');
+}
 import IncomingOrderModal from '../../components/IncomingOrderModal';
 import {
     subscribeToRiderRequests,
@@ -194,9 +200,11 @@ export default function RiderDashboard() {
         });
 
         // EC-01/EC-06: Monitor network connectivity
-        const unsubscribeNetInfo = NetInfo.addEventListener(state => {
-            setIsOffline(!state.isConnected);
-        });
+        const unsubscribeNetInfo = NetInfo
+            ? NetInfo.addEventListener(state => {
+                setIsOffline(!state.isConnected);
+              })
+            : null;
 
         // EC-08: Subscribe to GPS location for spoofing detection
         const unsubscribeLocation = subscribeToLocation(boxIdForMonitoring, (location) => {
@@ -257,7 +265,7 @@ export default function RiderDashboard() {
             deactivateTracking();
             unsubscribeBattery();
             unsubscribeTamper();
-            unsubscribeNetInfo();
+            unsubscribeNetInfo?.();
             unsubscribeLocation();
             unsubscribeKeypad();
             unsubscribeHinge();

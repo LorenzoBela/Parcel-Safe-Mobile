@@ -13,20 +13,23 @@
 
 import { Platform, AppState, AppStateStatus, Linking } from 'react-native';
 import * as Notifications from 'expo-notifications';
-import NetInfo from '@react-native-community/netinfo';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-// Firebase messaging - conditionally imported
+// Native modules - conditionally imported to prevent startup crashes
+let NetInfo: any = null;
 let messaging: any = null;
 let BackgroundFetch: any = null;
 let BackgroundService: any = null;
 
 try {
-    messaging = require('@react-native-firebase/messaging').default;
+    NetInfo = require('@react-native-community/netinfo').default;
+    // Use modular API (Firebase v22+) instead of deprecated .default
+    const messagingModule = require('@react-native-firebase/messaging');
+    messaging = messagingModule.default || messagingModule;
     BackgroundFetch = require('react-native-background-fetch').default;
     BackgroundService = require('react-native-background-actions').default;
 } catch (error) {
-    console.log('[BackgroundService] Native modules not available - requires dev build');
+    if (__DEV__) console.log('[BackgroundService] Native modules not available');
 }
 
 // ==================== Configuration ====================
@@ -113,13 +116,13 @@ export function onBackgroundEvent(handler: BackgroundEventHandler): () => void {
  * Emit a background event to all handlers
  */
 async function emitEvent(type: BackgroundEventType, data: any): Promise<void> {
-    console.log(`[BackgroundService] Event: ${type}`, data);
+    if (__DEV__) console.log(`[BackgroundService] Event: ${type}`);
 
     for (const handler of eventHandlers) {
         try {
             await handler(type, data);
         } catch (error) {
-            console.error(`[BackgroundService] Event handler error:`, error);
+            if (__DEV__) console.error('[BackgroundService] Event handler error:', error);
         }
     }
 }
@@ -131,14 +134,14 @@ async function emitEvent(type: BackgroundEventType, data: any): Promise<void> {
  */
 async function initializeFCM(): Promise<string | null> {
     if (!messaging) {
-        console.log('[BackgroundService] FCM not available - requires dev build');
+        if (__DEV__) console.log('[BackgroundService] FCM not available');
         return null;
     }
 
     try {
         // Check if messaging is callable
         if (typeof messaging !== 'function') {
-            console.warn('[BackgroundService] Firebase messaging not properly initialized');
+            if (__DEV__) console.warn('[BackgroundService] Firebase messaging not initialized');
             return null;
         }
 
@@ -148,13 +151,13 @@ async function initializeFCM(): Promise<string | null> {
             authStatus === messaging.AuthorizationStatus.PROVISIONAL;
 
         if (!enabled) {
-            console.warn('[BackgroundService] FCM permission denied');
+            if (__DEV__) console.warn('[BackgroundService] FCM permission denied');
             return null;
         }
 
         // Get FCM token
         const fcmToken = await messaging().getToken();
-        console.log('[BackgroundService] FCM Token:', fcmToken);
+        if (__DEV__) console.log('[BackgroundService] FCM Token obtained');
 
         // Save token
         await AsyncStorage.setItem(BACKGROUND_CONFIG.STORAGE_KEYS.FCM_TOKEN, fcmToken);
@@ -165,7 +168,7 @@ async function initializeFCM(): Promise<string | null> {
 
         return fcmToken;
     } catch (error) {
-        console.error('[BackgroundService] FCM initialization error:', error);
+        if (__DEV__) console.error('[BackgroundService] FCM init error:', error);
         return null;
     }
 }
@@ -177,7 +180,7 @@ function setupFCMHandlers(): void {
 
     // Foreground messages
     messaging().onMessage(async (remoteMessage: any) => {
-        console.log('[BackgroundService] Foreground FCM message:', remoteMessage);
+        if (__DEV__) console.log('[BackgroundService] Foreground FCM message');
 
         if (remoteMessage.data?.type === 'order') {
             await emitEvent('order_received', remoteMessage.data);
@@ -189,7 +192,7 @@ function setupFCMHandlers(): void {
 
     // Token refresh
     messaging().onTokenRefresh(async (token: string) => {
-        console.log('[BackgroundService] FCM token refreshed:', token);
+        if (__DEV__) console.log('[BackgroundService] FCM token refreshed');
         await AsyncStorage.setItem(BACKGROUND_CONFIG.STORAGE_KEYS.FCM_TOKEN, token);
         backgroundState.fcmToken = token;
         // TODO: Update token on server
@@ -200,7 +203,7 @@ function setupFCMHandlers(): void {
  * Background message handler (call this from index.js)
  */
 export async function handleBackgroundMessage(remoteMessage: any): Promise<void> {
-    console.log('[BackgroundService] Background FCM message:', remoteMessage);
+    if (__DEV__) console.log('[BackgroundService] Background FCM message');
 
     if (remoteMessage.data?.type === 'order') {
         // Process order even when app is in background/killed
@@ -228,7 +231,7 @@ async function showOrderNotification(orderData: any): Promise<void> {
             trigger: null, // Show immediately
         });
     } catch (error) {
-        console.error('[BackgroundService] Notification error:', error);
+        if (__DEV__) console.error('[BackgroundService] Notification error:', error);
     }
 }
 
@@ -239,7 +242,7 @@ async function showOrderNotification(orderData: any): Promise<void> {
  */
 async function initializeBackgroundFetch(): Promise<void> {
     if (!BackgroundFetch || typeof BackgroundFetch.configure !== 'function') {
-        console.log('[BackgroundService] Background fetch not available - requires dev build');
+        if (__DEV__) console.log('[BackgroundService] Background fetch not available');
         return;
     }
 
@@ -258,7 +261,7 @@ async function initializeBackgroundFetch(): Promise<void> {
                 requiresStorageNotLow: false,
             },
             async (taskId: string) => {
-                console.log('[BackgroundService] Background fetch executed:', taskId);
+                if (__DEV__) console.log('[BackgroundService] Background fetch executed:', taskId);
 
                 try {
                     // Check for new orders
@@ -274,22 +277,22 @@ async function initializeBackgroundFetch(): Promise<void> {
 
                     BackgroundFetch.finish(taskId);
                 } catch (error) {
-                    console.error('[BackgroundService] Background fetch error:', error);
+                    if (__DEV__) console.error('[BackgroundService] Background fetch error:', error);
                     BackgroundFetch.finish(taskId);
                 }
             },
 
             (taskId: string) => {
-                console.warn('[BackgroundService] Background fetch timeout:', taskId);
+                if (__DEV__) console.warn('[BackgroundService] Background fetch timeout:', taskId);
                 BackgroundFetch.finish(taskId);
             }
         );
 
         // Start background fetch
         await BackgroundFetch.start();
-        console.log('[BackgroundService] Background fetch started');
+        if (__DEV__) console.log('[BackgroundService] Background fetch started');
     } catch (error) {
-        console.error('[BackgroundService] Background fetch setup error:', error);
+        if (__DEV__) console.error('[BackgroundService] Background fetch setup error:', error);
     }
 }
 
@@ -299,7 +302,7 @@ async function initializeBackgroundFetch(): Promise<void> {
 async function checkForNewOrders(): Promise<void> {
     // TODO: Implement order checking logic
     // This should query your backend/Firebase for new orders
-    console.log('[BackgroundService] Checking for new orders...');
+    if (__DEV__) console.log('[BackgroundService] Checking for new orders...');
 }
 
 /**
@@ -307,7 +310,7 @@ async function checkForNewOrders(): Promise<void> {
  */
 async function startForegroundService(): Promise<void> {
     if (Platform.OS !== 'android' || !BackgroundService || typeof BackgroundService.start !== 'function') {
-        console.log('[BackgroundService] Foreground service not available - requires dev build');
+        if (__DEV__) console.log('[BackgroundService] Foreground service not available');
         return; // Foreground service only needed on Android
     }
 
@@ -315,14 +318,14 @@ async function startForegroundService(): Promise<void> {
         // CRITICAL: Check location permissions before starting FGS with type "location"
         // Android 14+ (API 34+) requires location permissions to be granted at runtime
         const { PermissionsAndroid } = require('react-native');
-        
+
         const coarseGranted = await PermissionsAndroid.check(
             PermissionsAndroid.PERMISSIONS.ACCESS_COARSE_LOCATION
         );
         const fineGranted = await PermissionsAndroid.check(
             PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION
         );
-        
+
         if (!coarseGranted && !fineGranted) {
             // Request location permissions
             const granted = await PermissionsAndroid.request(
@@ -335,9 +338,9 @@ async function startForegroundService(): Promise<void> {
                     buttonPositive: 'OK',
                 }
             );
-            
+
             if (granted !== PermissionsAndroid.RESULTS.GRANTED) {
-                console.error('[BackgroundService] Location permission denied - cannot start foreground service');
+                if (__DEV__) console.error('[BackgroundService] Location permission denied');
                 throw new Error('Location permission required for foreground service');
             }
         }
@@ -361,9 +364,9 @@ async function startForegroundService(): Promise<void> {
 
         await BackgroundService.start(foregroundServiceTask, options);
         backgroundState.isForegroundServiceActive = true;
-        console.log('[BackgroundService] Foreground service started');
+        if (__DEV__) console.log('[BackgroundService] Foreground service started');
     } catch (error) {
-        console.error('[BackgroundService] Foreground service error:', error);
+        if (__DEV__) console.error('[BackgroundService] Foreground service error:', error);
         throw error; // Re-throw to prevent silent failures
     }
 }
@@ -394,7 +397,7 @@ const foregroundServiceTask = async (taskData: any) => {
                 // Wait for next heartbeat
                 await new Promise(resolve => setTimeout(resolve, BACKGROUND_CONFIG.HEARTBEAT_INTERVAL));
             } catch (error) {
-                console.error('[BackgroundService] Heartbeat error:', error);
+                if (__DEV__) console.error('[BackgroundService] Heartbeat error:', error);
             }
         }
     });
@@ -411,9 +414,9 @@ async function stopForegroundService(): Promise<void> {
     try {
         await BackgroundService.stop();
         backgroundState.isForegroundServiceActive = false;
-        console.log('[BackgroundService] Foreground service stopped');
+        if (__DEV__) console.log('[BackgroundService] Foreground service stopped');
     } catch (error) {
-        console.error('[BackgroundService] Stop foreground service error:', error);
+        if (__DEV__) console.error('[BackgroundService] Stop foreground error:', error);
     }
 }
 
@@ -423,6 +426,10 @@ async function stopForegroundService(): Promise<void> {
  * Setup network monitoring
  */
 function setupNetworkMonitoring(): void {
+    if (!NetInfo) {
+        if (__DEV__) console.log('[BackgroundService] NetInfo not available, skipping network monitoring');
+        return;
+    }
     NetInfo.addEventListener(state => {
         const wasOnline = backgroundState.networkStatus === 'online';
         const isOnline = state.isConnected && state.isInternetReachable;
@@ -430,11 +437,11 @@ function setupNetworkMonitoring(): void {
         backgroundState.networkStatus = isOnline ? 'online' : 'offline';
 
         if (!wasOnline && isOnline) {
-            console.log('[BackgroundService] Network restored');
+            if (__DEV__) console.log('[BackgroundService] Network restored');
             emitEvent('connection_restored', { timestamp: Date.now() });
             backgroundState.reconnectAttempts = 0;
         } else if (wasOnline && !isOnline) {
-            console.log('[BackgroundService] Network lost');
+            if (__DEV__) console.log('[BackgroundService] Network lost');
             emitEvent('connection_lost', { timestamp: Date.now() });
         }
     });
@@ -452,7 +459,7 @@ export async function initializeBackgroundServices(): Promise<void> {
     }
 
     try {
-        console.log('[BackgroundService] Initializing...');
+        if (__DEV__) console.log('[BackgroundService] Initializing...');
 
         // 1. Setup notification channels
         await setupNotificationChannels();
@@ -460,7 +467,7 @@ export async function initializeBackgroundServices(): Promise<void> {
         // 2. Initialize FCM
         const fcmToken = await initializeFCM();
         if (fcmToken) {
-            console.log('[BackgroundService] FCM initialized with token:', fcmToken);
+            if (__DEV__) console.log('[BackgroundService] FCM initialized');
         }
 
         // 3. Initialize background fetch
@@ -482,9 +489,9 @@ export async function initializeBackgroundServices(): Promise<void> {
             JSON.stringify(backgroundState)
         );
 
-        console.log('[BackgroundService] Successfully initialized');
+        if (__DEV__) console.log('[BackgroundService] Successfully initialized');
     } catch (error) {
-        console.error('[BackgroundService] Initialization error:', error);
+        if (__DEV__) console.error('[BackgroundService] Initialization error:', error);
         throw error;
     }
 }
@@ -494,7 +501,7 @@ export async function initializeBackgroundServices(): Promise<void> {
  */
 export async function stopBackgroundServices(): Promise<void> {
     try {
-        console.log('[BackgroundService] Stopping...');
+        if (__DEV__) console.log('[BackgroundService] Stopping...');
 
         // Stop foreground service
         await stopForegroundService();
@@ -517,9 +524,9 @@ export async function stopBackgroundServices(): Promise<void> {
             JSON.stringify(backgroundState)
         );
 
-        console.log('[BackgroundService] Stopped');
+        if (__DEV__) console.log('[BackgroundService] Stopped');
     } catch (error) {
-        console.error('[BackgroundService] Stop error:', error);
+        if (__DEV__) console.error('[BackgroundService] Stop error:', error);
     }
 }
 
@@ -583,9 +590,9 @@ export async function setupNotificationChannels(): Promise<void> {
             }
         );
 
-        console.log('[BackgroundService] Notification channels created');
+        if (__DEV__) console.log('[BackgroundService] Notification channels created');
     } catch (error) {
-        console.error('[BackgroundService] Notification channel error:', error);
+        if (__DEV__) console.error('[BackgroundService] Notification channel error:', error);
     }
 }
 
@@ -597,7 +604,7 @@ export async function setupNotificationChannels(): Promise<void> {
 export async function checkBatteryOptimization(): Promise<boolean> {
     // This requires native module - placeholder
     // In production, use react-native-device-info or custom native module
-    console.log('[BackgroundService] Battery optimization check not implemented');
+    if (__DEV__) console.log('[BackgroundService] Battery optimization check not implemented');
     return true;
 }
 
@@ -616,9 +623,9 @@ export async function requestDisableBatteryOptimization(): Promise<void> {
         // This is a simplified approach. In a real native module we'd check isIgnoringBatteryOptimizations()
         // Here we just guide the user to settings
         await Linking.sendIntent(intent, [{ key: 'package', value: `package:${pkg}` }]);
-        console.log('[BackgroundService] Opened battery optimization settings');
+        if (__DEV__) console.log('[BackgroundService] Opened battery settings');
     } catch (error) {
-        console.error('[BackgroundService] Failed to open settings:', error);
+        if (__DEV__) console.error('[BackgroundService] Settings error:', error);
         // Fallback to general settings
         await Linking.openSettings();
     }

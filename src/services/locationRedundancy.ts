@@ -15,7 +15,15 @@ import {
     LocationData,
     BoxState
 } from './firebaseClient';
-import database from '@react-native-firebase/database'; // Direct access for custom health node
+// Firebase native database - conditionally imported to prevent startup crashes
+let database: any = null;
+try {
+    // Use modular API (Firebase v22+) instead of deprecated .default
+    const databaseModule = require('@react-native-firebase/database');
+    database = databaseModule.default || databaseModule;
+} catch (error) {
+    if (__DEV__) console.log('[LocationRedundancy] @react-native-firebase/database not available');
+}
 
 // ==================== Configuration ====================
 
@@ -196,15 +204,19 @@ class LocationRedundancyManager {
         });
 
         // EC-84: Subscribe to GPS Health
-        const healthPath = `boxes/${this.boxId}/gps_health`;
-        const onHealthUpdate = (snapshot: any) => {
-            const data = snapshot.val();
-            if (data) {
-                this.handleGpsHealthUpdate(data);
-            }
-        };
-        database().ref(healthPath).on('value', onHealthUpdate);
-        this.unsubscribeGpsHealth = () => database().ref(healthPath).off('value', onHealthUpdate);
+        if (database) {
+            const healthPath = `boxes/${this.boxId}/gps_health`;
+            const onHealthUpdate = (snapshot: any) => {
+                const data = snapshot.val();
+                if (data) {
+                    this.handleGpsHealthUpdate(data);
+                }
+            };
+            database().ref(healthPath).on('value', onHealthUpdate);
+            this.unsubscribeGpsHealth = () => database().ref(healthPath).off('value', onHealthUpdate);
+        } else {
+            if (__DEV__) console.log('[LocationRedundancy] Firebase database not available, skipping GPS health');
+        }
     }
 
     // EC-84: Handle GPS health updates

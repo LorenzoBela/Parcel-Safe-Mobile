@@ -21,7 +21,9 @@ let messaging: any = null;
 
 try {
     Notifications = require('expo-notifications');
-    messaging = require('@react-native-firebase/messaging').default;
+    // Use modular API (Firebase v22+) instead of deprecated .default
+    const messagingModule = require('@react-native-firebase/messaging');
+    messaging = messagingModule.default || messagingModule;
 } catch (error) {
     console.log('[DEV] Native modules not available - using console simulation');
 }

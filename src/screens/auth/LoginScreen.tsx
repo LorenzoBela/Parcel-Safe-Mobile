@@ -7,10 +7,10 @@ import {
     Animated,
     useColorScheme,
     StatusBar,
-    SafeAreaView,
     ActivityIndicator,
     Alert
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Text } from 'react-native-paper';
 import { useNavigation } from '@react-navigation/native';
 import useAuthStore from '../../store/authStore';

@@ -56,7 +56,31 @@ npm install
 
 ### Running the App
 
-**For Development (Expo Go):**
+**Quick Start (Recommended):**
+```powershell
+# Windows - Ultimate Mode (auto-everything!)
+.\start.ps1 -Ultimate
+```
+
+This launches the **Ultimate Dev Environment** which automatically:
+- ✅ Analyzes & syncs all file changes
+- ✅ Detects & clears stale caches (only when needed)
+- ✅ Auto-installs dependencies if package.json changed
+- ✅ Shows desktop notifications for important events
+- ✅ Saves Metro logs with timestamps
+- ✅ Monitors for errors with auto-analysis
+- ✅ Performs thorough directory comparisons
+
+**Other Start Script Options:**
+```powershell
+.\start.ps1                  # Normal mode
+.\start.ps1 -ClearCache      # Force clear caches first
+.\start.ps1 -Tunnel          # Use tunnel instead of LAN
+.\start.ps1 -Verbose         # Show detailed logs
+.\start.ps1 -SyncOnly        # Just sync files, don't start Metro
+```
+
+**Manual Start (For Development with Expo Go):**
 ```bash
 npx expo start
 ```

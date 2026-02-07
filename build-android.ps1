@@ -532,7 +532,8 @@ function Ensure-AppCmakeArguments {
 '                arguments "-DANDROID_STL=c++_shared",',
 '                          "-DCMAKE_ANDROID_STL_TYPE=c++_shared",',
 '                          "-DCMAKE_SHARED_LINKER_FLAGS=-lc++_shared",',
-'                          "-DCMAKE_EXE_LINKER_FLAGS=-lc++_shared"',
+'                          "-DCMAKE_EXE_LINKER_FLAGS=-lc++_shared",',
+'                          "-DANDROID_LD=lld"',
 '            }',
 '        }',
 '        // END app-cmake-libcxx-fix'

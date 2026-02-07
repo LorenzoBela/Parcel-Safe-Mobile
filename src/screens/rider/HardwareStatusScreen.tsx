@@ -13,8 +13,8 @@ import {
     StyleSheet,
     TouchableOpacity,
     RefreshControl,
-    SafeAreaView,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { useHardwareStatus } from '../../hooks/useHardwareStatus';
 import { HardwareAlertList } from '../../components/HardwareAlertBanner';
 import { HardwareStatusBadge, StatusDot } from '../../components/HardwareStatusBadge';

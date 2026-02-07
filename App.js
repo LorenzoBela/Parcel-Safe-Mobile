@@ -20,7 +20,7 @@ try {
   Notifications = require('expo-notifications');
   const bgService = require('./src/services/backgroundServiceManager');
   const orderService = require('./src/services/orderListenerService');
-  
+
   initializeBackgroundServices = bgService.initializeBackgroundServices;
   onBackgroundEvent = bgService.onBackgroundEvent;
   initializeOrderListener = orderService.initializeOrderListener;
@@ -35,7 +35,7 @@ try {
     }),
   });
 } catch (error) {
-  console.log('[App] Native modules not available - requires dev build');
+  if (__DEV__) console.log('[App] Native modules not available - requires dev build');
 }
 
 const AppContent = () => {
@@ -44,58 +44,54 @@ const AppContent = () => {
 
   useEffect(() => {
     let cleanupFunctions = [];
+    let timeoutId = null;
 
-    // Initialize background services when app starts
+    // Initialize background services when app starts (deferred to not block first render)
     const initializeServices = async () => {
       if (!initializeBackgroundServices) {
-        console.log('[App] Background services not available - requires dev build');
+        if (__DEV__) console.log('[App] Background services not available - requires dev build');
         return;
       }
 
       try {
-        console.log('[App] Initializing background services...');
-        
+        if (__DEV__) console.log('[App] Initializing background services...');
+
         // Initialize background service manager
         await initializeBackgroundServices();
-        
+
         // Subscribe to background events
         const unsubscribeBackgroundEvents = onBackgroundEvent((type, data) => {
-          console.log('[App] Background event:', type, data);
-          
+          if (__DEV__) console.log('[App] Background event:', type);
+
           if (type === 'order_received') {
-            // Handle new order notification
-            console.log('[App] New order received:', data);
+            if (__DEV__) console.log('[App] New order received');
           }
         });
         cleanupFunctions.push(unsubscribeBackgroundEvents);
 
         // Subscribe to new order events
-        // Note: This requires the user to be logged in as a rider
-        // You should call initializeOrderListener(riderId) after login
         const unsubscribeOrders = onNewOrder((order) => {
-          console.log('[App] New order callback:', order);
-          // You can navigate to order screen or show in-app alert
+          if (__DEV__) console.log('[App] New order callback');
         });
         cleanupFunctions.push(unsubscribeOrders);
 
         // Listen for notification taps
         const notificationResponseSubscription = Notifications.addNotificationResponseReceivedListener(
           (response) => {
-            console.log('[App] Notification tapped:', response);
+            if (__DEV__) console.log('[App] Notification tapped');
             const data = response.notification.request.content.data;
-            
+
             if (data.type === 'new_order') {
               // Navigate to order screen
-              // navigation.navigate('OrderDetails', { orderId: data.orderId });
             }
           }
         );
         cleanupFunctions.push(() => notificationResponseSubscription.remove());
 
-        console.log('[App] Background services initialized successfully');
+        if (__DEV__) console.log('[App] Background services initialized successfully');
       } catch (error) {
-        console.error('[App] Failed to initialize background services:', error);
-        
+        if (__DEV__) console.error('[App] Failed to initialize background services:', error);
+
         // Show alert to user about background service failure
         Alert.alert(
           'Background Services',
@@ -105,27 +101,29 @@ const AppContent = () => {
       }
     };
 
-    initializeServices();
+    // Defer heavy initialization to not block first render
+    timeoutId = setTimeout(() => {
+      initializeServices();
+    }, 100);
 
     // Monitor app state changes
     const subscription = AppState.addEventListener('change', nextAppState => {
       if (appState.match(/inactive|background/) && nextAppState === 'active') {
-        console.log('[App] App has come to the foreground');
-        // Reconnect services if needed
+        if (__DEV__) console.log('[App] App has come to the foreground');
       } else if (nextAppState.match(/inactive|background/)) {
-        console.log('[App] App has gone to the background');
+        if (__DEV__) console.log('[App] App has gone to the background');
       }
       setAppState(nextAppState);
     });
 
     return () => {
+      if (timeoutId) clearTimeout(timeoutId);
       subscription.remove();
-      // Call all cleanup functions
       cleanupFunctions.forEach(cleanup => {
         try {
           if (cleanup) cleanup();
         } catch (error) {
-          console.error('[App] Cleanup error:', error);
+          if (__DEV__) console.error('[App] Cleanup error:', error);
         }
       });
     };

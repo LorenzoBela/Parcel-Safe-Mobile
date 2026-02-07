@@ -14,7 +14,10 @@
   },
   "name": "mobile",
   "version": "1.0.0",
+  "main": "index.js",
   "scripts": {
+    "start": "expo start",
+    "start:clear": "expo start --clear",
     "android": "expo run:android",
     "ios": "expo run:ios",
     "test": "jest",

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { View, StyleSheet, ScrollView, Image, Dimensions } from 'react-native';
 import { Text, Card, Button, useTheme, Chip, Surface, IconButton } from 'react-native-paper';
 import { useNavigation, useRoute } from '@react-navigation/native';
@@ -12,10 +12,19 @@ export default function DeliveryDetailScreen() {
     const { delivery } = route.params;
     const MAPBOX_TOKEN = process.env.EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN;
 
+    const [routeGeometry, setRouteGeometry] = useState<any>(null);
+
+    // Get pickup and dropoff coordinates from delivery object
+    // Support both new format (pickup_lat/lng, dropoff_lat/lng) and old format (lat/lng)
+    const pickupLat = delivery.pickup_lat || delivery.pickupLat || 14.5831;
+    const pickupLng = delivery.pickup_lng || delivery.pickupLng || 120.9794;
+    const dropoffLat = delivery.dropoff_lat || delivery.dropoffLat || delivery.lat || 14.5995;
+    const dropoffLng = delivery.dropoff_lng || delivery.dropoffLng || delivery.lng || 120.9842;
+
     // Mock coordinates for the map (Manila area)
     const deliveryLocation = {
-        latitude: 14.5995,
-        longitude: 120.9842,
+        latitude: dropoffLat,
+        longitude: dropoffLng,
         latitudeDelta: 0.01,
         longitudeDelta: 0.01,
     };
@@ -47,18 +56,27 @@ export default function DeliveryDetailScreen() {
         }
     }, [MAPBOX_TOKEN]);
 
-    const routeGeoJson = useMemo(() => ({
-        type: 'Feature' as const,
-        geometry: {
-            type: 'LineString' as const,
-            coordinates: [
-                [120.9794, 14.5831],
-                [120.9810, 14.5890],
-                [120.9830, 14.5950],
-                [deliveryLocation.longitude, deliveryLocation.latitude],
-            ],
-        },
-    }), [deliveryLocation.latitude, deliveryLocation.longitude]);
+    // Fetch actual route from Mapbox Directions API
+    useEffect(() => {
+        const fetchRoute = async () => {
+            if (!MAPBOX_TOKEN) return;
+
+            try {
+                const url = `https://api.mapbox.com/directions/v5/mapbox/driving/${pickupLng},${pickupLat};${dropoffLng},${dropoffLat}?geometries=geojson&access_token=${MAPBOX_TOKEN}`;
+                
+                const response = await fetch(url);
+                const data = await response.json();
+
+                if (data.routes && data.routes.length > 0) {
+                    setRouteGeometry(data.routes[0].geometry);
+                }
+            } catch (error) {
+                console.error('Route calculation error:', error);
+            }
+        };
+
+        fetchRoute();
+    }, [MAPBOX_TOKEN, pickupLat, pickupLng, dropoffLat, dropoffLng]);
 
     return (
         <View style={styles.container}>
@@ -78,20 +96,32 @@ export default function DeliveryDetailScreen() {
                             attributionEnabled={false}
                         >
                             <MapboxGL.Camera
-                                zoomLevel={14}
-                                centerCoordinate={[deliveryLocation.longitude, deliveryLocation.latitude]}
+                                zoomLevel={13}
+                                centerCoordinate={[(pickupLng + dropoffLng) / 2, (pickupLat + dropoffLat) / 2]}
                             />
 
-                            <MapboxGL.ShapeSource id="delivery-route" shape={routeGeoJson}>
-                                <MapboxGL.LineLayer
-                                    id="delivery-route-line"
-                                    style={{
-                                        lineColor: theme.colors.primary,
-                                        lineWidth: 3,
+                            {/* Actual Street-by-Street Route from Mapbox Directions API */}
+                            {routeGeometry && (
+                                <MapboxGL.ShapeSource
+                                    id="delivery-route"
+                                    shape={{
+                                        type: 'Feature',
+                                        geometry: routeGeometry,
+                                        properties: {},
                                     }}
-                                />
-                            </MapboxGL.ShapeSource>
+                                >
+                                    <MapboxGL.LineLayer
+                                        id="delivery-route-line"
+                                        style={{
+                                            lineColor: theme.colors.primary,
+                                            lineWidth: 4,
+                                            lineOpacity: 0.8,
+                                        }}
+                                    />
+                                </MapboxGL.ShapeSource>
+                            )}
 
+                            {/* Dropoff Location (Destination) */}
                             <MapboxGL.PointAnnotation
                                 id="delivery-location"
                                 coordinate={[deliveryLocation.longitude, deliveryLocation.latitude]}
@@ -100,10 +130,11 @@ export default function DeliveryDetailScreen() {
                                 <View style={styles.markerDot} />
                             </MapboxGL.PointAnnotation>
 
+                            {/* Pickup Location (Start Point) */}
                             <MapboxGL.PointAnnotation
                                 id="delivery-start"
-                                coordinate={[120.9794, 14.5831]}
-                                title="Start Point"
+                                coordinate={[pickupLng, pickupLat]}
+                                title="Pickup Location"
                             >
                                 <View style={[styles.markerDot, { backgroundColor: '#2196F3' }]} />
                             </MapboxGL.PointAnnotation>

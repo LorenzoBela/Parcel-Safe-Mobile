@@ -6,7 +6,7 @@
 
 import 'react-native-url-polyfill/auto';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { createClient, SupabaseClient, processLock } from '@supabase/supabase-js';
+import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import axios from 'axios';
 
 const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL || '';
@@ -21,7 +21,9 @@ export const supabase: SupabaseClient | null =
                 persistSession: true,
                 autoRefreshToken: true,
                 detectSessionInUrl: false,
-                lock: processLock,
+                // Use default lock mechanism for React Native (processLock is for Node.js only)
+                // lockAcquireTimeout increased to 15s to handle slower devices
+                lockAcquireTimeout: 15000,
             },
             global: {
                 fetch: async (url, options) => {
