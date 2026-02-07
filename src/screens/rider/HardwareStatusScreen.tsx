@@ -19,11 +19,16 @@ import { useHardwareStatus } from '../../hooks/useHardwareStatus';
 import { HardwareAlertList } from '../../components/HardwareAlertBanner';
 import { HardwareStatusBadge, StatusDot } from '../../components/HardwareStatusBadge';
 import { subscribeToPower, PowerState, subscribeToResourceConflict, ResourceConflictState } from '../../services/firebaseClient';
+import {
+    BoxPairingState,
+    isPairingActive,
+    subscribeToRiderPairing,
+} from '../../services/boxPairingService';
 
 interface HardwareStatusScreenProps {
-    route: {
-        params: {
-            boxId: string;
+    route?: {
+        params?: {
+            boxId?: string;
             deliveryId?: string;
         };
     };
@@ -31,8 +36,12 @@ interface HardwareStatusScreenProps {
 }
 
 export default function HardwareStatusScreen({ route, navigation }: HardwareStatusScreenProps) {
-    const { boxId, deliveryId } = route.params;
+    const [pairingState, setPairingState] = useState<BoxPairingState | null>(null);
+    const [riderId] = useState('RIDER_001');
+    const boxId = route?.params?.boxId ?? pairingState?.box_id;
+    const deliveryId = route?.params?.deliveryId;
     const [refreshing, setRefreshing] = useState(false);
+    const isPaired = isPairingActive(pairingState);
 
     // EC-90: Power State
     const [powerState, setPowerState] = useState<PowerState | null>(null);
@@ -55,19 +64,28 @@ export default function HardwareStatusScreen({ route, navigation }: HardwareStat
         dismissAlert,
         acknowledgeReboot,
         refresh,
-    } = useHardwareStatus(boxId, deliveryId);
+    } = useHardwareStatus(boxId || 'BOX_001', deliveryId);
 
     // EC-90: Subscribe to Power State
     useEffect(() => {
+        if (!boxId) return;
         const unsubscribe = subscribeToPower(boxId, setPowerState);
         return () => unsubscribe();
     }, [boxId]);
 
     // EC-91: Subscribe to Resource Conflict State
     useEffect(() => {
+        if (!boxId) return;
         const unsubscribe = subscribeToResourceConflict(boxId, setResourceConflict);
         return () => unsubscribe();
     }, [boxId]);
+
+    useEffect(() => {
+        const unsubscribe = subscribeToRiderPairing(riderId, (state) => {
+            setPairingState(state);
+        });
+        return unsubscribe;
+    }, [riderId]);
 
     const onRefresh = async () => {
         setRefreshing(true);
@@ -79,6 +97,21 @@ export default function HardwareStatusScreen({ route, navigation }: HardwareStat
         await acknowledgeReboot();
         refresh();
     };
+
+    if (!isPaired || !boxId) {
+        return (
+            <SafeAreaView style={styles.container}>
+                <View style={styles.errorContainer}>
+                    <Text style={styles.errorIcon}>🔒</Text>
+                    <Text style={styles.errorText}>Pair a box to view hardware health</Text>
+                    <Text style={styles.errorSubtext}>Scan the QR on your box to continue.</Text>
+                    <TouchableOpacity style={styles.retryButton} onPress={() => navigation.navigate('PairBox')}>
+                        <Text style={styles.retryText}>Pair Box</Text>
+                    </TouchableOpacity>
+                </View>
+            </SafeAreaView>
+        );
+    }
 
     if (error) {
         return (

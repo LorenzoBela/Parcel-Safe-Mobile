@@ -48,6 +48,11 @@ import {
     TokenStatus,
     forceTokenRefresh,
 } from '../../services/tokenRefreshService';
+import {
+    BoxPairingState,
+    isPairingActive,
+    subscribeToRiderPairing,
+} from '../../services/boxPairingService';
 // EC-90: Power State
 import { subscribeToPower, PowerState, isSolenoidBlockedByVoltage } from '../../services/firebaseClient';
 
@@ -116,6 +121,7 @@ export default function RiderDashboard() {
     const [showOrderModal, setShowOrderModal] = useState(false);
     const [riderId] = useState('RIDER_001'); // Demo rider ID - in production, get from auth
     const [pushToken, setPushToken] = useState<string | null>(null);
+    const [pairingState, setPairingState] = useState<BoxPairingState | null>(null);
 
     // EC-32: Cancellation State
     const [showCancelModal, setShowCancelModal] = useState(false);
@@ -131,9 +137,14 @@ export default function RiderDashboard() {
     // EC-90: Power State
     const [powerState, setPowerState] = useState<PowerState | null>(null);
 
+    const isPaired = isPairingActive(pairingState);
+    const pairedBoxId = pairingState?.box_id;
+    const pairingModeLabel = pairingState?.mode === 'ONE_TIME' ? 'One-time' : 'Session';
+    const boxIdForMonitoring = pairedBoxId ?? 'BOX_001';
+
     // Auto-start monitoring when component mounts (demo box ID)
     useEffect(() => {
-        startMonitoring('BOX_001');
+        startMonitoring(boxIdForMonitoring);
 
         // EC-85: Listen for recall
         // In a real app, 'TRK-8821-9023' would be dynamic
@@ -149,7 +160,7 @@ export default function RiderDashboard() {
         });
 
         // EC-03: Subscribe to battery state
-        const unsubscribeBattery = subscribeToBattery('BOX_001', (state) => {
+        const unsubscribeBattery = subscribeToBattery(boxIdForMonitoring, (state) => {
             setBatteryState(state);
 
             // Show alert on low battery
@@ -169,7 +180,7 @@ export default function RiderDashboard() {
         });
 
         // EC-18: Subscribe to tamper state
-        const unsubscribeTamper = subscribeToTamper('BOX_001', (state) => {
+        const unsubscribeTamper = subscribeToTamper(boxIdForMonitoring, (state) => {
             setTamperState(state);
 
             // Show critical alert on tamper detection
@@ -188,7 +199,7 @@ export default function RiderDashboard() {
         });
 
         // EC-08: Subscribe to GPS location for spoofing detection
-        const unsubscribeLocation = subscribeToLocation('BOX_001', (location) => {
+        const unsubscribeLocation = subscribeToLocation(boxIdForMonitoring, (location) => {
             if (location && lastGpsLocation) {
                 // Calculate distance using Haversine approximation
                 const R = 6371000;
@@ -219,7 +230,7 @@ export default function RiderDashboard() {
         });
 
         // EC-82: Subscribe to Keypad
-        const unsubscribeKeypad = subscribeToKeypad('BOX_001', (state) => {
+        const unsubscribeKeypad = subscribeToKeypad(boxIdForMonitoring, (state) => {
             setKeypadState(state);
             if (state?.is_stuck) {
                 Alert.alert(
@@ -231,7 +242,7 @@ export default function RiderDashboard() {
         });
 
         // EC-83: Subscribe to Hinge
-        const unsubscribeHinge = subscribeToHinge('BOX_001', (state) => {
+        const unsubscribeHinge = subscribeToHinge(boxIdForMonitoring, (state) => {
             setHingeState(state);
             if (state?.status === 'DAMAGED') {
                 Alert.alert(
@@ -251,7 +262,7 @@ export default function RiderDashboard() {
             unsubscribeKeypad();
             unsubscribeHinge();
         };
-    }, [lastGpsLocation]);
+    }, [boxIdForMonitoring, lastGpsLocation]);
 
     // EC-01/EC-06: Check for pending syncs periodically
     useEffect(() => {
@@ -337,12 +348,19 @@ export default function RiderDashboard() {
 
     // EC-78: Subscribe to Reassignment Updates
     useEffect(() => {
-        const boxId = 'BOX_001'; // Demo Box ID
+        const boxId = boxIdForMonitoring;
         const unsubscribe = subscribeToReassignment(boxId, (state) => {
             setReassignmentState(state);
         });
         return unsubscribe;
-    }, []);
+    }, [boxIdForMonitoring]);
+
+    useEffect(() => {
+        const unsubscribe = subscribeToRiderPairing(riderId, (state) => {
+            setPairingState(state);
+        });
+        return unsubscribe;
+    }, [riderId]);
 
     // EC-78: Handle Reassignment Modal and Timer
     useEffect(() => {
@@ -351,7 +369,7 @@ export default function RiderDashboard() {
             if (type) {
                 setShowReassignmentModal(true);
                 // Start auto-ack timer
-                const cleanup = startAutoAckTimer('BOX_001', riderId, reassignmentState, () => {
+                const cleanup = startAutoAckTimer(boxIdForMonitoring, riderId, reassignmentState, () => {
                     setShowReassignmentModal(false);
                     // Alert provided by service callback or state update logic can go here
                 });
@@ -360,7 +378,7 @@ export default function RiderDashboard() {
         } else {
             setShowReassignmentModal(false);
         }
-    }, [reassignmentState, riderId]);
+    }, [boxIdForMonitoring, reassignmentState, riderId]);
 
     // EC-89: Token Refresh Service
     useEffect(() => {
@@ -389,7 +407,7 @@ export default function RiderDashboard() {
 
     // EC-90: Subscribe to Power State
     useEffect(() => {
-        const unsubscribePower = subscribeToPower('BOX_001', (state) => {
+        const unsubscribePower = subscribeToPower(boxIdForMonitoring, (state) => {
             setPowerState(state);
             if (state?.solenoid_blocked) {
                 Alert.alert(
@@ -401,11 +419,11 @@ export default function RiderDashboard() {
         });
 
         return () => unsubscribePower();
-    }, []);
+    }, [boxIdForMonitoring]);
 
     const handleReassignmentAcknowledge = async () => {
         if (reassignmentState) {
-            await acknowledgeReassignment('BOX_001', riderId);
+            await acknowledgeReassignment(boxIdForMonitoring, riderId);
             setShowReassignmentModal(false);
         }
     };
@@ -457,7 +475,7 @@ export default function RiderDashboard() {
         try {
             const result = await requestCancellation({
                 deliveryId: nextDelivery.id,
-                boxId: 'BOX_001', // Demo box ID
+                boxId: boxIdForMonitoring,
                 reason,
                 reasonDetails: details,
                 riderId: riderId,
@@ -980,9 +998,43 @@ export default function RiderDashboard() {
                     </View>
                 </Surface>
 
+                {/* Pairing Status */}
+                <Surface style={styles.pairingCard} elevation={2}>
+                    <View style={styles.pairingRow}>
+                        <View style={styles.pairingInfo}>
+                            <Text variant="titleSmall" style={{ fontWeight: 'bold' }}>
+                                {isPaired ? 'Box Paired' : 'No Box Paired'}
+                            </Text>
+                            <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
+                                {isPaired && pairedBoxId
+                                    ? `Box ${pairedBoxId} • ${pairingModeLabel}`
+                                    : 'Scan a box QR to link controls and health data.'}
+                            </Text>
+                        </View>
+                        <Button
+                            mode={isPaired ? 'outlined' : 'contained'}
+                            onPress={() => navigation.navigate('PairBox')}
+                        >
+                            {isPaired ? 'Manage' : 'Pair Box'}
+                        </Button>
+                    </View>
+                </Surface>
+
                 {/* Quick Actions */}
                 <View style={styles.actionsGrid}>
-                    <QuickAction icon="cube-outline" label="Box Status" onPress={() => navigation.navigate('BoxControls')} color="#FF9800" />
+                    <QuickAction
+                        icon="cube-outline"
+                        label="Box Status"
+                        onPress={() => {
+                            if (!isPaired || !pairedBoxId) {
+                                Alert.alert('Pair Required', 'Scan your box QR to access controls.');
+                                navigation.navigate('PairBox');
+                                return;
+                            }
+                            navigation.navigate('BoxControls', { boxId: pairedBoxId });
+                        }}
+                        color="#FF9800"
+                    />
                     <QuickAction icon="history" label="History" onPress={() => navigation.navigate('DeliveryRecords')} color="#2196F3" />
                     <QuickAction icon="face-agent" label="Support" onPress={() => navigation.navigate('RiderSupport')} color="#9C27B0" />
                     <QuickAction icon="cog" label="Settings" onPress={() => navigation.navigate('RiderSettings')} color="#607D8B" />
@@ -1503,6 +1555,20 @@ const styles = StyleSheet.create({
         borderRadius: 16,
         padding: 12,
         marginBottom: 16,
+    },
+    pairingCard: {
+        borderRadius: 16,
+        padding: 16,
+        marginBottom: 16,
+    },
+    pairingRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+    },
+    pairingInfo: {
+        flex: 1,
+        marginRight: 16,
     },
     gpsStatusRow: {
         flexDirection: 'row',

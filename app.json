@@ -58,7 +58,8 @@
           "autolinkEnabled": true
         }
       ],
-      "./scripts/withAndroidManifestHelpers.js"
+      "./scripts/withAndroidManifestHelpers.js",
+      "expo-font"
     ],
     "extra": {
       "eas": {

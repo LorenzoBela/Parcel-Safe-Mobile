@@ -1,18 +1,86 @@
-import React, { useState, useEffect } from 'react';
-import { View, StyleSheet, ScrollView, TouchableOpacity, Alert, TextInput as RNTextInput } from 'react-native';
-import { Text, Card, Avatar, Button, Surface, IconButton, Modal, Portal, TextInput } from 'react-native-paper';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { View, StyleSheet, ScrollView, TouchableOpacity, Alert, Share } from 'react-native';
+import { Text, Card, Avatar, Button, Surface, IconButton, Modal, Portal, TextInput, Chip, Divider } from 'react-native-paper';
 import { useNavigation } from '@react-navigation/native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import dayjs from 'dayjs';
 import { markDeliveryComplete, getDeliveryByIdOrTracking } from '../../services/supabaseClient';
+import * as Clipboard from 'expo-clipboard';
+import * as FileSystem from 'expo-file-system';
+import QRCode from 'react-native-qrcode-svg';
 
 export default function AdminDashboard() {
     const navigation = useNavigation<any>();
     const [currentTime, setCurrentTime] = useState(dayjs());
     const [overrideModalVisible, setOverrideModalVisible] = useState(false);
+    const [pairQrModalVisible, setPairQrModalVisible] = useState(false);
     const [trackingInput, setTrackingInput] = useState('');
     const [reasonInput, setReasonInput] = useState('');
     const [isProcessing, setIsProcessing] = useState(false);
+    const [pairBoxId, setPairBoxId] = useState('');
+    const [pairMode, setPairMode] = useState<'ONE_TIME' | 'SESSION'>('SESSION');
+    const [sessionHours, setSessionHours] = useState(24);
+    const [pairToken, setPairToken] = useState('');
+    const qrRef = useRef<any>(null);
+
+    const pairingPayload = useMemo(() => {
+        if (!pairBoxId.trim()) return '';
+        const params = new URLSearchParams({
+            boxId: pairBoxId.trim(),
+            token: pairToken,
+            mode: pairMode,
+        });
+        if (pairMode === 'SESSION') {
+            params.set('sessionHours', String(sessionHours));
+        }
+        return `parcelsafe://pair?${params.toString()}`;
+    }, [pairBoxId, pairMode, pairToken, sessionHours]);
+
+    const generatePairToken = () => {
+        if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
+            return crypto.randomUUID();
+        }
+        return Math.random().toString(36).slice(2, 10);
+    };
+
+    const openPairQrModal = () => {
+        setPairToken(generatePairToken());
+        setPairQrModalVisible(true);
+    };
+
+    const copyPairingPayload = async () => {
+        if (!pairingPayload) {
+            Alert.alert('Missing Box ID', 'Enter a box ID to generate a payload.');
+            return;
+        }
+        await Clipboard.setStringAsync(pairingPayload);
+        Alert.alert('Copied', 'Pairing payload copied to clipboard.');
+    };
+
+    const sharePairingPayload = async () => {
+        if (!pairingPayload) {
+            Alert.alert('Missing Box ID', 'Enter a box ID to generate a payload.');
+            return;
+        }
+        await Share.share({ message: pairingPayload });
+    };
+
+    const shareQrImage = async () => {
+        if (!pairingPayload || !qrRef.current?.toDataURL) {
+            Alert.alert('QR Not Ready', 'Generate a QR first.');
+            return;
+        }
+
+        qrRef.current.toDataURL(async (data: string) => {
+            try {
+                const fileUri = `${FileSystem.cacheDirectory}pairing-qr-${pairBoxId || 'box'}.png`;
+                await FileSystem.writeAsStringAsync(fileUri, data, { encoding: FileSystem.EncodingType.Base64 });
+                await Share.share({ url: fileUri, message: pairingPayload });
+            } catch (error) {
+                await Share.share({ message: pairingPayload });
+            }
+        });
+    };
 
     useEffect(() => {
         const timer = setInterval(() => {
@@ -173,6 +241,14 @@ export default function AdminDashboard() {
                     >
                         Complete Del.
                     </Button>
+                    <Button
+                        mode="contained"
+                        icon="qrcode"
+                        style={[styles.quickLinkBtn, { backgroundColor: '#1D4ED8' }]}
+                        onPress={openPairQrModal}
+                    >
+                        Pair QR
+                    </Button>
                 </ScrollView>
 
                 {/* EC-03: Override Delivery Modal */}
@@ -221,6 +297,109 @@ export default function AdminDashboard() {
                             >
                                 Complete Delivery
                             </Button>
+                        </View>
+                    </Modal>
+                </Portal>
+
+                {/* Pair QR Modal */}
+                <Portal>
+                    <Modal
+                        visible={pairQrModalVisible}
+                        onDismiss={() => setPairQrModalVisible(false)}
+                        contentContainerStyle={styles.modalContainer}
+                    >
+                        <Text variant="titleLarge" style={{ fontWeight: 'bold', marginBottom: 12 }}>
+                            Generate Pairing QR
+                        </Text>
+                        <Text variant="bodySmall" style={{ color: '#666', marginBottom: 16 }}>
+                            Enter the box ID, choose one-time or session mode, then share or copy the QR payload.
+                        </Text>
+
+                        <TextInput
+                            label="Box ID"
+                            value={pairBoxId}
+                            onChangeText={setPairBoxId}
+                            mode="outlined"
+                            style={{ marginBottom: 12 }}
+                        />
+
+                        <Text variant="bodySmall" style={{ marginBottom: 8 }}>Pairing Mode</Text>
+                        <View style={styles.modeRow}>
+                            <Chip
+                                selected={pairMode === 'ONE_TIME'}
+                                onPress={() => setPairMode('ONE_TIME')}
+                                style={styles.modeChip}
+                            >
+                                One-time
+                            </Chip>
+                            <Chip
+                                selected={pairMode === 'SESSION'}
+                                onPress={() => setPairMode('SESSION')}
+                                style={styles.modeChip}
+                            >
+                                Session
+                            </Chip>
+                        </View>
+
+                        {pairMode === 'SESSION' && (
+                            <View style={{ marginBottom: 8 }}>
+                                <Text variant="bodySmall" style={{ marginBottom: 8 }}>Session Duration</Text>
+                                <View style={styles.modeRow}>
+                                    {[4, 12, 24, 48].map((hours) => (
+                                        <Chip
+                                            key={hours}
+                                            selected={sessionHours === hours}
+                                            onPress={() => setSessionHours(hours)}
+                                            style={styles.modeChip}
+                                        >
+                                            {hours}h
+                                        </Chip>
+                                    ))}
+                                </View>
+                            </View>
+                        )}
+
+                        <View style={styles.tokenRow}>
+                            <TextInput
+                                label="Pair Token"
+                                value={pairToken}
+                                mode="outlined"
+                                style={{ flex: 1 }}
+                                editable={false}
+                            />
+                            <Button mode="outlined" onPress={() => setPairToken(generatePairToken())}>
+                                Regenerate
+                            </Button>
+                        </View>
+
+                        <Divider style={{ marginVertical: 16 }} />
+
+                        <View style={styles.qrContainer}>
+                            {pairingPayload ? (
+                                <QRCode
+                                    value={pairingPayload}
+                                    size={200}
+                                    getRef={(ref) => (qrRef.current = ref)}
+                                />
+                            ) : (
+                                <Text style={{ color: '#666' }}>Enter a box ID to render QR</Text>
+                            )}
+                        </View>
+
+                        <TextInput
+                            label="QR Payload"
+                            value={pairingPayload}
+                            mode="outlined"
+                            multiline
+                            numberOfLines={3}
+                            editable={false}
+                            style={{ marginBottom: 12 }}
+                        />
+
+                        <View style={styles.modalActionsRow}>
+                            <Button mode="outlined" onPress={copyPairingPayload}>Copy Payload</Button>
+                            <Button mode="outlined" onPress={sharePairingPayload}>Share Payload</Button>
+                            <Button mode="contained" onPress={shareQrImage}>Share QR</Button>
                         </View>
                     </Modal>
                 </Portal>
@@ -358,10 +537,39 @@ const styles = StyleSheet.create({
     alertIcon: {
         marginRight: 12,
     },
-    modalContainer: {
-        backgroundColor: 'white',
-        padding: 24,
-        margin: 20,
-        borderRadius: 16,
-    },
+        modalContainer: {
+            backgroundColor: 'white',
+            padding: 24,
+            margin: 20,
+            borderRadius: 16,
+        },
+        modeRow: {
+            flexDirection: 'row',
+            flexWrap: 'wrap',
+            marginBottom: 12,
+        },
+        modeChip: {
+            marginRight: 8,
+            marginBottom: 8,
+        },
+        tokenRow: {
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: 12,
+            marginBottom: 8,
+        },
+        qrContainer: {
+            alignItems: 'center',
+            justifyContent: 'center',
+            paddingVertical: 12,
+            backgroundColor: '#F8FAFC',
+            borderRadius: 12,
+            marginBottom: 12,
+        },
+        modalActionsRow: {
+            flexDirection: 'row',
+            flexWrap: 'wrap',
+            justifyContent: 'space-between',
+            gap: 8,
+        },
 });

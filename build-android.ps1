@@ -214,6 +214,29 @@ try {
 $PROJECT_ROOT = $DEST_DIR
 $ANDROID_DIR = Join-Path $PROJECT_ROOT "android"
 
+# Restore last known good config (best-effort)
+function Restore-LastGoodConfig {
+    param([string]$ProjectRoot)
+    $lastGoodPath = Join-Path $ProjectRoot "build-last-good.json"
+    if (-not (Test-Path $lastGoodPath)) { return }
+    try {
+        $lastGood = Get-Content -Path $lastGoodPath -Raw | ConvertFrom-Json
+        if (-not $env:ANDROID_HOME -and $lastGood.androidHome) { $env:ANDROID_HOME = $lastGood.androidHome }
+        if (-not $env:ANDROID_SDK_ROOT -and $lastGood.androidSdkRoot) { $env:ANDROID_SDK_ROOT = $lastGood.androidSdkRoot }
+        if (-not $env:ANDROID_NDK_HOME -and $lastGood.androidNdkHome) { $env:ANDROID_NDK_HOME = $lastGood.androidNdkHome }
+        if (-not $env:NDK_HOME -and $lastGood.ndkHome) { $env:NDK_HOME = $lastGood.ndkHome }
+        if (-not $env:JAVA_HOME -and $lastGood.javaHome) { $env:JAVA_HOME = $lastGood.javaHome }
+        if (-not $env:NODE_BINARY -and $lastGood.nodeBinary) { $env:NODE_BINARY = $lastGood.nodeBinary }
+        if (-not $env:ANDROID_STL -and $lastGood.androidStl) { $env:ANDROID_STL = $lastGood.androidStl }
+        if (-not $env:CMAKE_ANDROID_STL_TYPE -and $lastGood.cmakeAndroidStlType) { $env:CMAKE_ANDROID_STL_TYPE = $lastGood.cmakeAndroidStlType }
+        Write-Host "[OK] Loaded last known good build config: $lastGoodPath" -ForegroundColor Green
+    } catch {
+        Write-Host "[WARN] Failed to load last known good build config" -ForegroundColor DarkYellow
+    }
+}
+
+Restore-LastGoodConfig -ProjectRoot $PROJECT_ROOT
+
 #region agent log
 function Write-AgentLog {
     param(
@@ -297,8 +320,7 @@ if (Test-Path $localPropsPathEarly) {
 function Update-LocalPropertiesPaths {
     param(
         [string]$Path,
-        [string]$SdkDir,
-        [string]$NdkDir
+        [string]$SdkDir
     )
     $lines = @()
     if (Test-Path $Path) {
@@ -306,7 +328,13 @@ function Update-LocalPropertiesPaths {
     }
     $lines = $lines | Where-Object { $_ -notmatch '^sdk\.dir=' -and $_ -notmatch '^ndk\.dir=' }
     if ($SdkDir) { $lines += ("sdk.dir=" + ($SdkDir -replace '\\', '/')) }
-    if ($NdkDir) { $lines += ("ndk.dir=" + ($NdkDir -replace '\\', '/')) }
+    Set-Content -Path $Path -Value $lines
+}
+
+function Remove-NdkDirFromLocalProperties {
+    param([string]$Path)
+    if (-not (Test-Path $Path)) { return }
+    $lines = Get-Content $Path | Where-Object { $_ -notmatch '^ndk\.dir=' }
     Set-Content -Path $Path -Value $lines
 }
 if ((!$env:ANDROID_HOME -or !$env:ANDROID_SDK_ROOT) -and $sdkDirEarly) {
@@ -318,7 +346,8 @@ if ((!$env:ANDROID_HOME -or !$env:ANDROID_SDK_ROOT) -and $sdkDirEarly) {
     Test-AndroidEnvironment -SdkPath $sdkDirEarly
 
     # Normalize sdk.dir in local.properties for the build directory
-    Update-LocalPropertiesPaths -Path $localPropsPathEarly -SdkDir $sdkDirEarly -NdkDir $null
+    Update-LocalPropertiesPaths -Path $localPropsPathEarly -SdkDir $sdkDirEarly
+    Remove-NdkDirFromLocalProperties -Path $localPropsPathEarly
     
     # Add platform-tools to PATH if not already there (for adb command)
     $platformTools = Join-Path $sdkDirEarly "platform-tools"
@@ -409,26 +438,7 @@ if ((!$env:ANDROID_HOME -or !$env:ANDROID_SDK_ROOT) -and $sdkDirEarly) {
             }
         }
 
-        # Ensure local.properties has ndk.dir pointing at the selected NDK (use forward slashes)
-        $ndkDirForProps = $ndkDir -replace '\\', '/'
-        $ndkLine = "ndk.dir=$ndkDirForProps"
-        if (Test-Path $localPropsPathEarly) {
-            $localPropsContent = Get-Content $localPropsPathEarly
-            $normalized = @()
-            foreach ($line in $localPropsContent) {
-                if ($line -match '^sdk\.dir=.*ndk\.dir=') {
-                    $parts = $line -split 'ndk\.dir='
-                    $sdkPart = $parts[0].TrimEnd()
-                    if ($sdkPart) { $normalized += $sdkPart }
-                    if ($parts.Count -gt 1) { $normalized += ("ndk.dir=" + $parts[1]) }
-                } else {
-                    $normalized += $line
-                }
-            }
-            $normalized = $normalized | Where-Object { $_ -notmatch '^ndk\.dir=' }
-            $normalized += $ndkLine
-            Set-Content -Path $localPropsPathEarly -Value $normalized
-        }
+        Remove-NdkDirFromLocalProperties -Path $localPropsPathEarly
 
         Write-Host "[OK] Using NDK: $ndkDir" -ForegroundColor Green
     } else {
@@ -507,6 +517,38 @@ function Ensure-BlockAfterLine {
     Set-Content -Path $Path -Value $output
 }
 
+function Ensure-AppCmakeArguments {
+    param(
+        [string]$Path
+    )
+    if (-not (Test-Path $Path)) { return }
+    $raw = Get-Content -Path $Path -Raw
+    if ($raw -match 'BEGIN app-cmake-libcxx-fix') { return }
+
+    $block = @(
+'        // BEGIN app-cmake-libcxx-fix',
+'        externalNativeBuild {',
+'            cmake {',
+'                arguments "-DANDROID_STL=c++_shared",',
+'                          "-DCMAKE_ANDROID_STL_TYPE=c++_shared",',
+'                          "-DCMAKE_SHARED_LINKER_FLAGS=-lc++_shared",',
+'                          "-DCMAKE_EXE_LINKER_FLAGS=-lc++_shared"',
+'            }',
+'        }',
+'        // END app-cmake-libcxx-fix'
+    )
+
+    $lines = Get-Content -Path $Path
+    $output = @()
+    foreach ($line in $lines) {
+        $output += $line
+        if ($line -match 'buildConfigField\s+"String"\s*,\s*"REACT_NATIVE_RELEASE_LEVEL"') {
+            $output += $block
+        }
+    }
+    Set-Content -Path $Path -Value $output
+}
+
 function Ensure-CMakeLibCppShared {
     param(
         [string]$Path,
@@ -547,7 +589,7 @@ function Ensure-CMakeLibCppShared {
 
 # Enforce Gradle STL flags
 $gradleProps = Join-Path $ANDROID_DIR "gradle.properties"
-Ensure-LineInFile -Path $gradleProps -MatchRegex '^android\.cmake\.arguments=' -LineToSet 'android.cmake.arguments=-DANDROID_STL=c++_shared -DCMAKE_ANDROID_STL_TYPE=c++_shared'
+Ensure-LineInFile -Path $gradleProps -MatchRegex '^android\.cmake\.arguments=' -LineToSet 'android.cmake.arguments=-DANDROID_STL=c++_shared -DCMAKE_ANDROID_STL_TYPE=c++_shared -DCMAKE_SHARED_LINKER_FLAGS=-lc++_shared -DCMAKE_EXE_LINKER_FLAGS=-lc++_shared'
 
 # Enforce root build.gradle subproject CMake args
 $rootBuildGradle = Join-Path $ANDROID_DIR "build.gradle"
@@ -577,6 +619,10 @@ $cmakeBlock = @(
 )
 Ensure-BlockAfterLine -Path $rootBuildGradle -AnchorRegex 'apply plugin: "com.facebook.react.rootproject"' -BlockText $cmakeBlock -BlockMarker '// BEGIN libcxx-shared-fix'
 
+# Enforce app build.gradle defaultConfig CMake args
+$appBuildGradle = Join-Path $ANDROID_DIR "app\build.gradle"
+Ensure-AppCmakeArguments -Path $appBuildGradle
+
 # Patch common native modules in node_modules (if present)
 $expoCmake = Join-Path $PROJECT_ROOT "node_modules\expo-modules-core\android\CMakeLists.txt"
 Ensure-CMakeLibCppShared -Path $expoCmake -TargetName '${PACKAGE_NAME}'
@@ -584,8 +630,14 @@ Ensure-CMakeLibCppShared -Path $expoCmake -TargetName '${PACKAGE_NAME}'
 $workletsCmake = Join-Path $PROJECT_ROOT "node_modules\react-native-worklets\android\CMakeLists.txt"
 Ensure-CMakeLibCppShared -Path $workletsCmake -TargetName 'worklets'
 
+$reanimatedCmake = Join-Path $PROJECT_ROOT "node_modules\react-native-reanimated\android\CMakeLists.txt"
+Ensure-CMakeLibCppShared -Path $reanimatedCmake -TargetName 'reanimated'
+
 $gestureCmake = Join-Path $PROJECT_ROOT "node_modules\react-native-gesture-handler\android\src\main\jni\CMakeLists.txt"
 Ensure-CMakeLibCppShared -Path $gestureCmake -TargetName '${PACKAGE_NAME}'
+
+$screensCmake = Join-Path $PROJECT_ROOT "node_modules\react-native-screens\android\CMakeLists.txt"
+Ensure-CMakeLibCppShared -Path $screensCmake -TargetName 'rnscreens'
 
 Write-Host "[OK] Working build fixes applied" -ForegroundColor Green
 
@@ -605,6 +657,7 @@ function Test-FileContains {
 $checkResults = [ordered]@{}
 $checkResults["gradle.properties ANDROID_STL"] = Test-FileContains -Path $gradleProps -Pattern 'android\.cmake\.arguments=.*ANDROID_STL=c\+\+_shared'
 $checkResults["root build.gradle libcxx-shared-fix"] = Test-FileContains -Path $rootBuildGradle -Pattern 'BEGIN libcxx-shared-fix'
+$checkResults["app build.gradle app-cmake-libcxx-fix"] = Test-FileContains -Path $appBuildGradle -Pattern 'BEGIN app-cmake-libcxx-fix'
 $checkResults["expo-modules-core CMake libc++_shared"] = Test-FileContains -Path $expoCmake -Pattern 'c\+\+_shared'
 $checkResults["worklets CMake libc++_shared"] = Test-FileContains -Path $workletsCmake -Pattern 'c\+\+_shared'
 $checkResults["gesture-handler CMake libc++_shared"] = Test-FileContains -Path $gestureCmake -Pattern 'c\+\+_shared'
@@ -685,6 +738,46 @@ Set-Location $PROJECT_ROOT
 # Step 5: Ensure node_modules are fresh
 Write-Host "`nStep 5: Ensuring node_modules are up to date..." -ForegroundColor Yellow
 
+function Test-RequiredPatches {
+    param([string]$ProjectRoot)
+    $patchDir = Join-Path $ProjectRoot "patches"
+    $required = @(
+        "expo-barcode-scanner+14.0.1.patch",
+        "react-native+0.81.5.patch",
+        "react-native-reanimated+4.2.1.patch"
+    )
+    if (-not (Test-Path $patchDir)) {
+        Write-Host "[WARN] patches directory not found: $patchDir" -ForegroundColor DarkYellow
+        return
+    }
+    $missing = @()
+    foreach ($p in $required) {
+        if (-not (Test-Path (Join-Path $patchDir $p))) { $missing += $p }
+    }
+    if ($missing.Count -gt 0) {
+        Write-Host "[WARN] Missing patch-package files:" -ForegroundColor DarkYellow
+        $missing | ForEach-Object { Write-Host "  - $_" -ForegroundColor Gray }
+    } else {
+        Write-Host "[OK] patch-package inputs verified" -ForegroundColor Green
+    }
+}
+
+Test-RequiredPatches -ProjectRoot $PROJECT_ROOT
+
+# Avoid patch-package failures for expo-barcode-scanner-interface in the build copy
+$barcodeInterfacePatch = Join-Path $PROJECT_ROOT "patches\expo-barcode-scanner-interface+3.0.0.patch"
+if (Test-Path $barcodeInterfacePatch) {
+    Remove-Item -Path $barcodeInterfacePatch -Force
+    Write-Host "[INFO] Removed build-local patch: expo-barcode-scanner-interface+3.0.0.patch" -ForegroundColor DarkYellow
+}
+
+# Avoid patch-package failures for expo-camera in the build copy
+$expoCameraPatch = Join-Path $PROJECT_ROOT "patches\expo-camera+16.0.18.patch"
+if (Test-Path $expoCameraPatch) {
+    Remove-Item -Path $expoCameraPatch -Force
+    Write-Host "[INFO] Removed build-local patch: expo-camera+16.0.18.patch" -ForegroundColor DarkYellow
+}
+
 # Always reinstall in build directory to ensure correct versions
 Write-Host "  Installing dependencies..." -ForegroundColor Gray
 npm install --force
@@ -702,6 +795,266 @@ Write-AgentLog -HypothesisId "H4" -Message "node modules check" -Data @{
     npmExitCode   = $npmInstallExit
 }
 #endregion
+
+# Patch expo-barcode-scanner-interface to modern Expo modules config
+function Invoke-BarcodeScannerInterfaceFix {
+    param([string]$ProjectRoot)
+    $interfaceRoot = Join-Path $ProjectRoot "node_modules\expo-barcode-scanner-interface"
+    if (-not (Test-Path $interfaceRoot)) { return }
+
+    $buildGradlePath = Join-Path $interfaceRoot "android\build.gradle"
+    $modernGradle = @(
+        'apply plugin: ''com.android.library''',
+        '',
+        'group = ''host.exp.exponent''',
+        'version = ''3.0.0''',
+        '',
+        'def expoModulesCorePlugin = new File(project(":expo-modules-core").projectDir.absolutePath, "ExpoModulesCorePlugin.gradle")',
+        'apply from: expoModulesCorePlugin',
+        'applyKotlinExpoModulesCorePlugin()',
+        'useCoreDependencies()',
+        'useDefaultAndroidSdkVersions()',
+        'useExpoPublishing()',
+        '',
+        'android {',
+        '  namespace "expo.modules.interfaces.barcodescanner"',
+        '  defaultConfig {',
+        '    versionCode 11',
+        '    versionName "3.0.0"',
+        '  }',
+        '}',
+        '',
+        'dependencies {',
+        '}'
+    )
+    if (Test-Path $buildGradlePath) {
+        Set-Content -Path $buildGradlePath -Value $modernGradle
+    }
+
+    $javaDir = Join-Path $interfaceRoot "android\src\main\java\expo\interfaces\barcodescanner"
+    if (Test-Path $javaDir) {
+        Get-ChildItem -Path $javaDir -Filter "*.java" | ForEach-Object {
+            $raw = Get-Content -Path $_.FullName -Raw
+            $updated = $raw -replace 'package\s+expo\.interfaces\.barcodescanner;', 'package expo.modules.interfaces.barcodescanner;'
+            if ($updated -ne $raw) {
+                Set-Content -Path $_.FullName -Value $updated
+            }
+        }
+
+        $resultPath = Join-Path $javaDir "BarCodeScannerResult.java"
+        $resultContent = @(
+            'package expo.modules.interfaces.barcodescanner;',
+            '',
+            'import java.util.List;',
+            '',
+            'public class BarCodeScannerResult {',
+            '  public static class BoundingBox {',
+            '    public int x;',
+            '    public int y;',
+            '    public int width;',
+            '    public int height;',
+            '',
+            '    public BoundingBox(int x, int y, int width, int height) {',
+            '      this.x = x;',
+            '      this.y = y;',
+            '      this.width = width;',
+            '      this.height = height;',
+            '    }',
+            '  }',
+            '',
+            '  private int mReferenceImageWidth;',
+            '  private int mReferenceImageHeight;',
+            '  private int mType;',
+            '  private String mValue;',
+            '  private String mRaw;',
+            '  private List<Integer> mCornerPoints;',
+            '  private BoundingBox mBoundingBox;',
+            '',
+            '  public BarCodeScannerResult(int type, String value, String raw, List<Integer> cornerPoints, int height, int width) {',
+            '    mType = type;',
+            '    mValue = value;',
+            '    mRaw = raw;',
+            '    mCornerPoints = cornerPoints;',
+            '    mReferenceImageHeight = height;',
+            '    mReferenceImageWidth = width;',
+            '    mBoundingBox = computeBoundingBox(cornerPoints);',
+            '  }',
+            '',
+            '  public BarCodeScannerResult(int type, String value, List<Integer> cornerPoints, int height, int width) {',
+            '    this(type, value, null, cornerPoints, height, width);',
+            '  }',
+            '',
+            '  public int getType() {',
+            '    return mType;',
+            '  }',
+            '  public String getValue() {',
+            '    return mValue;',
+            '  }',
+            '  public String getRaw() {',
+            '    return mRaw;',
+            '  }',
+            '  public void setRaw(String raw) {',
+            '    mRaw = raw;',
+            '  }',
+            '',
+            '  public List<Integer> getCornerPoints() {',
+            '    return mCornerPoints;',
+            '  }',
+            '  public void setCornerPoints(List<Integer> points) {',
+            '    mCornerPoints = points;',
+            '    mBoundingBox = computeBoundingBox(points);',
+            '  }',
+            '',
+            '  public BoundingBox getBoundingBox() {',
+            '    return mBoundingBox;',
+            '  }',
+            '  public void setBoundingBox(BoundingBox boundingBox) {',
+            '    mBoundingBox = boundingBox;',
+            '  }',
+            '',
+            '  public int getReferenceImageHeight() {',
+            '    return mReferenceImageHeight;',
+            '  }',
+            '  public void setReferenceImageHeight(int height) {',
+            '    mReferenceImageHeight = height;',
+            '  }',
+            '',
+            '  public int getReferenceImageWidth() {',
+            '    return mReferenceImageWidth;',
+            '  }',
+            '  public void setReferenceImageWidth(int width) {',
+            '    mReferenceImageWidth = width;',
+            '  }',
+            '',
+            '  private BoundingBox computeBoundingBox(List<Integer> cornerPoints) {',
+            '    if (cornerPoints == null || cornerPoints.size() < 2) {',
+            '      return new BoundingBox(0, 0, 0, 0);',
+            '    }',
+            '    int minX = Integer.MAX_VALUE;',
+            '    int minY = Integer.MAX_VALUE;',
+            '    int maxX = Integer.MIN_VALUE;',
+            '    int maxY = Integer.MIN_VALUE;',
+            '    for (int i = 0; i < cornerPoints.size() - 1; i += 2) {',
+            '      int x = cornerPoints.get(i);',
+            '      int y = cornerPoints.get(i + 1);',
+            '      if (x < minX) minX = x;',
+            '      if (y < minY) minY = y;',
+            '      if (x > maxX) maxX = x;',
+            '      if (y > maxY) maxY = y;',
+            '    }',
+            '    if (minX == Integer.MAX_VALUE || minY == Integer.MAX_VALUE || maxX == Integer.MIN_VALUE || maxY == Integer.MIN_VALUE) {',
+            '      return new BoundingBox(0, 0, 0, 0);',
+            '    }',
+            '    return new BoundingBox(minX, minY, maxX - minX, maxY - minY);',
+            '  }',
+            '}',
+            ''
+        )
+        if (Test-Path $resultPath) {
+            Set-Content -Path $resultPath -Value $resultContent
+        }
+
+        $scannerInterfacePath = Join-Path $javaDir "BarCodeScannerInterface.java"
+        $scannerInterfaceContent = @(
+            'package expo.modules.interfaces.barcodescanner;',
+            '',
+            'public interface BarCodeScannerInterface extends BarCodeScanner {',
+            '}',
+            ''
+        )
+        Set-Content -Path $scannerInterfacePath -Value $scannerInterfaceContent
+
+        $providerInterfacePath = Join-Path $javaDir "BarCodeScannerProviderInterface.java"
+        $providerInterfaceContent = @(
+            'package expo.modules.interfaces.barcodescanner;',
+            '',
+            'import android.content.Context;',
+            '',
+            'public interface BarCodeScannerProviderInterface {',
+            '  BarCodeScannerInterface createBarCodeDetectorWithContext(Context context);',
+            '}',
+            ''
+        )
+        Set-Content -Path $providerInterfacePath -Value $providerInterfaceContent
+    }
+
+    $manifestPath = Join-Path $interfaceRoot "android\src\main\AndroidManifest.xml"
+    if (Test-Path $manifestPath) {
+        $manifestRaw = Get-Content -Path $manifestPath -Raw
+        $manifestUpdated = $manifestRaw -replace '\s*package="expo\.interfaces\.barcodescanner"', ''
+        if ($manifestUpdated -ne $manifestRaw) {
+            Set-Content -Path $manifestPath -Value $manifestUpdated
+        }
+    }
+
+    Write-Host "[OK] Applied expo-barcode-scanner-interface compatibility fix" -ForegroundColor Green
+}
+
+Invoke-BarcodeScannerInterfaceFix -ProjectRoot $PROJECT_ROOT
+
+function Invoke-ExpoBarcodeScannerDependencyFix {
+    param([string]$ProjectRoot)
+    $gradlePath = Join-Path $ProjectRoot "node_modules\expo-barcode-scanner\android\build.gradle"
+    if (-not (Test-Path $gradlePath)) { return }
+
+    $raw = Get-Content -Path $gradlePath -Raw
+    if ($raw -notmatch 'expo-barcode-scanner-interface') {
+        $updated = $raw -replace '(?m)^\s*dependencies\s*\{', 'dependencies {`r`n  implementation project(":expo-barcode-scanner-interface")'
+        if ($updated -ne $raw) {
+            Set-Content -Path $gradlePath -Value $updated
+        }
+    }
+}
+
+function Invoke-ExpoCameraDependencyFix {
+    param([string]$ProjectRoot)
+    $gradlePath = Join-Path $ProjectRoot "node_modules\expo-camera\android\build.gradle"
+    if (-not (Test-Path $gradlePath)) { return }
+
+    $raw = Get-Content -Path $gradlePath -Raw
+    if ($raw -notmatch 'expo-barcode-scanner-interface') {
+        $updated = $raw -replace '(?m)^\s*dependencies\s*\{', 'dependencies {`r`n  implementation project(":expo-barcode-scanner-interface")'
+        if ($updated -ne $raw) {
+            Set-Content -Path $gradlePath -Value $updated
+        }
+    }
+}
+
+Invoke-ExpoBarcodeScannerDependencyFix -ProjectRoot $PROJECT_ROOT
+Invoke-ExpoCameraDependencyFix -ProjectRoot $PROJECT_ROOT
+
+# Patch react-native-background-actions to use foreground service type on API 29+
+function Invoke-BackgroundActionsForegroundTypeFix {
+    param([string]$ProjectRoot)
+    $taskPath = Join-Path $ProjectRoot "node_modules\react-native-background-actions\android\src\main\java\com\asterinet\react\bgactions\RNBackgroundActionsTask.java"
+    if (-not (Test-Path $taskPath)) { return }
+
+    $raw = Get-Content -Path $taskPath -Raw
+
+    if ($raw -notmatch 'ServiceInfo') {
+        $raw = $raw -replace '(?m)^import android\.content\.Intent;\s*$', "import android.content.Intent;`nimport android.content.pm.ServiceInfo;"
+    }
+
+    if ($raw -match 'startForeground\(SERVICE_NOTIFICATION_ID, notification,') {
+        Set-Content -Path $taskPath -Value $raw
+        return
+    }
+
+    $replacement = @(
+        '        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {',
+        '            int serviceType = ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC | ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION;',
+        '            startForeground(SERVICE_NOTIFICATION_ID, notification, serviceType);',
+        '        } else {',
+        '            startForeground(SERVICE_NOTIFICATION_ID, notification);',
+        '        }'
+    ) -join "`n"
+
+    $raw = $raw -replace 'startForeground\(SERVICE_NOTIFICATION_ID, notification\);', $replacement
+    Set-Content -Path $taskPath -Value $raw
+    Write-Host "[OK] Applied background-actions foreground service type fix" -ForegroundColor Green
+}
+
+Invoke-BackgroundActionsForegroundTypeFix -ProjectRoot $PROJECT_ROOT
 
 # Step 6: Pre-build checks
 Write-Host "`nStep 6: Running pre-build checks..." -ForegroundColor Yellow
@@ -809,6 +1162,44 @@ Write-Host "====================================" -ForegroundColor Cyan
 # Post-build verification
 if ($expoExitCode -eq 0) {
     Write-Host "`n[OK] Build succeeded!" -ForegroundColor Green
+
+    # Save last known good build snapshot
+    function Get-PatchList {
+        param([string]$ProjectRoot)
+        $patchDir = Join-Path $ProjectRoot "patches"
+        if (-not (Test-Path $patchDir)) { return @() }
+        return (Get-ChildItem -Path $patchDir -Filter "*.patch" -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Name)
+    }
+
+    $lastGoodPath = Join-Path $PROJECT_ROOT "build-last-good.json"
+    $nodeVersion = (& node --version 2>$null | Out-String).Trim()
+    $javaVersion = (& java -version 2>&1 | Select-Object -First 1)
+    $buildConfig = $null
+    if (Test-Path $configPath) {
+        try { $buildConfig = Get-Content -Path $configPath -Raw | ConvertFrom-Json } catch { $buildConfig = $null }
+    }
+
+    $lastGoodData = [ordered]@{
+        timestamp           = (Get-Date).ToString("o")
+        androidSdkRoot      = $env:ANDROID_SDK_ROOT
+        androidHome         = $env:ANDROID_HOME
+        androidNdkHome       = $env:ANDROID_NDK_HOME
+        ndkHome             = $env:NDK_HOME
+        javaHome            = $env:JAVA_HOME
+        nodeBinary          = $env:NODE_BINARY
+        androidStl          = $env:ANDROID_STL
+        cmakeAndroidStlType = $env:CMAKE_ANDROID_STL_TYPE
+        nodeVersion         = $nodeVersion
+        javaVersion         = $javaVersion
+        patches             = (Get-PatchList -ProjectRoot $PROJECT_ROOT)
+        buildConfig         = $buildConfig
+    }
+    try {
+        $lastGoodData | ConvertTo-Json -Depth 6 | Set-Content -Path $lastGoodPath -Encoding UTF8
+        Write-Host "[OK] Saved last known good build snapshot: $lastGoodPath" -ForegroundColor Green
+    } catch {
+        Write-Host "[WARN] Failed to save last known good build snapshot" -ForegroundColor DarkYellow
+    }
     
     # Check for APK output
     $apkSearchPaths = @(

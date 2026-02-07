@@ -4,7 +4,8 @@ export type RootStackParamList = {
   CustomerDashboard: undefined;
   RiderDashboard: undefined;
   AssignedDeliveries: undefined;
-  BoxControls: undefined;
+  BoxControls: { boxId?: string } | undefined;
+  PairBox: undefined;
   Arrival: undefined;
   DeliveryCompletion: undefined;
   AdminDashboard: undefined;

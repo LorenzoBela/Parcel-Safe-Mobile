@@ -4,6 +4,7 @@ import { Text, Card, Button, Surface, ProgressBar, useTheme, IconButton, Divider
 import LottieView from 'lottie-react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import dayjs from 'dayjs';
+import { useNavigation, useRoute } from '@react-navigation/native';
 import {
     subscribeToBattery,
     BatteryState,
@@ -24,6 +25,11 @@ import {
 } from '../../services/firebaseClient';
 import { subscribeToAdminOverride, AdminOverrideState, getOverrideNotificationMessage } from '../../services/adminOverrideService';
 import { bleOtpService, BleBoxDevice, BleTransferResult } from '../../services/bleOtpService';
+import {
+    BoxPairingState,
+    isPairingActive,
+    subscribeToRiderPairing,
+} from '../../services/boxPairingService';
 
 // Demo box ID (would come from navigation params in production)
 const DEMO_BOX_ID = 'BOX_001';
@@ -31,11 +37,15 @@ const DEMO_DELIVERY_ID = 'DEL_001';
 const DEMO_OTP = '123456';
 
 export default function BoxControlsScreen() {
+    const navigation = useNavigation();
+    const route = useRoute<any>();
     const theme = useTheme();
     const animationRef = useRef<LottieView>(null);
     const [isLocked, setIsLocked] = useState(true);
     const [rebooting, setRebooting] = useState(false);
     const [logs, setLogs] = useState<{ time: string; message: string; type: string }[]>([]);
+    const [pairingState, setPairingState] = useState<BoxPairingState | null>(null);
+    const [riderId] = useState('RIDER_001');
 
     // EC-03: Battery Monitoring State
     const [batteryState, setBatteryState] = useState<BatteryState | null>(null);
@@ -76,13 +86,17 @@ export default function BoxControlsScreen() {
         sync: 'Just now'
     });
 
+    const isPaired = isPairingActive(pairingState);
+    const pairedBoxId = pairingState?.box_id;
+    const boxId = route?.params?.boxId ?? pairedBoxId ?? DEMO_BOX_ID;
+
     // Initialize Logs and Subscriptions
     useEffect(() => {
         addLog("Control Panel accessed", "info");
         addLog("Telemetry stream connected", "success");
 
         // EC-03: Subscribe to battery state
-        const unsubscribeBattery = subscribeToBattery(DEMO_BOX_ID, (state) => {
+        const unsubscribeBattery = subscribeToBattery(boxId, (state) => {
             setBatteryState(state);
             if (state) {
                 setTelemetry(prev => ({
@@ -93,7 +107,7 @@ export default function BoxControlsScreen() {
         });
 
         // EC-18: Subscribe to tamper state
-        const unsubscribeTamper = subscribeToTamper(DEMO_BOX_ID, (state) => {
+        const unsubscribeTamper = subscribeToTamper(boxId, (state) => {
             setTamperState(state);
             if (state?.detected) {
                 addLog("⚠️ TAMPER DETECTED - Box in lockdown!", "error");
@@ -101,7 +115,7 @@ export default function BoxControlsScreen() {
         });
 
         // EC-04: Subscribe to OTP lockout state
-        const unsubscribeLockout = subscribeToLockout(DEMO_BOX_ID, (state) => {
+        const unsubscribeLockout = subscribeToLockout(boxId, (state) => {
             setLockoutState(state);
             if (state?.active) {
                 addLog(`OTP Lockout active (${state.attempt_count} failed attempts)`, "warning");
@@ -109,7 +123,7 @@ export default function BoxControlsScreen() {
         });
 
         // EC-07: Subscribe to OTP status
-        const unsubscribeOtpStatus = subscribeToOtpStatus(DEMO_BOX_ID, (status) => {
+        const unsubscribeOtpStatus = subscribeToOtpStatus(boxId, (status) => {
             setOtpStatus(status);
             if (status?.otp_expired) {
                 addLog("⚠️ OTP has expired - regeneration needed", "warning");
@@ -117,7 +131,7 @@ export default function BoxControlsScreen() {
         });
 
         // EC-77: Subscribe to admin override
-        const unsubscribeOverride = subscribeToAdminOverride(DEMO_BOX_ID, (state) => {
+        const unsubscribeOverride = subscribeToAdminOverride(boxId, (state) => {
             setAdminOverrideState(state);
             if (state?.active && !state.processed) {
                 const msg = getOverrideNotificationMessage(state);
@@ -127,7 +141,7 @@ export default function BoxControlsScreen() {
         });
 
         // EC-90: Subscribe to power state
-        const unsubscribePower = subscribeToPower(DEMO_BOX_ID, (state) => {
+        const unsubscribePower = subscribeToPower(boxId, (state) => {
             setPowerState(state);
             if (state?.solenoid_blocked) {
                 addLog("🔋 VOLTAGE CRITICAL - Unlock disabled", "error");
@@ -135,7 +149,7 @@ export default function BoxControlsScreen() {
         });
 
         // EC-97: Subscribe to Face Auth Status
-        const unsubscribeFaceAuth = subscribeToFaceAuthStatus(DEMO_BOX_ID, (status) => {
+        const unsubscribeFaceAuth = subscribeToFaceAuthStatus(boxId, (status) => {
             setFaceAuthStatus(status || 'IDLE');
 
             if (status === 'AUTHENTICATED') {
@@ -151,7 +165,7 @@ export default function BoxControlsScreen() {
         });
 
         // EC-96: Subscribe to Lock Health
-        const unsubscribeLockHealth = subscribeToLockHealth(DEMO_BOX_ID, (state) => {
+        const unsubscribeLockHealth = subscribeToLockHealth(boxId, (state) => {
             setLockHealth(state);
             if (state?.overheated) {
                 addLog("🔥 Solenoid Overheated - Actuation Blocked", "error");
@@ -168,7 +182,14 @@ export default function BoxControlsScreen() {
             unsubscribeFaceAuth();
             unsubscribeLockHealth();
         };
-    }, []);
+    }, [boxId]);
+
+    useEffect(() => {
+        const unsubscribe = subscribeToRiderPairing(riderId, (state) => {
+            setPairingState(state);
+        });
+        return unsubscribe;
+    }, [riderId]);
 
     // EC-04: Lockout countdown timer
     useEffect(() => {
@@ -210,6 +231,11 @@ export default function BoxControlsScreen() {
     };
 
     const toggleLock = () => {
+        if (!isPaired) {
+            Alert.alert('Pair Required', 'Scan your box QR to unlock controls.');
+            navigation.navigate('PairBox' as never);
+            return;
+        }
         // EC-90: Block unlock if solenoid is blocked due to low voltage
         if (isLocked && powerState?.solenoid_blocked) {
             Alert.alert(
@@ -286,7 +312,7 @@ export default function BoxControlsScreen() {
                     text: "Reset",
                     onPress: async () => {
                         try {
-                            await resetLockout(DEMO_BOX_ID);
+                            await resetLockout(boxId);
                             addLog("OTP Lockout reset successfully", "success");
                             Alert.alert("Success", "Lockout has been reset. Customer can now retry OTP.");
                         } catch (error) {
@@ -301,6 +327,11 @@ export default function BoxControlsScreen() {
 
     // EC-02: BLE OTP Transfer
     const handleBleTransfer = async () => {
+        if (!isPaired) {
+            Alert.alert('Pair Required', 'Scan your box QR before sending OTP over BLE.');
+            navigation.navigate('PairBox' as never);
+            return;
+        }
         setShowBleModal(true);
         setBleStatus('scanning');
         setBleMessage('Scanning for nearby box...');
@@ -308,7 +339,7 @@ export default function BoxControlsScreen() {
 
         try {
             const result = await bleOtpService.sendOtpToBox(
-                DEMO_BOX_ID,
+                boxId,
                 DEMO_OTP,
                 DEMO_DELIVERY_ID,
                 {
@@ -396,7 +427,7 @@ export default function BoxControlsScreen() {
 
         try {
             addLog("Starting Face Scan...", "info");
-            await startFaceScan(DEMO_BOX_ID);
+            await startFaceScan(boxId);
         } catch (error) {
             addLog("Failed to start face scan", "error");
         }
@@ -405,6 +436,24 @@ export default function BoxControlsScreen() {
     return (
         <View style={styles.container}>
             <ScrollView contentContainerStyle={styles.scrollContent}>
+
+                {!isPaired && (
+                    <Surface style={styles.pairingBanner} elevation={3}>
+                        <MaterialCommunityIcons name="qrcode" size={24} color="white" />
+                        <View style={{ flex: 1, marginLeft: 12 }}>
+                            <Text style={styles.alertTitle}>PAIR REQUIRED</Text>
+                            <Text style={styles.alertText}>Scan the box QR to unlock controls and health data.</Text>
+                        </View>
+                        <Button
+                            mode="contained"
+                            onPress={() => navigation.navigate('PairBox' as never)}
+                            buttonColor="white"
+                            textColor="#374151"
+                        >
+                            Pair
+                        </Button>
+                    </Surface>
+                )}
 
                 {/* EC-77: Admin Override Alert Banner */}
                 {adminOverrideState?.active && !adminOverrideState.processed && (
@@ -797,6 +846,14 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         alignItems: 'center',
         backgroundColor: '#D32F2F',
+        padding: 16,
+        borderRadius: 12,
+        marginBottom: 16,
+    },
+    pairingBanner: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#1D4ED8',
         padding: 16,
         borderRadius: 12,
         marginBottom: 16,
