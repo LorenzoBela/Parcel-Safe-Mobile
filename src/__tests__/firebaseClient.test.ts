@@ -12,6 +12,17 @@ jest.mock('firebase/app', () => ({
     getApps: jest.fn(() => [{}]),
 }));
 
+// Mock Firebase Auth
+jest.mock('firebase/auth', () => ({
+    getAuth: jest.fn(),
+    initializeAuth: jest.fn(() => ({})),
+}));
+
+// Mock @firebase/auth for React Native persistence
+jest.mock('@firebase/auth', () => ({
+    getReactNativePersistence: jest.fn(),
+}));
+
 // Shared mock references
 let mockOnValueCallback: ((snapshot: { val: () => unknown }) => void) | null = null;
 let lastSetCall: { ref: unknown; data: unknown } | null = null;
@@ -22,7 +33,7 @@ jest.mock('firebase/database', () => ({
     ref: jest.fn((db, path) => ({ _path: path })),
     onValue: jest.fn((dbRef, callback) => {
         mockOnValueCallback = callback;
-        return () => {}; // Unsubscribe
+        return () => { }; // Unsubscribe
     }),
     off: jest.fn(),
     set: jest.fn((dbRef, data) => {
@@ -70,7 +81,7 @@ describe('firebaseClient', () => {
             };
 
             subscribeToLocation('BOX_001', mockCallback);
-            
+
             // Simulate receiving data through the callback
             if (mockOnValueCallback) {
                 mockOnValueCallback({ val: () => mockLocationData });
@@ -83,7 +94,7 @@ describe('firebaseClient', () => {
             const mockCallback = jest.fn();
 
             subscribeToLocation('BOX_001', mockCallback);
-            
+
             // Simulate receiving null data
             if (mockOnValueCallback) {
                 mockOnValueCallback({ val: () => null });
@@ -98,7 +109,7 @@ describe('firebaseClient', () => {
             const unsubscribe = subscribeToLocation('BOX_001', mockCallback);
 
             expect(typeof unsubscribe).toBe('function');
-            
+
             // Call unsubscribe - should call off
             unsubscribe();
             expect(off).toHaveBeenCalled();
@@ -153,7 +164,7 @@ describe('firebaseClient', () => {
 
             expect(ref).toHaveBeenCalledWith(expect.anything(), 'locations/BOX_001');
             expect(set).toHaveBeenCalled();
-            
+
             expect(lastSetCall).not.toBeNull();
             const data = lastSetCall!.data as Record<string, unknown>;
             expect(data.latitude).toBe(14.6042);
@@ -191,7 +202,7 @@ describe('firebaseClient', () => {
 
             expect(ref).toHaveBeenCalledWith(expect.anything(), 'hardware/BOX_001');
             expect(set).toHaveBeenCalled();
-            
+
             expect(lastSetCall).not.toBeNull();
             const data = lastSetCall!.data as Record<string, unknown>;
             expect(data.status).toBe('ARRIVED');

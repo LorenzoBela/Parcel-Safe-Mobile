@@ -18,12 +18,20 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 // Conditionally import modules
 let Notifications: any = null;
 let messaging: any = null;
+let AuthorizationStatus: any = null;
 
 try {
     Notifications = require('expo-notifications');
-    // Use modular API (Firebase v22+) instead of deprecated .default
+    // Use modular API if available to avoid deprecation warnings
     const messagingModule = require('@react-native-firebase/messaging');
-    messaging = messagingModule.default || messagingModule;
+    if (messagingModule.getMessaging) {
+        // Wrap in function to match existing usage: messaging().method()
+        messaging = () => messagingModule.getMessaging();
+    } else {
+        messaging = messagingModule.default || messagingModule;
+    }
+    // safely capture AuthorizationStatus
+    AuthorizationStatus = messagingModule.AuthorizationStatus || (messagingModule.default && messagingModule.default.AuthorizationStatus) || {};
 } catch (error) {
     console.log('[DEV] Native modules not available - using console simulation');
 }
@@ -151,8 +159,8 @@ export async function registerForPushNotifications(): Promise<string | null> {
     try {
         // Request FCM permission (Android 13+)
         const authStatus = await messaging().requestPermission();
-        const enabled = authStatus === messaging.AuthorizationStatus.AUTHORIZED ||
-                       authStatus === messaging.AuthorizationStatus.PROVISIONAL;
+        const enabled = authStatus === AuthorizationStatus.AUTHORIZED ||
+            authStatus === AuthorizationStatus.PROVISIONAL;
 
         if (!enabled) {
             console.warn('FCM permission not granted');
@@ -209,7 +217,7 @@ export async function getFCMToken(): Promise<string | null> {
  */
 export function onTokenRefresh(callback: (token: string) => void): () => void {
     if (!messaging) {
-        return () => {};
+        return () => { };
     }
 
     const unsubscribe = messaging().onTokenRefresh(async (newToken: string) => {

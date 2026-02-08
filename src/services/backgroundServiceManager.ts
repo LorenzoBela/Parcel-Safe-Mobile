@@ -18,6 +18,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 // Native modules - conditionally imported to prevent startup crashes
 let NetInfo: any = null;
 let messaging: any = null;
+let AuthorizationStatus: any = null;
 let BackgroundFetch: any = null;
 let BackgroundService: any = null;
 
@@ -25,7 +26,14 @@ try {
     NetInfo = require('@react-native-community/netinfo').default;
     // Use modular API (Firebase v22+) instead of deprecated .default
     const messagingModule = require('@react-native-firebase/messaging');
-    messaging = messagingModule.default || messagingModule;
+    if (messagingModule.getMessaging) {
+        // Wrap in function to match existing usage: messaging().method()
+        messaging = () => messagingModule.getMessaging();
+    } else {
+        messaging = messagingModule.default || messagingModule;
+    }
+    // safely capture AuthorizationStatus
+    AuthorizationStatus = messagingModule.AuthorizationStatus || (messagingModule.default && messagingModule.default.AuthorizationStatus) || {};
     BackgroundFetch = require('react-native-background-fetch').default;
     BackgroundService = require('react-native-background-actions').default;
 } catch (error) {
@@ -116,7 +124,7 @@ export function onBackgroundEvent(handler: BackgroundEventHandler): () => void {
  * Emit a background event to all handlers
  */
 async function emitEvent(type: BackgroundEventType, data: any): Promise<void> {
-    if (__DEV__) console.log(`[BackgroundService] Event: ${type}`);
+    // if (__DEV__) console.log(`[BackgroundService] Event: ${type}`);
 
     for (const handler of eventHandlers) {
         try {
@@ -147,8 +155,8 @@ async function initializeFCM(): Promise<string | null> {
 
         // Request permission (Android 13+)
         const authStatus = await messaging().requestPermission();
-        const enabled = authStatus === messaging.AuthorizationStatus.AUTHORIZED ||
-            authStatus === messaging.AuthorizationStatus.PROVISIONAL;
+        const enabled = authStatus === AuthorizationStatus.AUTHORIZED ||
+            authStatus === AuthorizationStatus.PROVISIONAL;
 
         if (!enabled) {
             if (__DEV__) console.warn('[BackgroundService] FCM permission denied');
@@ -157,7 +165,7 @@ async function initializeFCM(): Promise<string | null> {
 
         // Get FCM token
         const fcmToken = await messaging().getToken();
-        if (__DEV__) console.log('[BackgroundService] FCM Token obtained');
+        // if (__DEV__) console.log('[BackgroundService] FCM Token obtained');
 
         // Save token
         await AsyncStorage.setItem(BACKGROUND_CONFIG.STORAGE_KEYS.FCM_TOKEN, fcmToken);
@@ -364,7 +372,7 @@ async function startForegroundService(): Promise<void> {
 
         await BackgroundService.start(foregroundServiceTask, options);
         backgroundState.isForegroundServiceActive = true;
-        if (__DEV__) console.log('[BackgroundService] Foreground service started');
+        // if (__DEV__) console.log('[BackgroundService] Foreground service started');
     } catch (error) {
         if (__DEV__) console.error('[BackgroundService] Foreground service error:', error);
         throw error; // Re-throw to prevent silent failures
@@ -437,7 +445,7 @@ function setupNetworkMonitoring(): void {
         backgroundState.networkStatus = isOnline ? 'online' : 'offline';
 
         if (!wasOnline && isOnline) {
-            if (__DEV__) console.log('[BackgroundService] Network restored');
+            // if (__DEV__) console.log('[BackgroundService] Network restored');
             emitEvent('connection_restored', { timestamp: Date.now() });
             backgroundState.reconnectAttempts = 0;
         } else if (wasOnline && !isOnline) {
@@ -459,7 +467,7 @@ export async function initializeBackgroundServices(): Promise<void> {
     }
 
     try {
-        if (__DEV__) console.log('[BackgroundService] Initializing...');
+        // if (__DEV__) console.log('[BackgroundService] Initializing...');
 
         // 1. Setup notification channels
         await setupNotificationChannels();
@@ -467,7 +475,7 @@ export async function initializeBackgroundServices(): Promise<void> {
         // 2. Initialize FCM
         const fcmToken = await initializeFCM();
         if (fcmToken) {
-            if (__DEV__) console.log('[BackgroundService] FCM initialized');
+            // if (__DEV__) console.log('[BackgroundService] FCM initialized');
         }
 
         // 3. Initialize background fetch
@@ -489,7 +497,7 @@ export async function initializeBackgroundServices(): Promise<void> {
             JSON.stringify(backgroundState)
         );
 
-        if (__DEV__) console.log('[BackgroundService] Successfully initialized');
+        // if (__DEV__) console.log('[BackgroundService] Successfully initialized');
     } catch (error) {
         if (__DEV__) console.error('[BackgroundService] Initialization error:', error);
         throw error;
@@ -590,7 +598,7 @@ export async function setupNotificationChannels(): Promise<void> {
             }
         );
 
-        if (__DEV__) console.log('[BackgroundService] Notification channels created');
+        // if (__DEV__) console.log('[BackgroundService] Notification channels created');
     } catch (error) {
         if (__DEV__) console.error('[BackgroundService] Notification channel error:', error);
     }

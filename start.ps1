@@ -533,6 +533,19 @@ function Start-RealtimeSync {
                             if ($verbose) {
                                 Write-Host "[SYNC] Updated: $relativePath" -ForegroundColor DarkGray
                             }
+
+                            # Auto-install dependencies if package.json changes
+                            if ($relativePath -match "package(-lock)?\.json${dollar}") {
+                                try {
+                                    Write-Host "[SYNC] Dependencies changed - running install..." -ForegroundColor Yellow
+                                    Push-Location $build
+                                    cmd /c "npm install" | Out-Null
+                                    Write-Host "[SYNC] Dependencies installed" -ForegroundColor Green
+                                    Pop-Location
+                                } catch {
+                                    Write-Host "[SYNC ERROR] Install failed: ${dollar}_" -ForegroundColor Red
+                                }
+                            }
                         }
                     }
                     'Created' {

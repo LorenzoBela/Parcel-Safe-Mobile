@@ -22,6 +22,14 @@ const mockNavigation = {
 };
 const mockRoute = { params: {} } as any;
 
+jest.mock('firebase/database', () => ({
+    getDatabase: jest.fn(() => ({})),
+    ref: jest.fn(() => ({})),
+    onValue: jest.fn((ref, callback) => jest.fn()),
+    off: jest.fn(),
+    set: jest.fn(() => Promise.resolve()),
+}));
+
 jest.mock('@react-navigation/native', () => ({
     useNavigation: () => mockNavigation,
     useRoute: () => mockRoute,
@@ -38,6 +46,25 @@ jest.mock('react-native-maps', () => {
         PROVIDER_GOOGLE: 'google',
     };
 });
+
+jest.mock('react-native-safe-area-context', () => {
+    const React = require('react');
+    const MOCK_INSETS = { top: 0, right: 0, bottom: 0, left: 0 };
+    return {
+        SafeAreaProvider: ({ children }: any) => children,
+        SafeAreaView: ({ children }: any) => children,
+        useSafeAreaInsets: () => MOCK_INSETS,
+        SafeAreaInsetsContext: {
+            Consumer: ({ children }: any) => children(MOCK_INSETS),
+        },
+    };
+});
+
+jest.mock('@expo/vector-icons', () => ({
+    MaterialCommunityIcons: 'MaterialCommunityIcons',
+    Ionicons: 'Ionicons',
+}));
+
 
 jest.mock('lottie-react-native', () => {
     const React = require('react');
@@ -101,6 +128,8 @@ jest.mock('../../../services/firebaseClient', () => ({
     subscribeToOtpStatus: jest.fn(() => () => undefined),
     subscribeToResourceConflict: jest.fn(() => () => undefined), // Added missing mock
     resetLockout: jest.fn(() => Promise.resolve()),
+    getFirebaseDatabase: jest.fn(() => ({})),
+    subscribeToLowLight: jest.fn(() => () => undefined), // Added missing mock
 }));
 
 jest.mock('../../../services/offlineCache', () => ({
@@ -259,6 +288,14 @@ jest.mock('../../../services/tokenRefreshService', () => ({
     formatTimeUntilExpiry: jest.fn(() => '30:00'), // Added missing mock
 }));
 
+jest.mock('../../../services/boxPairingService', () => ({
+    subscribeToRiderPairing: jest.fn((riderId, cb) => {
+        cb({ box_id: 'BOX-1', state: 'PAIRED' }); // Provide active pairing
+        return () => undefined;
+    }),
+    isPairingActive: jest.fn(() => true), // Force active pairing
+}));
+
 const renderWithProvider = (component: React.ReactElement) =>
     render(<PaperProvider>{component}</PaperProvider>);
 
@@ -266,7 +303,7 @@ describe('Rider Screens', () => {
     beforeEach(() => {
         jest.clearAllMocks();
         jest.useFakeTimers();
-        mockRoute.params = {};
+        mockRoute.params = { boxId: 'BOX-1' };
     });
 
     afterEach(() => {

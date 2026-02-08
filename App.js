@@ -35,7 +35,7 @@ try {
     }),
   });
 } catch (error) {
-  if (__DEV__) console.log('[App] Native modules not available - requires dev build');
+  // if (__DEV__) console.log('[App] Native modules not available - requires dev build');
 }
 
 const AppContent = () => {
@@ -54,14 +54,14 @@ const AppContent = () => {
       }
 
       try {
-        if (__DEV__) console.log('[App] Initializing background services...');
+        // if (__DEV__) console.log('[App] Initializing background services...');
 
         // Initialize background service manager
         await initializeBackgroundServices();
 
         // Subscribe to background events
         const unsubscribeBackgroundEvents = onBackgroundEvent((type, data) => {
-          if (__DEV__) console.log('[App] Background event:', type);
+          // if (__DEV__) console.log('[App] Background event:', type);
 
           if (type === 'order_received') {
             if (__DEV__) console.log('[App] New order received');
@@ -71,14 +71,14 @@ const AppContent = () => {
 
         // Subscribe to new order events
         const unsubscribeOrders = onNewOrder((order) => {
-          if (__DEV__) console.log('[App] New order callback');
+          // if (__DEV__) console.log('[App] New order callback');
         });
         cleanupFunctions.push(unsubscribeOrders);
 
         // Listen for notification taps
         const notificationResponseSubscription = Notifications.addNotificationResponseReceivedListener(
           (response) => {
-            if (__DEV__) console.log('[App] Notification tapped');
+            // if (__DEV__) console.log('[App] Notification tapped');
             const data = response.notification.request.content.data;
 
             if (data.type === 'new_order') {
@@ -88,7 +88,7 @@ const AppContent = () => {
         );
         cleanupFunctions.push(() => notificationResponseSubscription.remove());
 
-        if (__DEV__) console.log('[App] Background services initialized successfully');
+        // if (__DEV__) console.log('[App] Background services initialized successfully');
       } catch (error) {
         if (__DEV__) console.error('[App] Failed to initialize background services:', error);
 
@@ -109,9 +109,9 @@ const AppContent = () => {
     // Monitor app state changes
     const subscription = AppState.addEventListener('change', nextAppState => {
       if (appState.match(/inactive|background/) && nextAppState === 'active') {
-        if (__DEV__) console.log('[App] App has come to the foreground');
+        // if (__DEV__) console.log('[App] App has come to the foreground');
       } else if (nextAppState.match(/inactive|background/)) {
-        if (__DEV__) console.log('[App] App has gone to the background');
+        // if (__DEV__) console.log('[App] App has gone to the background');
       }
       setAppState(nextAppState);
     });

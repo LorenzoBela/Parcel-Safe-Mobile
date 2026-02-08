@@ -13,17 +13,12 @@ import {
     writePhoneLocation,
     subscribeToBoxState,
     LocationData,
-    BoxState
+    BoxState,
+    subscribeToGpsHealth,
+    GpsHealthState
 } from './firebaseClient';
-// Firebase native database - conditionally imported to prevent startup crashes
-let database: any = null;
-try {
-    // Use modular API (Firebase v22+) instead of deprecated .default
-    const databaseModule = require('@react-native-firebase/database');
-    database = databaseModule.default || databaseModule;
-} catch (error) {
-    if (__DEV__) console.log('[LocationRedundancy] @react-native-firebase/database not available');
-}
+// Firebase native database import removed - using JS SDK via firebaseClient
+
 
 // ==================== Configuration ====================
 
@@ -204,23 +199,15 @@ class LocationRedundancyManager {
         });
 
         // EC-84: Subscribe to GPS Health
-        if (database) {
-            const healthPath = `boxes/${this.boxId}/gps_health`;
-            const onHealthUpdate = (snapshot: any) => {
-                const data = snapshot.val();
-                if (data) {
-                    this.handleGpsHealthUpdate(data);
-                }
-            };
-            database().ref(healthPath).on('value', onHealthUpdate);
-            this.unsubscribeGpsHealth = () => database().ref(healthPath).off('value', onHealthUpdate);
-        } else {
-            if (__DEV__) console.log('[LocationRedundancy] Firebase database not available, skipping GPS health');
-        }
+        this.unsubscribeGpsHealth = subscribeToGpsHealth(this.boxId, (data) => {
+            if (data) {
+                this.handleGpsHealthUpdate(data);
+            }
+        });
     }
 
     // EC-84: Handle GPS health updates
-    private handleGpsHealthUpdate(data: any): void {
+    private handleGpsHealthUpdate(data: GpsHealthState): void {
         const hdop = data.box_hdop || 100;
         const satellites = data.satellites_visible || 0;
         const obstructionDetected = data.obstruction_detected || false;

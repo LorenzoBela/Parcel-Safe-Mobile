@@ -6,6 +6,7 @@ import { useNavigation } from '@react-navigation/native';
 import CancellationModal from '../../components/modals/CancellationModal';
 import { requestCancellation, CancellationReason } from '../../services/cancellationService';
 import dayjs from 'dayjs';
+import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/datetimepicker';
 
 export default function AssignedDeliveriesScreen() {
     const theme = useTheme();
@@ -13,8 +14,14 @@ export default function AssignedDeliveriesScreen() {
     const [searchQuery, setSearchQuery] = useState('');
 
     const [filter, setFilter] = useState('All'); // All, Pending, Completed
-    const [dateFilter, setDateFilter] = useState('All'); // All, Today, Tomorrow, Week
+    const [dateFilter, setDateFilter] = useState('All'); // All, Today, Tomorrow, Week, Custom
     const [showFilters, setShowFilters] = useState(false); // Collapsible filter state
+
+    // Custom Date Range State
+    const [customStartDate, setCustomStartDate] = useState<Date>(new Date());
+    const [customEndDate, setCustomEndDate] = useState<Date>(new Date());
+    const [showDatePicker, setShowDatePicker] = useState(false);
+    const [datePickerMode, setDatePickerMode] = useState<'start' | 'end'>('start');
 
     const [refreshing, setRefreshing] = useState(false);
     const [viewMode, setViewMode] = useState<'list' | 'grid'>('list');
@@ -159,6 +166,30 @@ export default function AssignedDeliveriesScreen() {
         }
     };
 
+    const onDateChange = (event: DateTimePickerEvent, selectedDate?: Date) => {
+        setShowDatePicker(Platform.OS === 'ios');
+        if (selectedDate) {
+            if (datePickerMode === 'start') {
+                setCustomStartDate(selectedDate);
+                // Auto adjust end date if it's before start date
+                if (dayjs(selectedDate).isAfter(dayjs(customEndDate))) {
+                    setCustomEndDate(selectedDate);
+                }
+            } else {
+                setCustomEndDate(selectedDate);
+                // Auto adjust start date if it's after end date
+                if (dayjs(selectedDate).isBefore(dayjs(customStartDate))) {
+                    setCustomStartDate(selectedDate);
+                }
+            }
+        }
+    };
+
+    const showDateMode = (mode: 'start' | 'end') => {
+        setDatePickerMode(mode);
+        setShowDatePicker(true);
+    };
+
     const getStatusColor = (status) => {
         switch (status) {
             case 'Pending': return '#FF9800';
@@ -183,9 +214,10 @@ export default function AssignedDeliveriesScreen() {
             matchesDate = itemDate.isSame(today.add(1, 'day'), 'day');
         } else if (dateFilter === 'Week') {
             // Check if within current week (Sunday to Saturday)
-            // Or next 7 days? Let's assume current week for now or just next 7 days.
-            // Let's use startOf('week') to endOf('week')
             matchesDate = itemDate.isAfter(today.startOf('week').subtract(1, 'day')) && itemDate.isBefore(today.endOf('week').add(1, 'day'));
+        } else if (dateFilter === 'Custom') {
+            matchesDate = itemDate.isAfter(dayjs(customStartDate).subtract(1, 'day'), 'day') &&
+                itemDate.isBefore(dayjs(customEndDate).add(1, 'day'), 'day');
         }
 
         return matchesSearch && matchesStatus && matchesDate;
@@ -362,7 +394,7 @@ export default function AssignedDeliveriesScreen() {
 
                         <Text variant="labelMedium" style={{ marginBottom: 8, color: theme.colors.onSurfaceVariant }}>Date</Text>
                         <View style={styles.filterRow}>
-                            {['All', 'Today', 'Tomorrow', 'Week'].map((dateOpt) => (
+                            {['All', 'Today', 'Tomorrow', 'Week', 'Custom'].map((dateOpt) => (
                                 <Chip
                                     key={dateOpt}
                                     selected={dateFilter === dateOpt}
@@ -374,6 +406,46 @@ export default function AssignedDeliveriesScreen() {
                                 </Chip>
                             ))}
                         </View>
+
+                        {/* Custom Date Range Selection */}
+                        {dateFilter === 'Custom' && (
+                            <View style={styles.customDateContainer}>
+                                <TouchableOpacity
+                                    style={[styles.dateInput, { borderColor: theme.colors.outline }]}
+                                    onPress={() => showDateMode('start')}
+                                >
+                                    <Text variant="labelSmall" style={{ color: theme.colors.onSurfaceVariant }}>Start Date</Text>
+                                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                                        <MaterialCommunityIcons name="calendar" size={16} color={theme.colors.primary} style={{ marginRight: 4 }} />
+                                        <Text variant="bodyMedium">{dayjs(customStartDate).format('MMM D, YYYY')}</Text>
+                                    </View>
+                                </TouchableOpacity>
+
+                                <MaterialCommunityIcons name="arrow-right" size={20} color={theme.colors.onSurfaceVariant} style={{ marginHorizontal: 8 }} />
+
+                                <TouchableOpacity
+                                    style={[styles.dateInput, { borderColor: theme.colors.outline }]}
+                                    onPress={() => showDateMode('end')}
+                                >
+                                    <Text variant="labelSmall" style={{ color: theme.colors.onSurfaceVariant }}>End Date</Text>
+                                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                                        <MaterialCommunityIcons name="calendar" size={16} color={theme.colors.primary} style={{ marginRight: 4 }} />
+                                        <Text variant="bodyMedium">{dayjs(customEndDate).format('MMM D, YYYY')}</Text>
+                                    </View>
+                                </TouchableOpacity>
+                            </View>
+                        )}
+
+                        {showDatePicker && (
+                            <DateTimePicker
+                                testID="dateTimePicker"
+                                value={datePickerMode === 'start' ? customStartDate : customEndDate}
+                                mode="date"
+                                is24Hour={true}
+                                display="default"
+                                onChange={onDateChange}
+                            />
+                        )}
                     </View>
                 )}
             </View>
@@ -451,6 +523,22 @@ const styles = StyleSheet.create({
     filterChip: {
         marginRight: 8,
         marginBottom: 8,
+    },
+    customDateContainer: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        marginTop: 8,
+        marginBottom: 8,
+        padding: 8,
+        backgroundColor: '#f5f5f5',
+        borderRadius: 8,
+    },
+    dateInput: {
+        flex: 1,
+        borderWidth: 1,
+        borderRadius: 8,
+        padding: 8,
+        backgroundColor: 'white',
     },
     listContent: {
         padding: 20,

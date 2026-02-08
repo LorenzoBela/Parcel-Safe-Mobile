@@ -16,6 +16,10 @@ import {
     Database,
     DatabaseReference
 } from 'firebase/database';
+import { initializeAuth, getAuth, Auth } from 'firebase/auth';
+// @ts-ignore - This export exists at runtime for React Native
+import { getReactNativePersistence } from '@firebase/auth';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 // Firebase configuration - should match web project
 const firebaseConfig = {
@@ -31,16 +35,31 @@ const firebaseConfig = {
 // Initialize Firebase (prevent duplicate initialization)
 let app: FirebaseApp;
 let database: Database;
+let auth: Auth;
 
 export function initializeFirebase(): Database {
     if (getApps().length === 0) {
         app = initializeApp(firebaseConfig);
+        // Initialize Auth with AsyncStorage persistence for React Native
+        auth = initializeAuth(app, {
+            persistence: getReactNativePersistence(AsyncStorage)
+        });
     } else {
         app = getApps()[0];
+        // Get existing auth instance if app already initialized
+        try {
+            auth = getAuth(app);
+        } catch {
+            // Auth not initialized yet, initialize with persistence
+            auth = initializeAuth(app, {
+                persistence: getReactNativePersistence(AsyncStorage)
+            });
+        }
     }
     database = getDatabase(app);
     return database;
 }
+
 
 export function getFirebaseDatabase(): Database {
     if (!database) {
@@ -634,6 +653,89 @@ export function subscribeToCamera(
     return () => off(cameraRef);
 }
 
+// ==================== EC-97: Low-Light Face Detection ====================
+
+export type LowLightTier = 'NORMAL' | 'ENHANCED' | 'FLASH' | 'FALLBACK';
+
+export interface LowLightState {
+    /** Low-light condition detected by camera */
+    isLowLight: boolean;
+    /** Current brightness level (0-255) */
+    brightness: number;
+    /** Current capture tier being used */
+    tier: LowLightTier;
+    /** Whether fallback verification is required (face NOT found after all tiers) */
+    fallbackRequired: boolean;
+    /** Whether flash was used for capture */
+    flashUsed: boolean;
+    /** Whether night mode is enabled on OV3660 */
+    nightModeEnabled: boolean;
+    /** Timestamp of last brightness check */
+    timestamp: number;
+    /** Associated delivery for this capture attempt */
+    deliveryId: string;
+    /** Reason fallback is required (displayed to user) */
+    fallbackReason?: string;
+}
+
+/**
+ * Subscribe to low-light camera state updates (EC-97)
+ * 
+ * Used to trigger fallback verification UI when face detection fails
+ * due to poor lighting conditions.
+ * 
+ * @param boxId - The box MAC address
+ * @param callback - Called with updated low-light state
+ * @returns Unsubscribe function
+ */
+export function subscribeToLowLight(
+    boxId: string,
+    callback: (state: LowLightState | null) => void
+): () => void {
+    const db = getFirebaseDatabase();
+    const lowLightRef = ref(db, `hardware/${boxId}/low_light`);
+
+    const unsubscribe = onValue(lowLightRef, (snapshot) => {
+        const data = snapshot.val();
+        callback(data as LowLightState | null);
+    });
+
+    return () => off(lowLightRef);
+}
+
+/**
+ * Check if fallback verification is required (EC-97)
+ * 
+ * @param state - The current low-light state
+ * @returns true if user should use alternative verification
+ */
+export function isLowLightFallbackRequired(state: LowLightState | null): boolean {
+    return state?.fallbackRequired === true && state?.tier === 'FALLBACK';
+}
+
+/**
+ * Get user-friendly low-light status message (EC-97)
+ * 
+ * @param state - The current low-light state
+ * @returns Localized message for UI display
+ */
+export function getLowLightMessage(state: LowLightState | null): string {
+    if (!state) return '';
+
+    if (state.fallbackRequired) {
+        return state.fallbackReason || 'Camera cannot detect face in low light. Please use alternative verification.';
+    }
+
+    switch (state.tier) {
+        case 'ENHANCED':
+            return 'Low light detected. Using enhanced capture mode.';
+        case 'FLASH':
+            return 'Very low light. Flash enabled for capture.';
+        default:
+            return '';
+    }
+}
+
 // ==================== EC-25: Reboot State ====================
 export interface RebootState {
     rebooted: boolean;
@@ -674,6 +776,33 @@ export async function clearRebootFlag(boxId: string): Promise<void> {
     const db = getFirebaseDatabase();
     const rebootRef = ref(db, `hardware/${boxId}/reboot/rebooted`);
     await set(rebootRef, false);
+}
+
+// ==================== EC-84: GPS Health Monitoring ====================
+
+export interface GpsHealthState {
+    box_hdop: number;
+    satellites_visible: number;
+    obstruction_detected: boolean;
+    timestamp: number;
+}
+
+/**
+ * Subscribe to GPS health updates (EC-84)
+ */
+export function subscribeToGpsHealth(
+    boxId: string,
+    callback: (state: GpsHealthState | null) => void
+): () => void {
+    const db = getFirebaseDatabase();
+    const healthRef = ref(db, `boxes/${boxId}/gps_health`);
+
+    const unsubscribe = onValue(healthRef, (snapshot) => {
+        const data = snapshot.val();
+        callback(data as GpsHealthState | null);
+    });
+
+    return () => off(healthRef);
 }
 
 // ==================== EC-47: Duplicate Delivery Prevention ====================

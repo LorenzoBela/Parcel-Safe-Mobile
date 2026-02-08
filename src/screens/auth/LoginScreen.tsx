@@ -50,9 +50,9 @@ export default function LoginScreen() {
     const handleGoogleSignIn = async () => {
         try {
             setLoading(true);
-            console.log('Initiating Google Sign-In...');
+            // console.log('Initiating Google Sign-In...');
             const result = await signInWithGoogleAndSyncProfile();
-            console.log('Sign-in successful:', result.email, result.role);
+            // console.log('Sign-in successful:', result.email, result.role);
 
             login(result);
 
@@ -65,10 +65,10 @@ export default function LoginScreen() {
             }
         } catch (error: any) {
             console.error('Login failed:', error);
-            
+
             let errorMessage = 'Login failed. Please try again.';
-            
-            if (error?.message?.includes('Network request failed') || 
+
+            if (error?.message?.includes('Network request failed') ||
                 error?.message?.includes('timeout') ||
                 error?.code === 'NETWORK_ERROR') {
                 errorMessage = 'Network connection failed. Please check your internet connection and try again.';
@@ -77,7 +77,7 @@ export default function LoginScreen() {
             } else if (error?.message) {
                 errorMessage = `Login failed: ${error.message}`;
             }
-            
+
             Alert.alert(
                 'Authentication Error',
                 errorMessage,

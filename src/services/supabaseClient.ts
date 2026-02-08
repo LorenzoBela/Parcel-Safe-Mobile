@@ -21,9 +21,7 @@ export const supabase: SupabaseClient | null =
                 persistSession: true,
                 autoRefreshToken: true,
                 detectSessionInUrl: false,
-                // Use default lock mechanism for React Native (processLock is for Node.js only)
-                // lockAcquireTimeout increased to 15s to handle slower devices
-                lockAcquireTimeout: 15000,
+
             },
             global: {
                 fetch: async (url, options) => {
@@ -57,10 +55,6 @@ export const supabase: SupabaseClient | null =
                             // Keep as string if not valid JSON
                         }
                     }
-
-                    console.log(`[Supabase] Fetching: ${urlStr}`);
-                    console.log('[Supabase] Headers:', JSON.stringify(headers));
-                    console.log('[Supabase] Body length:', requestData ? JSON.stringify(requestData).length : 0);
 
                     try {
                         const result = await axios({

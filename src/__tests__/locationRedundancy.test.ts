@@ -35,6 +35,10 @@ jest.mock("../services/firebaseClient", () => {
             };
         }),
         writePhoneLocation: jest.fn().mockResolvedValue(undefined),
+        subscribeToGpsHealth: jest.fn((_boxId: string, cb: any) => {
+            // For now just a no-op mock, or capture if needed
+            return () => { };
+        }),
     };
 });
 

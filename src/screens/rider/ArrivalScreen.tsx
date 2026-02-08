@@ -54,6 +54,11 @@ import {
     BatteryState,
     subscribeToTamper,
     TamperState,
+    // EC-97: Low-Light Detection
+    subscribeToLowLight,
+    LowLightState,
+    isLowLightFallbackRequired,
+    getLowLightMessage,
 } from '../../services/firebaseClient';
 
 import { bleOtpService, BleBoxDevice } from '../../services/bleOtpService';
@@ -126,6 +131,9 @@ export default function ArrivalScreen() {
     // EC-15: Background Location State
     const [bgLocationState, setBgLocationState] = useState<BackgroundLocationState | null>(null);
 
+    // EC-97: Low-Light State
+    const [lowLightState, setLowLightState] = useState<LowLightState | null>(null);
+
     // EC-02: BLE Transfer State
     const [showBleModal, setShowBleModal] = useState(false);
     const [bleStatus, setBleStatus] = useState<'idle' | 'scanning' | 'connecting' | 'transferring' | 'success' | 'error'>('idle');
@@ -185,11 +193,24 @@ export default function ArrivalScreen() {
             }
         });
 
+        // EC-97: Subscribe to low-light state
+        const unsubscribeLowLight = subscribeToLowLight(params.boxId, (state) => {
+            setLowLightState(state);
+            if (state && isLowLightFallbackRequired(state)) {
+                Alert.alert(
+                    '📷 Low Light Condition',
+                    'Camera cannot detect face due to poor lighting. Alternative verification will be required.',
+                    [{ text: 'OK' }]
+                );
+            }
+        });
+
         return () => {
             unsubscribeBgLocation();
             unsubscribeLockout();
             unsubscribeBattery();
             unsubscribeTamper();
+            unsubscribeLowLight();
         };
     }, [params.boxId]);
 
@@ -623,6 +644,28 @@ export default function ArrivalScreen() {
                             <Text style={styles.bgLocationText}>
                                 {bgLocationState.lastError || 'Background tracking not active'}
                             </Text>
+                        </View>
+                    </Card.Content>
+                </Card>
+            )}
+
+            {/* EC-97: Low-Light Warning Banner */}
+            {lowLightState?.isLowLight && (
+                <Card style={[styles.lowLightBanner, lowLightState.fallbackRequired && styles.lowLightCritical]}>
+                    <Card.Content style={styles.bannerContent}>
+                        <Text style={styles.bannerIcon}>{lowLightState.fallbackRequired ? '📷' : '🌙'}</Text>
+                        <View style={{ flex: 1 }}>
+                            <Text style={[styles.lowLightTitle, lowLightState.fallbackRequired && { color: 'white' }]}>
+                                {lowLightState.fallbackRequired ? 'CAMERA FALLBACK' : 'LOW LIGHT DETECTED'}
+                            </Text>
+                            <Text style={[styles.lowLightText, lowLightState.fallbackRequired && { color: 'rgba(255,255,255,0.9)' }]}>
+                                {getLowLightMessage(lowLightState)}
+                            </Text>
+                            {lowLightState.tier !== 'NORMAL' && (
+                                <Text style={[styles.lowLightTier, lowLightState.fallbackRequired && { color: 'rgba(255,255,255,0.7)' }]}>
+                                    Mode: {lowLightState.tier} {lowLightState.flashUsed && '⚡'} {lowLightState.nightModeEnabled && '🌙'}
+                                </Text>
+                            )}
                         </View>
                     </Card.Content>
                 </Card>
@@ -1104,5 +1147,31 @@ const styles = StyleSheet.create({
     },
     bleActions: {
         alignItems: 'center',
+    },
+    // EC-97: Low-Light Banner
+    lowLightBanner: {
+        backgroundColor: '#FEF3C7', // Amber/yellow for warning
+        marginBottom: 12,
+        borderRadius: 12,
+        borderLeftWidth: 4,
+        borderLeftColor: '#F59E0B',
+    },
+    lowLightCritical: {
+        backgroundColor: '#7C3AED', // Purple for fallback/critical
+        borderLeftColor: '#7C3AED',
+    },
+    lowLightTitle: {
+        color: '#92400E',
+        fontWeight: 'bold',
+        fontSize: 14,
+    },
+    lowLightText: {
+        color: '#B45309',
+        fontSize: 12,
+    },
+    lowLightTier: {
+        color: '#78716C',
+        fontSize: 10,
+        marginTop: 4,
     },
 });

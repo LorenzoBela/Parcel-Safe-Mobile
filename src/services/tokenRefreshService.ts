@@ -67,7 +67,7 @@ let callbacks: TokenRefreshCallbacks = {};
  */
 export function startTokenRefreshService(userCallbacks?: TokenRefreshCallbacks): void {
     if (tokenCheckInterval) {
-        console.log('[EC-89] Token refresh service already running');
+        // console.log('[EC-89] Token refresh service already running');
         return;
     }
 
@@ -76,7 +76,7 @@ export function startTokenRefreshService(userCallbacks?: TokenRefreshCallbacks):
     refreshAttempts = 0;
     currentStatus = 'HEALTHY';
 
-    console.log('[EC-89] Starting token refresh service');
+    // console.log('[EC-89] Starting token refresh service');
 
     // Initial check
     checkTokenHealth();
@@ -95,7 +95,7 @@ export function stopTokenRefreshService(): void {
     if (tokenCheckInterval) {
         clearInterval(tokenCheckInterval);
         tokenCheckInterval = null;
-        console.log('[EC-89] Token refresh service stopped');
+        // console.log('[EC-89] Token refresh service stopped');
     }
 }
 
@@ -142,7 +142,7 @@ export async function checkTokenHealth(): Promise<TokenHealthState> {
 
     // Proactive refresh if expiring
     if (isExpiring && currentStatus !== 'REFRESHING') {
-        console.log(`[EC-89] Token expiring (age: ${Math.floor(tokenAge / 60000)} min), refreshing...`);
+        // console.log(`[EC-89] Token expiring (age: ${Math.floor(tokenAge / 60000)} min), refreshing...`);
         await refreshToken(user);
     }
 
@@ -158,7 +158,7 @@ async function refreshToken(user: User): Promise<boolean> {
 
     for (let attempt = 1; attempt <= TOKEN_REFRESH_CONFIG.MAX_REFRESH_ATTEMPTS; attempt++) {
         try {
-            console.log(`[EC-89] Token refresh attempt ${attempt}/${TOKEN_REFRESH_CONFIG.MAX_REFRESH_ATTEMPTS}`);
+            // console.log(`[EC-89] Token refresh attempt ${attempt}/${TOKEN_REFRESH_CONFIG.MAX_REFRESH_ATTEMPTS}`);
 
             // Force token refresh
             await user.getIdToken(true);
@@ -171,13 +171,13 @@ async function refreshToken(user: User): Promise<boolean> {
             // Report to Firebase
             await reportTokenHealthToFirebase(user.uid, 'HEALTHY');
 
-            console.log('[EC-89] Token refreshed successfully');
+            // console.log('[EC-89] Token refreshed successfully');
             callbacks.onRefreshSuccess?.();
 
             return true;
         } catch (error) {
             refreshAttempts = attempt;
-            console.warn(`[EC-89] Token refresh failed (attempt ${attempt}):`, error);
+            // console.warn(`[EC-89] Token refresh failed (attempt ${attempt}):`, error);
 
             // Exponential backoff
             const delay = Math.min(
@@ -186,7 +186,7 @@ async function refreshToken(user: User): Promise<boolean> {
             );
 
             if (attempt < TOKEN_REFRESH_CONFIG.MAX_REFRESH_ATTEMPTS) {
-                console.log(`[EC-89] Retrying in ${delay}ms...`);
+                // console.log(`[EC-89] Retrying in ${delay}ms...`);
                 await sleep(delay);
             }
         }
@@ -201,7 +201,7 @@ async function refreshToken(user: User): Promise<boolean> {
 
     // Force re-login after max failures
     if (refreshAttempts >= TOKEN_REFRESH_CONFIG.MAX_REFRESH_ATTEMPTS) {
-        console.error('[EC-89] Token refresh failed after max attempts - forcing re-login');
+        // console.error('[EC-89] Token refresh failed after max attempts - forcing re-login');
         callbacks.onForceRelogin?.();
     }
 
@@ -236,7 +236,7 @@ async function reportTokenHealthToFirebase(
         });
     } catch (error) {
         // Silent fail - don't block on reporting
-        console.warn('[EC-89] Failed to report token health:', error);
+        // console.warn('[EC-89] Failed to report token health:', error);
     }
 }
 
@@ -273,7 +273,7 @@ export function resetTokenTimer(): void {
     lastTokenRefreshTime = Date.now();
     refreshAttempts = 0;
     updateStatus('HEALTHY');
-    console.log('[EC-89] Token timer reset');
+    // console.log('[EC-89] Token timer reset');
 }
 
 /**
@@ -284,7 +284,7 @@ export async function forceTokenRefresh(): Promise<boolean> {
     const user = auth.currentUser;
 
     if (!user) {
-        console.warn('[EC-89] Cannot force refresh - no user');
+        // console.warn('[EC-89] Cannot force refresh - no user');
         return false;
     }
 

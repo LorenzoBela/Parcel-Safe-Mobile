@@ -14,6 +14,7 @@ try {
 }
 
 import { getAuth, GoogleAuthProvider, signInWithCredential, signOut as firebaseSignOut } from 'firebase/auth';
+import { initializeFirebase } from './firebaseClient';
 
 const getSupabaseClient = async () => {
   const { supabase } = await import('./supabaseClient');
@@ -116,10 +117,13 @@ export const signInWithGoogleAndSyncProfile = async (): Promise<AuthSessionResul
   // Authenticate with Firebase using the Google ID Token
   try {
     console.log('Authenticating with Firebase...');
+    // Ensure Firebase is initialized before using getAuth()
+    initializeFirebase();
     const auth = getAuth();
     const credential = GoogleAuthProvider.credential(googleResult.idToken);
     await signInWithCredential(auth, credential);
     console.log('Firebase authentication successful!');
+
   } catch (firebaseError) {
     console.error('Firebase authentication failed:', firebaseError);
     // Continue - we don't want to block Supabase login if Firebase fails, 
@@ -230,6 +234,8 @@ export const signOut = async () => {
 
   try {
     await GoogleSignin.signOut();
+    // Ensure Firebase is initialized before using getAuth()
+    initializeFirebase();
     const auth = getAuth();
     await firebaseSignOut(auth);
   } catch (error) {
