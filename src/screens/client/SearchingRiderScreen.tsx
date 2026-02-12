@@ -10,12 +10,14 @@ import {
     cancelBooking,
     BookingRequest,
     SEARCH_RADIUS_KM,
+    generateShareToken,
 } from '../../services/riderMatchingService';
 import {
     registerForPushNotifications,
     setupNotificationChannels,
     startOngoingNotification,
 } from '../../services/pushNotificationService';
+import useAuthStore from '../../store/authStore';
 
 // 5 minutes in milliseconds
 const SEARCH_TIMEOUT_MS = 5 * 60 * 1000;
@@ -43,7 +45,9 @@ export default function SearchingRiderScreen() {
     const [searchFailed, setSearchFailed] = useState(false);
     const [progress, setProgress] = useState(0);
     const [bookingId] = useState(generateBookingId());
+    const [shareToken] = useState(generateShareToken());
     const [notifiedRidersCount, setNotifiedRidersCount] = useState(0);
+    const authedUserId = useAuthStore((state: any) => state.user?.userId) as string | undefined;
 
     // Animation constants
     const pulseAnim = useRef(new Animated.Value(0)).current;
@@ -58,8 +62,8 @@ export default function SearchingRiderScreen() {
         pickupLng = 120.9842,
         dropoffLat = 14.5831,
         dropoffLng = 120.9794,
-        estimatedFare = 85.00,
-        customerId = 'CUSTOMER_001', // In production, get from auth
+        estimatedFare,
+        estimatedCost,
     } = route.params || {};
 
     useEffect(() => {
@@ -111,17 +115,24 @@ export default function SearchingRiderScreen() {
 
         // Create booking and notify nearby riders
         const createBookingAndNotify = async () => {
+            if (!authedUserId) {
+                setSearchFailed(true);
+                setStatusText('Please log in again to continue booking');
+                return;
+            }
+
             const bookingRequest: BookingRequest = {
                 bookingId,
-                customerId,
+                customerId: authedUserId,
                 pickupLat,
                 pickupLng,
                 pickupAddress: pickup || 'Pickup Location',
                 dropoffLat,
                 dropoffLng,
                 dropoffAddress: dropoff || 'Dropoff Location',
-                estimatedFare,
+                estimatedFare: estimatedFare ?? estimatedCost ?? 0,
                 createdAt: Date.now(),
+                shareToken,
             };
 
             // Create the booking in Firebase
@@ -154,6 +165,11 @@ export default function SearchingRiderScreen() {
                         riderId,
                         pickup,
                         dropoff,
+                        pickupLat,
+                        pickupLng,
+                        dropoffLat,
+                        dropoffLng,
+                        shareToken,
                     });
                 }, 1500);
             }
@@ -174,7 +190,7 @@ export default function SearchingRiderScreen() {
             progressAnim.stopAnimation();
             unsubscribeStatus();
         };
-    }, [searchFailed]);
+    }, [searchFailed, authedUserId, estimatedCost, estimatedFare, shareToken]);
 
     const handleCancel = () => {
         Alert.alert(

@@ -80,12 +80,16 @@ export interface LocationData {
     source: 'box' | 'phone';
 }
 
+export type LocationsByBoxId = Record<string, LocationData>;
+
 export interface BoxState {
     status: 'SLEEP' | 'STANDBY' | 'ACTIVE' | 'ARRIVED' | 'UNLOCKING' | 'LOCKED';
     delivery_id?: string;
     otp_code?: string;
     last_heartbeat?: number;
 }
+
+export type HardwareByBoxId = Record<string, unknown>;
 
 // ==================== Location Functions ====================
 
@@ -105,6 +109,26 @@ export function subscribeToLocation(
     });
 
     return () => off(locationRef);
+}
+
+/**
+ * Subscribe to live location updates for all boxes.
+ *
+ * RTDB shape expected:
+ * locations/{boxId} => LocationData
+ */
+export function subscribeToAllLocations(
+    callback: (locations: LocationsByBoxId | null) => void
+): () => void {
+    const db = getFirebaseDatabase();
+    const locationsRef = ref(db, 'locations');
+
+    onValue(locationsRef, (snapshot) => {
+        const data = snapshot.val();
+        callback((data ?? null) as LocationsByBoxId | null);
+    });
+
+    return () => off(locationsRef);
 }
 
 /**
@@ -151,6 +175,23 @@ export function subscribeToBoxState(
     });
 
     return () => off(stateRef);
+}
+
+/**
+ * Subscribe to the entire hardware tree (admin/fleet views).
+ */
+export function subscribeToAllHardware(
+    callback: (hardware: HardwareByBoxId | null) => void
+): () => void {
+    const db = getFirebaseDatabase();
+    const hardwareRef = ref(db, 'hardware');
+
+    onValue(hardwareRef, (snapshot) => {
+        const data = snapshot.val();
+        callback((data ?? null) as HardwareByBoxId | null);
+    });
+
+    return () => off(hardwareRef);
 }
 
 /**

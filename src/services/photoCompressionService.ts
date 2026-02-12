@@ -12,7 +12,7 @@
  */
 
 import * as ImageManipulator from 'expo-image-manipulator';
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 
 // ==================== EC-56: Configuration ====================
 
@@ -103,7 +103,7 @@ export async function compressImage(uri: string): Promise<CompressionResult> {
 
     try {
         // Get original file info
-        const originalInfo = await FileSystem.getInfoAsync(uri, { size: true });
+        const originalInfo = await FileSystem.getInfoAsync(uri);
         if (!originalInfo.exists) {
             result.error = 'Original file not found';
             return result;
@@ -147,7 +147,7 @@ export async function compressImage(uri: string): Promise<CompressionResult> {
         result.compressedUri = manipResult.uri;
 
         // Get compressed file size
-        const compressedInfo = await FileSystem.getInfoAsync(manipResult.uri, { size: true });
+        const compressedInfo = await FileSystem.getInfoAsync(manipResult.uri);
         result.compressedSize = (compressedInfo as any).size || 0;
         
         // Calculate compression ratio
@@ -245,7 +245,7 @@ export async function queuePhotoForUpload(
     };
 
     // Get original size first
-    const fileInfo = await FileSystem.getInfoAsync(uri, { size: true });
+    const fileInfo = await FileSystem.getInfoAsync(uri);
     item.originalSize = (fileInfo as any).size || 0;
     item.totalBytes = item.originalSize;
 

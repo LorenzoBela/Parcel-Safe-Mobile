@@ -48,6 +48,7 @@ import {
 } from '../../services/backgroundLocationService';
 
 import {
+    subscribeToLocation,
     subscribeToLockout,
     LockoutState,
     subscribeToBattery,
@@ -75,6 +76,9 @@ import {
     acknowledgeReassignment,
     isReassignmentPending
 } from '../../services/deliveryReassignmentService';
+import { subscribeToDelivery, updateDeliveryStatus } from '../../services/riderMatchingService';
+import useAuthStore from '../../store/authStore';
+import SwipeConfirmButton from '../../components/SwipeConfirmButton';
 
 interface RouteParams {
     deliveryId: string;
@@ -89,13 +93,20 @@ interface RouteParams {
 export default function ArrivalScreen() {
     const navigation = useNavigation<any>();
     const route = useRoute();
-    const params = route.params as RouteParams || {
-        deliveryId: 'demo-delivery',
-        boxId: 'demo-box',
-        targetLat: 14.5995,
-        targetLng: 120.9842,
-        targetAddress: '123 Sample Street, Manila',
-    };
+    const params = route.params as RouteParams | undefined;
+
+    if (!params?.deliveryId || !params?.boxId) {
+        return (
+            <View style={[styles.container, { justifyContent: 'center', padding: 24 }]}>
+                <Text variant="titleMedium" style={{ marginBottom: 12 }}>
+                    Missing delivery context.
+                </Text>
+                <Button mode="contained" onPress={() => navigation.goBack()}>
+                    Go Back
+                </Button>
+            </View>
+        );
+    }
 
     // Geofence State
     const [isInsideGeoFence, setIsInsideGeoFence] = useState(false);
@@ -133,6 +144,7 @@ export default function ArrivalScreen() {
 
     // EC-97: Low-Light State
     const [lowLightState, setLowLightState] = useState<LowLightState | null>(null);
+    const [tamperDeliveryFlagged, setTamperDeliveryFlagged] = useState(false);
 
     // EC-02: BLE Transfer State
     const [showBleModal, setShowBleModal] = useState(false);
@@ -146,7 +158,11 @@ export default function ArrivalScreen() {
     // EC-78: Delivery Reassignment State
     const [reassignmentState, setReassignmentState] = useState<ReassignmentState | null>(null);
     const [showReassignmentModal, setShowReassignmentModal] = useState(false);
-    const riderId = 'RIDER_001'; // Should be dynamic in prod
+    const [hasBeenInsideGeofence, setHasBeenInsideGeofence] = useState(false);
+    const [autoPickupFallbackApplied, setAutoPickupFallbackApplied] = useState(false);
+    const authedUserId = useAuthStore((state: any) => state.user?.userId) as string | undefined;
+    const riderId = authedUserId;
+    const [deliveryStatus, setDeliveryStatus] = useState<string>('ASSIGNED');
 
     // EC-15: Background location starts automatically when screen mounts
     useEffect(() => {
@@ -185,6 +201,13 @@ export default function ArrivalScreen() {
         const unsubscribeTamper = subscribeToTamper(params.boxId, (state) => {
             setTamperState(state);
             if (state?.detected) {
+                if (!tamperDeliveryFlagged) {
+                    setTamperDeliveryFlagged(true);
+                    updateDeliveryStatus(params.deliveryId, 'TAMPERED', {
+                        tampered_at: Date.now(),
+                        tamper_lockdown: Boolean(state.lockdown),
+                    });
+                }
                 Alert.alert(
                     '🚨 SECURITY ALERT',
                     'Box tamper detected! The box is now in lockdown mode. Contact support.',
@@ -212,7 +235,127 @@ export default function ArrivalScreen() {
             unsubscribeTamper();
             unsubscribeLowLight();
         };
-    }, [params.boxId]);
+    }, [params.boxId, params.deliveryId, tamperDeliveryFlagged]);
+
+    useEffect(() => {
+        const unsubscribe = subscribeToDelivery(params.deliveryId, (delivery) => {
+            if (!delivery?.status) {
+                return;
+            }
+            setDeliveryStatus(delivery.status);
+        });
+
+        return unsubscribe;
+    }, [params.deliveryId]);
+
+    const isPickupConfirmed = ['PICKED_UP', 'IN_TRANSIT', 'COMPLETED'].includes(deliveryStatus);
+
+    useEffect(() => {
+        const unsubscribeLocation = subscribeToLocation(params.boxId, (location) => {
+            if (!location) {
+                return;
+            }
+
+            const position = {
+                lat: location.latitude,
+                lng: location.longitude,
+                accuracy: 15,
+            };
+
+            setCurrentPosition(position);
+            const result = checkGeofence(position, geofence);
+            setIsInsideGeoFence(result.isInside);
+            setDistanceMeters(result.distanceMeters);
+
+            if (result.isInside) {
+                setHasBeenInsideGeofence(true);
+            }
+        });
+
+        return unsubscribeLocation;
+    }, [geofence, params.boxId]);
+
+    useEffect(() => {
+        const canAutoRecoverPickup = ['ASSIGNED', 'PICKUP_PENDING', 'ARRIVED'].includes(deliveryStatus);
+
+        if (!hasBeenInsideGeofence || isInsideGeoFence || isPickupConfirmed || autoPickupFallbackApplied || !canAutoRecoverPickup) {
+            return;
+        }
+
+        setAutoPickupFallbackApplied(true);
+
+        const applyAutoPickupFallback = async () => {
+            const now = Date.now();
+            const pickedUpOk = await updateDeliveryStatus(params.deliveryId, 'PICKED_UP', {
+                picked_up_at: now,
+                pickup_confirmed_fallback: true,
+                pickup_fallback_reason: 'AUTO_GEOFENCE_EXIT',
+            });
+
+            if (!pickedUpOk) {
+                setAutoPickupFallbackApplied(false);
+                return;
+            }
+
+            await updateDeliveryStatus(params.deliveryId, 'IN_TRANSIT', {
+                in_transit_at: now,
+                in_transit_reason: 'AUTO_GEOFENCE_EXIT',
+            });
+
+            setDeliveryStatus('IN_TRANSIT');
+            Alert.alert(
+                'Auto Recovery Applied',
+                'Pickup was auto-confirmed because geofence exit was detected after arrival zone entry.'
+            );
+        };
+
+        applyAutoPickupFallback();
+    }, [
+        autoPickupFallbackApplied,
+        deliveryStatus,
+        hasBeenInsideGeofence,
+        isInsideGeoFence,
+        isPickupConfirmed,
+        params.deliveryId,
+    ]);
+
+    const ensurePickupConfirmed = useCallback(async () => {
+        if (isPickupConfirmed) {
+            return true;
+        }
+
+        const success = await updateDeliveryStatus(params.deliveryId, 'PICKED_UP', {
+            picked_up_at: Date.now(),
+            pickup_confirmed_fallback: true,
+        });
+
+        if (!success) {
+            Alert.alert('Action Failed', 'Could not update pickup status. Please try again.');
+            return false;
+        }
+
+        setDeliveryStatus('PICKED_UP');
+        return true;
+    }, [isPickupConfirmed, params.deliveryId]);
+
+    const handlePickupSwipe = async () => {
+        if (!isInsideGeoFence) {
+            Alert.alert('Location Required', 'Check GPS first and move inside the geofence before confirming pickup.');
+            return;
+        }
+
+        const success = await updateDeliveryStatus(params.deliveryId, 'PICKED_UP', {
+            picked_up_at: Date.now(),
+        });
+
+        if (!success) {
+            Alert.alert('Action Failed', 'Unable to confirm pickup right now.');
+            return;
+        }
+
+        setDeliveryStatus('PICKED_UP');
+        Alert.alert('Pickup Confirmed', 'Package marked as picked up. Continue to handover flow.');
+    };
 
     // EC-04: Lockout countdown timer
     useEffect(() => {
@@ -265,6 +408,12 @@ export default function ArrivalScreen() {
         const result = checkGeofence(position, geofence);
         setIsInsideGeoFence(result.isInside);
         setDistanceMeters(result.distanceMeters);
+
+        if (result.isInside) {
+            updateDeliveryStatus(params.deliveryId, 'ARRIVED', {
+                arrived_at: Date.now(),
+            });
+        }
 
         // EC-12: Suggest geofence expansion if needed
         if (!result.isInside && result.needsExpansion) {
@@ -337,11 +486,37 @@ export default function ArrivalScreen() {
     };
 
     // EC-11: Customer arrived during wait
-    const handleCustomerArrived = () => {
+    const handleCustomerArrived = async () => {
+        const pickupOk = await ensurePickupConfirmed();
+        if (!pickupOk) {
+            return;
+        }
+
         const newState = markCustomerArrived(waitTimerState);
         setWaitTimerState(newState);
         writeWaitTimerToFirebase(newState);
-        navigation.navigate('DeliveryCompletion');
+        navigation.navigate('DeliveryCompletion', {
+            deliveryId: params.deliveryId,
+            boxId: params.boxId,
+        });
+    };
+
+    const handleProceedToHandover = async () => {
+        const pickupOk = await ensurePickupConfirmed();
+        if (!pickupOk) {
+            return;
+        }
+
+        if (isInsideGeoFence && !['ARRIVED', 'COMPLETED'].includes(deliveryStatus)) {
+            await updateDeliveryStatus(params.deliveryId, 'ARRIVED', {
+                arrived_at: Date.now(),
+            });
+        }
+
+        navigation.navigate('DeliveryCompletion', {
+            deliveryId: params.deliveryId,
+            boxId: params.boxId,
+        });
     };
 
     // EC-11: Return with package
@@ -472,8 +647,8 @@ export default function ArrivalScreen() {
                 boxId: params.boxId,
                 reason,
                 reasonDetails: details,
-                riderId: 'RIDER_001', // Would come from auth in production
-                riderName: params.riderName || 'Rider',
+                riderId: riderId || '',
+                riderName: params.riderName,
             });
 
             if (result.success) {
@@ -712,6 +887,31 @@ export default function ArrivalScreen() {
                 📍 Check GPS Location
             </Button>
 
+            {!isPickupConfirmed && (
+                <Card style={styles.infoCard}>
+                    <Card.Content>
+                        <Text style={styles.infoTitle}>Pickup Confirmation</Text>
+                        <Text style={styles.infoText}>
+                            Swipe to confirm package pickup before handover. If you forgot earlier, use fallback below.
+                        </Text>
+                        <View style={{ marginTop: 10 }}>
+                            <SwipeConfirmButton
+                                label="Swipe to confirm package picked up"
+                                onConfirm={handlePickupSwipe}
+                                disabled={!isInsideGeoFence}
+                            />
+                        </View>
+                        <Button
+                            mode="text"
+                            style={{ marginTop: 8 }}
+                            onPress={ensurePickupConfirmed}
+                        >
+                            Fallback: I already picked it up
+                        </Button>
+                    </Card.Content>
+                </Card>
+            )}
+
             {/* Show waiting UI if timer is active */}
             {(waitTimerState.status === 'WAITING' || waitTimerState.status === 'EXPIRED') ? (
                 renderWaitingUI()
@@ -733,7 +933,7 @@ export default function ArrivalScreen() {
                     <Button
                         mode="contained"
                         disabled={!isInsideGeoFence}
-                        onPress={() => navigation.navigate('DeliveryCompletion')}
+                        onPress={handleProceedToHandover}
                         style={styles.button}
                     >
                         Proceed to Handover

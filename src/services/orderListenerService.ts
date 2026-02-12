@@ -12,7 +12,7 @@
  * - Automatic reconnection
  */
 
-import { ref, onValue, off, query, orderByChild, equalTo, get } from 'firebase/database';
+import { ref, onValue, off, query, orderByChild, equalTo, get, update } from 'firebase/database';
 import { getFirebaseDatabase } from './firebaseClient';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Notifications from 'expo-notifications';
@@ -143,7 +143,12 @@ export async function startOrderListener(riderId: string): Promise<void> {
                         
                         // Mark as notified (update in Firebase)
                         // This prevents duplicate notifications
-                        // TODO: Implement Firebase update to set notified flag
+                        update(ref(database, `orders/${orderId}`), {
+                            notified: true,
+                            notified_at: Date.now(),
+                        }).catch((error) => {
+                            console.error('[OrderListener] Failed to mark order as notified:', error);
+                        });
                     }
                 });
             }

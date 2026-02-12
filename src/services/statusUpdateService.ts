@@ -8,7 +8,7 @@
  */
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { ref, set, serverTimestamp } from 'firebase/database';
+import { ref, update, serverTimestamp } from 'firebase/database';
 import { getFirebaseDatabase } from './firebaseClient';
 
 // Storage keys
@@ -23,7 +23,21 @@ export const EC35_CONFIG = {
     BASE_RETRY_MS: 1000, // 1 second, doubles each retry
 };
 
-export type DeliveryStatus = 'PENDING' | 'IN_TRANSIT' | 'ARRIVED' | 'COMPLETED' | 'FAILED';
+export type DeliveryStatus =
+    | 'PENDING'
+    | 'SEARCHING'
+    | 'ACCEPTED'
+    | 'ASSIGNED'
+    | 'PICKED_UP'
+    | 'IN_TRANSIT'
+    | 'ARRIVED'
+    | 'COMPLETED'
+    | 'CANCELLED'
+    | 'RETURNED'
+    | 'RECALLED'
+    | 'TAMPERED'
+    | 'FAILED'
+    | string;
 
 export interface StatusUpdateEntry {
     deliveryId: string;
@@ -93,7 +107,7 @@ class StatusUpdateService {
      */
     async queueStatusUpdate(
         deliveryId: string,
-        boxId: string,
+        boxId: string = 'UNKNOWN_BOX',
         status: DeliveryStatus
     ): Promise<boolean> {
         try {
@@ -159,12 +173,13 @@ class StatusUpdateService {
                 }
 
                 try {
-                    // Attempt to sync to Firebase
-                    const statusRef = ref(database, `deliveries/${entry.deliveryId}/status`);
-                    await set(statusRef, {
+                    // Attempt to sync to Firebase (match current delivery record schema)
+                    const deliveryRef = ref(database, `deliveries/${entry.deliveryId}`);
+                    await update(deliveryRef, {
                         status: entry.status,
                         updated_at: serverTimestamp(),
-                        source: 'mobile_retry',
+                        status_retry_source: 'mobile_retry',
+                        status_retry_box_id: entry.boxId,
                     });
 
                     entry.synced = true;
@@ -211,13 +226,14 @@ class StatusUpdateService {
     async markCompleteManually(deliveryId: string, boxId: string): Promise<boolean> {
         try {
             const database = getFirebaseDatabase();
-            const statusRef = ref(database, `deliveries/${deliveryId}/status`);
+            const deliveryRef = ref(database, `deliveries/${deliveryId}`);
 
-            await set(statusRef, {
+            await update(deliveryRef, {
                 status: 'COMPLETED',
                 updated_at: serverTimestamp(),
-                source: 'manual_fallback',
+                status_retry_source: 'manual_fallback',
                 manual_override: true,
+                status_retry_box_id: boxId,
             });
 
             // Remove from queue

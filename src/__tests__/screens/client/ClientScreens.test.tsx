@@ -23,11 +23,26 @@ jest.mock('@react-navigation/native', () => ({
     useFocusEffect: (callback: any) => callback(),
 }));
 
+jest.mock('../../../store/authStore', () => {
+    const store = {
+        user: { userId: 'customer-1', role: 'customer' },
+        isAuthenticated: true,
+        role: 'customer',
+        login: jest.fn(),
+        logout: jest.fn(),
+    };
+    return {
+        __esModule: true,
+        default: (selector?: any) => (selector ? selector(store) : store),
+    };
+});
+
 jest.mock('../../../services/firebaseClient', () => ({
     subscribeToDisplay: jest.fn(() => () => undefined),
 }));
 
 jest.mock('../../../services/riderMatchingService', () => ({
+    generateShareToken: jest.fn(() => 'share-token-123'),
     subscribeToBookingStatus: jest.fn(() => () => undefined),
     subscribeToRiderLocation: jest.fn(() => () => undefined),
     startBookingTimer: jest.fn(() => () => undefined),
@@ -109,7 +124,7 @@ describe('Client Screens', () => {
 
     it('renders TrackOrderScreen', () => {
         const { getByText } = renderWithProvider(<TrackOrderScreen />);
-        expect(getByText('Arriving in 10 mins')).toBeTruthy();
+        expect(getByText('Delivery In Progress')).toBeTruthy();
     });
 
     it('renders DeliveryLogScreen', () => {

@@ -54,6 +54,7 @@ import {
     TokenStatus,
     forceTokenRefresh,
 } from '../../services/tokenRefreshService';
+import statusUpdateService from '../../services/statusUpdateService';
 import {
     BoxPairingState,
     isPairingActive,
@@ -61,6 +62,7 @@ import {
 } from '../../services/boxPairingService';
 // EC-90: Power State
 import { subscribeToPower, PowerState, isSolenoidBlockedByVoltage } from '../../services/firebaseClient';
+import useAuthStore from '../../store/authStore';
 
 export default function RiderDashboard() {
     const navigation = useNavigation<any>();
@@ -124,7 +126,11 @@ export default function RiderDashboard() {
     // Incoming Order State (for rider matching)
     const [incomingRequest, setIncomingRequest] = useState<{ requestId: string; data: RiderOrderRequest } | null>(null);
     const [showOrderModal, setShowOrderModal] = useState(false);
-    const [riderId] = useState('RIDER_001'); // Demo rider ID - in production, get from auth
+    const authedUserId = useAuthStore((state: any) => state.user?.userId) as string | undefined;
+    const authedUser = useAuthStore((state: any) => state.user) as any;
+    const riderId = authedUserId;
+    const riderName = authedUser?.fullName || authedUser?.name || undefined;
+    const riderPhone = authedUser?.phone || undefined;
     const [pushToken, setPushToken] = useState<string | null>(null);
     const [pairingState, setPairingState] = useState<BoxPairingState | null>(null);
 
@@ -287,6 +293,10 @@ export default function RiderDashboard() {
 
     // Subscribe to incoming order requests when rider is online
     useEffect(() => {
+        if (!riderId) {
+            return;
+        }
+
         if (!isOnline) {
             // Remove from online riders when going offline
             removeRiderFromOnline(riderId);
@@ -351,6 +361,20 @@ export default function RiderDashboard() {
             notificationListener.remove();
             removeRiderFromOnline(riderId);
         };
+    }, [isOnline, riderLocation, riderId, pushToken]);
+
+    useEffect(() => {
+        if (!isOnline || !riderLocation || !riderId) {
+            return;
+        }
+
+        updateRiderStatus(
+            riderId,
+            riderLocation.coords.latitude,
+            riderLocation.coords.longitude,
+            true,
+            pushToken || undefined
+        );
     }, [isOnline, riderLocation, riderId, pushToken]);
 
     // EC-78: Subscribe to Reassignment Updates
@@ -428,6 +452,11 @@ export default function RiderDashboard() {
         return () => unsubscribePower();
     }, [boxIdForMonitoring]);
 
+    // EC-35: Try to flush any queued status updates while rider is active
+    useEffect(() => {
+        statusUpdateService.processQueue().catch(() => undefined);
+    }, []);
+
     const handleReassignmentAcknowledge = async () => {
         if (reassignmentState) {
             await acknowledgeReassignment(boxIdForMonitoring, riderId);
@@ -437,12 +466,17 @@ export default function RiderDashboard() {
 
     // Handle accepting an order
     const handleAcceptOrder = async () => {
-        if (!incomingRequest) return;
+        if (!incomingRequest || !riderId) return;
 
         const success = await acceptOrder(
             riderId,
             incomingRequest.data.bookingId,
-            incomingRequest.requestId
+            incomingRequest.requestId,
+            {
+                riderName,
+                riderPhone,
+                boxId: boxIdForMonitoring,
+            }
         );
 
         if (success) {
@@ -451,7 +485,18 @@ export default function RiderDashboard() {
             Alert.alert(
                 '✅ Order Accepted',
                 'Navigate to pickup location to collect the package.',
-                [{ text: 'Start Navigation', onPress: () => navigation.navigate('Arrival') }]
+                [{
+                    text: 'Start Navigation',
+                    onPress: () => navigation.navigate('Arrival', {
+                        deliveryId: incomingRequest.data.bookingId,
+                        boxId: boxIdForMonitoring,
+                        targetLat: incomingRequest.data.dropoffLat,
+                        targetLng: incomingRequest.data.dropoffLng,
+                        targetAddress: incomingRequest.data.dropoffAddress,
+                        customerPhone: undefined,
+                        riderName,
+                    })
+                }]
             );
         } else {
             Alert.alert('Error', 'Failed to accept order. Please try again.');
@@ -485,8 +530,8 @@ export default function RiderDashboard() {
                 boxId: boxIdForMonitoring,
                 reason,
                 reasonDetails: details,
-                riderId: riderId,
-                riderName: 'Juan Dela Cruz', // Demo name
+                riderId: riderId || '',
+                riderName: riderName || 'Rider',
             });
 
             if (result.success) {

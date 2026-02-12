@@ -1,10 +1,15 @@
 import React, { useState, useEffect } from 'react';
-import { View, StyleSheet, Dimensions, TouchableOpacity, Alert } from 'react-native';
+import { View, StyleSheet, Dimensions, TouchableOpacity, Alert, Share } from 'react-native';
 import MapboxGL, { isMapboxNativeAvailable, MapFallback } from '../../components/map/MapboxWrapper';
 import { Text, Card, Avatar, Button, IconButton, Surface, useTheme } from 'react-native-paper';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useRoute } from '@react-navigation/native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { subscribeToDisplay } from '../../services/firebaseClient';
+import {
+    subscribeToDelivery,
+    subscribeToRiderLocation,
+    DeliveryRecord,
+} from '../../services/riderMatchingService';
 import {
     subscribeToCancellation,
     CancellationState,
@@ -14,50 +19,127 @@ import {
     requestCustomerCancellation,
     CustomerCancellationReason,
 } from '../../services/cancellationService';
+import statusUpdateService from '../../services/statusUpdateService';
 import * as Clipboard from 'expo-clipboard';
 import CustomerCancellationModal from '../../components/modals/CustomerCancellationModal';
+import useAuthStore from '../../store/authStore';
+
+interface TrackRouteParams {
+    bookingId: string;
+    riderId?: string;
+    shareToken?: string;
+    pickup?: string;
+    dropoff?: string;
+    pickupLat?: number;
+    pickupLng?: number;
+    dropoffLat?: number;
+    dropoffLng?: number;
+}
+
+function mapStatusToCancellationStatus(status: string | undefined): DeliveryStatus {
+    switch (status) {
+        case 'PENDING':
+            return DeliveryStatus.PENDING;
+        case 'ASSIGNED':
+            return DeliveryStatus.ASSIGNED;
+        case 'PICKED_UP':
+            return DeliveryStatus.PICKED_UP;
+        case 'IN_TRANSIT':
+            return DeliveryStatus.IN_TRANSIT;
+        case 'ARRIVED':
+            return DeliveryStatus.ARRIVED;
+        case 'COMPLETED':
+            return DeliveryStatus.DELIVERED;
+        case 'CANCELLED':
+            return DeliveryStatus.CANCELLED;
+        default:
+            return DeliveryStatus.ASSIGNED;
+    }
+}
 
 export default function TrackOrderScreen() {
     const navigation = useNavigation<any>();
+    const route = useRoute<any>();
     const theme = useTheme();
     const [displayStatus, setDisplayStatus] = useState<'OK' | 'DEGRADED' | 'FAILED'>('OK');
     const [cancellation, setCancellation] = useState<CancellationState | null>(null);
     const [showCancelModal, setShowCancelModal] = useState(false);
     const [cancelLoading, setCancelLoading] = useState(false);
+    const [delivery, setDelivery] = useState<DeliveryRecord | null>(null);
+    const [riderLiveLocation, setRiderLiveLocation] = useState<{ lat: number; lng: number } | null>(null);
 
-    // Mock data - in real app, get from route params or state
-    const deliveryStatus = DeliveryStatus.ASSIGNED; // Example: before pickup
-    const customerId = 'cust_123';
+    const params = (route.params || {}) as TrackRouteParams;
+    const deliveryId = params.bookingId;
+    const customerId = useAuthStore((state: any) => state.user?.userId) as string | undefined;
+
+    const deliveryStatus = mapStatusToCancellationStatus(delivery?.status);
 
     const MAPBOX_TOKEN = process.env.EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN;
 
-    // Mock Delivery ID (in real app, get from route params)
-    const deliveryId = 'TRK-8821-9023';
+    const destination = {
+        latitude: delivery?.dropoff_lat ?? params.dropoffLat ?? 0,
+        longitude: delivery?.dropoff_lng ?? params.dropoffLng ?? 0,
+    };
 
-    // Mock coordinates
-    const boxLocation = { latitude: 14.5995, longitude: 120.9842 };
-    const riderLocation = { latitude: 14.5990, longitude: 120.9830 };
-    const destination = { latitude: 14.6000, longitude: 120.9850 };
+    const boxLocation = {
+        latitude: delivery?.pickup_lat ?? params.pickupLat ?? destination.latitude,
+        longitude: delivery?.pickup_lng ?? params.pickupLng ?? destination.longitude,
+    };
+
+    const riderLocation = {
+        latitude: riderLiveLocation?.lat ?? boxLocation.latitude,
+        longitude: riderLiveLocation?.lng ?? boxLocation.longitude,
+    };
 
     const riderDetails = {
-        name: 'Juan Dela Cruz',
-        vehicle: 'Yamaha NMAX (ABC-1234)',
-        rating: 4.8,
-        phone: '+63 912 345 6789',
+        name: delivery?.rider_name || 'Rider Assigned',
+        vehicle: 'Delivery Rider',
+        rating: 0,
+        phone: delivery?.rider_phone || '',
     };
 
     useEffect(() => {
+        // Best-effort flush of queued status updates (EC-35) when tracking UI opens.
+        statusUpdateService.processQueue().catch(() => undefined);
+    }, []);
+
+    useEffect(() => {
+        if (!deliveryId) {
+            Alert.alert('Missing Delivery', 'Unable to open tracking without a valid delivery.', [
+                { text: 'Go Back', onPress: () => navigation.goBack() },
+            ]);
+            return;
+        }
+
         if (MAPBOX_TOKEN) {
             MapboxGL.setAccessToken(MAPBOX_TOKEN);
             MapboxGL.setTelemetryEnabled(false);
         }
 
-        // EC-86: Monitor display health
-        const unsubscribeDisplay = subscribeToDisplay('BOX_001', (displayState) => {
-            if (displayState) {
-                setDisplayStatus(displayState.status);
-            }
+        const unsubscribeDelivery = subscribeToDelivery(deliveryId, (data) => {
+            setDelivery(data);
         });
+
+        const initialRiderId = params.riderId;
+        let unsubscribeRiderLocation = () => undefined;
+        if (initialRiderId) {
+            unsubscribeRiderLocation = subscribeToRiderLocation(initialRiderId, (location) => {
+                if (!location) {
+                    setRiderLiveLocation(null);
+                    return;
+                }
+                setRiderLiveLocation({ lat: location.lat, lng: location.lng });
+            });
+        }
+
+        // EC-86: Monitor display health
+        const unsubscribeDisplay = delivery?.box_id
+            ? subscribeToDisplay(delivery.box_id, (displayState) => {
+                if (displayState) {
+                    setDisplayStatus(displayState.status);
+                }
+            })
+            : () => undefined;
 
         // EC-32: Monitor cancellation
         const unsubscribeCancellation = subscribeToCancellation(deliveryId, (state) => {
@@ -65,10 +147,26 @@ export default function TrackOrderScreen() {
         });
 
         return () => {
+            unsubscribeDelivery();
+            unsubscribeRiderLocation();
             unsubscribeDisplay();
             unsubscribeCancellation();
         };
-    }, []);
+    }, [MAPBOX_TOKEN, deliveryId, params.riderId, delivery?.box_id, navigation]);
+
+    useEffect(() => {
+        if (!delivery?.rider_id) {
+            return;
+        }
+
+        return subscribeToRiderLocation(delivery.rider_id, (location) => {
+            if (!location) {
+                setRiderLiveLocation(null);
+                return;
+            }
+            setRiderLiveLocation({ lat: location.lat, lng: location.lng });
+        });
+    }, [delivery?.rider_id]);
 
     const copyReturnOtp = async () => {
         if (cancellation?.returnOtp) {
@@ -81,6 +179,12 @@ export default function TrackOrderScreen() {
     const handleCancellationSubmit = async (reason: CustomerCancellationReason, details: string) => {
         setCancelLoading(true);
         try {
+            if (!customerId) {
+                Alert.alert('Authentication Required', 'Please log in again to manage this delivery.');
+                setCancelLoading(false);
+                return;
+            }
+
             const result = await requestCustomerCancellation(
                 {
                     deliveryId,
@@ -107,6 +211,21 @@ export default function TrackOrderScreen() {
         } finally {
             setCancelLoading(false);
         }
+    };
+
+    const handleShareTracking = async () => {
+        const token = delivery?.share_token || params.shareToken;
+        if (!token) {
+            Alert.alert('Share Unavailable', 'Tracking link is not ready yet.');
+            return;
+        }
+
+        const baseUrl = process.env.EXPO_PUBLIC_TRACKING_WEB_BASE_URL || 'https://parcel-safe.web.app';
+        const url = `${baseUrl}/track/${token}`;
+        await Share.share({
+            message: `Track your Parcel-Safe delivery: ${url}`,
+            url,
+        });
     };
 
     const canCancelResult = canCustomerCancel(deliveryStatus);
@@ -228,7 +347,9 @@ export default function TrackOrderScreen() {
                         {cancellation ? (
                             <Text variant="titleLarge" style={{ fontWeight: 'bold', color: theme.colors.error }}>Delivery Cancelled</Text>
                         ) : (
-                            <Text variant="titleLarge" style={{ fontWeight: 'bold', color: theme.colors.onSurface }}>Arriving in 10 mins</Text>
+                            <Text variant="titleLarge" style={{ fontWeight: 'bold', color: theme.colors.onSurface }}>
+                                {delivery?.status === 'ARRIVED' ? 'Rider Arrived' : 'Delivery In Progress'}
+                            </Text>
                         )}
 
                         {cancellation ? (
@@ -236,7 +357,9 @@ export default function TrackOrderScreen() {
                                 Reason: {formatCancellationReason(cancellation.reason)}
                             </Text>
                         ) : (
-                            <Text variant="bodyMedium" style={{ color: theme.colors.onSurfaceVariant }}>On the way to your location</Text>
+                            <Text variant="bodyMedium" style={{ color: theme.colors.onSurfaceVariant }}>
+                                {delivery?.status ? `Status: ${delivery.status}` : 'On the way to your location'}
+                            </Text>
                         )}
 
                         {/* EC-86: Display hint when keypad unavailable */}
@@ -307,12 +430,28 @@ export default function TrackOrderScreen() {
                     </View>
                 </View>
 
+                <Button
+                    mode="outlined"
+                    style={styles.cancelBtn}
+                    icon="share-variant"
+                    onPress={handleShareTracking}
+                >
+                    Share Tracking Link
+                </Button>
+
                 {!cancellation && (
                     <Button
                         mode="contained"
                         style={styles.viewOtpBtn}
                         icon="lock-open"
-                        onPress={() => navigation.navigate('OTP')}
+                        onPress={() => {
+                            const boxId = delivery?.box_id;
+                            if (!boxId) {
+                                return;
+                            }
+                            navigation.navigate('OTP', { boxId });
+                        }}
+                        disabled={!delivery?.box_id}
                     >
                         View Secure OTP
                     </Button>

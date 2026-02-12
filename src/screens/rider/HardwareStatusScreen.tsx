@@ -24,6 +24,7 @@ import {
     isPairingActive,
     subscribeToRiderPairing,
 } from '../../services/boxPairingService';
+import useAuthStore from '../../store/authStore';
 
 interface HardwareStatusScreenProps {
     route?: {
@@ -37,7 +38,8 @@ interface HardwareStatusScreenProps {
 
 export default function HardwareStatusScreen({ route, navigation }: HardwareStatusScreenProps) {
     const [pairingState, setPairingState] = useState<BoxPairingState | null>(null);
-    const [riderId] = useState('RIDER_001');
+    const authedUserId = useAuthStore((state: any) => state.user?.userId) as string | undefined;
+    const riderId = authedUserId ?? 'RIDER_001';
     const boxId = route?.params?.boxId ?? pairingState?.box_id;
     const deliveryId = route?.params?.deliveryId;
     const [refreshing, setRefreshing] = useState(false);

@@ -78,7 +78,8 @@ param(
     [switch]$NoInstall,
     [switch]$SkipHealthCheck,
     [switch]$Force,
-    [switch]$NoRealtimeSync
+    [switch]$NoRealtimeSync,
+    [string]$HostIP
 )
 $ErrorActionPreference = "Continue"
 
@@ -943,9 +944,69 @@ if (-not $SkipHealthCheck) {
 # STEP 6: NETWORK CONFIGURATION
 # ============================================
 
-$lanIP = (Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.PrefixOrigin -eq 'Dhcp' -or $_.PrefixOrigin -eq 'Manual' } | Where-Object { $_.InterfaceAlias -notmatch 'Loopback' } | Select-Object -First 1).IPAddress
+function Get-BestLanIp {
+    # Prefer the IPv4 on the interface that owns the default route. This avoids
+    # selecting hotspot/virtual adapters like 192.168.137.1.
+    try {
+        $defaultRoute = Get-NetRoute -DestinationPrefix "0.0.0.0/0" -ErrorAction SilentlyContinue |
+            Where-Object { $_.NextHop -and $_.NextHop -ne "0.0.0.0" } |
+            Sort-Object -Property RouteMetric, InterfaceMetric |
+            Select-Object -First 1
+
+        if ($defaultRoute -and $defaultRoute.InterfaceIndex) {
+            $ip = Get-NetIPAddress -AddressFamily IPv4 -InterfaceIndex $defaultRoute.InterfaceIndex -ErrorAction SilentlyContinue |
+                Where-Object {
+                    $_.IPAddress -and
+                    $_.IPAddress -notmatch '^169\\.254\\.' -and
+                    $_.IPAddress -notmatch '^127\\.'
+                } |
+                Sort-Object -Property PrefixLength -Descending |
+                Select-Object -First 1
+
+            if ($ip -and $ip.IPAddress) {
+                return $ip.IPAddress
+            }
+        }
+    } catch {
+        # Fall through to heuristics
+    }
+
+    # Heuristic fallback: pick a "normal" private IPv4, excluding common virtual adapters.
+    $candidates = Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue |
+        Where-Object {
+            $_.IPAddress -and
+            $_.IPAddress -match '^(10\\.|192\\.168\\.|172\\.(1[6-9]|2\\d|3[0-1])\\.)' -and
+            $_.IPAddress -notmatch '^169\\.254\\.' -and
+            $_.InterfaceAlias -notmatch 'Loopback|vEthernet|Hyper-V|VirtualBox|VMware|WSL|Bluetooth|TAP|Tunnel|Hamachi' -and
+            $_.InterfaceAlias -notmatch 'Local Area Connection\\*'
+        }
+
+    $best = $candidates | Sort-Object -Property PrefixLength -Descending | Select-Object -First 1
+    return $best.IPAddress
+}
+
+$lanIP = $null
+if ($HostIP -and $HostIP.Trim()) {
+    $lanIP = $HostIP.Trim()
+} else {
+    $lanIP = Get-BestLanIp
+}
+
 if (-not $lanIP) { $lanIP = "localhost" }
+
 $env:REACT_NATIVE_PACKAGER_HOSTNAME = $lanIP
+$env:EXPO_PACKAGER_HOSTNAME = $lanIP
+
+# Best-effort: ensure Windows Firewall allows inbound Metro (may require admin).
+try {
+    $fwRule = Get-NetFirewallRule -DisplayName "Metro Bundler (8081)" -ErrorAction SilentlyContinue
+    if (-not $fwRule) {
+        New-NetFirewallRule -DisplayName "Metro Bundler (8081)" -Direction Inbound -Protocol TCP -LocalPort 8081 -Action Allow -Profile Private,Domain -ErrorAction Stop | Out-Null
+        if ($Verbose) { Write-Host "[OK] Created firewall rule: Metro Bundler (8081)" -ForegroundColor Green }
+    }
+} catch {
+    if ($Verbose) { Write-Host "[INFO] Could not create firewall rule for 8081 (try running PowerShell as Administrator)" -ForegroundColor DarkGray }
+}
 
 # ============================================
 # STEP 7: LAUNCH METRO

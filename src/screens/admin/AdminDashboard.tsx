@@ -4,9 +4,9 @@ import { Text, Card, Avatar, Button, Surface, IconButton, Modal, Portal, TextInp
 import { useNavigation } from '@react-navigation/native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import dayjs from 'dayjs';
-import { markDeliveryComplete, getDeliveryByIdOrTracking } from '../../services/supabaseClient';
+import { getDeliveryByIdOrTracking, listSmartBoxes, markDeliveryComplete, SmartBoxSummary } from '../../services/supabaseClient';
 import * as Clipboard from 'expo-clipboard';
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 import QRCode from 'react-native-qrcode-svg';
 
 export default function AdminDashboard() {
@@ -18,6 +18,8 @@ export default function AdminDashboard() {
     const [reasonInput, setReasonInput] = useState('');
     const [isProcessing, setIsProcessing] = useState(false);
     const [pairBoxId, setPairBoxId] = useState('');
+    const [availableBoxes, setAvailableBoxes] = useState<SmartBoxSummary[]>([]);
+    const [boxesLoading, setBoxesLoading] = useState(false);
     const [pairMode, setPairMode] = useState<'ONE_TIME' | 'SESSION'>('SESSION');
     const [sessionHours, setSessionHours] = useState(24);
     const [pairToken, setPairToken] = useState('');
@@ -43,9 +45,26 @@ export default function AdminDashboard() {
         return Math.random().toString(36).slice(2, 10);
     };
 
-    const openPairQrModal = () => {
+    const openPairQrModal = async () => {
         setPairToken(generatePairToken());
+        setPairMode('SESSION');
+        setSessionHours(24);
         setPairQrModalVisible(true);
+
+        setBoxesLoading(true);
+        try {
+            const boxes = await listSmartBoxes();
+            setAvailableBoxes(boxes);
+
+            // Match web UX (QR is generated for a known box): auto-pick a box so QR renders immediately.
+            if (!pairBoxId.trim() && boxes.length > 0) {
+                setPairBoxId(boxes[0].id);
+            }
+        } catch (e) {
+            setAvailableBoxes([]);
+        } finally {
+            setBoxesLoading(false);
+        }
     };
 
     const copyPairingPayload = async () => {
@@ -308,20 +327,51 @@ export default function AdminDashboard() {
                         onDismiss={() => setPairQrModalVisible(false)}
                         contentContainerStyle={styles.modalContainer}
                     >
+                        <ScrollView
+                            showsVerticalScrollIndicator={false}
+                            nestedScrollEnabled
+                            contentContainerStyle={{ paddingBottom: 8 }}
+                        >
                         <Text variant="titleLarge" style={{ fontWeight: 'bold', marginBottom: 12 }}>
                             Generate Pairing QR
                         </Text>
                         <Text variant="bodySmall" style={{ color: '#666', marginBottom: 16 }}>
-                            Enter the box ID, choose one-time or session mode, then share or copy the QR payload.
+                            Select a box, choose one-time or session mode, then share or copy the QR payload.
                         </Text>
 
-                        <TextInput
-                            label="Box ID"
-                            value={pairBoxId}
-                            onChangeText={setPairBoxId}
-                            mode="outlined"
-                            style={{ marginBottom: 12 }}
-                        />
+                        <Text variant="bodySmall" style={{ marginBottom: 8 }}>Select Box</Text>
+                        <View style={styles.boxSelectContainer}>
+                            {boxesLoading ? (
+                                <Text variant="bodySmall" style={{ color: '#666' }}>Loading boxes…</Text>
+                            ) : availableBoxes.length === 0 ? (
+                                <>
+                                    <Text variant="bodySmall" style={{ color: '#666', marginBottom: 8 }}>No boxes found.</Text>
+                                    <TextInput
+                                        label="Box ID (manual)"
+                                        value={pairBoxId}
+                                        onChangeText={setPairBoxId}
+                                        mode="outlined"
+                                    />
+                                </>
+                            ) : (
+                                <ScrollView
+                                    style={styles.boxSelectScroll}
+                                    contentContainerStyle={styles.boxSelectContent}
+                                    nestedScrollEnabled
+                                >
+                                    {availableBoxes.map((box) => (
+                                        <Chip
+                                            key={box.id}
+                                            selected={pairBoxId === box.id}
+                                            onPress={() => setPairBoxId(box.id)}
+                                            style={styles.boxChip}
+                                        >
+                                            {box.id}
+                                        </Chip>
+                                    ))}
+                                </ScrollView>
+                            )}
+                        </View>
 
                         <Text variant="bodySmall" style={{ marginBottom: 8 }}>Pairing Mode</Text>
                         <View style={styles.modeRow}>
@@ -382,7 +432,7 @@ export default function AdminDashboard() {
                                     getRef={(ref) => (qrRef.current = ref)}
                                 />
                             ) : (
-                                <Text style={{ color: '#666' }}>Enter a box ID to render QR</Text>
+                                <Text style={{ color: '#666' }}>Select a box to render QR</Text>
                             )}
                         </View>
 
@@ -401,6 +451,7 @@ export default function AdminDashboard() {
                             <Button mode="outlined" onPress={sharePairingPayload}>Share Payload</Button>
                             <Button mode="contained" onPress={shareQrImage}>Share QR</Button>
                         </View>
+                        </ScrollView>
                     </Modal>
                 </Portal>
 
@@ -537,39 +588,60 @@ const styles = StyleSheet.create({
     alertIcon: {
         marginRight: 12,
     },
-        modalContainer: {
-            backgroundColor: 'white',
-            padding: 24,
-            margin: 20,
-            borderRadius: 16,
-        },
-        modeRow: {
-            flexDirection: 'row',
-            flexWrap: 'wrap',
-            marginBottom: 12,
-        },
-        modeChip: {
-            marginRight: 8,
-            marginBottom: 8,
-        },
-        tokenRow: {
-            flexDirection: 'row',
-            alignItems: 'center',
-            gap: 12,
-            marginBottom: 8,
-        },
-        qrContainer: {
-            alignItems: 'center',
-            justifyContent: 'center',
-            paddingVertical: 12,
-            backgroundColor: '#F8FAFC',
-            borderRadius: 12,
-            marginBottom: 12,
-        },
-        modalActionsRow: {
-            flexDirection: 'row',
-            flexWrap: 'wrap',
-            justifyContent: 'space-between',
-            gap: 8,
-        },
+    boxSelectContainer: {
+        borderWidth: 1,
+        borderColor: '#DDD',
+        borderRadius: 8,
+        padding: 8,
+        marginBottom: 12,
+        maxHeight: 140,
+    },
+    boxSelectScroll: {
+        flexGrow: 0,
+    },
+    boxSelectContent: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        gap: 8,
+    },
+    boxChip: {
+        marginRight: 0,
+        marginBottom: 0,
+    },
+    modalContainer: {
+        backgroundColor: 'white',
+        padding: 24,
+        margin: 20,
+        borderRadius: 16,
+        maxHeight: '90%',
+    },
+    modeRow: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        marginBottom: 12,
+    },
+    modeChip: {
+        marginRight: 8,
+        marginBottom: 8,
+    },
+    tokenRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 12,
+        marginBottom: 8,
+    },
+    qrContainer: {
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingVertical: 12,
+        backgroundColor: '#F8FAFC',
+        borderRadius: 12,
+        marginBottom: 12,
+    },
+    modalActionsRow: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        justifyContent: 'space-between',
+        gap: 8,
+    },
 });

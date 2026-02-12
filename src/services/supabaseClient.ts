@@ -145,6 +145,12 @@ export interface Delivery {
     created_at: string;
 }
 
+export interface SmartBoxSummary {
+    id: string;
+    hardware_mac_address?: string | null;
+    status?: 'IDLE' | 'IN_TRANSIT' | 'MAINTENANCE' | string | null;
+}
+
 // ==================== EC-03: ADMIN FALLBACK FUNCTIONS ====================
 
 /**
@@ -202,4 +208,27 @@ export async function getCurrentUser() {
     if (!supabase) return null;
     const { data: { user } } = await supabase.auth.getUser();
     return user;
+}
+
+/**
+ * List registered smart boxes (Admin pairing QR selection)
+ * Mirrors the web admin hardware dashboard source: public.smart_boxes
+ */
+export async function listSmartBoxes(): Promise<SmartBoxSummary[]> {
+    if (!supabase) {
+        console.warn('Supabase not configured');
+        return [];
+    }
+
+    const { data, error } = await supabase
+        .from('smart_boxes')
+        .select('id, hardware_mac_address, status')
+        .order('hardware_mac_address');
+
+    if (error || !data) {
+        console.error('Failed to list smart boxes:', error?.message);
+        return [];
+    }
+
+    return data as SmartBoxSummary[];
 }

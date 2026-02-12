@@ -3,6 +3,7 @@ import { Alert, StyleSheet, View } from 'react-native';
 import { Button, Card, Chip, Divider, Surface, Text, useTheme } from 'react-native-paper';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import useAuthStore from '../../store/authStore';
 import {
     PairingMode,
     PairingQrPayload,
@@ -10,11 +11,12 @@ import {
     parsePairingQr,
 } from '../../services/boxPairingService';
 
-const DEMO_RIDER_ID = 'RIDER_001';
 const SESSION_OPTIONS = [4, 12, 24];
 
 export default function PairBoxScreen() {
     const theme = useTheme();
+    const authedUserId = useAuthStore((state: any) => state.user?.userId) as string | undefined;
+    const authedRole = useAuthStore((state: any) => state.role) as string | null;
     const [permission, requestPermission] = useCameraPermissions();
     const [scannedPayload, setScannedPayload] = useState<PairingQrPayload | null>(null);
     const [scanLocked, setScanLocked] = useState(false);
@@ -55,11 +57,21 @@ export default function PairBoxScreen() {
             return;
         }
 
+        if (!authedUserId) {
+            Alert.alert('Not Logged In', 'Please log in as a rider account to pair a box.');
+            return;
+        }
+
+        if (authedRole && authedRole !== 'rider') {
+            Alert.alert('Wrong Account', 'Please log in with a rider account to pair a box.');
+            return;
+        }
+
         try {
             setIsPairing(true);
             await pairBoxWithRider({
                 boxId: scannedPayload.boxId,
-                riderId: DEMO_RIDER_ID,
+                riderId: authedUserId,
                 mode: derivedMode,
                 pairToken: scannedPayload.token,
                 sessionHours: derivedMode === 'SESSION' ? derivedSessionHours : undefined,
@@ -70,7 +82,7 @@ export default function PairBoxScreen() {
         } finally {
             setIsPairing(false);
         }
-    }, [derivedMode, derivedSessionHours, scannedPayload?.boxId, scannedPayload?.token]);
+    }, [authedRole, authedUserId, derivedMode, derivedSessionHours, scannedPayload?.boxId, scannedPayload?.token]);
 
     if (!permission) {
         return (

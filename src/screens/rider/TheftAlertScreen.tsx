@@ -18,6 +18,7 @@ import { useNavigation, useRoute } from '@react-navigation/native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import dayjs from 'dayjs';
 import relativeTime from 'dayjs/plugin/relativeTime';
+import useAuthStore from '../../store/authStore';
 import {
     subscribeToTheftStatus,
     reportTheft,
@@ -38,9 +39,11 @@ export default function TheftAlertScreen() {
     const route = useRoute<any>();
     const theme = useTheme();
 
+    const authedUserId = useAuthStore((state: any) => state.user?.userId) as string | undefined;
+
     // Get boxId from navigation params or use demo ID
     const boxId = route.params?.boxId || 'BOX_001';
-    const riderId = route.params?.riderId || 'RIDER_001';
+    const riderId = route.params?.riderId || authedUserId || 'RIDER_001';
 
     // State
     const [theftStatus, setTheftStatus] = useState<TheftStatus | null>(null);

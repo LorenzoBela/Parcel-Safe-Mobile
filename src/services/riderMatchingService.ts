@@ -8,6 +8,7 @@
 import { getFirebaseDatabase } from './firebaseClient';
 import { ref, get, set, update, remove, onValue, off, onDisconnect } from 'firebase/database';
 import { showIncomingOrderNotification } from './pushNotificationService';
+import statusUpdateService from './statusUpdateService';
 
 // Search radius in kilometers (as per user requirement)
 export const SEARCH_RADIUS_KM = 3;
@@ -44,6 +45,43 @@ export interface BookingRequest {
     dropoffAddress: string;
     estimatedFare: number;
     createdAt: number;
+    shareToken?: string;
+}
+
+export interface DeliveryRecord {
+    id: string;
+    tracking_number: string;
+    rider_id: string;
+    rider_name?: string;
+    rider_phone?: string;
+    customer_id: string;
+    box_id: string;
+    pickup_lat: number;
+    pickup_lng: number;
+    pickup_address: string;
+    dropoff_lat: number;
+    dropoff_lng: number;
+    dropoff_address: string;
+    share_token: string;
+    status: string;
+    created_at: number;
+    accepted_at?: number;
+    updated_at?: number;
+}
+
+export interface RiderLiveLocation {
+    lat: number;
+    lng: number;
+    lastUpdated: number;
+}
+
+export function generateShareToken(length: number = 32): string {
+    const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+    let token = '';
+    for (let index = 0; index < length; index += 1) {
+        token += alphabet.charAt(Math.floor(Math.random() * alphabet.length));
+    }
+    return token;
 }
 
 /**
@@ -175,6 +213,7 @@ export async function findNearbyRiders(
 export async function createPendingBooking(request: BookingRequest): Promise<boolean> {
     try {
         const db = getFirebaseDatabase();
+        const shareToken = request.shareToken || generateShareToken();
         await set(ref(db, `/pending_bookings/${request.bookingId}`), {
             customer_id: request.customerId,
             pickup_lat: request.pickupLat,
@@ -186,6 +225,12 @@ export async function createPendingBooking(request: BookingRequest): Promise<boo
             estimated_fare: request.estimatedFare,
             status: 'SEARCHING',
             accepted_by: null,
+            created_at: request.createdAt,
+            share_token: shareToken,
+        });
+
+        await set(ref(db, `/share_tokens/${shareToken}`), {
+            delivery_id: request.bookingId,
             created_at: request.createdAt,
         });
 
@@ -287,15 +332,30 @@ export async function notifyNearbyRiders(
 export async function acceptOrder(
     riderId: string,
     bookingId: string,
-    requestId: string
+    requestId: string,
+    metadata?: {
+        riderName?: string;
+        riderPhone?: string;
+        boxId?: string;
+    }
 ): Promise<boolean> {
     try {
         const db = getFirebaseDatabase();
+        const bookingRef = ref(db, `/pending_bookings/${bookingId}`);
+        const bookingSnapshot = await get(bookingRef);
+
+        if (!bookingSnapshot.exists()) {
+            return false;
+        }
+
+        const booking = bookingSnapshot.val() as any;
+        const acceptedAt = Date.now();
+
         // Update the pending booking
-        await update(ref(db, `/pending_bookings/${bookingId}`), {
+        await update(bookingRef, {
             status: 'ACCEPTED',
             accepted_by: riderId,
-            accepted_at: Date.now(),
+            accepted_at: acceptedAt,
         });
 
         // Mark the request as accepted
@@ -306,6 +366,36 @@ export async function acceptOrder(
         // Mark rider as unavailable
         await update(ref(db, `/online_riders/${riderId}`), {
             is_available: false,
+        });
+
+        const shareToken = booking.share_token || generateShareToken();
+        const deliveryRecord: DeliveryRecord = {
+            id: bookingId,
+            tracking_number: bookingId,
+            rider_id: riderId,
+            rider_name: metadata?.riderName,
+            rider_phone: metadata?.riderPhone,
+            customer_id: booking.customer_id,
+            box_id: metadata?.boxId || '',
+            pickup_lat: booking.pickup_lat,
+            pickup_lng: booking.pickup_lng,
+            pickup_address: booking.pickup_address,
+            dropoff_lat: booking.dropoff_lat,
+            dropoff_lng: booking.dropoff_lng,
+            dropoff_address: booking.dropoff_address,
+            share_token: shareToken,
+            status: 'ASSIGNED',
+            created_at: booking.created_at || acceptedAt,
+            accepted_at: acceptedAt,
+            updated_at: acceptedAt,
+        };
+
+        await set(ref(db, `/deliveries/${bookingId}`), deliveryRecord);
+
+        await set(ref(db, `/share_tokens/${shareToken}`), {
+            delivery_id: bookingId,
+            created_at: booking.created_at || acceptedAt,
+            updated_at: acceptedAt,
         });
 
         return true;
@@ -373,6 +463,87 @@ export function subscribeToBookingStatus(
 
     // Return unsubscribe function
     return () => off(statusRef);
+}
+
+export function subscribeToDelivery(
+    deliveryId: string,
+    callback: (delivery: DeliveryRecord | null) => void
+): () => void {
+    const db = getFirebaseDatabase();
+    const deliveryRef = ref(db, `/deliveries/${deliveryId}`);
+
+    onValue(deliveryRef, (snapshot) => {
+        if (!snapshot.exists()) {
+            callback(null);
+            return;
+        }
+        callback(snapshot.val() as DeliveryRecord);
+    });
+
+    return () => off(deliveryRef);
+}
+
+export function subscribeToRiderLocation(
+    riderId: string,
+    callback: (location: RiderLiveLocation | null) => void
+): () => void {
+    const db = getFirebaseDatabase();
+    const riderRef = ref(db, `/online_riders/${riderId}`);
+
+    onValue(riderRef, (snapshot) => {
+        if (!snapshot.exists()) {
+            callback(null);
+            return;
+        }
+
+        const data = snapshot.val() as any;
+        if (typeof data.lat !== 'number' || typeof data.lng !== 'number') {
+            callback(null);
+            return;
+        }
+
+        callback({
+            lat: data.lat,
+            lng: data.lng,
+            lastUpdated: data.last_updated || Date.now(),
+        });
+    });
+
+    return () => off(riderRef);
+}
+
+export async function updateDeliveryStatus(
+    deliveryId: string,
+    status: string,
+    additionalFields?: Record<string, unknown>
+): Promise<boolean> {
+    try {
+        const db = getFirebaseDatabase();
+        await update(ref(db, `/deliveries/${deliveryId}`), {
+            status,
+            updated_at: Date.now(),
+            ...(additionalFields || {}),
+        });
+        return true;
+    } catch (error) {
+        console.error('Error updating delivery status:', error);
+
+        // EC-35: Queue for retry when connectivity is restored.
+        try {
+            const fields = additionalFields || {};
+            const candidateBoxId =
+                (typeof (fields as any).boxId === 'string' && (fields as any).boxId) ||
+                (typeof (fields as any).box_id === 'string' && (fields as any).box_id) ||
+                (typeof (fields as any).status_retry_box_id === 'string' && (fields as any).status_retry_box_id) ||
+                'UNKNOWN_BOX';
+
+            await statusUpdateService.queueStatusUpdate(deliveryId, candidateBoxId, status);
+        } catch (queueError) {
+            console.error('[EC35] Failed to queue status update:', queueError);
+        }
+
+        return false;
+    }
 }
 
 /**

@@ -20,10 +20,45 @@ jest.mock('@react-navigation/native', () => ({
     useFocusEffect: (callback: any) => callback(),
 }));
 
+jest.mock('../../../services/firebaseClient', () => ({
+    subscribeToAllLocations: jest.fn((callback: any) => {
+        callback({
+            'BOX-001': {
+                latitude: 14.5547,
+                longitude: 121.0244,
+                source: 'box',
+                timestamp: Date.now(),
+            },
+            'BOX-002': {
+                latitude: 14.5601,
+                longitude: 121.0102,
+                source: 'phone',
+                timestamp: Date.now(),
+            },
+            'BOX-003': {
+                latitude: 14.5488,
+                longitude: 121.0301,
+                source: 'box',
+                timestamp: Date.now(),
+            },
+        });
+        return () => undefined;
+    }),
+    subscribeToAllHardware: jest.fn((callback: any) => {
+        callback({
+            'BOX-001': { status: 'IDLE', tamper: { detected: false, lockdown: false } },
+            'BOX-002': { status: 'ACTIVE', tamper: { detected: false, lockdown: false } },
+            'BOX-003': { status: 'TAMPER', tamper: { detected: true, lockdown: true } },
+        });
+        return () => undefined;
+    }),
+}));
+
 jest.mock('../../../services/supabaseClient', () => ({
     markDeliveryComplete: jest.fn(() => Promise.resolve(true)),
     getDeliveryByIdOrTracking: jest.fn(() => Promise.resolve(null)),
     getCurrentUser: jest.fn(() => Promise.resolve({ id: 'admin-1' })),
+    listSmartBoxes: jest.fn(() => Promise.resolve([{ id: 'BOX-001', hardware_mac_address: 'AA:BB:CC:DD:EE:FF', status: 'IDLE' }])),
 }));
 
 jest.mock('../../../services/adminOverrideService', () => ({

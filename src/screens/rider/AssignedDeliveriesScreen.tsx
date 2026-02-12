@@ -5,6 +5,7 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import CancellationModal from '../../components/modals/CancellationModal';
 import { requestCancellation, CancellationReason } from '../../services/cancellationService';
+import useAuthStore from '../../store/authStore';
 import dayjs from 'dayjs';
 import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/datetimepicker';
 
@@ -137,6 +138,8 @@ export default function AssignedDeliveriesScreen() {
         });
     };
 
+    const authedUserId = useAuthStore((state: any) => state.user?.userId) as string | undefined;
+
     const handleCancellationSubmit = async (reason: CancellationReason, details: string) => {
         if (!selectedDelivery) return;
 
@@ -148,7 +151,7 @@ export default function AssignedDeliveriesScreen() {
                 boxId: 'BOX_001',
                 reason,
                 reasonDetails: details,
-                riderId: 'RIDER_001',
+                riderId: authedUserId ?? 'RIDER_001',
                 riderName: 'Juan Dela Cruz',
             });
 

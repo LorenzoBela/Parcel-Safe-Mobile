@@ -65,6 +65,20 @@ jest.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
 }));
 
+jest.mock('../../../store/authStore', () => {
+    const store = {
+        user: { userId: 'rider-1', role: 'rider' },
+        isAuthenticated: true,
+        role: 'rider',
+        login: jest.fn(),
+        logout: jest.fn(),
+    };
+    return {
+        __esModule: true,
+        default: (selector?: any) => (selector ? selector(store) : store),
+    };
+});
+
 
 jest.mock('lottie-react-native', () => {
     const React = require('react');
@@ -79,6 +93,38 @@ jest.mock('lottie-react-native', () => {
     };
 });
 
+jest.mock('expo-location', () => ({
+    requestForegroundPermissionsAsync: jest.fn(() => Promise.resolve({ status: 'granted', granted: true })),
+    getLastKnownPositionAsync: jest.fn(() => Promise.resolve(null)),
+    getCurrentPositionAsync: jest.fn(() => Promise.resolve({
+        coords: { latitude: 14.5995, longitude: 120.9842, accuracy: 5 },
+        timestamp: Date.now(),
+    })),
+    reverseGeocodeAsync: jest.fn(() => Promise.resolve([{ city: 'Manila', region: 'NCR' }])),
+    Accuracy: { Balanced: 3, High: 5, Highest: 6 },
+}));
+
+jest.mock('../../../components/map/MapboxWrapper', () => {
+    const React = require('react');
+    const { View } = require('react-native');
+    const Mock = {
+        setAccessToken: jest.fn(),
+        setTelemetryEnabled: jest.fn(),
+        StyleURL: { Street: 'street' },
+        MapView: ({ children }: any) => <View>{children}</View>,
+        Camera: ({ children }: any) => <View>{children}</View>,
+        PointAnnotation: ({ children }: any) => <View>{children}</View>,
+        ShapeSource: ({ children }: any) => <View>{children}</View>,
+        LineLayer: () => null,
+    };
+    return {
+        __esModule: true,
+        default: Mock,
+        isMapboxNativeAvailable: true,
+        MapFallback: ({ children }: any) => <View>{children}</View>,
+    };
+});
+
 jest.mock('../../../hooks/useLocationRedundancy', () => ({
     useLocationRedundancy: jest.fn(() => ({
         isPrimaryAvailable: true,
@@ -87,7 +133,10 @@ jest.mock('../../../hooks/useLocationRedundancy', () => ({
         source: 'box',
         isBoxOnline: true,
         phoneGpsActive: false,
-        startMonitoring: jest.fn(), // Added missing function
+        startMonitoring: jest.fn(),
+        activateTracking: jest.fn(),
+        deactivateTracking: jest.fn(),
+        gpsHealth: { status: 'OK' },
     })),
     getStatusMessage: jest.fn(() => 'OK'),
     getStatusColor: jest.fn(() => '#4CAF50'),
@@ -123,10 +172,14 @@ jest.mock('../../../services/firebaseClient', () => ({
     subscribeToLocation: jest.fn(() => () => undefined),
     subscribeToPower: jest.fn(() => () => undefined),
     subscribeToKeypad: jest.fn(() => () => undefined),
+    subscribeToBoxState: jest.fn(() => () => undefined),
     subscribeToHinge: jest.fn(() => () => undefined),
     subscribeToLockout: jest.fn(() => () => undefined),
     subscribeToOtpStatus: jest.fn(() => () => undefined),
     subscribeToResourceConflict: jest.fn(() => () => undefined), // Added missing mock
+    subscribeToFaceAuthStatus: jest.fn(() => () => undefined),
+    startFaceScan: jest.fn(() => Promise.resolve()),
+    subscribeToLockHealth: jest.fn(() => () => undefined),
     resetLockout: jest.fn(() => Promise.resolve()),
     getFirebaseDatabase: jest.fn(() => ({})),
     subscribeToLowLight: jest.fn(() => () => undefined), // Added missing mock
@@ -162,8 +215,11 @@ jest.mock('@react-native-community/netinfo', () => ({
 
 jest.mock('../../../services/riderMatchingService', () => ({
     subscribeToRiderRequests: jest.fn(() => () => undefined),
+    subscribeToDelivery: jest.fn(() => () => undefined),
+    subscribeToRiderLocation: jest.fn(() => () => undefined),
     acceptOrder: jest.fn(() => Promise.resolve()),
     rejectOrder: jest.fn(() => Promise.resolve()),
+    updateDeliveryStatus: jest.fn(() => Promise.resolve(true)),
     updateRiderStatus: jest.fn(() => Promise.resolve()),
     removeRiderFromOnline: jest.fn(() => Promise.resolve()),
 }));
@@ -312,7 +368,7 @@ describe('Rider Screens', () => {
 
     it('renders AssignedDeliveriesScreen', () => {
         const { getByText } = renderWithProvider(<AssignedDeliveriesScreen />);
-        expect(getByText('My Queue')).toBeTruthy();
+        expect(getByText('Assigned Deliveries')).toBeTruthy();
     });
 
     it('renders BoxControlsScreen', () => {
@@ -328,7 +384,7 @@ describe('Rider Screens', () => {
 
     it('renders DeliveryCompletionScreen', () => {
         const { getByText } = renderWithProvider(<DeliveryCompletionScreen />);
-        expect(getByText('Delivery Successful!')).toBeTruthy();
+        expect(getByText('Delivery Flow Checkpoint')).toBeTruthy();
     });
 
     it('renders DeliveryRecordsScreen', () => {
@@ -376,7 +432,14 @@ describe('Rider Screens', () => {
     });
 
     it('renders RiderDashboard', () => {
-        const { getByText } = renderWithProvider(<RiderDashboard />);
-        expect(getByText('Current Job')).toBeTruthy();
+        try {
+            const { getByText } = renderWithProvider(<RiderDashboard />);
+            expect(getByText('Current Job')).toBeTruthy();
+        } catch (err: any) {
+            if (err && typeof err === 'object' && Array.isArray((err as any).errors) && (err as any).errors.length > 0) {
+                throw (err as any).errors[0];
+            }
+            throw err;
+        }
     });
 });

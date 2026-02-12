@@ -10,6 +10,8 @@ import {
     BatteryState,
     subscribeToTamper,
     TamperState,
+    subscribeToBoxState,
+    BoxState,
     subscribeToLockout,
     LockoutState,
     subscribeToOtpStatus,
@@ -23,6 +25,7 @@ import {
     subscribeToLockHealth, // EC-96
     LockHealthState, // EC-96
 } from '../../services/firebaseClient';
+import { updateDeliveryStatus } from '../../services/riderMatchingService';
 import { subscribeToAdminOverride, AdminOverrideState, getOverrideNotificationMessage } from '../../services/adminOverrideService';
 import { bleOtpService, BleBoxDevice, BleTransferResult } from '../../services/bleOtpService';
 import {
@@ -30,11 +33,10 @@ import {
     isPairingActive,
     subscribeToRiderPairing,
 } from '../../services/boxPairingService';
+import useAuthStore from '../../store/authStore';
 
 // Demo box ID (would come from navigation params in production)
 const DEMO_BOX_ID = 'BOX_001';
-const DEMO_DELIVERY_ID = 'DEL_001';
-const DEMO_OTP = '123456';
 
 export default function BoxControlsScreen() {
     const navigation = useNavigation();
@@ -45,7 +47,8 @@ export default function BoxControlsScreen() {
     const [rebooting, setRebooting] = useState(false);
     const [logs, setLogs] = useState<{ time: string; message: string; type: string }[]>([]);
     const [pairingState, setPairingState] = useState<BoxPairingState | null>(null);
-    const [riderId] = useState('RIDER_001');
+    const authedUserId = useAuthStore((state: any) => state.user?.userId) as string | undefined;
+    const riderId = authedUserId ?? 'RIDER_001';
 
     // EC-03: Battery Monitoring State
     const [batteryState, setBatteryState] = useState<BatteryState | null>(null);
@@ -89,9 +92,18 @@ export default function BoxControlsScreen() {
     const isPaired = isPairingActive(pairingState);
     const pairedBoxId = pairingState?.box_id;
     const boxId = route?.params?.boxId ?? pairedBoxId ?? DEMO_BOX_ID;
+    const routeDeliveryId = route?.params?.deliveryId as string | undefined;
+
+    const [boxState, setBoxState] = useState<BoxState | null>(null);
+    // Last-resort fallback for dev screens when box has no active delivery.
+    const activeDeliveryId = routeDeliveryId || boxState?.delivery_id || 'DEL_001';
+    const activeOtpCode = boxState?.otp_code || '';
 
     // Initialize Logs and Subscriptions
     useEffect(() => {
+                const unsubscribeBoxState = subscribeToBoxState(boxId, (state) => {
+                    setBoxState(state);
+                });
         addLog("Control Panel accessed", "info");
         addLog("Telemetry stream connected", "success");
 
@@ -111,6 +123,14 @@ export default function BoxControlsScreen() {
             setTamperState(state);
             if (state?.detected) {
                 addLog("⚠️ TAMPER DETECTED - Box in lockdown!", "error");
+
+                if (activeDeliveryId && activeDeliveryId !== 'DEL_001') {
+                    updateDeliveryStatus(activeDeliveryId, 'TAMPERED', {
+                        tampered_at: Date.now(),
+                        tamper_lockdown: Boolean(state.lockdown),
+                        source: 'box_controls',
+                    });
+                }
             }
         });
 
@@ -175,6 +195,7 @@ export default function BoxControlsScreen() {
         return () => {
             unsubscribeBattery();
             unsubscribeTamper();
+            unsubscribeBoxState();
             unsubscribeLockout();
             unsubscribeOtpStatus();
             unsubscribeOverride();
@@ -332,6 +353,15 @@ export default function BoxControlsScreen() {
             navigation.navigate('PairBox' as never);
             return;
         }
+
+        if (!activeDeliveryId || !activeOtpCode || activeOtpCode.length < 6) {
+            Alert.alert(
+                'OTP Not Ready',
+                'No active OTP found for this box. Make sure a delivery is assigned and OTP has been issued.'
+            );
+            return;
+        }
+
         setShowBleModal(true);
         setBleStatus('scanning');
         setBleMessage('Scanning for nearby box...');
@@ -340,8 +370,8 @@ export default function BoxControlsScreen() {
         try {
             const result = await bleOtpService.sendOtpToBox(
                 boxId,
-                DEMO_OTP,
-                DEMO_DELIVERY_ID,
+                activeOtpCode,
+                activeDeliveryId,
                 {
                     onScanStart: () => {
                         setBleStatus('scanning');
