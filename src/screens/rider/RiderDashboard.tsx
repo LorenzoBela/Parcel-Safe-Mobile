@@ -20,6 +20,7 @@ try {
     if (__DEV__) console.log('[RiderDashboard] NetInfo not available');
 }
 import IncomingOrderModal from '../../components/IncomingOrderModal';
+import TripPreviewModal from '../../components/modals/TripPreviewModal';
 import {
     subscribeToRiderRequests,
     acceptOrder,
@@ -187,7 +188,7 @@ export default function RiderDashboard() {
                     .from('deliveries')
                     .select('id, status')
                     .eq('rider_id', riderId)
-                    .in('status', ['IN_TRANSIT', 'ARRIVED'])
+                    .in('status', ['PENDING', 'IN_TRANSIT', 'ARRIVED'])
                     .limit(1);
 
                 if (!error && data && data.length > 0) {
@@ -530,23 +531,24 @@ export default function RiderDashboard() {
 
         if (success) {
             setShowOrderModal(false);
+
+            // Prepare trip details for preview
+            const tripDetails = {
+                pickupAddress: incomingRequest.data.pickupAddress,
+                dropoffAddress: incomingRequest.data.dropoffAddress,
+                estimatedFare: incomingRequest.data.estimatedFare,
+                distance: `${incomingRequest.data.distance?.toFixed(1) || '--'} km`,
+                duration: `${incomingRequest.data.duration?.toFixed(0) || '--'} min`,
+                pickupLat: incomingRequest.data.pickupLat,
+                pickupLng: incomingRequest.data.pickupLng,
+                dropoffLat: incomingRequest.data.dropoffLat,
+                dropoffLng: incomingRequest.data.dropoffLng,
+                bookingId: incomingRequest.data.bookingId, // Store ID for start
+            };
+
+            setAcceptedTripDetails(tripDetails);
             setIncomingRequest(null);
-            Alert.alert(
-                '✅ Order Accepted',
-                'Navigate to pickup location to collect the package.',
-                [{
-                    text: 'Start Navigation',
-                    onPress: () => navigation.navigate('Arrival', {
-                        deliveryId: incomingRequest.data.bookingId,
-                        boxId: boxIdForMonitoring,
-                        targetLat: incomingRequest.data.dropoffLat,
-                        targetLng: incomingRequest.data.dropoffLng,
-                        targetAddress: incomingRequest.data.dropoffAddress,
-                        customerPhone: undefined,
-                        riderName,
-                    })
-                }]
-            );
+            setShowTripPreview(true);
         } else {
             Alert.alert('Error', 'Failed to accept order. Please try again.');
         }
@@ -569,6 +571,10 @@ export default function RiderDashboard() {
         setShowOrderModal(false);
         setIncomingRequest(null);
     }, [incomingRequest, riderId]);
+
+    // Trip Preview State
+    const [showTripPreview, setShowTripPreview] = useState(false);
+    const [acceptedTripDetails, setAcceptedTripDetails] = useState<any>(null);
 
     // EC-32: Handle Cancellation Submit
     const handleCancellationSubmit = async (reason: CancellationReason, details: string) => {

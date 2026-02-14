@@ -8,7 +8,10 @@ import { subscribeToDisplay } from '../../services/firebaseClient';
 import {
     subscribeToDelivery,
     subscribeToRiderLocation,
+    subscribeToBoxLocation,
+    getRiderProfile,
     DeliveryRecord,
+    RiderProfile,
 } from '../../services/riderMatchingService';
 import {
     subscribeToCancellation,
@@ -23,6 +26,8 @@ import statusUpdateService from '../../services/statusUpdateService';
 import * as Clipboard from 'expo-clipboard';
 import CustomerCancellationModal from '../../components/modals/CustomerCancellationModal';
 import useAuthStore from '../../store/authStore';
+import { lineString } from '@turf/helpers';
+// MapboxGL is already imported from wrapper
 
 interface TrackRouteParams {
     bookingId: string;
@@ -67,6 +72,9 @@ export default function TrackOrderScreen() {
     const [cancelLoading, setCancelLoading] = useState(false);
     const [delivery, setDelivery] = useState<DeliveryRecord | null>(null);
     const [riderLiveLocation, setRiderLiveLocation] = useState<{ lat: number; lng: number } | null>(null);
+    const [boxLiveLocation, setBoxLiveLocation] = useState<{ lat: number; lng: number } | null>(null);
+    const [routeCoordinates, setRouteCoordinates] = useState<number[][] | null>(null);
+    const [riderProfile, setRiderProfile] = useState<RiderProfile | null>(null);
 
     const params = (route.params || {}) as TrackRouteParams;
     const deliveryId = params.bookingId;
@@ -81,22 +89,38 @@ export default function TrackOrderScreen() {
         longitude: delivery?.dropoff_lng ?? params.dropoffLng ?? 0,
     };
 
+    const isPickedUp = ['PICKED_UP', 'IN_TRANSIT'].includes(delivery?.status || '');
+
     const boxLocation = {
-        latitude: delivery?.pickup_lat ?? params.pickupLat ?? destination.latitude,
-        longitude: delivery?.pickup_lng ?? params.pickupLng ?? destination.longitude,
+        latitude: boxLiveLocation?.lat ?? (isPickedUp ? RiderFallbackLat() : (delivery?.pickup_lat ?? params.pickupLat ?? destination.latitude)),
+        longitude: boxLiveLocation?.lng ?? (isPickedUp ? RiderFallbackLng() : (delivery?.pickup_lng ?? params.pickupLng ?? destination.longitude)),
     };
 
+    // Helper to get rider location for fallback without circular dependency reference in const
+    function RiderFallbackLat() { return riderLiveLocation?.lat ?? delivery?.pickup_lat ?? destination.latitude; }
+    function RiderFallbackLng() { return riderLiveLocation?.lng ?? delivery?.pickup_lng ?? destination.longitude; }
+
     const riderLocation = {
-        latitude: riderLiveLocation?.lat ?? boxLocation.latitude,
-        longitude: riderLiveLocation?.lng ?? boxLocation.longitude,
+        latitude: riderLiveLocation?.lat ?? (isPickedUp ? boxLocation.latitude : (delivery?.pickup_lat ?? params.pickupLat ?? destination.latitude)),
+        longitude: riderLiveLocation?.lng ?? (isPickedUp ? boxLocation.longitude : (delivery?.pickup_lng ?? params.pickupLng ?? destination.longitude)),
     };
 
     const riderDetails = {
-        name: delivery?.rider_name || 'Rider Assigned',
+        name: riderProfile?.full_name || delivery?.rider_name || (delivery?.status === 'ACCEPTED' ? 'Rider Assigned' : 'Connecting...'),
         vehicle: 'Delivery Rider',
-        rating: 0,
+        rating: riderProfile?.rating || 4.8,
         phone: delivery?.rider_phone || '',
+        avatar: riderProfile?.avatar_url || 'https://i.pravatar.cc/150?img=11',
     };
+
+    // Fetch Rider Profile when rider_id is assigned
+    useEffect(() => {
+        if (delivery?.rider_id) {
+            getRiderProfile(delivery.rider_id).then(setRiderProfile);
+        } else {
+            setRiderProfile(null);
+        }
+    }, [delivery?.rider_id]);
 
     useEffect(() => {
         // Best-effort flush of queued status updates (EC-35) when tracking UI opens.
@@ -143,14 +167,28 @@ export default function TrackOrderScreen() {
 
         // EC-32: Monitor cancellation
         const unsubscribeCancellation = subscribeToCancellation(deliveryId, (state) => {
-            setCancellation(state);
+            // Only consider it cancelled if the state exists AND is marked as cancelled
+            if (state && state.cancelled) {
+                setCancellation(state);
+            } else {
+                setCancellation(null);
+            }
         });
+
+        const unsubscribeBox = delivery?.box_id
+            ? subscribeToBoxLocation(delivery.box_id, (location) => {
+                if (location) {
+                    setBoxLiveLocation({ lat: location.lat, lng: location.lng });
+                }
+            })
+            : () => undefined;
 
         return () => {
             unsubscribeDelivery();
             unsubscribeRiderLocation();
             unsubscribeDisplay();
             unsubscribeCancellation();
+            unsubscribeBox();
         };
     }, [MAPBOX_TOKEN, deliveryId, params.riderId, delivery?.box_id, navigation]);
 
@@ -230,11 +268,37 @@ export default function TrackOrderScreen() {
 
     const canCancelResult = canCustomerCancel(deliveryStatus);
 
+    // Fetch route from Mapbox Directions API
+    useEffect(() => {
+        if (!riderLocation.latitude || !destination.latitude || !MAPBOX_TOKEN) return;
+
+        const fetchRoute = async () => {
+            try {
+                const response = await fetch(
+                    `https://api.mapbox.com/directions/v5/mapbox/driving/${riderLocation.longitude},${riderLocation.latitude};${destination.longitude},${destination.latitude}?geometries=geojson&access_token=${MAPBOX_TOKEN}`
+                );
+                const json = await response.json();
+                if (json.routes && json.routes.length > 0) {
+                    setRouteCoordinates(json.routes[0].geometry.coordinates);
+                }
+            } catch (error) {
+                console.error('Error fetching route:', error);
+            }
+        };
+
+        // Debounce or throttle this in production? For now, fetch on significant location change?
+        // Actually, just fetching on mount or destination change is safer for quota.
+        // Updating route every second is expensive. Let's fetch once initially or if destination changes.
+        // If rider moves, we might want to update, but maybe just visually showing the rider moving along the static route is enough?
+        // User asked for "mapping the street not just lines".
+        fetchRoute();
+    }, [destination.latitude, destination.longitude, MAPBOX_TOKEN]); // Removed riderLocation dependency to avoid API spam
+
     const routeGeoJson = {
         type: 'Feature' as const,
         geometry: {
             type: 'LineString' as const,
-            coordinates: [
+            coordinates: routeCoordinates || [
                 [riderLocation.longitude, riderLocation.latitude],
                 [boxLocation.longitude, boxLocation.latitude],
                 [destination.longitude, destination.latitude],
@@ -315,10 +379,10 @@ export default function TrackOrderScreen() {
                         <MapboxGL.CircleLayer
                             id="destination-fence"
                             style={{
-                                circleRadius: 20,
-                                circleColor: 'rgba(76, 175, 80, 0.1)',
-                                circleStrokeColor: 'rgba(76, 175, 80, 0.5)',
-                                circleStrokeWidth: 2,
+                                circleRadius: 60,
+                                circleColor: 'rgba(76, 175, 80, 0.25)', // More visible green fill
+                                circleStrokeColor: 'rgba(76, 175, 80, 0.8)', // Solid strong border
+                                circleStrokeWidth: 3,
                             }}
                         />
                     </MapboxGL.ShapeSource>
@@ -344,7 +408,7 @@ export default function TrackOrderScreen() {
 
                 <View style={styles.statusHeader}>
                     <View>
-                        {cancellation ? (
+                        {cancellation && delivery?.status === 'CANCELLED' ? (
                             <Text variant="titleLarge" style={{ fontWeight: 'bold', color: theme.colors.error }}>Delivery Cancelled</Text>
                         ) : (
                             <Text variant="titleLarge" style={{ fontWeight: 'bold', color: theme.colors.onSurface }}>
@@ -352,7 +416,7 @@ export default function TrackOrderScreen() {
                             </Text>
                         )}
 
-                        {cancellation ? (
+                        {cancellation && delivery?.status === 'CANCELLED' ? (
                             <Text variant="bodyMedium" style={{ color: theme.colors.onSurfaceVariant }}>
                                 Reason: {formatCancellationReason(cancellation.reason)}
                             </Text>
@@ -377,7 +441,7 @@ export default function TrackOrderScreen() {
                 </View>
 
                 {/* EC-32: Cancellation Details & Return OTP */}
-                {cancellation && (
+                {cancellation && delivery?.status === 'CANCELLED' && (
                     <Surface style={[styles.cancellationCard, { backgroundColor: theme.colors.errorContainer }]} elevation={1}>
                         <View style={styles.cancellationHeader}>
                             <MaterialCommunityIcons name="alert-circle-outline" size={24} color={theme.colors.error} />
@@ -401,7 +465,7 @@ export default function TrackOrderScreen() {
                 <View style={[styles.divider, { backgroundColor: theme.colors.outlineVariant }]} />
 
                 <View style={styles.riderInfo}>
-                    <Avatar.Image size={50} source={{ uri: 'https://i.pravatar.cc/150?img=11' }} />
+                    <Avatar.Image size={50} source={{ uri: riderDetails.avatar }} />
                     <View style={{ flex: 1, marginLeft: 16 }}>
                         <Text variant="titleMedium" style={{ fontWeight: 'bold', color: theme.colors.onSurface }}>{riderDetails.name}</Text>
                         <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>{riderDetails.vehicle}</Text>

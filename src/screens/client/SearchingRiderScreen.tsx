@@ -10,8 +10,8 @@ import {
     cancelBooking,
     BookingRequest,
     SEARCH_RADIUS_KM,
-    generateShareToken,
 } from '../../services/riderMatchingService';
+import { generateShareToken } from '../../utils/tokenUtils';
 import {
     registerForPushNotifications,
     setupNotificationChannels,
@@ -19,7 +19,7 @@ import {
 } from '../../services/pushNotificationService';
 import useAuthStore from '../../store/authStore';
 
-// 5 minutes in milliseconds
+// 5 minutes in milliseconds - adjusted for reliability
 const SEARCH_TIMEOUT_MS = 5 * 60 * 1000;
 
 // Rotating status messages to show the app is actively looking

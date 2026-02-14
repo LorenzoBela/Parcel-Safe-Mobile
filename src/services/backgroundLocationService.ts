@@ -13,7 +13,8 @@
 import * as Location from 'expo-location';
 import * as TaskManager from 'expo-task-manager';
 import { Platform, AppState, AppStateStatus } from 'react-native';
-import { writePhoneLocation, getFirebaseDatabase, ref, set, serverTimestamp, onValue, off } from './firebaseClient';
+import { getFirebaseDatabase, ref, set, serverTimestamp, onValue, off } from './firebaseClient';
+import { offlineQueueService } from './offlineQueueService';
 
 // ==================== Configuration ====================
 
@@ -87,26 +88,26 @@ TaskManager.defineTask(CONFIG.TASK_NAME, async ({ data, error }) => {
         console.error('[EC-15] Background task error:', error);
         return;
     }
-    
+
     if (!data || !currentBoxId) {
         return;
     }
-    
+
     const { locations } = data as { locations: Location.LocationObject[] };
-    
+
     if (locations && locations.length > 0) {
         const location = locations[locations.length - 1]; // Get most recent
-        
+
         try {
-            await writePhoneLocation(
+            await offlineQueueService.enqueueLocationUpdate(
                 currentBoxId,
                 location.coords.latitude,
                 location.coords.longitude,
                 location.coords.speed ?? 0,
                 location.coords.heading ?? 0
             );
-            
-            // Update last location timestamp in Firebase
+
+            // Update last location timestamp in Firebase (heartbeat, bypass queue for status)
             const db = getFirebaseDatabase();
             const statusRef = ref(db, `boxes/${currentBoxId}/background_location_status`);
             await set(statusRef, {
@@ -132,7 +133,7 @@ class BackgroundLocationManager {
         boxGpsAvailable: true,
         totalUpdatesCount: 0,
     };
-    
+
     private listeners: Set<StateChangeCallback> = new Set();
     private healthCheckInterval: NodeJS.Timeout | null = null;
     private appStateSubscription: any = null;
@@ -147,7 +148,7 @@ class BackgroundLocationManager {
         try {
             // Request foreground permission first
             const { status: foregroundStatus } = await Location.requestForegroundPermissionsAsync();
-            
+
             if (foregroundStatus !== 'granted') {
                 this.updateState({
                     permissionStatus: 'DENIED',
@@ -155,10 +156,10 @@ class BackgroundLocationManager {
                 });
                 return false;
             }
-            
+
             // Request background permission
             const { status: backgroundStatus } = await Location.requestBackgroundPermissionsAsync();
-            
+
             if (backgroundStatus !== 'granted') {
                 this.updateState({
                     permissionStatus: 'DENIED',
@@ -166,7 +167,7 @@ class BackgroundLocationManager {
                 });
                 return false;
             }
-            
+
             this.updateState({ permissionStatus: 'GRANTED' });
             return true;
         } catch (error) {
@@ -185,12 +186,12 @@ class BackgroundLocationManager {
         try {
             const { status: foregroundStatus } = await Location.getForegroundPermissionsAsync();
             const { status: backgroundStatus } = await Location.getBackgroundPermissionsAsync();
-            
+
             const granted = foregroundStatus === 'granted' && backgroundStatus === 'granted';
             this.updateState({
                 permissionStatus: granted ? 'GRANTED' : 'DENIED',
             });
-            
+
             return granted;
         } catch (error) {
             return false;
@@ -205,10 +206,10 @@ class BackgroundLocationManager {
             if (currentBoxId === boxId) return true;
             await this.stop();
         }
-        
+
         this.updateState({ status: 'STARTING' });
         currentBoxId = boxId;
-        
+
         // Check permissions
         const hasPermissions = await this.checkPermissions();
         if (!hasPermissions) {
@@ -221,11 +222,11 @@ class BackgroundLocationManager {
                 return false;
             }
         }
-        
+
         try {
             // Check if task is already running
             const isTaskRegistered = await TaskManager.isTaskRegisteredAsync(CONFIG.TASK_NAME);
-            
+
             if (!isTaskRegistered) {
                 // Start background location updates
                 await Location.startLocationUpdatesAsync(CONFIG.TASK_NAME, {
@@ -245,21 +246,21 @@ class BackgroundLocationManager {
                     pausesUpdatesAutomatically: false,
                 });
             }
-            
+
             this.updateState({
                 status: 'RUNNING',
                 foregroundServiceActive: Platform.OS === 'android',
                 lastError: null,
             });
-            
+
             // Start monitoring
             this.startHealthCheck();
             this.subscribeToAppState();
             this.subscribeToBoxGpsStatus(boxId);
-            
+
             // Log to Firebase
             await this.logServiceEvent(boxId, 'SERVICE_STARTED');
-            
+
             return true;
         } catch (error) {
             this.updateState({
@@ -276,29 +277,29 @@ class BackgroundLocationManager {
     async stop(): Promise<void> {
         try {
             const isTaskRegistered = await TaskManager.isTaskRegisteredAsync(CONFIG.TASK_NAME);
-            
+
             if (isTaskRegistered) {
                 await Location.stopLocationUpdatesAsync(CONFIG.TASK_NAME);
             }
         } catch (error) {
             console.error('[EC-15] Error stopping location updates:', error);
         }
-        
+
         // Clean up
         this.stopHealthCheck();
         this.unsubscribeFromAppState();
-        
+
         if (this.unsubscribeBoxGps) {
             this.unsubscribeBoxGps();
             this.unsubscribeBoxGps = null;
         }
-        
+
         if (currentBoxId) {
             await this.logServiceEvent(currentBoxId, 'SERVICE_STOPPED');
         }
-        
+
         currentBoxId = null;
-        
+
         this.updateState({
             status: 'STOPPED',
             foregroundServiceActive: false,
@@ -333,20 +334,20 @@ class BackgroundLocationManager {
      */
     async forceUpdate(): Promise<void> {
         if (!currentBoxId || this.state.status !== 'RUNNING') return;
-        
+
         try {
             const location = await Location.getCurrentPositionAsync({
                 accuracy: CONFIG.ACCURACY,
             });
-            
-            await writePhoneLocation(
+
+            await offlineQueueService.enqueueLocationUpdate(
                 currentBoxId,
                 location.coords.latitude,
                 location.coords.longitude,
                 location.coords.speed ?? 0,
                 location.coords.heading ?? 0
             );
-            
+
             this.updateState({
                 lastLocationTimestamp: Date.now(),
                 totalUpdatesCount: this.state.totalUpdatesCount + 1,
@@ -367,7 +368,7 @@ class BackgroundLocationManager {
         this.healthCheckInterval = setInterval(async () => {
             const now = Date.now();
             const lastUpdate = this.state.lastLocationTimestamp;
-            
+
             if (lastUpdate && (now - lastUpdate) > CONFIG.LOCATION_STALE_THRESHOLD_MS) {
                 // Location is stale - check if box GPS is available as fallback
                 if (!this.state.boxGpsAvailable) {
@@ -375,7 +376,7 @@ class BackgroundLocationManager {
                     await this.logServiceEvent(currentBoxId!, 'GPS_BOTH_DOWN');
                 }
             }
-            
+
             // Check if task is still running
             const isTaskRegistered = await TaskManager.isTaskRegisteredAsync(CONFIG.TASK_NAME);
             if (this.state.status === 'RUNNING' && !isTaskRegistered) {
@@ -408,22 +409,39 @@ class BackgroundLocationManager {
     private handleAppStateChange = async (nextAppState: AppStateStatus) => {
         if (nextAppState === 'active' && this.state.status === 'RUNNING') {
             // App came to foreground - force an immediate update
-            await this.forceUpdate();
+            // Wait for a moment to let the OS stabilize and permissions to be re-verified
+            setTimeout(async () => {
+                // Double check if we are still active (user didn't just quickly switch away)
+                if (AppState.currentState !== 'active') return;
+
+                // Re-verify permissions (user might have revoked them in settings)
+                const hasPermissions = await this.checkPermissions();
+                if (!hasPermissions) {
+                    this.updateState({
+                        status: 'PERMISSION_DENIED',
+                        lastError: 'Location permissions revoked while in background',
+                    });
+                    // Gracefully stop or alert user
+                    return;
+                }
+
+                await this.forceUpdate();
+            }, 1500);
         }
     };
 
     private subscribeToBoxGpsStatus(boxId: string): void {
         const db = getFirebaseDatabase();
         const boxGpsRef = ref(db, `locations/${boxId}`);
-        
+
         this.unsubscribeBoxGps = () => off(boxGpsRef);
-        
+
         onValue(boxGpsRef, (snapshot) => {
             const data = snapshot.val();
             if (data && data.source === 'box') {
                 const timestamp = data.server_timestamp || data.timestamp;
                 const isRecent = timestamp && (Date.now() - timestamp) < CONFIG.LOCATION_STALE_THRESHOLD_MS;
-                
+
                 this.updateState({ boxGpsAvailable: isRecent });
             } else {
                 this.updateState({ boxGpsAvailable: false });
@@ -484,7 +502,7 @@ export async function getPermissionStatus(): Promise<{
 }> {
     const { status: foregroundStatus } = await Location.getForegroundPermissionsAsync();
     const { status: backgroundStatus } = await Location.getBackgroundPermissionsAsync();
-    
+
     return {
         foreground: foregroundStatus === 'granted',
         background: backgroundStatus === 'granted',

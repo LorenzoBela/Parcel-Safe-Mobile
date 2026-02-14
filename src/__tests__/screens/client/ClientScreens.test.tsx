@@ -52,6 +52,10 @@ jest.mock('../../../services/riderMatchingService', () => ({
     cancelBooking: jest.fn(() => Promise.resolve()),
 }));
 
+jest.mock('../../../utils/tokenUtils', () => ({
+    generateShareToken: jest.fn(() => 'share-token-123'),
+}));
+
 jest.mock('lottie-react-native', () => 'LottieView');
 
 jest.mock('../../../services/cancellationService', () => ({

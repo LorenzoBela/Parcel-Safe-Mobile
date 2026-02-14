@@ -1,0 +1,212 @@
+import React from 'react';
+import { View, StyleSheet, Modal, Linking, Alert, Platform } from 'react-native';
+import { Text, Button, Surface, useTheme, Divider, IconButton } from 'react-native-paper';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
+
+interface TripPreviewModalProps {
+    visible: boolean;
+    onDismiss: () => void;
+    onStartTrip: () => void;
+    tripDetails: {
+        pickupAddress: string;
+        dropoffAddress: string;
+        estimatedFare: number;
+        distance: string; // e.g. "5.2 km"
+        duration: string; // e.g. "15 min"
+        pickupLat: number;
+        pickupLng: number;
+        dropoffLat: number;
+        dropoffLng: number;
+    } | null;
+}
+
+export default function TripPreviewModal({ visible, onDismiss, onStartTrip, tripDetails }: TripPreviewModalProps) {
+    const theme = useTheme();
+
+    if (!tripDetails) return null;
+
+    const handleOpenMaps = () => {
+        const { pickupLat, pickupLng, dropoffLat, dropoffLng } = tripDetails;
+        // Construct Google Maps URL for navigation
+        // Source: Current Location (implicit if not specified) -> Destination: Pickup -> Waypoint: Dropoff
+        // Ideally, first leg is to Pickup.
+
+        const label = encodeURIComponent(tripDetails.pickupAddress);
+        const latLng = `${pickupLat},${pickupLng}`;
+
+        // Scheme for Google Maps
+        const scheme = Platform.select({ ios: 'maps:0,0?q=', android: 'geo:0,0?q=' });
+        const url = Platform.select({
+            ios: `${scheme}${label}@${latLng}`,
+            android: `${scheme}${latLng}(${label})`
+        });
+
+        if (url) {
+            Linking.canOpenURL(url).then(supported => {
+                if (supported) {
+                    Linking.openURL(url);
+                } else {
+                    // Fallback to browser
+                    const browserUrl = `https://www.google.com/maps/search/?api=1&query=${latLng}`;
+                    Linking.openURL(browserUrl);
+                }
+            });
+        }
+    };
+
+    return (
+        <Modal
+            visible={visible}
+            transparent={true}
+            animationType="slide"
+            onRequestClose={onDismiss}
+        >
+            <View style={styles.modalOverlay}>
+                <Surface style={styles.modalContent} elevation={5}>
+                    <View style={styles.header}>
+                        <Text variant="titleMedium" style={styles.title}>New Request Accepted!</Text>
+                        <IconButton icon="close" size={24} onPress={onDismiss} />
+                    </View>
+
+                    <Divider style={styles.divider} />
+
+                    <View style={styles.detailsContainer}>
+                        {/* Pickup */}
+                        <View style={styles.row}>
+                            <MaterialCommunityIcons name="map-marker-outline" size={24} color={theme.colors.primary} />
+                            <View style={styles.textContainer}>
+                                <Text variant="labelMedium" style={{ color: theme.colors.outline }}>PICKUP</Text>
+                                <Text variant="bodyMedium" numberOfLines={2}>{tripDetails.pickupAddress}</Text>
+                            </View>
+                        </View>
+
+                        {/* Connector Line */}
+                        <View style={styles.connectorLine} />
+
+                        {/* Dropoff */}
+                        <View style={styles.row}>
+                            <MaterialCommunityIcons name="flag-checkered" size={24} color={theme.colors.error} />
+                            <View style={styles.textContainer}>
+                                <Text variant="labelMedium" style={{ color: theme.colors.outline }}>DROPOFF</Text>
+                                <Text variant="bodyMedium" numberOfLines={2}>{tripDetails.dropoffAddress}</Text>
+                            </View>
+                        </View>
+                    </View>
+
+                    <View style={styles.statsContainer}>
+                        <View style={styles.statItem}>
+                            <Text variant="headlineSmall" style={{ color: theme.colors.primary, fontWeight: 'bold' }}>
+                                ₱{tripDetails.estimatedFare.toFixed(2)}
+                            </Text>
+                            <Text variant="bodySmall">Est. Fare</Text>
+                        </View>
+                        <View style={styles.verticalDivider} />
+                        <View style={styles.statItem}>
+                            <Text variant="titleMedium">{tripDetails.distance}</Text>
+                            <Text variant="bodySmall">Distance</Text>
+                        </View>
+                        {/* Duration is optional if not available immediately */}
+                        <View style={styles.verticalDivider} />
+                        <View style={styles.statItem}>
+                            <Text variant="titleMedium">{tripDetails.duration || '-- min'}</Text>
+                            <Text variant="bodySmall">Est. Time</Text>
+                        </View>
+                    </View>
+
+                    <View style={styles.actionButtons}>
+                        <Button
+                            mode="outlined"
+                            icon="google-maps"
+                            onPress={handleOpenMaps}
+                            style={styles.mapButton}
+                        >
+                            Open Maps
+                        </Button>
+                        <Button
+                            mode="contained"
+                            icon="bike"
+                            onPress={onStartTrip}
+                            contentStyle={{ height: 48 }}
+                            style={styles.startButton}
+                        >
+                            Start Trip
+                        </Button>
+                    </View>
+                </Surface>
+            </View>
+        </Modal>
+    );
+}
+
+const styles = StyleSheet.create({
+    modalOverlay: {
+        flex: 1,
+        backgroundColor: 'rgba(0,0,0,0.5)',
+        justifyContent: 'flex-end',
+    },
+    modalContent: {
+        backgroundColor: 'white',
+        borderTopLeftRadius: 24,
+        borderTopRightRadius: 24,
+        padding: 20,
+        paddingBottom: 40,
+    },
+    header: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginBottom: 10,
+    },
+    title: {
+        fontWeight: 'bold',
+    },
+    divider: {
+        marginBottom: 20,
+    },
+    detailsContainer: {
+        marginBottom: 20,
+    },
+    row: {
+        flexDirection: 'row',
+        alignItems: 'flex-start',
+        marginBottom: 0,
+    },
+    textContainer: {
+        marginLeft: 12,
+        flex: 1,
+    },
+    connectorLine: {
+        width: 2,
+        height: 30, // Adjust based on spacing
+        backgroundColor: '#ddd',
+        marginLeft: 11, // Align with icon center (24/2 - 1)
+        marginVertical: 4,
+    },
+    statsContainer: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        backgroundColor: '#f8f9fa',
+        borderRadius: 12,
+        padding: 16,
+        marginBottom: 24,
+    },
+    statItem: {
+        alignItems: 'center',
+        flex: 1,
+    },
+    verticalDivider: {
+        width: 1,
+        height: 24,
+        backgroundColor: '#ddd',
+    },
+    actionButtons: {
+        gap: 12,
+    },
+    mapButton: {
+        borderColor: '#ddd',
+    },
+    startButton: {
+        // Primary button style
+    }
+});

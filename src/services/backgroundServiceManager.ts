@@ -322,6 +322,14 @@ async function startForegroundService(): Promise<void> {
         return; // Foreground service only needed on Android
     }
 
+    // Idempotency check: Don't start if already running
+    if (BackgroundService.isRunning()) {
+        if (__DEV__) console.log('[BackgroundService] Service already running, skipping start');
+        backgroundState.isForegroundServiceActive = true;
+        backgroundState.isRunning = true;
+        return;
+    }
+
     try {
         // CRITICAL: Check location permissions before starting FGS with type "location"
         // Android 14+ (API 34+) requires location permissions to be granted at runtime
@@ -384,9 +392,19 @@ async function startForegroundService(): Promise<void> {
 /**
  * Foreground service task
  */
-const foregroundServiceTask = async (taskData: any) => {
-    await new Promise(async () => {
+/**
+ * Foreground service task
+ * rewritten to correctly handle Promise resolution and prevent zombie tasks
+ */
+const foregroundServiceTask = async (taskDataArguments: any) => {
+    // We strictly use the Promise to keep the service alive until stop() is called
+    await new Promise<void>(async (resolve) => {
         // Keep service running with periodic heartbeat
+        // The loop continues as long as the service is meant to be running
+        // When BackgroundService.stop() is called, isRunning() will eventually return false (or we handle cancellation)
+
+        // const { delay } = require('../utils/timeUtils'); // excessive safety, or just use setTimeout
+
         while (BackgroundService.isRunning()) {
             try {
                 // Heartbeat
@@ -403,11 +421,16 @@ const foregroundServiceTask = async (taskData: any) => {
                 });
 
                 // Wait for next heartbeat
-                await new Promise(resolve => setTimeout(resolve, BACKGROUND_CONFIG.HEARTBEAT_INTERVAL));
+                await new Promise(r => setTimeout(r, BACKGROUND_CONFIG.HEARTBEAT_INTERVAL));
             } catch (error) {
                 if (__DEV__) console.error('[BackgroundService] Heartbeat error:', error);
+                // Prevent tight loop on error
+                await new Promise(r => setTimeout(r, 5000));
             }
         }
+
+        // Resolve the promise when the loop ends (service stopped)
+        resolve();
     });
 };
 
@@ -484,6 +507,12 @@ export async function initializeBackgroundServices(): Promise<void> {
         // 4. Start foreground service (Android only)
         if (Platform.OS === 'android') {
             await startForegroundService();
+            // Check & Request battery optimization if needed (Gold standard)
+            const isOptimized = await checkBatteryOptimization();
+            if (!isOptimized) {
+                // We don't await this to not block startup, user can deal with it async
+                requestDisableBatteryOptimization().catch(e => console.error(e));
+            }
         }
 
         // 5. Setup network monitoring
@@ -607,13 +636,21 @@ export async function setupNotificationChannels(): Promise<void> {
 // ==================== Battery Optimization ====================
 
 /**
- * Check if battery optimization is disabled
+ * Check if battery optimization is enabling (ignoring is disabled)
+ * We want isIgnoringBatteryOptimizations to be TRUE
  */
 export async function checkBatteryOptimization(): Promise<boolean> {
-    // This requires native module - placeholder
-    // In production, use react-native-device-info or custom native module
-    if (__DEV__) console.log('[BackgroundService] Battery optimization check not implemented');
-    return true;
+    if (Platform.OS !== 'android') return true;
+
+    try {
+        // We can check this via a native module or just assume false if not previously requested
+        // For now, we'll return false to prompt the user if we haven't asked yet
+        // In a real app with react-native-device-info: return await getType()
+        const hasRequested = await AsyncStorage.getItem('has_requested_battery_opt');
+        return !!hasRequested;
+    } catch {
+        return false;
+    }
 }
 
 /**
@@ -623,18 +660,28 @@ export async function requestDisableBatteryOptimization(): Promise<void> {
     if (Platform.OS !== 'android') return;
 
     try {
-        // Open battery optimization settings
-        // specific to the app if possible, otherwise general settings
-        const pkg = 'com.parcel.safe'; // Must match app.json
-        const intent = 'android.settings.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS';
+        await AsyncStorage.setItem('has_requested_battery_opt', 'true');
 
-        // This is a simplified approach. In a real native module we'd check isIgnoringBatteryOptimizations()
-        // Here we just guide the user to settings
-        await Linking.sendIntent(intent, [{ key: 'package', value: `package:${pkg}` }]);
+        const pkg = 'com.parcel.safe'; // Replace with package name from app.json if different
+
+        // This intent opens the specific app setting in battery optimization
+        // ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS requires permission in manifest
+        // ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS is safer but less direct
+
+        // Try the direct intent first (requires <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS"/>)
+        // If that fails or is not allowed by Play Store policy for this app type, fallback to settings
+
+        const intent = 'android.settings.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS';
+        try {
+            await Linking.sendIntent(intent, [{ key: 'package', value: `package:${pkg}` }]);
+        } catch (e) {
+            // Fallback to general settings
+            await Linking.sendIntent('android.settings.IGNORE_BATTERY_OPTIMIZATION_SETTINGS');
+        }
+
         if (__DEV__) console.log('[BackgroundService] Opened battery settings');
     } catch (error) {
         if (__DEV__) console.error('[BackgroundService] Settings error:', error);
-        // Fallback to general settings
         await Linking.openSettings();
     }
 }

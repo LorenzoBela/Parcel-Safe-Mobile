@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { View, StyleSheet, Alert, ActivityIndicator, TouchableOpacity, Modal, Animated } from 'react-native';
+import { View, StyleSheet, Alert, ActivityIndicator, TouchableOpacity, Modal, Animated, ScrollView } from 'react-native';
 import { Text, TextInput, Button, useTheme, Card, Divider } from 'react-native-paper';
 import MapboxGL from '../../components/map/MapboxWrapper';
 import * as Location from 'expo-location';
@@ -17,6 +17,7 @@ const INITIAL_REGION = {
 type MapboxSuggestion = {
     id: string;
     name: string;
+    address?: string; // Subtitle for UI
     coordinates?: [number, number];
 };
 
@@ -57,6 +58,33 @@ export default function BookServiceScreen() {
         }
     }, [MAPBOX_TOKEN]);
 
+
+    // Helper to get nicer names (POIs) from Mapbox
+    const reverseGeocodeMapbox = async (lat: number, lng: number): Promise<string | null> => {
+        if (!MAPBOX_TOKEN) return null;
+        try {
+            const url = `https://api.mapbox.com/geocoding/v5/mapbox.places/${lng},${lat}.json?access_token=${MAPBOX_TOKEN}&types=address,place&limit=1`;
+            const response = await fetch(url);
+            const data = await response.json();
+
+            if (data.features && data.features.length > 0) {
+                // Mapbox returns the most relevant feature first based on types
+                return data.features[0].place_name;
+                // Alternatively use data.features[0].text for shorter name (e.g. "Adamson University" vs "Adamson University, San Marcelino...")
+                // Let's use .text for the input field to keep it clean, or place_name if we want full context. 
+                // User asked for "Adamson University", so .text is likely better for the main display, 
+                // but .place_name is safer for unique identification.
+                // Let's try .text if it's a POI, otherwise place_name? 
+                // Actually usually data.features[0].text is just the name. 
+                // Let's stick to data.features[0].text for cleanliness in the input box.
+                return data.features[0].text;
+            }
+        } catch (error) {
+            console.error("Mapbox Reverse Geocode Error", error);
+        }
+        return null;
+    };
+
     useEffect(() => {
         (async () => {
             let { status } = await Location.requestForegroundPermissionsAsync();
@@ -69,29 +97,44 @@ export default function BookServiceScreen() {
             // Auto-set pickup to current location initially
             setPickupCoords(location.coords);
 
-            // Reverse geocode current location
-            try {
-                let address = await Location.reverseGeocodeAsync({
-                    latitude: location.coords.latitude,
-                    longitude: location.coords.longitude
-                });
-
-                if (address && address.length > 0) {
-                    const { city, region, name, street } = address[0];
-                    const locString = street || name || city || 'Current Location';
-                    setPickupText(locString);
-                } else {
+            // Reverse geocode current location using Mapbox for better POI support
+            const poiName = await reverseGeocodeMapbox(location.coords.latitude, location.coords.longitude);
+            if (poiName) {
+                setPickupText(poiName);
+            } else {
+                // Fallback to Expo if Mapbox fails or returns nothing (unlikely)
+                try {
+                    let address = await Location.reverseGeocodeAsync({
+                        latitude: location.coords.latitude,
+                        longitude: location.coords.longitude
+                    });
+                    if (address && address.length > 0) {
+                        const { city, region, name, street } = address[0];
+                        const locString = street || name || city || 'Current Location';
+                        setPickupText(locString);
+                    } else {
+                        setPickupText('Current Location');
+                    }
+                } catch (e) {
                     setPickupText('Current Location');
                 }
-            } catch (e) {
-                setPickupText('Current Location');
             }
         })();
     }, []);
 
+    // Session Token for Search Box API (UUID v4-like random string)
+    const [sessionToken, setSessionToken] = useState<string>('');
+
+    useEffect(() => {
+        // Simple random token generator
+        setSessionToken(Math.random().toString(36).substring(2) + Math.random().toString(36).substring(2));
+    }, []);
+
     useEffect(() => {
         if (!MAPBOX_TOKEN) return;
-        if (!activeQuery || activeQuery.trim().length < 3) {
+
+        // If text is empty/short, clear suggestions
+        if (!activeQuery || activeQuery.trim().length < 2) {
             setSuggestions([]);
             setSearchError(null);
             return;
@@ -103,52 +146,60 @@ export default function BookServiceScreen() {
                 setIsSearching(true);
                 setSearchError(null);
 
-                const proximity = pickupCoords
-                    ? `${pickupCoords.longitude},${pickupCoords.latitude}`
-                    : undefined;
+                // Use current pickup coords for proximity bias, or Manila default if null
+                const longitude = pickupCoords ? pickupCoords.longitude : 120.9842;
+                const latitude = pickupCoords ? pickupCoords.latitude : 14.5995;
+                const proximity = `${longitude},${latitude}`;
 
-                const url = new URL('https://api.mapbox.com/search/geocode/v6/forward');
-                url.searchParams.set('q', activeQuery.trim());
-                url.searchParams.set('access_token', MAPBOX_TOKEN);
-                url.searchParams.set('limit', '8');
-                url.searchParams.set('types', 'address,place,locality,neighborhood,street,district');
-                url.searchParams.set('country', 'PH');
-                url.searchParams.set('language', 'en');
-                url.searchParams.set('autocomplete', 'true');
-                if (proximity) {
-                    url.searchParams.set('proximity', proximity);
-                }
+                // Search Box API Suggest Endpoint
+                // Supports POIs, Brands, Addresses
+                const baseUrl = 'https://api.mapbox.com/search/searchbox/v1/suggest';
+                const queryParams = [
+                    `q=${encodeURIComponent(activeQuery.trim())}`,
+                    `access_token=${MAPBOX_TOKEN}`,
+                    `session_token=${sessionToken}`,
+                    `limit=5`, // Reduced to 5 to prevent UI clutter
+                    `language=en`,
+                    `country=PH`,
+                    `types=address,brand,place,locality,neighborhood,street`, // Broad types for "Grab-like" feeling
+                    `proximity=${proximity}`
+                ].join('&');
 
-                const response = await fetch(url.toString(), { signal: controller.signal });
+                const url = `${baseUrl}?${queryParams}`;
+
+                const response = await fetch(url, { signal: controller.signal });
+
                 if (!response.ok) {
                     const errorData = await response.text();
-                    console.error('Mapbox API error:', response.status, errorData);
+                    console.error('Mapbox Suggest error:', response.status, errorData);
                     throw new Error(`Search failed: ${response.status}`);
                 }
 
                 const data = await response.json();
-                console.log('Mapbox response:', data);
-                const features: MapboxSuggestion[] = Array.isArray(data?.features)
-                    ? data.features.map((feature: any) => {
-                        const props = feature.properties || {};
-                        // Build a more descriptive name with context
-                        let displayName = props.full_address || props.name || 'Unknown location';
 
-                        // If it's just a street/place name, add context
-                        if (props.context) {
-                            const locality = props.context.locality?.name;
-                            const place = props.context.place?.name;
-                            const region = props.context.region?.name;
+                const features: MapboxSuggestion[] = Array.isArray(data?.suggestions)
+                    ? data.suggestions.map((suggestion: any) => {
+                        // Search Box API returns 'name' and 'address'/'full_address'
+                        // We map this to our UI model
+                        const name = suggestion.name || 'Unknown';
+                        let address = suggestion.full_address || suggestion.place_formatted || '';
 
-                            if (!props.full_address && (locality || place)) {
-                                displayName = `${props.name || displayName}${locality ? ', ' + locality : ''}${place && place !== locality ? ', ' + place : ''}`;
-                            }
+                        // Fallback context logic if address is missing or same as name
+                        if ((!address || address === name) && suggestion.context) {
+                            const parts = [];
+                            if (suggestion.street?.name) parts.push(suggestion.street.name);
+                            if (suggestion.context.place?.name) parts.push(suggestion.context.place.name);
+                            if (suggestion.context.region?.name) parts.push(suggestion.context.region.name);
+                            address = parts.join(', ');
                         }
 
                         return {
-                            id: feature.id,
-                            name: displayName,
-                            coordinates: feature.geometry?.coordinates,
+                            id: suggestion.mapbox_id, // Important: Use mapbox_id for retrieval
+                            name: name,
+                            address: address,
+                            // Note: Suggest API does NOT return coordinates. 
+                            // We must fetch them in handleSelectSuggestion using the ID.
+                            coordinates: undefined
                         };
                     })
                     : [];
@@ -157,19 +208,23 @@ export default function BookServiceScreen() {
             } catch (error: any) {
                 if (error?.name !== 'AbortError') {
                     console.error('Search error:', error);
-                    setSearchError('Unable to load locations. Try again.');
-                    setSuggestions([]);
                 }
             } finally {
                 setIsSearching(false);
             }
-        }, 350);
+        }, 300); // 300ms debounce
 
         return () => {
             clearTimeout(timeout);
             controller.abort();
         };
-    }, [activeQuery, MAPBOX_TOKEN, pickupCoords]);
+    }, [activeQuery, MAPBOX_TOKEN, pickupCoords, sessionToken]);
+
+    // Refs for auto-focus
+    const dropoffInputRef = React.useRef<any>(null);
+
+    // Camera ref for manual updates
+    const cameraRef = React.useRef<any>(null);
 
     const handleMapPress = async (e: any) => {
         const coords = {
@@ -179,41 +234,98 @@ export default function BookServiceScreen() {
         setSuggestions([]);
         setSearchError(null);
 
-        let addressText = `${coords.latitude.toFixed(4)}, ${coords.longitude.toFixed(4)}`;
+        // Animate camera to the pressed location
+        cameraRef.current?.setCamera({
+            centerCoordinate: [coords.longitude, coords.latitude],
+            animationDuration: 1000,
+            animationMode: 'flyTo',
+        });
 
-        try {
-            let address = await Location.reverseGeocodeAsync({
-                latitude: coords.latitude,
-                longitude: coords.longitude
-            });
-
-            if (address && address.length > 0) {
-                const { street, name, city } = address[0];
-                const locString = street || name || city;
-                if (locString) {
-                    addressText = locString;
-                }
-            }
-        } catch (error) {
-            console.log('Reverse geocoding failed', error);
-        }
+        // Optimistic update - show coordinates first then loading
+        let addressText = "Locating...";
 
         if (activeField === 'pickup') {
             setPickupCoords(coords);
             setPickupText(addressText);
+
+            // Auto-focus dropoff after a short delay to let user see the pickup is set
+            setTimeout(() => {
+                setActiveField('dropoff');
+                dropoffInputRef.current?.focus();
+            }, 800);
         } else {
             setDropoffCoords(coords);
             setDropoffText(addressText);
         }
+
+        // Use Mapbox for POI-aware reverse geocoding
+        // Note: Reverse geocoding might still use standard Geocoding API or Search Box Retrieve
+        // For simplicity reusing existing helper for now, but commonly Reverse Geocoding v5 is used
+        const poiName = await reverseGeocodeMapbox(coords.latitude, coords.longitude);
+
+        if (poiName) {
+            addressText = poiName;
+        } else {
+            // Fallback to coordinates or Expo
+            addressText = `${coords.latitude.toFixed(4)}, ${coords.longitude.toFixed(4)}`;
+        }
+
+        if (activeField === 'pickup') {
+            setPickupText(addressText);
+        } else {
+            setDropoffText(addressText);
+        }
     };
 
-    const handleSelectSuggestion = (item: MapboxSuggestion) => {
-        if (!item.coordinates || item.coordinates.length < 2) return;
-        const coords = { longitude: item.coordinates[0], latitude: item.coordinates[1] };
+    const handleSelectSuggestion = async (item: MapboxSuggestion) => {
+        // If we already have coordinates (historical/cached), use them.
+        // If not, we must RETRIEVE them using the Search Box Retrieve API.
+
+        let coords: { latitude: number; longitude: number } | null = null;
+
+        if (item.coordinates && item.coordinates.length >= 2) {
+            coords = { longitude: item.coordinates[0], latitude: item.coordinates[1] };
+        } else {
+            // Need to fetch details
+            try {
+                // Show some loading indicator? For now just await.
+                // Ideally we'd show a spinner on the item but we'll do optimistic transition
+
+                const url = `https://api.mapbox.com/search/searchbox/v1/retrieve/${item.id}?session_token=${sessionToken}&access_token=${MAPBOX_TOKEN}`;
+                const response = await fetch(url);
+                const data = await response.json();
+
+                if (data.features && data.features.length > 0) {
+                    const geometry = data.features[0].geometry;
+                    if (geometry && geometry.coordinates) {
+                        coords = {
+                            longitude: geometry.coordinates[0],
+                            latitude: geometry.coordinates[1]
+                        };
+                    }
+                }
+            } catch (e) {
+                console.error("Failed to retrieve place details", e);
+                Alert.alert("Error", "Could not fetch location details.");
+                return;
+            }
+        }
+
+        if (!coords) return;
+
+        // Animate camera
+        cameraRef.current?.setCamera({
+            centerCoordinate: [coords.longitude, coords.latitude],
+            zoomLevel: 15,
+            animationDuration: 1000,
+        });
 
         if (activeField === 'pickup') {
             setPickupCoords(coords);
             setPickupText(item.name);
+            // Auto-advance
+            setActiveField('dropoff');
+            dropoffInputRef.current?.focus();
         } else {
             setDropoffCoords(coords);
             setDropoffText(item.name);
@@ -292,6 +404,55 @@ export default function BookServiceScreen() {
         });
     };
 
+    // Add the FAB handler for strictly just recentering (no input change)
+    const handleRecenter = async () => {
+        let { status } = await Location.requestForegroundPermissionsAsync();
+        if (status !== 'granted') return;
+
+        let location = await Location.getCurrentPositionAsync({});
+        const coords = location.coords;
+
+        cameraRef.current?.setCamera({
+            centerCoordinate: [coords.longitude, coords.latitude],
+            zoomLevel: 15,
+            animationDuration: 1000,
+        });
+    };
+
+    // Existing handler: Sets Pickup to Current Location AND Centers
+    const handleSetPickupToCurrent = async () => {
+        setPickupText("Locating...");
+        let { status } = await Location.requestForegroundPermissionsAsync();
+        if (status !== 'granted') return;
+
+        let location = await Location.getCurrentPositionAsync({});
+        const coords = location.coords;
+
+        setPickupCoords(coords);
+
+        // Update camera
+        cameraRef.current?.setCamera({
+            centerCoordinate: [coords.longitude, coords.latitude],
+            zoomLevel: 15,
+            animationDuration: 1000,
+        });
+
+        // Use Mapbox POI Reverse Geocode
+        const poiName = await reverseGeocodeMapbox(coords.latitude, coords.longitude);
+        if (poiName) {
+            setPickupText(poiName);
+        } else {
+            // Fallback
+            setPickupText('Current Location');
+        }
+
+        // Auto-advance
+        setTimeout(() => {
+            setActiveField('dropoff');
+            dropoffInputRef.current?.focus();
+        }, 800);
+    };
+
     return (
         <View style={styles.container}>
             {/* Map Background */}
@@ -301,12 +462,16 @@ export default function BookServiceScreen() {
                     onPress={handleMapPress}
                     logoEnabled={false}
                     attributionEnabled={false}
+                    scaleBarEnabled={false}
                 >
                     <MapboxGL.Camera
-                        zoomLevel={14}
+                        ref={cameraRef}
+                        zoomLevel={15} // Slightly closer
                         centerCoordinate={pickupCoords
                             ? [pickupCoords.longitude, pickupCoords.latitude]
                             : [INITIAL_REGION.longitude, INITIAL_REGION.latitude]}
+                        animationMode={'flyTo'}
+                        animationDuration={1000}
                     />
                     <MapboxGL.UserLocation visible />
 
@@ -343,6 +508,8 @@ export default function BookServiceScreen() {
                                     lineColor: theme.colors.primary,
                                     lineWidth: 4,
                                     lineOpacity: 0.8,
+                                    lineCap: 'round',
+                                    lineJoin: 'round',
                                 }}
                             />
                         </MapboxGL.ShapeSource>
@@ -350,176 +517,201 @@ export default function BookServiceScreen() {
                 </MapboxGL.MapView>
             ) : (
                 <View style={[StyleSheet.absoluteFillObject, styles.mapFallback]}>
-                    <Text style={{ color: theme.colors.onSurfaceVariant }}>
-                        Map unavailable: set EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN in .env
-                    </Text>
+                    <Text>Map unavailable</Text>
                 </View>
             )}
 
-            {/* Floating Input Card */}
-            <View style={styles.inputContainer}>
-                <Card style={[styles.card, { backgroundColor: theme.colors.surface }]}>
-                    <Card.Content>
-                        <Text variant="titleMedium" style={[styles.title, { color: theme.colors.onSurface }]}>Book a Service</Text>
+            {/* Back Button */}
+            <TouchableOpacity style={[styles.backButton, { backgroundColor: theme.colors.surface }]} onPress={() => navigation.goBack()}>
+                <MaterialCommunityIcons name="arrow-left" size={24} color={theme.colors.onSurface} />
+            </TouchableOpacity>
 
-                        <View
-                            style={[
-                                styles.inputWrapper,
-                                { backgroundColor: theme.colors.background, borderColor: theme.colors.outline },
-                                activeField === 'pickup' && { backgroundColor: theme.colors.secondaryContainer, borderColor: theme.colors.primary }
-                            ]}
-                        >
-                            <MaterialCommunityIcons name="circle-slice-8" size={20} color="green" style={styles.inputIcon} />
+            {/* Float Input Panel */}
+            <View style={styles.inputContainer}>
+                <View style={[styles.minimalCard, { backgroundColor: theme.colors.surface, shadowColor: '#000' }]}>
+
+                    {/* Visual Connector */}
+                    <View style={styles.connectorColumn}>
+                        <View style={[styles.dot, { backgroundColor: '#4CAF50' }]} />
+                        <View style={styles.connectorLine} />
+                        <View style={[styles.square, { backgroundColor: '#F44336' }]} />
+                    </View>
+
+                    {/* Inputs */}
+                    <View style={styles.inputsColumn}>
+
+                        {/* Pickup */}
+                        <View style={[styles.minimalInputWrapper, activeField === 'pickup' && styles.minimalActiveInput]}>
                             <TextInput
                                 mode="flat"
-                                placeholder="Pickup Location"
+                                placeholder="Current Location"
+                                placeholderTextColor={theme.colors.primary}
                                 value={pickupText}
                                 onChangeText={(text) => {
                                     setPickupText(text);
                                     setActiveField('pickup');
                                 }}
-                                style={[styles.textInput, { backgroundColor: 'transparent' }]}
+                                style={[styles.minimalTextInput, { backgroundColor: 'transparent' }]}
                                 textColor={theme.colors.onSurface}
                                 underlineColor="transparent"
                                 activeUnderlineColor="transparent"
-                                placeholderTextColor={theme.colors.onSurfaceVariant}
                                 onFocus={() => setActiveField('pickup')}
-                                right={<TextInput.Icon icon="crosshairs-gps" onPress={() => setActiveField('pickup')} />}
+                                right={pickupText.length > 0 ? <TextInput.Icon icon="close-circle" size={16} onPress={() => setPickupText('')} /> : null}
                             />
                         </View>
 
-                        <View style={styles.divider} />
+                        {/* Divider */}
+                        <View style={{ height: 1, backgroundColor: '#E0E0E0', marginLeft: 10, marginRight: 10 }} />
 
-                        <View
-                            style={[
-                                styles.inputWrapper,
-                                { backgroundColor: theme.colors.background, borderColor: theme.colors.outline },
-                                activeField === 'dropoff' && { backgroundColor: theme.colors.secondaryContainer, borderColor: theme.colors.primary }
-                            ]}
-                        >
-                            <MaterialCommunityIcons name="map-marker" size={20} color="red" style={styles.inputIcon} />
+                        {/* Dropoff */}
+                        <View style={[styles.minimalInputWrapper, activeField === 'dropoff' && styles.minimalActiveInput]}>
                             <TextInput
+                                ref={dropoffInputRef}
                                 mode="flat"
-                                placeholder="Dropoff Location"
+                                placeholder="Where to?"
                                 value={dropoffText}
                                 onChangeText={(text) => {
                                     setDropoffText(text);
                                     setActiveField('dropoff');
                                 }}
-                                style={[styles.textInput, { backgroundColor: 'transparent' }]}
+                                style={[styles.minimalTextInput, { backgroundColor: 'transparent' }]}
                                 textColor={theme.colors.onSurface}
                                 underlineColor="transparent"
                                 activeUnderlineColor="transparent"
                                 placeholderTextColor={theme.colors.onSurfaceVariant}
                                 onFocus={() => setActiveField('dropoff')}
+                                right={dropoffText.length > 0 ? <TextInput.Icon icon="close-circle" size={16} onPress={() => setDropoffText('')} /> : null}
                             />
                         </View>
+                    </View>
+                </View>
+            </View>
 
-                        <View style={styles.helperTextContainer}>
-                            <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
-                                {activeField === 'pickup'
-                                    ? 'Type to search or tap map to set Pickup'
-                                    : 'Type to search or tap map to set Dropoff'}
-                            </Text>
-                        </View>
+            {/* Helper text removed */}
 
-                        {(isSearching || searchError || suggestions.length > 0) && (
-                            <View style={[styles.suggestionsContainer, { borderColor: theme.colors.outline }]}
+            {/* Suggestions List */}
+            {(isSearching || searchError || suggestions.length > 0) && (
+                <View style={[styles.suggestionsContainer, { top: 160 }]}>
+                    <ScrollView
+                        keyboardShouldPersistTaps="handled"
+                        showsVerticalScrollIndicator={false}
+                        contentContainerStyle={{ flexGrow: 1 }}
+                    >
+                        {/* "Set location on map" - Always visible when searching if no exact match yet */}
+                        <TouchableOpacity
+                            style={styles.suggestionItem}
+                            onPress={() => {
+                                // Hide suggestions
+                                setSuggestions([]);
+                                // Just focus the map
+                            }}
+                        >
+                            <View style={[styles.iconCircle, { backgroundColor: '#E3F2FD' }]}>
+                                <MaterialCommunityIcons name="map-marker-radius" size={20} color={theme.colors.primary} />
+                            </View>
+                            <View style={{ marginLeft: 12 }}>
+                                <Text variant="bodyMedium" style={{ fontWeight: 'bold', color: theme.colors.primary }}>
+                                    Set location on map
+                                </Text>
+                                <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
+                                    Choose specific point
+                                </Text>
+                            </View>
+                        </TouchableOpacity>
+
+                        {/* "My Current Location" - Only for pickup */}
+                        {activeField === 'pickup' && !isSearching && (
+                            <TouchableOpacity
+                                style={styles.suggestionItem}
+                                onPress={handleSetPickupToCurrent}
                             >
-                                {isSearching && (
-                                    <View style={styles.suggestionLoading}>
-                                        <ActivityIndicator size="small" color={theme.colors.primary} />
-                                        <Text variant="bodySmall" style={{ marginLeft: 8, color: theme.colors.onSurfaceVariant }}>
-                                            Searching locations...
-                                        </Text>
-                                    </View>
-                                )}
-
-                                {!!searchError && !isSearching && (
-                                    <Text variant="bodySmall" style={{ color: theme.colors.error, paddingHorizontal: 12, paddingVertical: 8 }}>
-                                        {searchError}
+                                <View style={[styles.iconCircle, { backgroundColor: '#E8F5E9' }]}>
+                                    <MaterialCommunityIcons name="crosshairs-gps" size={20} color="#4CAF50" />
+                                </View>
+                                <View style={{ marginLeft: 12 }}>
+                                    <Text variant="bodyMedium" style={{ fontWeight: 'bold', color: '#388E3C' }}>
+                                        Use Current Location
                                     </Text>
-                                )}
+                                </View>
+                            </TouchableOpacity>
+                        )}
 
-                                {!isSearching && !searchError && suggestions.map((item) => (
-                                    <TouchableOpacity
-                                        key={item.id}
-                                        style={styles.suggestionItem}
-                                        onPress={() => handleSelectSuggestion(item)}
-                                    >
-                                        <MaterialCommunityIcons name="map-marker-outline" size={18} color={theme.colors.primary} />
-                                        <Text variant="bodyMedium" style={{ marginLeft: 8, color: theme.colors.onSurface }} numberOfLines={2}>
-                                            {item.name}
-                                        </Text>
-                                    </TouchableOpacity>
-                                ))}
+                        <Divider />
+
+                        {isSearching && (
+                            <View style={styles.suggestionLoading}>
+                                <ActivityIndicator size="small" color={theme.colors.primary} />
+                                <Text variant="bodySmall" style={{ marginLeft: 8 }}>Searching nearby places...</Text>
                             </View>
                         )}
 
-                        <Button
-                            mode="contained"
-                            onPress={handleConfirm}
-                            style={styles.button}
-                            contentStyle={{ paddingVertical: 4 }}
-                            disabled={!pickupCoords || !dropoffCoords || !routeData}
-                        >
-                            Confirm Booking
-                        </Button>
-                    </Card.Content>
-                </Card>
-            </View>
+                        {suggestions.map((item) => (
+                            <TouchableOpacity
+                                key={item.id}
+                                style={styles.suggestionItem}
+                                onPress={() => handleSelectSuggestion(item)}
+                            >
+                                <View style={[styles.iconCircle, { backgroundColor: '#F5F5F5' }]}>
+                                    <MaterialCommunityIcons name="map-marker-outline" size={20} color={theme.colors.onSurfaceVariant} />
+                                </View>
+                                <View style={{ marginLeft: 12, flex: 1 }}>
+                                    <Text variant="bodyMedium" style={{ color: theme.colors.onSurface, fontWeight: '600' }} numberOfLines={1}>
+                                        {item.name}
+                                    </Text>
+                                    {item.address ? (
+                                        <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }} numberOfLines={1}>
+                                            {item.address}
+                                        </Text>
+                                    ) : null}
+                                </View>
+                            </TouchableOpacity>
+                        ))}
+                    </ScrollView>
+                </View>
+            )}
 
-            {/* Bottom Route Preview Card */}
-            {routeData && pickupCoords && dropoffCoords && (
+            {/* Recenter FAB (Top) */}
+            <TouchableOpacity
+                style={[styles.fab, { backgroundColor: theme.colors.surface, bottom: 240 }]}
+                onPress={handleRecenter}
+            >
+                <MaterialCommunityIcons name="crosshairs-gps" size={24} color={theme.colors.onSurface} />
+            </TouchableOpacity>
+
+            {/* Set Pickup to Current Location FAB (Bottom) */}
+            <TouchableOpacity
+                style={[styles.fab, { backgroundColor: theme.colors.surface }]}
+                onPress={handleSetPickupToCurrent}
+            >
+                <MaterialCommunityIcons name="map-marker-plus" size={24} color={theme.colors.primary} />
+            </TouchableOpacity>
+
+            {/* Bottom Sheet / Trip Details */}
+            {routeData && (
                 <View style={styles.bottomPreviewContainer}>
                     <Card style={[styles.bottomPreviewCard, { backgroundColor: theme.colors.surface }]} elevation={5}>
                         <Card.Content>
                             <View style={styles.previewHeader}>
-                                <MaterialCommunityIcons name="routes" size={24} color={theme.colors.primary} />
-                                <Text variant="titleMedium" style={{ marginLeft: 8, color: theme.colors.onSurface, fontWeight: 'bold' }}>
-                                    Trip Details
+                                <Text variant="titleMedium" style={{ color: theme.colors.onSurface, fontWeight: 'bold' }}>
+                                    Total: ₱{routeData.cost}
+                                </Text>
+                                <Text variant="bodyMedium" style={{ color: theme.colors.onSurfaceVariant }}>
+                                    {routeData.distance.toFixed(1)}km • {Math.round(routeData.duration)}mins
                                 </Text>
                             </View>
 
-                            <View style={styles.previewStats}>
-                                <View style={styles.statItem}>
-                                    <MaterialCommunityIcons name="map-marker-distance" size={20} color={theme.colors.primary} />
-                                    <View style={{ marginLeft: 8 }}>
-                                        <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>Distance</Text>
-                                        <Text variant="bodyLarge" style={{ color: theme.colors.onSurface, fontWeight: '600' }}>
-                                            {routeData.distance.toFixed(1)} km
-                                        </Text>
-                                    </View>
-                                </View>
-
-                                <View style={styles.statItem}>
-                                    <MaterialCommunityIcons name="clock-outline" size={20} color={theme.colors.primary} />
-                                    <View style={{ marginLeft: 8 }}>
-                                        <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>Time</Text>
-                                        <Text variant="bodyLarge" style={{ color: theme.colors.onSurface, fontWeight: '600' }}>
-                                            {Math.round(routeData.duration)} min
-                                        </Text>
-                                    </View>
-                                </View>
-
-                                <View style={styles.statItem}>
-                                    <MaterialCommunityIcons name="cash" size={20} color={theme.colors.primary} />
-                                    <View style={{ marginLeft: 8 }}>
-                                        <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>Fare</Text>
-                                        <Text variant="bodyLarge" style={{ color: theme.colors.primary, fontWeight: 'bold' }}>
-                                            ₱{routeData.cost}
-                                        </Text>
-                                    </View>
-                                </View>
-                            </View>
+                            <Button
+                                mode="contained"
+                                onPress={handleConfirm}
+                                style={{ marginTop: 12, borderRadius: 8 }}
+                                contentStyle={{ paddingVertical: 6 }}
+                            >
+                                Confirm Booking
+                            </Button>
                         </Card.Content>
                     </Card>
                 </View>
             )}
-
-            <TouchableOpacity style={[styles.backButton, { backgroundColor: theme.colors.surface }]} onPress={() => navigation.goBack()}>
-                <MaterialCommunityIcons name="arrow-left" size={24} color={theme.colors.onSurface} />
-            </TouchableOpacity>
         </View>
     );
 }
@@ -539,149 +731,139 @@ const styles = StyleSheet.create({
     },
     inputContainer: {
         position: 'absolute',
-        top: 60,
-        left: 20,
+        top: 45,
+        left: 70,
         right: 20,
+        zIndex: 10,
     },
-    card: {
+    minimalCard: {
         borderRadius: 12,
-        elevation: 4,
-    },
-    title: {
-        fontWeight: 'bold',
-        marginBottom: 16,
-        textAlign: 'center',
-    },
-    inputWrapper: {
+        backgroundColor: 'white',
         flexDirection: 'row',
+        overflow: 'hidden',
+        paddingVertical: 4,
+        elevation: 4, // Android shadow
+        shadowOpacity: 0.1, // iOS shadow
+        shadowRadius: 4,
+        shadowOffset: { width: 0, height: 2 },
+    },
+    connectorColumn: {
+        width: 40,
         alignItems: 'center',
-        borderRadius: 8,
-        borderWidth: 1,
+        justifyContent: 'center',
+        paddingVertical: 12,
     },
-    activeInput: {
-        borderColor: '#2196F3',
+    dot: {
+        width: 8,
+        height: 8,
+        borderRadius: 4,
+        marginBottom: 4,
     },
-    inputIcon: {
-        marginLeft: 12,
-    },
-    textInput: {
+    connectorLine: {
+        width: 2,
         flex: 1,
+        backgroundColor: '#E0E0E0',
+        marginVertical: 4,
+        borderRadius: 1,
+    },
+    square: {
+        width: 8,
+        height: 8,
+        marginTop: 4,
+        borderRadius: 1,
+    },
+    inputsColumn: {
+        flex: 1,
+        justifyContent: 'center',
+        paddingRight: 8,
+    },
+    minimalInputWrapper: {
+        height: 40,
+        justifyContent: 'center',
+    },
+    minimalTextInput: {
         backgroundColor: 'transparent',
-        height: 50,
+        height: 40,
         fontSize: 14,
+        paddingHorizontal: 0,
     },
-    divider: {
-        height: 12,
-    },
-    button: {
-        marginTop: 16,
+    minimalActiveInput: {
+        backgroundColor: '#F3F4F6', // Subtle gray highlight for active input
         borderRadius: 8,
     },
     backButton: {
         position: 'absolute',
-        top: 40, // Adjust for status bar
-        left: 20,
-        padding: 8,
+        top: 50,
+        left: 15,
+        width: 40,
+        height: 40,
         borderRadius: 20,
-        elevation: 3,
-    },
-    helperTextContainer: {
-        marginTop: 8,
         alignItems: 'center',
+        justifyContent: 'center',
+        elevation: 4,
+        zIndex: 20,
     },
     suggestionsContainer: {
-        marginTop: 10,
-        borderWidth: 1,
-        borderRadius: 10,
-        backgroundColor: 'rgba(255, 255, 255, 0.98)',
-        maxHeight: 180,
-        overflow: 'hidden',
-    },
-    suggestionLoading: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        paddingHorizontal: 12,
-        paddingVertical: 10,
+        position: 'absolute',
+        left: 20,
+        right: 20,
+        backgroundColor: 'white',
+        borderRadius: 12,
+        elevation: 5,
+        paddingVertical: 4,
+        maxHeight: 260, // Increased to fit scrollable content better without blocking whole map
+        zIndex: 15,
     },
     suggestionItem: {
         flexDirection: 'row',
         alignItems: 'center',
-        paddingHorizontal: 12,
-        paddingVertical: 10,
-        borderTopWidth: 1,
-        borderTopColor: 'rgba(0,0,0,0.08)',
+        paddingHorizontal: 16,
+        paddingVertical: 12,
+        borderBottomWidth: 0.5,
+        borderBottomColor: '#f0f0f0',
     },
-    modalContainer: {
-        flex: 1,
-        backgroundColor: 'rgba(0,0,0,0.5)',
-        justifyContent: 'flex-end',
+    suggestionLoading: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        padding: 16,
     },
-    modalContent: {
-        borderTopLeftRadius: 24,
-        borderTopRightRadius: 24,
-        overflow: 'hidden',
-        maxHeight: '85%',
-    },
-    previewMapContainer: {
-        height: 250,
-        width: '100%',
-    },
-    previewMap: {
-        flex: 1,
-    },
-    previewMarker: {
+    fab: {
+        position: 'absolute',
+        right: 20,
+        bottom: 180, // Above bottom sheet
+        width: 48,
+        height: 48,
+        borderRadius: 24,
         alignItems: 'center',
         justifyContent: 'center',
-    },
-    tripDetails: {
-        padding: 20,
-    },
-    modalTitle: {
-        fontWeight: 'bold',
-        marginBottom: 20,
-    },
-    detailRow: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        marginBottom: 16,
-    },
-    detailText: {
-        marginLeft: 16,
-        flex: 1,
-    },
-    costRow: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        marginBottom: 20,
-    },
-    modalActions: {
-        flexDirection: 'row',
-        gap: 12,
-    },
-    modalButton: {
-        flex: 1,
+        elevation: 5,
+        shadowColor: '#000',
+        shadowOpacity: 0.2,
+        shadowRadius: 4,
+        shadowOffset: { width: 0, height: 2 },
+        zIndex: 5,
     },
     bottomPreviewContainer: {
         position: 'absolute',
         bottom: 20,
         left: 20,
         right: 20,
+        zIndex: 10,
     },
     bottomPreviewCard: {
         borderRadius: 16,
     },
     previewHeader: {
         flexDirection: 'row',
+        justifyContent: 'space-between',
         alignItems: 'center',
-        marginBottom: 12,
+        marginBottom: 8,
     },
-    previewStats: {
-        flexDirection: 'row',
-        justifyContent: 'space-around',
-    },
-    statItem: {
-        flexDirection: 'row',
+    iconCircle: {
+        width: 32,
+        height: 32,
+        borderRadius: 16,
         alignItems: 'center',
+        justifyContent: 'center',
     },
 });

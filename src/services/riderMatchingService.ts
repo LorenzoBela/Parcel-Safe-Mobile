@@ -9,6 +9,9 @@ import { getFirebaseDatabase } from './firebaseClient';
 import { ref, get, set, update, remove, onValue, off, onDisconnect } from 'firebase/database';
 import { showIncomingOrderNotification } from './pushNotificationService';
 import statusUpdateService from './statusUpdateService';
+import { supabase } from './supabaseClient';
+
+import { generateShareToken, generateOTP } from '../utils/tokenUtils';
 
 // Search radius in kilometers (as per user requirement)
 export const SEARCH_RADIUS_KM = 3;
@@ -75,14 +78,7 @@ export interface RiderLiveLocation {
     lastUpdated: number;
 }
 
-export function generateShareToken(length: number = 32): string {
-    const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-    let token = '';
-    for (let index = 0; index < length; index += 1) {
-        token += alphabet.charAt(Math.floor(Math.random() * alphabet.length));
-    }
-    return token;
-}
+export { generateShareToken };
 
 /**
  * Rider order request structure (sent to rider)
@@ -99,6 +95,8 @@ export interface RiderOrderRequest {
     estimatedFare: number;
     expiresAt: number;
     customerId: string;
+    distance?: number;
+    duration?: number;
 }
 
 /**
@@ -233,6 +231,37 @@ export async function createPendingBooking(request: BookingRequest): Promise<boo
             delivery_id: request.bookingId,
             created_at: request.createdAt,
         });
+
+        // Sync to Supabase (Source of Truth)
+        if (supabase) {
+            const otpCode = generateOTP();
+            const { error } = await supabase
+                .from('deliveries')
+                .insert({
+                    id: request.bookingId,
+                    tracking_number: request.bookingId, // Use bookingId as tracking number for now
+                    customer_id: request.customerId,
+                    pickup_lat: request.pickupLat,
+                    pickup_lng: request.pickupLng,
+                    pickup_address: request.pickupAddress,
+                    dropoff_lat: request.dropoffLat,
+                    dropoff_lng: request.dropoffLng,
+                    dropoff_address: request.dropoffAddress,
+                    estimated_fare: request.estimatedFare,
+                    share_token: shareToken,
+                    otp_code: otpCode,
+                    status: 'PENDING',
+                    created_at: new Date(request.createdAt).toISOString(),
+                });
+
+            if (error) {
+                console.error('[RiderMatching] Failed to create Supabase delivery:', error.message);
+                // We don't block the flow here, but we should log it. 
+                // In a robust system, we might want to fail the whole operation or queue it.
+            } else {
+                console.log('[RiderMatching] Created Supabase delivery:', request.bookingId);
+            }
+        }
 
         return true;
     } catch (error) {
@@ -373,8 +402,8 @@ export async function acceptOrder(
             id: bookingId,
             tracking_number: bookingId,
             rider_id: riderId,
-            rider_name: metadata?.riderName,
-            rider_phone: metadata?.riderPhone,
+            rider_name: metadata?.riderName || '',
+            rider_phone: metadata?.riderPhone || '',
             customer_id: booking.customer_id,
             box_id: metadata?.boxId || '',
             pickup_lat: booking.pickup_lat,
@@ -397,6 +426,33 @@ export async function acceptOrder(
             created_at: booking.created_at || acceptedAt,
             updated_at: acceptedAt,
         });
+
+        // Sync Accept to Supabase
+        if (supabase) {
+            const updates: any = {
+                rider_id: riderId,
+                rider_name: metadata?.riderName,
+                rider_phone: metadata?.riderPhone,
+                status: 'ASSIGNED', // Or 'ACCEPTED' if your DB enum distinguishes
+                accepted_at: new Date(acceptedAt).toISOString(),
+                updated_at: new Date(acceptedAt).toISOString(),
+            };
+
+            if (metadata?.boxId) {
+                updates.box_id = metadata.boxId;
+            }
+
+            const { error } = await supabase
+                .from('deliveries')
+                .update(updates)
+                .eq('id', bookingId);
+
+            if (error) {
+                console.error('[RiderMatching] Failed to update Supabase delivery on accept:', error.message);
+            } else {
+                console.log('[RiderMatching] Updated Supabase delivery on accept:', bookingId);
+            }
+        }
 
         return true;
     } catch (error) {
@@ -656,5 +712,70 @@ export async function removeRiderFromOnline(riderId: string): Promise<boolean> {
     } catch (error) {
         console.error('Error removing rider from online list:', error);
         return false;
+    }
+}
+/**
+ * Subscribe to box location updates (for real-time parcel tracking)
+ */
+export function subscribeToBoxLocation(
+    boxId: string,
+    callback: (location: { lat: number; lng: number; heading?: number; lastUpdated?: number } | null) => void
+): () => void {
+    const db = getFirebaseDatabase();
+    // Assuming box location is stored at /boxes/{boxId}/location based on rule book and usage
+    const boxRef = ref(db, `/boxes/${boxId}/location`);
+
+    const unsubscribe = onValue(boxRef, (snapshot) => {
+        if (!snapshot.exists()) {
+            callback(null);
+            return;
+        }
+
+        const data = snapshot.val();
+        if (typeof data.lat !== 'number' || typeof data.lng !== 'number') {
+            callback(null);
+            return;
+        }
+
+        callback({
+            lat: data.lat,
+            lng: data.lng,
+            heading: data.heading,
+            lastUpdated: data.last_updated || Date.now(), // Fallback if not provided by hardware
+        });
+    });
+
+    return () => off(boxRef);
+}
+
+export interface RiderProfile {
+    id: string;
+    full_name: string;
+    avatar_url: string | null;
+    rating?: number;
+}
+
+/**
+ * Fetch rider profile from Supabase
+ */
+export async function getRiderProfile(riderId: string): Promise<RiderProfile | null> {
+    if (!supabase) return null;
+
+    try {
+        const { data, error } = await supabase
+            .from('profiles')
+            .select('id, full_name, avatar_url, rating')
+            .eq('id', riderId)
+            .single();
+
+        if (error) {
+            console.error('Error fetching rider profile:', error);
+            return null;
+        }
+
+        return data as RiderProfile;
+    } catch (error) {
+        console.error('Error in getRiderProfile:', error);
+        return null;
     }
 }
