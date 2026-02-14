@@ -11,89 +11,8 @@ export default function DeliveryRecordsScreen() {
     const [filter, setFilter] = useState('All'); // All, Today, Week, Month
     const [viewMode, setViewMode] = useState<'list' | 'grid'>('list');
 
-    // Mock Data for History
-    const historyData = [
-        {
-            id: '1',
-            trk: 'TRK-8821-9023',
-            customer: 'Lorenzo Bela',
-            address: '123 Rizal Park, Manila',
-            date: 'Dec 2, 2025',
-            time: '10:30 AM',
-            earnings: '₱150.00',
-            status: 'Delivered',
-            type: 'Electronics',
-            distance: '2.5 km',
-            priority: 'High',
-            pickup_lat: 14.5547,
-            pickup_lng: 121.0244,
-            lat: 14.5831,
-            lng: 120.9794,
-            dropoff_lat: 14.5831,
-            dropoff_lng: 120.9794,
-            image: 'https://via.placeholder.com/300' // Mock image
-        },
-        {
-            id: '2',
-            trk: 'TRK-9921-1122',
-            customer: 'Kean Guzon',
-            address: '456 Quezon Ave, QC',
-            date: 'Dec 1, 2025',
-            time: '02:15 PM',
-            earnings: '₱120.00',
-            status: 'Delivered',
-            type: 'Documents',
-            distance: '5.1 km',
-            priority: 'Normal',
-            pickup_lat: 14.5995,
-            pickup_lng: 120.9842,
-            lat: 14.6409,
-            lng: 121.0384,
-            dropoff_lat: 14.6409,
-            dropoff_lng: 121.0384,
-            image: 'https://via.placeholder.com/300'
-        },
-        {
-            id: '3',
-            trk: 'TRK-7721-3344',
-            customer: 'Robert Callorina',
-            address: '789 Makati Ave, Makati',
-            date: 'Nov 30, 2025',
-            time: '09:45 AM',
-            earnings: '₱0.00',
-            status: 'Cancelled',
-            type: 'Fragile',
-            distance: '8.2 km',
-            priority: 'Normal',
-            pickup_lat: 14.5831,
-            pickup_lng: 120.9794,
-            lat: 14.5547,
-            lng: 121.0244,
-            dropoff_lat: 14.5547,
-            dropoff_lng: 121.0244,
-            image: 'https://via.placeholder.com/300'
-        },
-        {
-            id: '4',
-            trk: 'TRK-5521-6677',
-            customer: 'Jeus Manigbas',
-            address: '101 Intramuros, Manila',
-            date: 'Nov 29, 2025',
-            time: '04:20 PM',
-            earnings: '₱200.00',
-            status: 'Delivered',
-            type: 'Food',
-            distance: '1.2 km',
-            priority: 'High',
-            pickup_lat: 14.6004,
-            pickup_lng: 120.9900,
-            lat: 14.5905,
-            lng: 120.9768,
-            dropoff_lat: 14.5905,
-            dropoff_lng: 120.9768,
-            image: 'https://via.placeholder.com/300'
-        },
-    ];
+    // Mock Data removed — waiting for backend integration
+    const historyData: any[] = [];
 
     const getStatusColor = (status) => {
         switch (status) {
@@ -108,8 +27,8 @@ export default function DeliveryRecordsScreen() {
         return new Date(dateStr);
     };
 
-    // Mock "Current Date" as Dec 2, 2025 for demo purposes
-    const currentDate = new Date('2025-12-02');
+    // Use actual current date
+    const currentDate = new Date();
 
     const filteredData = historyData.filter(item => {
         const matchesSearch = item.trk.toLowerCase().includes(searchQuery.toLowerCase()) ||

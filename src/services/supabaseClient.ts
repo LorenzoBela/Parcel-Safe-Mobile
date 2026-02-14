@@ -232,3 +232,53 @@ export async function listSmartBoxes(): Promise<SmartBoxSummary[]> {
 
     return data as SmartBoxSummary[];
 }
+
+/**
+ * Assign/unassign a smart box to a user in Supabase.
+ *
+ * Web UI shows "Unassigned" based on smart_boxes.current_rider_id, so we update it here as best-effort.
+ * Note: RLS may block this for non-admin roles; failures are returned as false.
+ */
+export async function setSmartBoxAssignedUser(boxId: string, userId: string | null): Promise<boolean> {
+    if (!supabase) {
+        console.warn('Supabase not configured');
+        return false;
+    }
+
+    if (!boxId?.trim()) {
+        return false;
+    }
+
+    const normalizedBoxId = boxId.trim();
+
+    // 1) Try primary key match (most common)
+    const primary = await supabase
+        .from('smart_boxes')
+        // column name in DB is snake_case
+        .update({ current_rider_id: userId })
+        .eq('id', normalizedBoxId)
+        .select('id');
+
+    if (primary.error) {
+        console.warn('Failed to update smart_boxes assignment (by id):', primary.error.message);
+        return false;
+    }
+
+    if (Array.isArray(primary.data) && primary.data.length > 0) {
+        return true;
+    }
+
+    // 2) Fallback: some environments store the Firebase key (MAC) in hardware_mac_address while id is different.
+    const fallback = await supabase
+        .from('smart_boxes')
+        .update({ current_rider_id: userId })
+        .eq('hardware_mac_address', normalizedBoxId)
+        .select('id');
+
+    if (fallback.error) {
+        console.warn('Failed to update smart_boxes assignment (by hardware_mac_address):', fallback.error.message);
+        return false;
+    }
+
+    return Array.isArray(fallback.data) && fallback.data.length > 0;
+}

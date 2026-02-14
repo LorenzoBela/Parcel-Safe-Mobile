@@ -34,6 +34,9 @@ import {
     subscribeToRiderPairing,
 } from '../../services/boxPairingService';
 import useAuthStore from '../../store/authStore';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
+const PAIRED_BOX_CACHE_KEY_PREFIX = 'parcelSafe:lastPairedBoxId:';
 
 // Demo box ID (would come from navigation params in production)
 const DEMO_BOX_ID = 'BOX_001';
@@ -48,7 +51,8 @@ export default function BoxControlsScreen() {
     const [logs, setLogs] = useState<{ time: string; message: string; type: string }[]>([]);
     const [pairingState, setPairingState] = useState<BoxPairingState | null>(null);
     const authedUserId = useAuthStore((state: any) => state.user?.userId) as string | undefined;
-    const riderId = authedUserId ?? 'RIDER_001';
+    const riderId = authedUserId;
+    const [cachedBoxId, setCachedBoxId] = useState<string | null>(null);
 
     // EC-03: Battery Monitoring State
     const [batteryState, setBatteryState] = useState<BatteryState | null>(null);
@@ -91,7 +95,7 @@ export default function BoxControlsScreen() {
 
     const isPaired = isPairingActive(pairingState);
     const pairedBoxId = pairingState?.box_id;
-    const boxId = route?.params?.boxId ?? pairedBoxId ?? DEMO_BOX_ID;
+    const boxId = route?.params?.boxId ?? pairedBoxId ?? cachedBoxId ?? DEMO_BOX_ID;
     const routeDeliveryId = route?.params?.deliveryId as string | undefined;
 
     const [boxState, setBoxState] = useState<BoxState | null>(null);
@@ -206,8 +210,17 @@ export default function BoxControlsScreen() {
     }, [boxId]);
 
     useEffect(() => {
+        if (!riderId) return;
+
+        AsyncStorage.getItem(`${PAIRED_BOX_CACHE_KEY_PREFIX}${riderId}`)
+            .then((value) => setCachedBoxId(value || null))
+            .catch(() => setCachedBoxId(null));
+
         const unsubscribe = subscribeToRiderPairing(riderId, (state) => {
             setPairingState(state);
+            if (state?.box_id) {
+                AsyncStorage.setItem(`${PAIRED_BOX_CACHE_KEY_PREFIX}${riderId}`, state.box_id).catch(() => undefined);
+            }
         });
         return unsubscribe;
     }, [riderId]);

@@ -38,7 +38,7 @@ export default function BookServiceScreen() {
 
     // Which input is currently focused/active for map selection
     const [activeField, setActiveField] = useState<'pickup' | 'dropoff'>('pickup');
-    
+
     // Route data (auto-calculated)
     const [routeData, setRouteData] = useState<{
         distance: number;
@@ -68,7 +68,24 @@ export default function BookServiceScreen() {
 
             // Auto-set pickup to current location initially
             setPickupCoords(location.coords);
-            setPickupText('Current Location');
+
+            // Reverse geocode current location
+            try {
+                let address = await Location.reverseGeocodeAsync({
+                    latitude: location.coords.latitude,
+                    longitude: location.coords.longitude
+                });
+
+                if (address && address.length > 0) {
+                    const { city, region, name, street } = address[0];
+                    const locString = street || name || city || 'Current Location';
+                    setPickupText(locString);
+                } else {
+                    setPickupText('Current Location');
+                }
+            } catch (e) {
+                setPickupText('Current Location');
+            }
         })();
     }, []);
 
@@ -116,18 +133,18 @@ export default function BookServiceScreen() {
                         const props = feature.properties || {};
                         // Build a more descriptive name with context
                         let displayName = props.full_address || props.name || 'Unknown location';
-                        
+
                         // If it's just a street/place name, add context
                         if (props.context) {
                             const locality = props.context.locality?.name;
                             const place = props.context.place?.name;
                             const region = props.context.region?.name;
-                            
+
                             if (!props.full_address && (locality || place)) {
                                 displayName = `${props.name || displayName}${locality ? ', ' + locality : ''}${place && place !== locality ? ', ' + place : ''}`;
                             }
                         }
-                        
+
                         return {
                             id: feature.id,
                             name: displayName,
@@ -154,19 +171,39 @@ export default function BookServiceScreen() {
         };
     }, [activeQuery, MAPBOX_TOKEN, pickupCoords]);
 
-    const handleMapPress = (e: any) => {
+    const handleMapPress = async (e: any) => {
         const coords = {
             latitude: e.geometry.coordinates[1],
             longitude: e.geometry.coordinates[0],
         };
         setSuggestions([]);
         setSearchError(null);
+
+        let addressText = `${coords.latitude.toFixed(4)}, ${coords.longitude.toFixed(4)}`;
+
+        try {
+            let address = await Location.reverseGeocodeAsync({
+                latitude: coords.latitude,
+                longitude: coords.longitude
+            });
+
+            if (address && address.length > 0) {
+                const { street, name, city } = address[0];
+                const locString = street || name || city;
+                if (locString) {
+                    addressText = locString;
+                }
+            }
+        } catch (error) {
+            console.log('Reverse geocoding failed', error);
+        }
+
         if (activeField === 'pickup') {
             setPickupCoords(coords);
-            setPickupText(`${coords.latitude.toFixed(4)}, ${coords.longitude.toFixed(4)}`);
+            setPickupText(addressText);
         } else {
             setDropoffCoords(coords);
-            setDropoffText(`${coords.latitude.toFixed(4)}, ${coords.longitude.toFixed(4)}`);
+            setDropoffText(addressText);
         }
     };
 
@@ -195,7 +232,7 @@ export default function BookServiceScreen() {
         setLoadingRoute(true);
         try {
             const url = `https://api.mapbox.com/directions/v5/mapbox/driving/${pickupCoords.longitude},${pickupCoords.latitude};${dropoffCoords.longitude},${dropoffCoords.latitude}?geometries=geojson&access_token=${MAPBOX_TOKEN}`;
-            
+
             const response = await fetch(url);
             const data = await response.json();
 
@@ -203,7 +240,7 @@ export default function BookServiceScreen() {
                 const route = data.routes[0];
                 const distanceKm = route.distance / 1000;
                 const durationMin = route.duration / 60;
-                
+
                 // Calculate cost: Base fare + per km + per minute
                 const baseFare = 50;
                 const perKm = 15;
@@ -240,6 +277,9 @@ export default function BookServiceScreen() {
             Alert.alert('Calculating Route', 'Please wait while we calculate your route.');
             return;
         }
+
+        console.log('[BookService] Confirmed Booking - Route Data:', routeData);
+        console.log('[BookService] Estimated Cost:', routeData.cost);
 
         navigation.navigate('SearchingRider', {
             pickup: pickupText,

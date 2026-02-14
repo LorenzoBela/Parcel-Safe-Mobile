@@ -36,7 +36,7 @@ export default function IncomingOrderModal({
     // Handle visibility animation
     useEffect(() => {
         if (visible && request) {
-            // Calculate initial time left
+            // Calculate initial time left only when the request ID changes or visibility changes
             const remaining = Math.max(0, Math.floor((request.expiresAt - Date.now()) / 1000));
             setTimeLeft(remaining);
 
@@ -74,7 +74,7 @@ export default function IncomingOrderModal({
                 useNativeDriver: true,
             }).start();
         }
-    }, [visible, request]);
+    }, [visible, request?.bookingId]); // Only re-run if visibility or booking ID changes
 
     // Countdown timer
     useEffect(() => {
@@ -92,7 +92,7 @@ export default function IncomingOrderModal({
         }, 1000);
 
         return () => clearInterval(timer);
-    }, [visible, request, onExpire]);
+    }, [visible, request?.bookingId, onExpire]); // Depend on bookingId, not the whole request object
 
     if (!request) return null;
 

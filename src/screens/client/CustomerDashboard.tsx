@@ -13,6 +13,8 @@ import {
     CancellationState,
     formatCancellationReason
 } from '../../services/cancellationService';
+import useAuthStore from '../../store/authStore';
+import { fetchWeather, weatherBackgroundImages, WeatherData } from '../../services/weatherService';
 
 export default function CustomerDashboard() {
     const navigation = useNavigation<any>();
@@ -24,9 +26,26 @@ export default function CustomerDashboard() {
     const [refreshing, setRefreshing] = useState(false);
     const [displayStatus, setDisplayStatus] = useState<'OK' | 'DEGRADED' | 'FAILED'>('OK');
     const [cancellation, setCancellation] = useState<CancellationState | null>(null);
+    const [weather, setWeather] = useState<WeatherData | null>(null);
+    const [deviceCoords, setDeviceCoords] = useState<{ lat: number; lng: number } | null>(null);
 
-    // Mock delivery ID - in real app, get from active delivery state
-    const activeDeliveryId = 'TRK-8821-9023';
+    // Get authenticated user data from store
+    const authedUser = useAuthStore((state: any) => state.user) as any;
+    const displayName = authedUser?.fullName || authedUser?.name || authedUser?.email || 'User';
+    const avatarUri = authedUser?.photo || null;
+
+    // Dynamic — will be populated when a real active delivery exists
+    const activeDeliveryId: string | null = null;
+
+    // Dynamic data — populated from real sources when available
+    const activeDelivery: {
+        id: string; status: string; eta: string; rider: string; location: string;
+    } | null = null;
+
+    const recentActivity: {
+        id: number; trackingId: string; type: string; date: string;
+        serviceType: string; status: string;
+    }[] = [];
 
     const handleShare = () => {
         setShareModalVisible(true);
@@ -34,10 +53,12 @@ export default function CustomerDashboard() {
 
     const performShare = async () => {
         setShareModalVisible(false);
+        if (!activeDelivery) return;
         try {
-            const result = await Share.share({
-                message: 'Track your Parcel-Safe delivery here: https://parcel-safe.web.app/track/TEMP-123',
-                url: 'https://parcel-safe.web.app/track/TEMP-123', // iOS uses this
+            const shareUrl = `https://parcel-safe.web.app/track/${activeDelivery.id}`;
+            await Share.share({
+                message: `Track your Parcel-Safe delivery here: ${shareUrl}`,
+                url: shareUrl, // iOS uses this
                 title: 'Track Parcel'
             });
         } catch (error: any) {
@@ -62,10 +83,10 @@ export default function CustomerDashboard() {
 
         try {
             let location = await Location.getCurrentPositionAsync({});
-            let address = await Location.reverseGeocodeAsync({
-                latitude: location.coords.latitude,
-                longitude: location.coords.longitude
-            });
+            const { latitude, longitude } = location.coords;
+            setDeviceCoords({ lat: latitude, lng: longitude });
+
+            let address = await Location.reverseGeocodeAsync({ latitude, longitude });
 
             if (address && address.length > 0) {
                 const { city, region, name } = address[0];
@@ -84,22 +105,33 @@ export default function CustomerDashboard() {
     }, [fetchLocation]);
 
     useEffect(() => {
-        // EC-86: Monitor display health
-        const unsubscribe = subscribeToDisplay('BOX_001', (displayState) => {
+        // EC-86: Monitor display health — only subscribe when box ID is known
+        if (!activeDelivery) return;
+        const boxId = activeDelivery.id; // Will use actual box ID from delivery context
+        const unsubscribe = subscribeToDisplay(boxId, (displayState) => {
             if (displayState) {
                 setDisplayStatus(displayState.status);
             }
         });
         return () => unsubscribe();
-    }, []);
+    }, [activeDelivery]);
 
     // EC-32: Monitor cancellation state for active delivery
     useEffect(() => {
+        if (!activeDeliveryId) return;
         const unsubscribe = subscribeToCancellation(activeDeliveryId, (state) => {
             setCancellation(state);
         });
         return () => unsubscribe();
     }, [activeDeliveryId]);
+
+    // Fetch live weather when device coords are available
+    useEffect(() => {
+        if (!deviceCoords) return;
+        fetchWeather(deviceCoords.lat, deviceCoords.lng).then((data) => {
+            if (data) setWeather(data);
+        });
+    }, [deviceCoords]);
 
     const onRefresh = useCallback(async () => {
         setRefreshing(true);
@@ -107,50 +139,7 @@ export default function CustomerDashboard() {
         setRefreshing(false);
     }, [fetchLocation]);
 
-    // Mock data
-    const weather = { temp: '28°C', condition: 'Cloudy', icon: 'weather-cloudy' };
 
-    const weatherImages = {
-        'Sunny': 'https://images.unsplash.com/photo-1622278612016-dd3a787f8003?ixlib=rb-1.2.1&auto=format&fit=crop&w=1000&q=80',
-        'Cloudy': 'https://images.unsplash.com/photo-1534088568595-a066f410bcda?ixlib=rb-1.2.1&auto=format&fit=crop&w=1000&q=80',
-        'Rainy': 'https://images.unsplash.com/photo-1515694346937-94d85e41e6f0?ixlib=rb-1.2.1&auto=format&fit=crop&w=1000&q=80',
-        'Thunder': 'https://images.unsplash.com/photo-1605727216801-e27ce1d0cc28?ixlib=rb-1.2.1&auto=format&fit=crop&w=1000&q=80',
-    };
-
-    const activeDelivery = {
-        id: 'TRK-8821-9023',
-        status: 'In Transit',
-        eta: '15 mins',
-        rider: 'Kean Guzon',
-        location: 'Near Manila City Hall',
-    };
-
-    const recentActivity = [
-        {
-            id: 1,
-            trackingId: 'TRK-9921-8821',
-            type: 'Delivered',
-            date: 'Yesterday, 2:30 PM',
-            serviceType: 'Standard Delivery',
-            status: 'Delivered',
-        },
-        {
-            id: 2,
-            trackingId: 'TRK-1120-3342',
-            type: 'Tampered',
-            date: 'Oct 24, 10:15 AM',
-            serviceType: 'Express Delivery',
-            status: 'Tampered',
-        },
-        {
-            id: 3,
-            trackingId: 'TRK-7782-1102',
-            type: 'Cancelled',
-            date: 'Oct 20, 9:00 AM',
-            serviceType: 'Standard Delivery',
-            status: 'Cancelled',
-        },
-    ];
 
 
 
@@ -185,7 +174,7 @@ export default function CustomerDashboard() {
         <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
             {/* Attractive Header with Weather Background */}
             <ImageBackground
-                source={{ uri: weatherImages[weather.condition] || weatherImages['Sunny'] }}
+                source={{ uri: weather ? (weatherBackgroundImages[weather.condition] || weatherBackgroundImages['Sunny']) : weatherBackgroundImages['Sunny'] }}
                 style={styles.headerBackground}
                 imageStyle={{ borderBottomLeftRadius: 20, borderBottomRightRadius: 20 }}
                 resizeMode="cover"
@@ -200,11 +189,13 @@ export default function CustomerDashboard() {
                             <Text style={styles.dateText}>{currentTime.format('dddd, MMMM D')}</Text>
                             <Text style={styles.timeText}>{currentTime.format('h:mm A')}</Text>
                         </View>
-                        <View style={styles.weatherContainer}>
-                            <MaterialCommunityIcons name={weather.icon as any} size={30} color="white" />
-                            <Text style={styles.weatherText}>{weather.temp}</Text>
-                            <Text style={styles.weatherCondition}>{weather.condition}</Text>
-                        </View>
+                        {weather && (
+                            <View style={styles.weatherContainer}>
+                                <MaterialCommunityIcons name={weather.icon as any} size={30} color="white" />
+                                <Text style={styles.weatherText}>{weather.temp}</Text>
+                                <Text style={styles.weatherCondition}>{weather.condition}</Text>
+                            </View>
+                        )}
                     </View>
                 </View>
             </ImageBackground>
@@ -222,9 +213,13 @@ export default function CustomerDashboard() {
                 <View style={styles.greetingContainer}>
                     <View>
                         <Text variant="headlineSmall" style={[styles.greeting, { color: theme.colors.onSurfaceVariant }]}>{getGreeting()}</Text>
-                        <Text variant="headlineMedium" style={[styles.userName, { color: theme.colors.onSurface }]}>Lorenzo Bela</Text>
+                        <Text variant="headlineMedium" style={[styles.userName, { color: theme.colors.onSurface }]}>{displayName}</Text>
                     </View>
-                    <Avatar.Image size={50} source={{ uri: 'https://i.pravatar.cc/150?img=12' }} />
+                    {avatarUri ? (
+                        <Avatar.Image size={50} source={{ uri: avatarUri }} />
+                    ) : (
+                        <Avatar.Text size={50} label={displayName.charAt(0).toUpperCase()} />
+                    )}
                 </View>
 
                 {/* EC-86: Display failure notification */}
@@ -257,65 +252,75 @@ export default function CustomerDashboard() {
 
                 {/* Active Delivery Card */}
                 <Text variant="titleMedium" style={[styles.sectionTitle, { color: theme.colors.onSurface }]}>Active Delivery</Text>
-                <Card style={[styles.deliveryCard, { backgroundColor: theme.colors.primaryContainer }]} mode="elevated">
-                    <View style={styles.deliveryHeader}>
-                        <View style={styles.deliveryIdContainer}>
-                            <MaterialCommunityIcons name="package-variant" size={20} color={theme.colors.onPrimaryContainer} />
-                            <Text variant="titleSmall" style={{ marginLeft: 8, color: theme.colors.onPrimaryContainer }}>{activeDelivery.id}</Text>
+                {activeDelivery ? (
+                    <Card style={[styles.deliveryCard, { backgroundColor: theme.colors.primaryContainer }]} mode="elevated">
+                        <View style={styles.deliveryHeader}>
+                            <View style={styles.deliveryIdContainer}>
+                                <MaterialCommunityIcons name="package-variant" size={20} color={theme.colors.onPrimaryContainer} />
+                                <Text variant="titleSmall" style={{ marginLeft: 8, color: theme.colors.onPrimaryContainer }}>{activeDelivery.id}</Text>
+                            </View>
+                            <View style={[styles.statusBadge, { backgroundColor: theme.colors.primary }]}>
+                                <Text style={[styles.statusText, { color: theme.colors.onPrimary }]}>{activeDelivery.status}</Text>
+                            </View>
                         </View>
-                        <View style={[styles.statusBadge, { backgroundColor: theme.colors.primary }]}>
-                            <Text style={[styles.statusText, { color: theme.colors.onPrimary }]}>{activeDelivery.status}</Text>
-                        </View>
-                    </View>
 
-                    <Card.Content style={styles.deliveryContent}>
-                        <View style={styles.deliveryRow}>
-                            <MaterialCommunityIcons name="clock-outline" size={20} color={theme.colors.onSurfaceVariant} />
-                            <Text variant="bodyMedium" style={[styles.deliveryDetail, { color: theme.colors.onSurface }]}>Arriving in {activeDelivery.eta}</Text>
-                        </View>
-                        <View style={styles.deliveryRow}>
-                            <MaterialCommunityIcons name="map-marker-outline" size={20} color={theme.colors.onSurfaceVariant} />
-                            <Text variant="bodyMedium" style={[styles.deliveryDetail, { color: theme.colors.onSurface }]}>{activeDelivery.location}</Text>
-                        </View>
-                        <View style={styles.deliveryRow}>
-                            <MaterialCommunityIcons name="motorbike" size={20} color={theme.colors.onSurfaceVariant} />
-                            <Text variant="bodyMedium" style={[styles.deliveryDetail, { color: theme.colors.onSurface }]}>{activeDelivery.rider}</Text>
-                        </View>
-                    </Card.Content>
+                        <Card.Content style={styles.deliveryContent}>
+                            <View style={styles.deliveryRow}>
+                                <MaterialCommunityIcons name="clock-outline" size={20} color={theme.colors.onSurfaceVariant} />
+                                <Text variant="bodyMedium" style={[styles.deliveryDetail, { color: theme.colors.onSurface }]}>Arriving in {activeDelivery.eta}</Text>
+                            </View>
+                            <View style={styles.deliveryRow}>
+                                <MaterialCommunityIcons name="map-marker-outline" size={20} color={theme.colors.onSurfaceVariant} />
+                                <Text variant="bodyMedium" style={[styles.deliveryDetail, { color: theme.colors.onSurface }]}>{activeDelivery.location}</Text>
+                            </View>
+                            <View style={styles.deliveryRow}>
+                                <MaterialCommunityIcons name="motorbike" size={20} color={theme.colors.onSurfaceVariant} />
+                                <Text variant="bodyMedium" style={[styles.deliveryDetail, { color: theme.colors.onSurface }]}>{activeDelivery.rider}</Text>
+                            </View>
+                        </Card.Content>
 
-                    <Card.Actions style={styles.deliveryActions}>
-                        <Button
-                            mode="contained"
-                            onPress={() => navigation.navigate('TrackOrder')}
-                            icon="map"
-                            style={{ flex: 1, marginRight: 4 }}
-                            contentStyle={{ paddingHorizontal: 0 }}
-                            labelStyle={{ fontSize: 13 }}
-                        >
-                            Track
-                        </Button>
-                        <Button
-                            mode="contained-tonal"
-                            onPress={() => navigation.navigate('OTP', { boxId: 'BOX_001' })}
-                            icon="lock-open"
-                            style={{ flex: 1, marginRight: 4 }}
-                            contentStyle={{ paddingHorizontal: 0 }}
-                            labelStyle={{ fontSize: 13 }}
-                        >
-                            Unlock
-                        </Button>
-                        <Button
-                            mode="outlined"
-                            onPress={handleShare}
-                            icon="share-variant"
-                            style={{ flex: 1, borderColor: theme.colors.primary }}
-                            contentStyle={{ paddingHorizontal: 0 }}
-                            labelStyle={{ fontSize: 13 }}
-                        >
-                            Share
-                        </Button>
-                    </Card.Actions>
-                </Card>
+                        <Card.Actions style={styles.deliveryActions}>
+                            <Button
+                                mode="contained"
+                                onPress={() => navigation.navigate('TrackOrder')}
+                                icon="map"
+                                style={{ flex: 1, marginRight: 4 }}
+                                contentStyle={{ paddingHorizontal: 0 }}
+                                labelStyle={{ fontSize: 13 }}
+                            >
+                                Track
+                            </Button>
+                            <Button
+                                mode="contained-tonal"
+                                onPress={() => navigation.navigate('OTP', { boxId: activeDelivery.id })}
+                                icon="lock-open"
+                                style={{ flex: 1, marginRight: 4 }}
+                                contentStyle={{ paddingHorizontal: 0 }}
+                                labelStyle={{ fontSize: 13 }}
+                            >
+                                Unlock
+                            </Button>
+                            <Button
+                                mode="outlined"
+                                onPress={handleShare}
+                                icon="share-variant"
+                                style={{ flex: 1, borderColor: theme.colors.primary }}
+                                contentStyle={{ paddingHorizontal: 0 }}
+                                labelStyle={{ fontSize: 13 }}
+                            >
+                                Share
+                            </Button>
+                        </Card.Actions>
+                    </Card>
+                ) : (
+                    <Card style={[styles.deliveryCard, { backgroundColor: theme.colors.surfaceVariant }]} mode="elevated">
+                        <Card.Content style={{ alignItems: 'center', paddingVertical: 24 }}>
+                            <MaterialCommunityIcons name="package-variant" size={48} color={theme.colors.onSurfaceVariant} />
+                            <Text variant="bodyLarge" style={{ color: theme.colors.onSurfaceVariant, marginTop: 12 }}>No active delivery</Text>
+                            <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant, marginTop: 4 }}>Book a service to get started</Text>
+                        </Card.Content>
+                    </Card>
+                )}
 
                 {/* Main Action - Book Now */}
                 <Card style={[styles.bookActionCard, { backgroundColor: theme.colors.surface }]} onPress={() => navigation.navigate('BookService')} mode="elevated">
@@ -339,28 +344,37 @@ export default function CustomerDashboard() {
 
                 {/* Recent Activity */}
                 <Text variant="titleMedium" style={[styles.sectionTitle, { color: theme.colors.onSurface }]}>Recent Activity</Text>
-                {recentActivity.map((activity) => {
-                    const statusStyle = getStatusIcon(activity.status);
-                    return (
-                        <Card key={activity.id} style={[styles.activityCard, { backgroundColor: theme.colors.surface }]} mode="elevated">
-                            <Card.Content style={styles.activityContent}>
-                                <View style={styles.activityRow}>
-                                    <View style={[styles.iconContainer, { backgroundColor: statusStyle.bg }]}>
-                                        <MaterialCommunityIcons name={statusStyle.icon as any} size={24} color={statusStyle.color} />
+                {recentActivity.length > 0 ? (
+                    recentActivity.map((activity) => {
+                        const statusStyle = getStatusIcon(activity.status);
+                        return (
+                            <Card key={activity.id} style={[styles.activityCard, { backgroundColor: theme.colors.surface }]} mode="elevated">
+                                <Card.Content style={styles.activityContent}>
+                                    <View style={styles.activityRow}>
+                                        <View style={[styles.iconContainer, { backgroundColor: statusStyle.bg }]}>
+                                            <MaterialCommunityIcons name={statusStyle.icon as any} size={24} color={statusStyle.color} />
+                                        </View>
+                                        <View style={styles.activityInfo}>
+                                            <Text variant="titleSmall" style={[styles.trackingId, { color: theme.colors.onSurface }]}>{activity.trackingId}</Text>
+                                            <Text variant="bodySmall" style={[styles.serviceType, { color: theme.colors.onSurfaceVariant }]}>{activity.serviceType}</Text>
+                                        </View>
+                                        <View style={styles.activityStatus}>
+                                            <Text variant="labelSmall" style={{ color: statusStyle.color, fontWeight: 'bold' }}>{activity.status}</Text>
+                                            <Text variant="bodySmall" style={styles.dateTextCard}>{activity.date}</Text>
+                                        </View>
                                     </View>
-                                    <View style={styles.activityInfo}>
-                                        <Text variant="titleSmall" style={[styles.trackingId, { color: theme.colors.onSurface }]}>{activity.trackingId}</Text>
-                                        <Text variant="bodySmall" style={[styles.serviceType, { color: theme.colors.onSurfaceVariant }]}>{activity.serviceType}</Text>
-                                    </View>
-                                    <View style={styles.activityStatus}>
-                                        <Text variant="labelSmall" style={{ color: statusStyle.color, fontWeight: 'bold' }}>{activity.status}</Text>
-                                        <Text variant="bodySmall" style={styles.dateTextCard}>{activity.date}</Text>
-                                    </View>
-                                </View>
-                            </Card.Content>
-                        </Card>
-                    );
-                })}
+                                </Card.Content>
+                            </Card>
+                        );
+                    })
+                ) : (
+                    <Card style={[styles.activityCard, { backgroundColor: theme.colors.surface }]} mode="elevated">
+                        <Card.Content style={{ alignItems: 'center', paddingVertical: 20 }}>
+                            <MaterialCommunityIcons name="history" size={36} color={theme.colors.onSurfaceVariant} />
+                            <Text variant="bodyMedium" style={{ color: theme.colors.onSurfaceVariant, marginTop: 8 }}>No recent activity</Text>
+                        </Card.Content>
+                    </Card>
+                )}
 
             </ScrollView>
 

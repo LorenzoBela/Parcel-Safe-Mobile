@@ -63,6 +63,10 @@ import {
 // EC-90: Power State
 import { subscribeToPower, PowerState, isSolenoidBlockedByVoltage } from '../../services/firebaseClient';
 import useAuthStore from '../../store/authStore';
+import { fetchWeather, weatherBackgroundImages, WeatherData } from '../../services/weatherService';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
+const PAIRED_BOX_CACHE_KEY_PREFIX = 'parcelSafe:lastPairedBoxId:';
 
 export default function RiderDashboard() {
     const navigation = useNavigation<any>();
@@ -133,6 +137,7 @@ export default function RiderDashboard() {
     const riderPhone = authedUser?.phone || undefined;
     const [pushToken, setPushToken] = useState<string | null>(null);
     const [pairingState, setPairingState] = useState<BoxPairingState | null>(null);
+    const [cachedBoxId, setCachedBoxId] = useState<string | null>(null);
 
     // EC-32: Cancellation State
     const [showCancelModal, setShowCancelModal] = useState(false);
@@ -148,30 +153,69 @@ export default function RiderDashboard() {
     // EC-90: Power State
     const [powerState, setPowerState] = useState<PowerState | null>(null);
 
+    // Active delivery tracking
+    const [hasActiveDelivery, setHasActiveDelivery] = useState(false);
+
     const isPaired = isPairingActive(pairingState);
     const pairedBoxId = pairingState?.box_id;
     const pairingModeLabel = pairingState?.mode === 'ONE_TIME' ? 'One-time' : 'Session';
-    const boxIdForMonitoring = pairedBoxId ?? 'BOX_001';
+    const boxIdForMonitoring = pairedBoxId ?? cachedBoxId;
 
-    // Auto-start monitoring when component mounts (demo box ID)
+    // Load last paired box id for cross-screen persistence.
     useEffect(() => {
-        startMonitoring(boxIdForMonitoring);
+        if (!riderId) {
+            setCachedBoxId(null);
+            return;
+        }
+        AsyncStorage.getItem(`${PAIRED_BOX_CACHE_KEY_PREFIX}${riderId}`)
+            .then((value) => setCachedBoxId(value || null))
+            .catch(() => setCachedBoxId(null));
+    }, [riderId]);
 
-        // EC-85: Listen for recall
-        // In a real app, 'TRK-8821-9023' would be dynamic
-        RecallService.listenForRecall('TRK-8821-9023', (isRecalled, returnOtp) => {
-            setRecallState({ isRecalled, returnOtp });
-            if (isRecalled) {
-                Alert.alert(
-                    '⚠️ PACKAGE RECALLED',
-                    'The sender has recalled this package. Please return it to the pickup point immediately.',
-                    [{ text: 'Routing to Sender' }]
-                );
+    // Check for active deliveries
+    useEffect(() => {
+        if (!riderId) return;
+
+        const checkActiveDeliveries = async () => {
+            try {
+                const { supabase } = await import('../../services/supabaseClient');
+                if (!supabase) {
+                    setHasActiveDelivery(false);
+                    return;
+                }
+                const { data, error } = await supabase
+                    .from('deliveries')
+                    .select('id, status')
+                    .eq('rider_id', riderId)
+                    .in('status', ['IN_TRANSIT', 'ARRIVED'])
+                    .limit(1);
+
+                if (!error && data && data.length > 0) {
+                    setHasActiveDelivery(true);
+                } else {
+                    setHasActiveDelivery(false);
+                }
+            } catch (err) {
+                console.error('[RiderDashboard] Failed to check active deliveries:', err);
+                setHasActiveDelivery(false);
             }
-        });
+        };
+
+        checkActiveDeliveries();
+        // Re-check every 30 seconds
+        const interval = setInterval(checkActiveDeliveries, 30000);
+        return () => clearInterval(interval);
+    }, [riderId]);
+
+    // Auto-start monitoring when component mounts
+    useEffect(() => {
+        if (boxIdForMonitoring) {
+            startMonitoring(boxIdForMonitoring);
+        }
 
         // EC-03: Subscribe to battery state
-        const unsubscribeBattery = subscribeToBattery(boxIdForMonitoring, (state) => {
+        // EC-03: Subscribe to battery state
+        const unsubscribeBattery = boxIdForMonitoring ? subscribeToBattery(boxIdForMonitoring, (state) => {
             setBatteryState(state);
 
             // Show alert on low battery
@@ -188,7 +232,7 @@ export default function RiderDashboard() {
                     [{ text: 'Understood' }]
                 );
             }
-        });
+        }) : () => { };
 
         // EC-18: Subscribe to tamper state
         const unsubscribeTamper = subscribeToTamper(boxIdForMonitoring, (state) => {
@@ -387,8 +431,13 @@ export default function RiderDashboard() {
     }, [boxIdForMonitoring]);
 
     useEffect(() => {
+        if (!riderId) return;
         const unsubscribe = subscribeToRiderPairing(riderId, (state) => {
             setPairingState(state);
+            // Keep cache warm even if pairing is only available via rider-scoped node.
+            if (state?.box_id) {
+                AsyncStorage.setItem(`${PAIRED_BOX_CACHE_KEY_PREFIX}${riderId}`, state.box_id).catch(() => undefined);
+            }
         });
         return unsubscribe;
     }, [riderId]);
@@ -465,7 +514,7 @@ export default function RiderDashboard() {
     };
 
     // Handle accepting an order
-    const handleAcceptOrder = async () => {
+    const handleAcceptOrder = useCallback(async () => {
         if (!incomingRequest || !riderId) return;
 
         const success = await acceptOrder(
@@ -501,28 +550,32 @@ export default function RiderDashboard() {
         } else {
             Alert.alert('Error', 'Failed to accept order. Please try again.');
         }
-    };
+    }, [incomingRequest, riderId, riderName, riderPhone, boxIdForMonitoring, navigation]);
 
     // Handle rejecting an order
-    const handleRejectOrder = async () => {
+    const handleRejectOrder = useCallback(async () => {
         if (!incomingRequest) return;
 
         await rejectOrder(riderId, incomingRequest.requestId);
         setShowOrderModal(false);
         setIncomingRequest(null);
-    };
+    }, [incomingRequest, riderId]);
 
     // Handle order request expiring
-    const handleOrderExpire = () => {
+    const handleOrderExpire = useCallback(() => {
         if (incomingRequest) {
             rejectOrder(riderId, incomingRequest.requestId);
         }
         setShowOrderModal(false);
         setIncomingRequest(null);
-    };
+    }, [incomingRequest, riderId]);
 
     // EC-32: Handle Cancellation Submit
     const handleCancellationSubmit = async (reason: CancellationReason, details: string) => {
+        if (!nextDelivery) {
+            Alert.alert('Error', 'No active delivery to cancel');
+            return;
+        }
         setCancelLoading(true);
         try {
             const result = await requestCancellation({
@@ -543,7 +596,7 @@ export default function RiderDashboard() {
                     reason: reason,
                     reasonDetails: details,
                     senderName: nextDelivery.customer,
-                    pickupAddress: nextDelivery.address, // In real app, use actual pickup address
+                    pickupAddress: nextDelivery.address,
                 });
             } else {
                 Alert.alert('Cancellation Failed', result.error || 'Unknown error');
@@ -726,42 +779,33 @@ export default function RiderDashboard() {
         );
     };
 
-    // Mock data
-    const weather = { temp: '28°C', condition: 'Cloudy', icon: 'weather-cloudy' };
-    const weatherImages = {
-        'Sunny': 'https://images.unsplash.com/photo-1622278612016-dd3a787f8003?ixlib=rb-1.2.1&auto=format&fit=crop&w=1000&q=80',
-        'Cloudy': 'https://images.unsplash.com/photo-1534088568595-a066f410bcda?ixlib=rb-1.2.1&auto=format&fit=crop&w=1000&q=80',
-        'Rainy': 'https://images.unsplash.com/photo-1515694346937-94d85e41e6f0?ixlib=rb-1.2.1&auto=format&fit=crop&w=1000&q=80',
-        'Thunder': 'https://images.unsplash.com/photo-1605727216801-e27ce1d0cc28?ixlib=rb-1.2.1&auto=format&fit=crop&w=1000&q=80',
-    };
+    // Live weather state
+    const [weather, setWeather] = useState<WeatherData | null>(null);
 
-    const nextDelivery = {
-        id: 'TRK-8821-9023',
-        address: '123 Rizal Park, Manila',
-        customer: 'Lorenzo Bela',
-        time: '15 mins',
-        phone: '+63 912 345 6789',
-        pickupAddress: '456 SM Mall of Asia, Pasay',
-        pickupTime: dayjs().add(15, 'minutes').format('h:mm A'),
-        dropoffTime: dayjs().add(45, 'minutes').format('h:mm A'),
-        fare: '₱250.00',
-        distance: distance || '8.5 km',
-        estimatedTime: '30 mins',
-        packageType: 'Electronics',
-        weight: '2.5 kg',
-        priority: 'High',
-        specialInstructions: 'Please handle with care. Fragile items inside.',
-        pickupLat: 14.5360,
-        pickupLng: 120.9823,
-        dropoffLat: destination.latitude,
-        dropoffLng: destination.longitude,
-    };
+    // Dynamic delivery state — populated from real sources when available
+    const nextDelivery: {
+        id: string; address: string; customer: string; time: string;
+        phone: string; pickupAddress: string; pickupTime: string;
+        dropoffTime: string; fare: string; distance: string;
+        estimatedTime: string; packageType: string; weight: string;
+        priority: string; specialInstructions: string;
+        pickupLat: number; pickupLng: number;
+        dropoffLat: number; dropoffLng: number;
+    } | null = null;
 
     const boxStatus = {
-        battery: batteryState?.percentage ? batteryState.percentage / 100 : 0.85, // Fall back to 85% if no data
+        battery: batteryState?.percentage ? batteryState.percentage / 100 : 0,
         connection: 'Connected',
         signal: 'Strong',
     };
+
+    // Fetch live weather when rider location is available
+    useEffect(() => {
+        if (!riderLocation) return;
+        fetchWeather(riderLocation.coords.latitude, riderLocation.coords.longitude).then((data) => {
+            if (data) setWeather(data);
+        });
+    }, [riderLocation]);
 
     // EC-03: Get battery icon based on level
     const getBatteryIcon = () => {
@@ -818,7 +862,7 @@ export default function RiderDashboard() {
 
             {/* Attractive Header */}
             <ImageBackground
-                source={{ uri: weatherImages[weather.condition] || weatherImages['Sunny'] }}
+                source={{ uri: weather ? (weatherBackgroundImages[weather.condition] || weatherBackgroundImages['Sunny']) : weatherBackgroundImages['Sunny'] }}
                 style={styles.headerBackground}
                 imageStyle={{ borderBottomLeftRadius: 20, borderBottomRightRadius: 20 }}
                 resizeMode="cover"
@@ -833,11 +877,13 @@ export default function RiderDashboard() {
                             <Text style={styles.dateText}>{currentTime.format('dddd, MMMM D')}</Text>
                             <Text style={styles.timeText}>{currentTime.format('h:mm A')}</Text>
                         </View>
-                        <View style={styles.weatherContainer}>
-                            <MaterialCommunityIcons name={weather.icon as any} size={30} color="white" />
-                            <Text style={styles.weatherText}>{weather.temp}</Text>
-                            <Text style={styles.weatherCondition}>{weather.condition}</Text>
-                        </View>
+                        {weather && (
+                            <View style={styles.weatherContainer}>
+                                <MaterialCommunityIcons name={weather.icon as any} size={30} color="white" />
+                                <Text style={styles.weatherText}>{weather.temp}</Text>
+                                <Text style={styles.weatherCondition}>{weather.condition}</Text>
+                            </View>
+                        )}
                     </View>
                 </View>
             </ImageBackground>
@@ -1021,21 +1067,21 @@ export default function RiderDashboard() {
                     <View style={styles.gpsStatusRow}>
                         <View style={[
                             styles.gpsStatusIcon,
-                            { backgroundColor: getStatusColor(gpsSource, isBoxOnline) + '20' }
+                            { backgroundColor: hasActiveDelivery ? getStatusColor(gpsSource, isBoxOnline) + '20' : '#F5F5F5' }
                         ]}>
                             <MaterialCommunityIcons
-                                name={gpsSource === 'box' ? 'access-point' : gpsSource === 'phone' ? 'cellphone' : 'access-point-off'}
+                                name={hasActiveDelivery && gpsSource === 'box' ? 'access-point' : hasActiveDelivery && gpsSource === 'phone' ? 'cellphone' : 'access-point-off'}
                                 size={24}
-                                color={getStatusColor(gpsSource, isBoxOnline)}
+                                color={hasActiveDelivery ? getStatusColor(gpsSource, isBoxOnline) : '#9E9E9E'}
                             />
                         </View>
                         <View style={styles.gpsStatusInfo}>
                             <Text variant="titleSmall" style={{ fontWeight: 'bold' }}>GPS Tracking</Text>
-                            <Text variant="bodySmall" style={{ color: getStatusColor(gpsSource, isBoxOnline) }}>
-                                {getStatusMessage(gpsSource, isBoxOnline)}
+                            <Text variant="bodySmall" style={{ color: hasActiveDelivery ? getStatusColor(gpsSource, isBoxOnline) : '#9E9E9E' }}>
+                                {hasActiveDelivery ? getStatusMessage(gpsSource, isBoxOnline) : 'No Active Delivery'}
                             </Text>
                         </View>
-                        {phoneGpsActive && (
+                        {phoneGpsActive && hasActiveDelivery && (
                             <Chip
                                 compact
                                 icon="phone"
@@ -1063,7 +1109,10 @@ export default function RiderDashboard() {
                         </View>
                         <Button
                             mode={isPaired ? 'outlined' : 'contained'}
-                            onPress={() => navigation.navigate('PairBox')}
+                            onPress={() => {
+                                // "Manage" is for pairing/unpairing; controls are available via Box Status.
+                                navigation.navigate('PairBox');
+                            }}
                         >
                             {isPaired ? 'Manage' : 'Pair Box'}
                         </Button>
@@ -1092,157 +1141,167 @@ export default function RiderDashboard() {
 
                 {/* Next Delivery Card */}
                 <Text variant="titleMedium" style={styles.sectionTitle}>Current Job</Text>
-                <Card style={styles.jobCard} mode="elevated">
-                    <View style={styles.mapContainer}>
-                        {riderLocation && MAPBOX_TOKEN ? (
-                            <MapboxGL.MapView
-                                style={styles.map}
-                                logoEnabled={false}
-                                attributionEnabled={false}
-                                styleURL={MapboxGL.StyleURL.Street}
-                                scrollEnabled={true}
-                                pitchEnabled={true}
-                                rotateEnabled={true}
-                                zoomEnabled={true}
-                            >
-                                <MapboxGL.Camera
-                                    zoomLevel={14}
-                                    centerCoordinate={[riderLocation.coords.longitude, riderLocation.coords.latitude]}
-                                    animationMode="easeTo"
-                                    animationDuration={500}
-                                />
-
-                                {/* Rider Location Marker */}
-                                <MapboxGL.PointAnnotation
-                                    id="rider-location"
-                                    coordinate={[riderLocation.coords.longitude, riderLocation.coords.latitude]}
-                                    title="Your Location"
+                {nextDelivery ? (
+                    <Card style={styles.jobCard} mode="elevated">
+                        <View style={styles.mapContainer}>
+                            {riderLocation && MAPBOX_TOKEN ? (
+                                <MapboxGL.MapView
+                                    style={styles.map}
+                                    logoEnabled={false}
+                                    attributionEnabled={false}
+                                    styleURL={MapboxGL.StyleURL.Street}
+                                    scrollEnabled={true}
+                                    pitchEnabled={true}
+                                    rotateEnabled={true}
+                                    zoomEnabled={true}
                                 >
-                                    <View style={{
-                                        width: 30,
-                                        height: 30,
-                                        borderRadius: 15,
-                                        backgroundColor: '#2196F3',
-                                        justifyContent: 'center',
-                                        alignItems: 'center',
-                                        borderWidth: 3,
-                                        borderColor: 'white',
-                                        shadowColor: '#000',
-                                        shadowOffset: { width: 0, height: 2 },
-                                        shadowOpacity: 0.3,
-                                        shadowRadius: 3,
-                                        elevation: 5,
-                                    }}>
-                                        <MaterialCommunityIcons name="navigation" size={16} color="white" />
-                                    </View>
-                                </MapboxGL.PointAnnotation>
+                                    <MapboxGL.Camera
+                                        zoomLevel={14}
+                                        centerCoordinate={[riderLocation.coords.longitude, riderLocation.coords.latitude]}
+                                        animationMode="easeTo"
+                                        animationDuration={500}
+                                    />
 
-                                {/* Destination Marker */}
-                                <MapboxGL.PointAnnotation
-                                    id="destination"
-                                    coordinate={[destination.longitude, destination.latitude]}
-                                    title={destination.title}
-                                >
-                                    <View style={{
-                                        width: 30,
-                                        height: 30,
-                                        borderRadius: 15,
-                                        backgroundColor: '#F44336',
-                                        justifyContent: 'center',
-                                        alignItems: 'center',
-                                        borderWidth: 3,
-                                        borderColor: 'white',
-                                        shadowColor: '#000',
-                                        shadowOffset: { width: 0, height: 2 },
-                                        shadowOpacity: 0.3,
-                                        shadowRadius: 3,
-                                        elevation: 5,
-                                    }}>
-                                        <MaterialCommunityIcons name="map-marker" size={20} color="white" />
-                                    </View>
-                                </MapboxGL.PointAnnotation>
-
-                                {/* Route Line - Actual Route from Mapbox Directions API */}
-                                {routeGeometry && (
-                                    <MapboxGL.ShapeSource
-                                        id="route-line"
-                                        shape={{
-                                            type: 'Feature',
-                                            geometry: routeGeometry,
-                                            properties: {},
-                                        }}
+                                    {/* Rider Location Marker */}
+                                    <MapboxGL.PointAnnotation
+                                        id="rider-location"
+                                        coordinate={[riderLocation.coords.longitude, riderLocation.coords.latitude]}
+                                        title="Your Location"
                                     >
-                                        <MapboxGL.LineLayer
-                                            id="route-line-layer"
-                                            style={{
-                                                lineColor: '#2196F3',
-                                                lineWidth: 4,
-                                                lineOpacity: 0.8,
+                                        <View style={{
+                                            width: 30,
+                                            height: 30,
+                                            borderRadius: 15,
+                                            backgroundColor: '#2196F3',
+                                            justifyContent: 'center',
+                                            alignItems: 'center',
+                                            borderWidth: 3,
+                                            borderColor: 'white',
+                                            shadowColor: '#000',
+                                            shadowOffset: { width: 0, height: 2 },
+                                            shadowOpacity: 0.3,
+                                            shadowRadius: 3,
+                                            elevation: 5,
+                                        }}>
+                                            <MaterialCommunityIcons name="motorbike" size={16} color="white" />
+                                        </View>
+                                    </MapboxGL.PointAnnotation>
+
+                                    {/* Destination Marker */}
+                                    <MapboxGL.PointAnnotation
+                                        id="destination"
+                                        coordinate={[destination.longitude, destination.latitude]}
+                                        title="Destination"
+                                    >
+                                        <View style={{
+                                            width: 30,
+                                            height: 30,
+                                            borderRadius: 15,
+                                            backgroundColor: '#F44336',
+                                            justifyContent: 'center',
+                                            alignItems: 'center',
+                                            borderWidth: 3,
+                                            borderColor: 'white',
+                                            shadowColor: '#000',
+                                            shadowOffset: { width: 0, height: 2 },
+                                            shadowOpacity: 0.3,
+                                            shadowRadius: 3,
+                                            elevation: 5,
+                                        }}>
+                                            <MaterialCommunityIcons name="map-marker" size={20} color="white" />
+                                        </View>
+                                    </MapboxGL.PointAnnotation>
+
+                                    {/* Route Line - Actual Route from Mapbox Directions API */}
+                                    {routeGeometry && (
+                                        <MapboxGL.ShapeSource
+                                            id="route-line"
+                                            shape={{
+                                                type: 'Feature',
+                                                geometry: routeGeometry,
+                                                properties: {},
                                             }}
-                                        />
-                                    </MapboxGL.ShapeSource>
-                                )}
-                            </MapboxGL.MapView>
-                        ) : (
-                            <View style={[styles.mapPlaceholder, { backgroundColor: theme.colors.surfaceVariant }]}>
-                                <Text style={{ color: theme.colors.onSurfaceVariant }}>
-                                    {MAPBOX_TOKEN ? 'Loading Map...' : 'Map unavailable: configure MAPBOX_ACCESS_TOKEN'}
-                                </Text>
-                            </View>
-                        )}
-                    </View>
-
-                    <Card.Content style={styles.jobContent}>
-                        <View style={styles.jobHeader}>
-                            <View>
-                                <Text variant="titleMedium" style={{ fontWeight: 'bold' }}>{nextDelivery.customer}</Text>
-                                <Text variant="bodySmall" style={{ color: '#666' }}>{nextDelivery.id}</Text>
-                            </View>
-                            <Chip icon="map-marker-distance" compact style={{ backgroundColor: '#E3F2FD' }}>{distance}</Chip>
+                                        >
+                                            <MapboxGL.LineLayer
+                                                id="route-line-layer"
+                                                style={{
+                                                    lineColor: '#2196F3',
+                                                    lineWidth: 4,
+                                                    lineOpacity: 0.8,
+                                                }}
+                                            />
+                                        </MapboxGL.ShapeSource>
+                                    )}
+                                </MapboxGL.MapView>
+                            ) : (
+                                <View style={[styles.mapPlaceholder, { backgroundColor: theme.colors.surfaceVariant }]}>
+                                    <Text style={{ color: theme.colors.onSurfaceVariant }}>
+                                        {MAPBOX_TOKEN ? 'Loading Map...' : 'Map unavailable: configure MAPBOX_ACCESS_TOKEN'}
+                                    </Text>
+                                </View>
+                            )}
                         </View>
 
-                        <View style={styles.divider} />
-
-                        <View style={styles.addressContainer}>
-                            <MaterialCommunityIcons name="map-marker" size={20} color={theme.colors.primary} style={{ marginTop: 2 }} />
-                            <Text variant="bodyMedium" style={styles.address}>{nextDelivery.address}</Text>
-                        </View>
-
-                        <View style={styles.jobMeta}>
-                            <View style={styles.metaItem}>
-                                <MaterialCommunityIcons name="clock-outline" size={16} color="#666" />
-                                <Text style={styles.metaText}>ETA: {nextDelivery.time}</Text>
+                        <Card.Content style={styles.jobContent}>
+                            <View style={styles.jobHeader}>
+                                <View>
+                                    <Text variant="titleMedium" style={{ fontWeight: 'bold' }}>{nextDelivery.customer}</Text>
+                                    <Text variant="bodySmall" style={{ color: '#666' }}>{nextDelivery.id}</Text>
+                                </View>
+                                <Chip icon="map-marker-distance" compact style={{ backgroundColor: '#E3F2FD' }}>{distance}</Chip>
                             </View>
-                        </View>
-                    </Card.Content>
 
-                    <Card.Actions style={styles.jobActions}>
-                        <Button
-                            mode="outlined"
-                            style={{ flex: 1, marginRight: 8 }}
-                            onPress={() => navigation.navigate('JobDetail', { job: nextDelivery })}
-                            textColor={theme.colors.primary}
-                        >
-                            Details
-                        </Button>
-                        <Button
-                            mode="contained"
-                            onPress={() => setShowCancelModal(true)}
-                            buttonColor={theme.colors.error}
-                            style={{ marginRight: 8 }}
-                        >
-                            Cancel
-                        </Button>
-                        <Button
-                            mode="contained"
-                            style={{ flex: 1 }}
-                            onPress={() => navigation.navigate('Arrival')}
-                            buttonColor={theme.colors.primary}
-                        >
-                            Start Trip
-                        </Button>
-                    </Card.Actions>
-                </Card>
+                            <View style={styles.divider} />
+
+                            <View style={styles.addressContainer}>
+                                <MaterialCommunityIcons name="map-marker" size={20} color={theme.colors.primary} style={{ marginTop: 2 }} />
+                                <Text variant="bodyMedium" style={styles.address}>{nextDelivery.address}</Text>
+                            </View>
+
+                            <View style={styles.jobMeta}>
+                                <View style={styles.metaItem}>
+                                    <MaterialCommunityIcons name="clock-outline" size={16} color="#666" />
+                                    <Text style={styles.metaText}>ETA: {nextDelivery.time}</Text>
+                                </View>
+                            </View>
+                        </Card.Content>
+
+                        <Card.Actions style={styles.jobActions}>
+                            <Button
+                                mode="outlined"
+                                style={{ flex: 1, marginRight: 8 }}
+                                onPress={() => navigation.navigate('JobDetail', { job: nextDelivery })}
+                                textColor={theme.colors.primary}
+                            >
+                                Details
+                            </Button>
+                            <Button
+                                mode="contained"
+                                onPress={() => setShowCancelModal(true)}
+                                buttonColor={theme.colors.error}
+                                style={{ marginRight: 8 }}
+                            >
+                                Cancel
+                            </Button>
+                            <Button
+                                mode="contained"
+                                style={{ flex: 1 }}
+                                onPress={() => navigation.navigate('Arrival')}
+                                buttonColor={theme.colors.primary}
+                            >
+                                Start Trip
+                            </Button>
+                        </Card.Actions>
+                    </Card>
+                ) : (
+                    <Card style={[styles.jobCard, { backgroundColor: theme.colors.surfaceVariant }]} mode="elevated">
+                        <Card.Content style={{ alignItems: 'center', paddingVertical: 32 }}>
+                            <MaterialCommunityIcons name="truck-delivery-outline" size={48} color={theme.colors.onSurfaceVariant} />
+                            <Text variant="bodyLarge" style={{ color: theme.colors.onSurfaceVariant, marginTop: 12 }}>No current job</Text>
+                            <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant, marginTop: 4 }}>Waiting for incoming orders</Text>
+                        </Card.Content>
+                    </Card>
+                )}
 
                 {/* Smart Box Status */}
                 <Text variant="titleMedium" style={styles.sectionTitle}>Box Status</Text>

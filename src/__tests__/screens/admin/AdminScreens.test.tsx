@@ -46,9 +46,39 @@ jest.mock('../../../services/firebaseClient', () => ({
     }),
     subscribeToAllHardware: jest.fn((callback: any) => {
         callback({
-            'BOX-001': { status: 'IDLE', tamper: { detected: false, lockdown: false } },
-            'BOX-002': { status: 'ACTIVE', tamper: { detected: false, lockdown: false } },
-            'BOX-003': { status: 'TAMPER', tamper: { detected: true, lockdown: true } },
+            'BOX-001': {
+                status: 'ACTIVE',
+                tamper: { detected: false, lockdown: false },
+                connection: 'LTE',
+                rssi: -75,
+                csq: 18,
+                op: 'Globe',
+                gps_fix: true,
+                last_updated: Date.now(),
+                data_bytes: 24576,
+            },
+            'BOX-002': {
+                status: 'STANDBY',
+                tamper: { detected: false, lockdown: false },
+                connection: 'LTE',
+                rssi: -95,
+                csq: 8,
+                op: 'Smart',
+                gps_fix: true,
+                last_updated: Date.now(),
+                data_bytes: 10240,
+            },
+            'BOX-003': {
+                status: 'TAMPER',
+                tamper: { detected: true, lockdown: true },
+                connection: 'LTE',
+                rssi: -110,
+                csq: 2,
+                op: 'Globe',
+                gps_fix: false,
+                last_updated: Date.now(),
+                data_bytes: 4096,
+            },
         });
         return () => undefined;
     }),

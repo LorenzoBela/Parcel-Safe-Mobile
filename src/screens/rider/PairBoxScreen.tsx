@@ -1,17 +1,23 @@
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Alert, StyleSheet, View } from 'react-native';
 import { Button, Card, Chip, Divider, Surface, Text, useTheme } from 'react-native-paper';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import useAuthStore from '../../store/authStore';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
+    BoxPairingState,
     PairingMode,
     PairingQrPayload,
+    isPairingActive,
     pairBoxWithRider,
     parsePairingQr,
+    revokePairing,
+    subscribeToRiderPairing,
 } from '../../services/boxPairingService';
 
-const SESSION_OPTIONS = [4, 12, 24];
+const SESSION_OPTIONS = [4, 12, 24, 48];
+const PAIRED_BOX_CACHE_KEY_PREFIX = 'parcelSafe:lastPairedBoxId:';
 
 export default function PairBoxScreen() {
     const theme = useTheme();
@@ -23,16 +29,29 @@ export default function PairBoxScreen() {
     const [mode, setMode] = useState<PairingMode>('SESSION');
     const [sessionHours, setSessionHours] = useState<number>(24);
     const [isPairing, setIsPairing] = useState(false);
+    const [pairingState, setPairingState] = useState<BoxPairingState | null>(null);
 
     const canScan = permission?.granted && !scanLocked && !isPairing;
 
-    const derivedMode = useMemo<PairingMode>(() => {
-        return scannedPayload?.mode ?? mode;
-    }, [mode, scannedPayload?.mode]);
+    const derivedMode = mode;
+    const derivedSessionHours = sessionHours;
 
-    const derivedSessionHours = useMemo<number>(() => {
-        return scannedPayload?.sessionHours ?? sessionHours;
-    }, [scannedPayload?.sessionHours, sessionHours]);
+    useEffect(() => {
+        if (!authedUserId) {
+            setPairingState(null);
+            return;
+        }
+        const unsubscribe = subscribeToRiderPairing(authedUserId, (state) => {
+            setPairingState(state);
+        });
+        return unsubscribe;
+    }, [authedUserId]);
+
+    const isScannedBoxPairedToMe = useMemo(() => {
+        if (!scannedPayload?.boxId) return false;
+        if (!isPairingActive(pairingState)) return false;
+        return pairingState?.box_id === scannedPayload.boxId;
+    }, [pairingState, scannedPayload?.boxId]);
 
     const handleBarcode = useCallback(
         ({ data }: { data: string }) => {
@@ -47,9 +66,22 @@ export default function PairBoxScreen() {
             }
 
             setScannedPayload(parsed);
+
+            // Cache boxId early so other screens have a fallback pointer even before pairing is confirmed.
+            if (authedUserId) {
+                AsyncStorage.setItem(`${PAIRED_BOX_CACHE_KEY_PREFIX}${authedUserId}`, parsed.boxId).catch(() => undefined);
+            }
+
+            // Seed the UI from the QR once, but allow the user to override after scan.
+            if (parsed.mode) {
+                setMode(parsed.mode);
+            }
+            if (typeof parsed.sessionHours === 'number' && Number.isFinite(parsed.sessionHours) && parsed.sessionHours > 0) {
+                setSessionHours(parsed.sessionHours);
+            }
             setScanLocked(true);
         },
-        [scanLocked]
+        [authedUserId, scanLocked]
     );
 
     const handlePair = useCallback(async () => {
@@ -58,12 +90,13 @@ export default function PairBoxScreen() {
         }
 
         if (!authedUserId) {
-            Alert.alert('Not Logged In', 'Please log in as a rider account to pair a box.');
+            Alert.alert('Not Logged In', 'Please log in to pair a box.');
             return;
         }
 
-        if (authedRole && authedRole !== 'rider') {
-            Alert.alert('Wrong Account', 'Please log in with a rider account to pair a box.');
+        // Allow riders and admins to pair (customers should not be able to claim hardware).
+        if (authedRole && authedRole === 'customer') {
+            Alert.alert('Wrong Account', 'Please log in with a rider or admin account to pair a box.');
             return;
         }
 
@@ -76,13 +109,46 @@ export default function PairBoxScreen() {
                 pairToken: scannedPayload.token,
                 sessionHours: derivedMode === 'SESSION' ? derivedSessionHours : undefined,
             });
-            Alert.alert('Paired', `Box ${scannedPayload.boxId} is now linked to your rider account.`);
+            Alert.alert('Paired', `Box ${scannedPayload.boxId} is now linked to your account.`);
         } catch (error) {
-            Alert.alert('Pairing Failed', 'Please try scanning again.');
+            const message = error instanceof Error ? error.message : 'Please try scanning again.';
+            Alert.alert('Pairing Failed', message);
         } finally {
             setIsPairing(false);
         }
     }, [authedRole, authedUserId, derivedMode, derivedSessionHours, scannedPayload?.boxId, scannedPayload?.token]);
+
+    const handleUnpair = useCallback(async () => {
+        const boxIdToUnpair = scannedPayload?.boxId || pairingState?.box_id;
+        if (!boxIdToUnpair || !authedUserId) return;
+
+        Alert.alert(
+            'Unpair Box',
+            `Unpair Box ${boxIdToUnpair} from your account?`,
+            [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                    text: 'Unpair',
+                    style: 'destructive',
+                    onPress: async () => {
+                        try {
+                            setIsPairing(true);
+                            await revokePairing(boxIdToUnpair, authedUserId);
+                            await AsyncStorage.removeItem(`${PAIRED_BOX_CACHE_KEY_PREFIX}${authedUserId}`);
+                            setScannedPayload(null);
+                            setScanLocked(false);
+                            Alert.alert('Unpaired', `Box ${boxIdToUnpair} is no longer linked to your account.`);
+                        } catch (error) {
+                            const message = error instanceof Error ? error.message : 'Please try again.';
+                            Alert.alert('Unpair Failed', message);
+                        } finally {
+                            setIsPairing(false);
+                        }
+                    },
+                },
+            ]
+        );
+    }, [authedUserId, scannedPayload?.boxId, pairingState?.box_id]);
 
     if (!permission) {
         return (
@@ -109,92 +175,148 @@ export default function PairBoxScreen() {
             <Surface style={styles.header} elevation={2}>
                 <Text variant="titleLarge" style={{ fontWeight: 'bold' }}>Pair a Smart Box</Text>
                 <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
-                    Scan the QR on the box to link it to your rider account.
+                    Scan the QR on the box to link it to your account.
                 </Text>
             </Surface>
 
-            <Card style={styles.scannerCard} mode="elevated">
-                <CameraView
-                    style={styles.camera}
-                    onBarcodeScanned={canScan ? handleBarcode : undefined}
-                    barcodeScannerSettings={{ barcodeTypes: ['qr'] }}
-                />
-                {!canScan && (
-                    <View style={styles.cameraOverlay}>
-                        <Text style={{ color: 'white' }}>Scan paused</Text>
-                    </View>
-                )}
-            </Card>
-
-            {scannedPayload && (
+            {/* Show current pairing status if already paired */}
+            {isPairingActive(pairingState) && !scannedPayload && (
                 <Card style={styles.payloadCard} mode="elevated">
                     <Card.Content>
-                        <Text variant="titleMedium" style={{ fontWeight: 'bold' }}>Scan Result</Text>
-                        <Text style={{ marginTop: 8 }}>Box ID: {scannedPayload.boxId}</Text>
-                        {scannedPayload.token && (
+                        <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
+                            <MaterialCommunityIcons name="link-variant" size={24} color={theme.colors.primary} />
+                            <Text variant="titleMedium" style={{ fontWeight: 'bold', marginLeft: 8 }}>
+                                Currently Paired
+                            </Text>
+                        </View>
+                        <Text style={{ marginTop: 8 }}>Box ID: {pairingState.box_id}</Text>
+                        <Text style={{ marginTop: 4, color: theme.colors.onSurfaceVariant }}>
+                            Mode: {pairingState.mode === 'ONE_TIME' ? 'One-time' : 'Session'}
+                        </Text>
+                        {pairingState.mode === 'SESSION' && pairingState.expires_at && (
                             <Text style={{ marginTop: 4, color: theme.colors.onSurfaceVariant }}>
-                                Token: {scannedPayload.token.slice(0, 6)}•••
+                                Expires: {new Date(pairingState.expires_at).toLocaleString()}
                             </Text>
                         )}
-
-                        <Divider style={{ marginVertical: 12 }} />
-
-                        <Text variant="titleSmall" style={{ marginBottom: 8 }}>Pairing Mode</Text>
-                        <View style={styles.modeRow}>
-                            <Chip
-                                selected={derivedMode === 'ONE_TIME'}
-                                onPress={() => setMode('ONE_TIME')}
-                                style={styles.modeChip}
-                            >
-                                One-time
-                            </Chip>
-                            <Chip
-                                selected={derivedMode === 'SESSION'}
-                                onPress={() => setMode('SESSION')}
-                                style={styles.modeChip}
-                            >
-                                Session
-                            </Chip>
-                        </View>
-
-                        {derivedMode === 'SESSION' && (
-                            <>
-                                <Text variant="titleSmall" style={{ marginTop: 12 }}>Session Duration</Text>
-                                <View style={styles.modeRow}>
-                                    {SESSION_OPTIONS.map((hours) => (
-                                        <Chip
-                                            key={hours}
-                                            selected={derivedSessionHours === hours}
-                                            onPress={() => setSessionHours(hours)}
-                                            style={styles.modeChip}
-                                        >
-                                            {hours}h
-                                        </Chip>
-                                    ))}
-                                </View>
-                            </>
-                        )}
                     </Card.Content>
-                    <Card.Actions style={{ justifyContent: 'space-between', padding: 16 }}>
+                    <Card.Actions style={{ justifyContent: 'flex-end', padding: 16 }}>
                         <Button
                             mode="outlined"
-                            onPress={() => {
-                                setScannedPayload(null);
-                                setScanLocked(false);
-                            }}
-                        >
-                            Scan Again
-                        </Button>
-                        <Button
-                            mode="contained"
-                            loading={isPairing}
+                            style={{ borderColor: theme.colors.error }}
+                            textColor={theme.colors.error}
                             disabled={isPairing}
-                            onPress={handlePair}
+                            loading={isPairing}
+                            onPress={handleUnpair}
                         >
-                            Pair Box
+                            Unpair Box
                         </Button>
                     </Card.Actions>
                 </Card>
+            )}
+
+            {/* Only show scanner if not paired or if they want to pair a different box */}
+            {(!isPairingActive(pairingState) || scannedPayload) && (
+                <>
+                    <Card style={styles.scannerCard} mode="elevated">
+                        <View style={styles.cameraContainer}>
+                            <CameraView
+                                style={styles.camera}
+                                onBarcodeScanned={canScan ? handleBarcode : undefined}
+                                barcodeScannerSettings={{ barcodeTypes: ['qr'] }}
+                            />
+                            {/* Visual guide only */}
+                            <View pointerEvents="none" style={styles.qrGuide} />
+                        </View>
+                        {!canScan && (
+                            <View style={styles.cameraOverlay}>
+                                <Text style={{ color: 'white' }}>Scan paused</Text>
+                            </View>
+                        )}
+                    </Card>
+
+                    {scannedPayload && (
+                        <Card style={styles.payloadCard} mode="elevated">
+                            <Card.Content>
+                                <Text variant="titleMedium" style={{ fontWeight: 'bold' }}>Scan Result</Text>
+                                <Text style={{ marginTop: 8 }}>Box ID: {scannedPayload.boxId}</Text>
+                                {scannedPayload.token && (
+                                    <Text style={{ marginTop: 4, color: theme.colors.onSurfaceVariant }}>
+                                        Token: {scannedPayload.token.slice(0, 6)}•••
+                                    </Text>
+                                )}
+
+                                <Divider style={{ marginVertical: 12 }} />
+
+                                <Text variant="titleSmall" style={{ marginBottom: 8 }}>Pairing Mode</Text>
+                                <View style={styles.modeRow}>
+                                    <Chip
+                                        selected={derivedMode === 'ONE_TIME'}
+                                        onPress={() => setMode('ONE_TIME')}
+                                        style={styles.modeChip}
+                                    >
+                                        One-time
+                                    </Chip>
+                                    <Chip
+                                        selected={derivedMode === 'SESSION'}
+                                        onPress={() => setMode('SESSION')}
+                                        style={styles.modeChip}
+                                    >
+                                        Session
+                                    </Chip>
+                                </View>
+
+                                {derivedMode === 'SESSION' && (
+                                    <>
+                                        <Text variant="titleSmall" style={{ marginTop: 12 }}>Session Duration</Text>
+                                        <View style={styles.modeRow}>
+                                            {SESSION_OPTIONS.map((hours) => (
+                                                <Chip
+                                                    key={hours}
+                                                    selected={derivedSessionHours === hours}
+                                                    onPress={() => setSessionHours(hours)}
+                                                    style={styles.modeChip}
+                                                >
+                                                    {hours}h
+                                                </Chip>
+                                            ))}
+                                        </View>
+                                    </>
+                                )}
+                            </Card.Content>
+                            <Card.Actions style={{ justifyContent: 'space-between', padding: 16 }}>
+                                <Button
+                                    mode="outlined"
+                                    onPress={() => {
+                                        setScannedPayload(null);
+                                        setScanLocked(false);
+                                        setMode('SESSION');
+                                        setSessionHours(24);
+                                    }}
+                                >
+                                    Scan Again
+                                </Button>
+                                {isScannedBoxPairedToMe ? (
+                                    <Button
+                                        mode="outlined"
+                                        disabled={isPairing}
+                                        onPress={handleUnpair}
+                                    >
+                                        Unpair
+                                    </Button>
+                                ) : (
+                                    <Button
+                                        mode="contained"
+                                        loading={isPairing}
+                                        disabled={isPairing}
+                                        onPress={handlePair}
+                                    >
+                                        Pair Box
+                                    </Button>
+                                )}
+                            </Card.Actions>
+                        </Card>
+                    )}
+                </>
             )}
         </View>
     );
@@ -216,8 +338,23 @@ const styles = StyleSheet.create({
         borderRadius: 16,
         marginBottom: 16,
     },
+    cameraContainer: {
+        position: 'relative',
+    },
     camera: {
         height: 280,
+    },
+    qrGuide: {
+        position: 'absolute',
+        top: '50%',
+        left: '50%',
+        width: 200,
+        height: 200,
+        marginLeft: -100,
+        marginTop: -100,
+        borderWidth: 2,
+        borderColor: 'rgba(255,255,255,0.9)',
+        borderRadius: 12,
     },
     cameraOverlay: {
         position: 'absolute',

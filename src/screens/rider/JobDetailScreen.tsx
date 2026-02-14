@@ -15,26 +15,20 @@ export default function JobDetailScreen() {
     const MAPBOX_TOKEN = process.env.EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN;
 
     // Get job data from params (or use mock data)
-    const jobData = route.params?.job || {
-        id: 'TRK-8821-9023',
-        customer: 'Lorenzo Bela',
-        phone: '+63 912 345 6789',
-        address: '123 Rizal Park, Manila',
-        pickupAddress: '456 SM Mall of Asia, Pasay',
-        pickupTime: dayjs().add(15, 'minutes').format('h:mm A'),
-        dropoffTime: dayjs().add(45, 'minutes').format('h:mm A'),
-        fare: '₱250.00',
-        distance: '8.5 km',
-        estimatedTime: '30 mins',
-        packageType: 'Electronics',
-        weight: '2.5 kg',
-        priority: 'High',
-        specialInstructions: 'Please handle with care. Fragile items inside.',
-        pickupLat: 14.5360,
-        pickupLng: 120.9823,
-        dropoffLat: 14.5831,
-        dropoffLng: 120.9794,
-    };
+    // Get job data from params
+    const jobData = route.params?.job;
+
+    if (!jobData) {
+        return (
+            <View style={[styles.container, { backgroundColor: theme.colors.background, justifyContent: 'center', alignItems: 'center' }]}>
+                <Surface style={{ padding: 20, borderRadius: 12, alignItems: 'center' }} elevation={2}>
+                    <MaterialCommunityIcons name="alert-circle-outline" size={48} color={theme.colors.error} />
+                    <Text variant="titleMedium" style={{ marginTop: 12, marginBottom: 8 }}>No Job Selected</Text>
+                    <Button mode="contained" onPress={() => navigation.goBack()}>Go Back</Button>
+                </Surface>
+            </View>
+        );
+    }
 
     const [routeGeometry, setRouteGeometry] = useState<any>(null);
 
@@ -52,7 +46,7 @@ export default function JobDetailScreen() {
 
             try {
                 const url = `https://api.mapbox.com/directions/v5/mapbox/driving/${jobData.pickupLng},${jobData.pickupLat};${jobData.dropoffLng},${jobData.dropoffLat}?geometries=geojson&access_token=${MAPBOX_TOKEN}`;
-                
+
                 const response = await fetch(url);
                 const data = await response.json();
 
@@ -170,7 +164,7 @@ export default function JobDetailScreen() {
                     <Card style={{ marginBottom: 16 }} mode="elevated">
                         <Card.Content>
                             <Text variant="titleMedium" style={{ fontWeight: 'bold', marginBottom: 16 }}>Trip Summary</Text>
-                            
+
                             <View style={styles.summaryRow}>
                                 <MaterialCommunityIcons name="map-marker-distance" size={20} color={theme.colors.primary} />
                                 <View style={{ flex: 1, marginLeft: 12 }}>

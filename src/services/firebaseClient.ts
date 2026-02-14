@@ -89,7 +89,32 @@ export interface BoxState {
     last_heartbeat?: number;
 }
 
-export type HardwareByBoxId = Record<string, unknown>;
+/** Fields the firmware writes to hardware/{boxId} via REST */
+export interface HardwareDiagnostics {
+    /** Connection type: 'LTE' | 'WiFi' */
+    connection?: string;
+    /** Signal strength in dBm (e.g. -85) */
+    rssi?: number;
+    /** Raw CSQ value 0-31 (99 = unknown) */
+    csq?: number;
+    /** Carrier / operator name */
+    op?: string;
+    /** Whether GPS currently has a fix */
+    gps_fix?: boolean;
+    /** millis() timestamp of last firmware heartbeat */
+    last_updated?: number;
+    /** Cumulative bytes sent to Firebase */
+    data_bytes?: number;
+    /** Box state string */
+    status?: string;
+    /** Tamper sub-object */
+    tamper?: {
+        detected?: boolean;
+        lockdown?: boolean;
+    };
+}
+
+export type HardwareByBoxId = Record<string, HardwareDiagnostics>;
 
 // ==================== Location Functions ====================
 

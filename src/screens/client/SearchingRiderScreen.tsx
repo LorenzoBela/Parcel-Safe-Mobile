@@ -67,6 +67,12 @@ export default function SearchingRiderScreen() {
     } = route.params || {};
 
     useEffect(() => {
+        console.log('[SearchingRider] Received params:', route.params);
+        console.log('[SearchingRider] Estimated Fare:', estimatedFare);
+        console.log('[SearchingRider] Estimated Cost:', estimatedCost);
+    }, []);
+
+    useEffect(() => {
         if (searchFailed) return; // Stop if search has failed
 
         // Start Pulse Animation

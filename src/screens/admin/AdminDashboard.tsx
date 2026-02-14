@@ -8,6 +8,19 @@ import { getDeliveryByIdOrTracking, listSmartBoxes, markDeliveryComplete, SmartB
 import * as Clipboard from 'expo-clipboard';
 import * as FileSystem from 'expo-file-system/legacy';
 import QRCode from 'react-native-qrcode-svg';
+import useAuthStore from '../../store/authStore';
+import { BoxPairingState, isPairingActive, subscribeToRiderPairing } from '../../services/boxPairingService';
+import * as Location from 'expo-location';
+import { fetchWeather, WeatherData } from '../../services/weatherService';
+
+function formatRemainingMs(ms: number): string {
+    if (!Number.isFinite(ms) || ms <= 0) return '0m';
+    const totalMinutes = Math.floor(ms / 60000);
+    const hours = Math.floor(totalMinutes / 60);
+    const minutes = totalMinutes % 60;
+    if (hours <= 0) return `${minutes}m`;
+    return `${hours}h ${minutes}m`;
+}
 
 export default function AdminDashboard() {
     const navigation = useNavigation<any>();
@@ -24,6 +37,18 @@ export default function AdminDashboard() {
     const [sessionHours, setSessionHours] = useState(24);
     const [pairToken, setPairToken] = useState('');
     const qrRef = useRef<any>(null);
+
+    const authedUserId = useAuthStore((state: any) => state.user?.userId) as string | undefined;
+    const [pairingState, setPairingState] = useState<BoxPairingState | null>(null);
+    const isPaired = isPairingActive(pairingState);
+
+    useEffect(() => {
+        if (!authedUserId) return;
+        const unsubscribe = subscribeToRiderPairing(authedUserId, (state) => {
+            setPairingState(state);
+        });
+        return unsubscribe;
+    }, [authedUserId]);
 
     const pairingPayload = useMemo(() => {
         if (!pairBoxId.trim()) return '';
@@ -162,18 +187,25 @@ export default function AdminDashboard() {
         );
     };
 
-    // Mock data
-    const weather = { temp: '28°C', condition: 'Cloudy', icon: 'weather-cloudy' };
-    const stats = [
-        { label: 'Total Deliveries', value: '150', icon: 'truck-check', color: '#4CAF50' },
-        { label: 'Tamper Events', value: '3', icon: 'alert-circle', color: '#F44336' },
-        { label: 'Active Riders', value: '12', icon: 'motorbike', color: '#2196F3' },
-        { label: 'Open Cases', value: '2', icon: 'folder-open', color: '#FF9800' },
-    ];
+    // Live weather state
+    const [weather, setWeather] = useState<WeatherData | null>(null);
 
-    const recentAlerts = [
-        { id: 1, box: 'BOX-001', time: '10:30 AM', type: 'Tamper Detected', location: 'Manila' },
-        { id: 2, box: 'BOX-005', time: '11:15 AM', type: 'Unauthorized Unlock', location: 'Quezon City' },
+    // Fetch device location and weather
+    useEffect(() => {
+        (async () => {
+            const { status } = await Location.requestForegroundPermissionsAsync();
+            if (status !== 'granted') return;
+            const loc = await Location.getCurrentPositionAsync({});
+            const data = await fetchWeather(loc.coords.latitude, loc.coords.longitude);
+            if (data) setWeather(data);
+        })();
+    }, []);
+
+    const stats = [
+        { label: 'Total Deliveries', value: '--', icon: 'truck-check', color: '#4CAF50' },
+        { label: 'Tamper Events', value: '--', icon: 'alert-circle', color: '#F44336' },
+        { label: 'Active Riders', value: '--', icon: 'motorbike', color: '#2196F3' },
+        { label: 'Open Cases', value: '--', icon: 'folder-open', color: '#FF9800' },
     ];
 
     const StatCard = ({ label, value, icon, color }) => (
@@ -195,11 +227,13 @@ export default function AdminDashboard() {
                         <Text style={styles.dateText}>{currentTime.format('dddd, MMMM D')}</Text>
                         <Text style={styles.timeText}>{currentTime.format('h:mm A')}</Text>
                     </View>
-                    <View style={styles.weatherContainer}>
-                        <MaterialCommunityIcons name={weather.icon as any} size={30} color="white" />
-                        <Text style={styles.weatherText}>{weather.temp}</Text>
-                        <Text style={styles.weatherCondition}>{weather.condition}</Text>
-                    </View>
+                    {weather && (
+                        <View style={styles.weatherContainer}>
+                            <MaterialCommunityIcons name={weather.icon as any} size={30} color="white" />
+                            <Text style={styles.weatherText}>{weather.temp}</Text>
+                            <Text style={styles.weatherCondition}>{weather.condition}</Text>
+                        </View>
+                    )}
                 </View>
             </View>
 
@@ -209,6 +243,30 @@ export default function AdminDashboard() {
                     <Text variant="headlineMedium" style={styles.headerTitle}>Admin Overview</Text>
                     <IconButton icon="refresh" size={24} onPress={() => console.log('Refresh')} />
                 </View>
+
+                <Surface style={styles.pairingBanner} elevation={1}>
+                    <View style={{ flex: 1 }}>
+                        <Text variant="titleSmall" style={{ fontWeight: 'bold' }}>Paired Box</Text>
+                        {isPaired ? (
+                            <>
+                                <Text variant="bodyMedium" style={{ marginTop: 2 }}>
+                                    {pairingState?.box_id}
+                                </Text>
+                                <Text variant="bodySmall" style={{ color: '#666', marginTop: 2 }}>
+                                    {pairingState?.mode === 'ONE_TIME' ? 'One-time' : 'Session'}
+                                    {pairingState?.expires_at ? ` • ${formatRemainingMs(pairingState.expires_at - Date.now())} left` : ''}
+                                </Text>
+                            </>
+                        ) : (
+                            <Text variant="bodySmall" style={{ color: '#666', marginTop: 2 }}>
+                                Not paired
+                            </Text>
+                        )}
+                    </View>
+                    <Button mode="outlined" onPress={() => navigation.navigate('PairBox')}>
+                        Pair
+                    </Button>
+                </Surface>
 
                 {/* Stats Grid */}
                 <View style={styles.statsGrid}>
@@ -332,125 +390,125 @@ export default function AdminDashboard() {
                             nestedScrollEnabled
                             contentContainerStyle={{ paddingBottom: 8 }}
                         >
-                        <Text variant="titleLarge" style={{ fontWeight: 'bold', marginBottom: 12 }}>
-                            Generate Pairing QR
-                        </Text>
-                        <Text variant="bodySmall" style={{ color: '#666', marginBottom: 16 }}>
-                            Select a box, choose one-time or session mode, then share or copy the QR payload.
-                        </Text>
+                            <Text variant="titleLarge" style={{ fontWeight: 'bold', marginBottom: 12 }}>
+                                Generate Pairing QR
+                            </Text>
+                            <Text variant="bodySmall" style={{ color: '#666', marginBottom: 16 }}>
+                                Select a box, choose one-time or session mode, then share or copy the QR payload.
+                            </Text>
 
-                        <Text variant="bodySmall" style={{ marginBottom: 8 }}>Select Box</Text>
-                        <View style={styles.boxSelectContainer}>
-                            {boxesLoading ? (
-                                <Text variant="bodySmall" style={{ color: '#666' }}>Loading boxes…</Text>
-                            ) : availableBoxes.length === 0 ? (
-                                <>
-                                    <Text variant="bodySmall" style={{ color: '#666', marginBottom: 8 }}>No boxes found.</Text>
-                                    <TextInput
-                                        label="Box ID (manual)"
-                                        value={pairBoxId}
-                                        onChangeText={setPairBoxId}
-                                        mode="outlined"
-                                    />
-                                </>
-                            ) : (
-                                <ScrollView
-                                    style={styles.boxSelectScroll}
-                                    contentContainerStyle={styles.boxSelectContent}
-                                    nestedScrollEnabled
-                                >
-                                    {availableBoxes.map((box) => (
-                                        <Chip
-                                            key={box.id}
-                                            selected={pairBoxId === box.id}
-                                            onPress={() => setPairBoxId(box.id)}
-                                            style={styles.boxChip}
-                                        >
-                                            {box.id}
-                                        </Chip>
-                                    ))}
-                                </ScrollView>
-                            )}
-                        </View>
-
-                        <Text variant="bodySmall" style={{ marginBottom: 8 }}>Pairing Mode</Text>
-                        <View style={styles.modeRow}>
-                            <Chip
-                                selected={pairMode === 'ONE_TIME'}
-                                onPress={() => setPairMode('ONE_TIME')}
-                                style={styles.modeChip}
-                            >
-                                One-time
-                            </Chip>
-                            <Chip
-                                selected={pairMode === 'SESSION'}
-                                onPress={() => setPairMode('SESSION')}
-                                style={styles.modeChip}
-                            >
-                                Session
-                            </Chip>
-                        </View>
-
-                        {pairMode === 'SESSION' && (
-                            <View style={{ marginBottom: 8 }}>
-                                <Text variant="bodySmall" style={{ marginBottom: 8 }}>Session Duration</Text>
-                                <View style={styles.modeRow}>
-                                    {[4, 12, 24, 48].map((hours) => (
-                                        <Chip
-                                            key={hours}
-                                            selected={sessionHours === hours}
-                                            onPress={() => setSessionHours(hours)}
-                                            style={styles.modeChip}
-                                        >
-                                            {hours}h
-                                        </Chip>
-                                    ))}
-                                </View>
+                            <Text variant="bodySmall" style={{ marginBottom: 8 }}>Select Box</Text>
+                            <View style={styles.boxSelectContainer}>
+                                {boxesLoading ? (
+                                    <Text variant="bodySmall" style={{ color: '#666' }}>Loading boxes…</Text>
+                                ) : availableBoxes.length === 0 ? (
+                                    <>
+                                        <Text variant="bodySmall" style={{ color: '#666', marginBottom: 8 }}>No boxes found.</Text>
+                                        <TextInput
+                                            label="Box ID (manual)"
+                                            value={pairBoxId}
+                                            onChangeText={setPairBoxId}
+                                            mode="outlined"
+                                        />
+                                    </>
+                                ) : (
+                                    <ScrollView
+                                        style={styles.boxSelectScroll}
+                                        contentContainerStyle={styles.boxSelectContent}
+                                        nestedScrollEnabled
+                                    >
+                                        {availableBoxes.map((box) => (
+                                            <Chip
+                                                key={box.id}
+                                                selected={pairBoxId === box.id}
+                                                onPress={() => setPairBoxId(box.id)}
+                                                style={styles.boxChip}
+                                            >
+                                                {box.id}
+                                            </Chip>
+                                        ))}
+                                    </ScrollView>
+                                )}
                             </View>
-                        )}
 
-                        <View style={styles.tokenRow}>
-                            <TextInput
-                                label="Pair Token"
-                                value={pairToken}
-                                mode="outlined"
-                                style={{ flex: 1 }}
-                                editable={false}
-                            />
-                            <Button mode="outlined" onPress={() => setPairToken(generatePairToken())}>
-                                Regenerate
-                            </Button>
-                        </View>
+                            <Text variant="bodySmall" style={{ marginBottom: 8 }}>Pairing Mode</Text>
+                            <View style={styles.modeRow}>
+                                <Chip
+                                    selected={pairMode === 'ONE_TIME'}
+                                    onPress={() => setPairMode('ONE_TIME')}
+                                    style={styles.modeChip}
+                                >
+                                    One-time
+                                </Chip>
+                                <Chip
+                                    selected={pairMode === 'SESSION'}
+                                    onPress={() => setPairMode('SESSION')}
+                                    style={styles.modeChip}
+                                >
+                                    Session
+                                </Chip>
+                            </View>
 
-                        <Divider style={{ marginVertical: 16 }} />
-
-                        <View style={styles.qrContainer}>
-                            {pairingPayload ? (
-                                <QRCode
-                                    value={pairingPayload}
-                                    size={200}
-                                    getRef={(ref) => (qrRef.current = ref)}
-                                />
-                            ) : (
-                                <Text style={{ color: '#666' }}>Select a box to render QR</Text>
+                            {pairMode === 'SESSION' && (
+                                <View style={{ marginBottom: 8 }}>
+                                    <Text variant="bodySmall" style={{ marginBottom: 8 }}>Session Duration</Text>
+                                    <View style={styles.modeRow}>
+                                        {[4, 12, 24, 48].map((hours) => (
+                                            <Chip
+                                                key={hours}
+                                                selected={sessionHours === hours}
+                                                onPress={() => setSessionHours(hours)}
+                                                style={styles.modeChip}
+                                            >
+                                                {hours}h
+                                            </Chip>
+                                        ))}
+                                    </View>
+                                </View>
                             )}
-                        </View>
 
-                        <TextInput
-                            label="QR Payload"
-                            value={pairingPayload}
-                            mode="outlined"
-                            multiline
-                            numberOfLines={3}
-                            editable={false}
-                            style={{ marginBottom: 12 }}
-                        />
+                            <View style={styles.tokenRow}>
+                                <TextInput
+                                    label="Pair Token"
+                                    value={pairToken}
+                                    mode="outlined"
+                                    style={{ flex: 1 }}
+                                    editable={false}
+                                />
+                                <Button mode="outlined" onPress={() => setPairToken(generatePairToken())}>
+                                    Regenerate
+                                </Button>
+                            </View>
 
-                        <View style={styles.modalActionsRow}>
-                            <Button mode="outlined" onPress={copyPairingPayload}>Copy Payload</Button>
-                            <Button mode="outlined" onPress={sharePairingPayload}>Share Payload</Button>
-                            <Button mode="contained" onPress={shareQrImage}>Share QR</Button>
-                        </View>
+                            <Divider style={{ marginVertical: 16 }} />
+
+                            <View style={styles.qrContainer}>
+                                {pairingPayload ? (
+                                    <QRCode
+                                        value={pairingPayload}
+                                        size={200}
+                                        getRef={(ref) => (qrRef.current = ref)}
+                                    />
+                                ) : (
+                                    <Text style={{ color: '#666' }}>Select a box to render QR</Text>
+                                )}
+                            </View>
+
+                            <TextInput
+                                label="QR Payload"
+                                value={pairingPayload}
+                                mode="outlined"
+                                multiline
+                                numberOfLines={3}
+                                editable={false}
+                                style={{ marginBottom: 12 }}
+                            />
+
+                            <View style={styles.modalActionsRow}>
+                                <Button mode="outlined" onPress={copyPairingPayload}>Copy Payload</Button>
+                                <Button mode="outlined" onPress={sharePairingPayload}>Share Payload</Button>
+                                <Button mode="contained" onPress={shareQrImage}>Share QR</Button>
+                            </View>
                         </ScrollView>
                     </Modal>
                 </Portal>
@@ -461,18 +519,15 @@ export default function AdminDashboard() {
                     <Button mode="text" compact onPress={() => navigation.navigate('TamperAlerts')}>View All</Button>
                 </View>
 
-                {recentAlerts.map((alert) => (
-                    <Surface key={alert.id} style={styles.alertItem} elevation={1}>
-                        <View style={styles.alertLeft}>
-                            <MaterialCommunityIcons name="alert" size={24} color="#F44336" style={styles.alertIcon} />
-                            <View>
-                                <Text variant="titleSmall" style={{ color: '#D32F2F' }}>{alert.type}</Text>
-                                <Text variant="bodySmall">{alert.box} • {alert.location}</Text>
-                            </View>
+                <Surface style={styles.alertItem} elevation={1}>
+                    <View style={styles.alertLeft}>
+                        <MaterialCommunityIcons name="shield-check-outline" size={24} color="#4CAF50" style={styles.alertIcon} />
+                        <View>
+                            <Text variant="titleSmall" style={{ color: '#4CAF50' }}>All Clear</Text>
+                            <Text variant="bodySmall">No recent alerts</Text>
                         </View>
-                        <Text variant="bodySmall" style={{ color: '#999' }}>{alert.time}</Text>
-                    </Surface>
-                ))}
+                    </View>
+                </Surface>
 
             </ScrollView>
         </View>
@@ -483,6 +538,15 @@ const styles = StyleSheet.create({
     container: {
         flex: 1,
         backgroundColor: '#F7F9FC',
+    },
+    pairingBanner: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        padding: 12,
+        borderRadius: 12,
+        marginBottom: 16,
+        backgroundColor: 'white',
     },
     headerBackground: {
         backgroundColor: '#F44336',

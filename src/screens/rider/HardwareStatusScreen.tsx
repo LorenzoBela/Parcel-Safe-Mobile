@@ -25,6 +25,9 @@ import {
     subscribeToRiderPairing,
 } from '../../services/boxPairingService';
 import useAuthStore from '../../store/authStore';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
+const PAIRED_BOX_CACHE_KEY_PREFIX = 'parcelSafe:lastPairedBoxId:';
 
 interface HardwareStatusScreenProps {
     route?: {
@@ -38,9 +41,10 @@ interface HardwareStatusScreenProps {
 
 export default function HardwareStatusScreen({ route, navigation }: HardwareStatusScreenProps) {
     const [pairingState, setPairingState] = useState<BoxPairingState | null>(null);
+    const [cachedBoxId, setCachedBoxId] = useState<string | null>(null);
     const authedUserId = useAuthStore((state: any) => state.user?.userId) as string | undefined;
-    const riderId = authedUserId ?? 'RIDER_001';
-    const boxId = route?.params?.boxId ?? pairingState?.box_id;
+    const riderId = authedUserId;
+    const boxId = route?.params?.boxId ?? pairingState?.box_id ?? cachedBoxId;
     const deliveryId = route?.params?.deliveryId;
     const [refreshing, setRefreshing] = useState(false);
     const isPaired = isPairingActive(pairingState);
@@ -83,8 +87,17 @@ export default function HardwareStatusScreen({ route, navigation }: HardwareStat
     }, [boxId]);
 
     useEffect(() => {
+        if (!riderId) return;
+
+        AsyncStorage.getItem(`${PAIRED_BOX_CACHE_KEY_PREFIX}${riderId}`)
+            .then((value) => setCachedBoxId(value || null))
+            .catch(() => setCachedBoxId(null));
+
         const unsubscribe = subscribeToRiderPairing(riderId, (state) => {
             setPairingState(state);
+            if (state?.box_id) {
+                AsyncStorage.setItem(`${PAIRED_BOX_CACHE_KEY_PREFIX}${riderId}`, state.box_id).catch(() => undefined);
+            }
         });
         return unsubscribe;
     }, [riderId]);
