@@ -1,50 +1,140 @@
-import React, { useState } from 'react';
-import { View, StyleSheet, FlatList, TouchableOpacity } from 'react-native';
+import React, { useState, useEffect, useCallback } from 'react';
+import { View, StyleSheet, FlatList, TouchableOpacity, RefreshControl, ActivityIndicator } from 'react-native';
 import { Text, Card, Button, Chip, Searchbar, Surface, useTheme, IconButton, Avatar } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useFocusEffect } from '@react-navigation/native';
+import { supabase } from '../../services/supabaseClient';
+import useAuthStore from '../../store/authStore';
+
+/** Map Supabase DeliveryStatus to display-friendly labels */
+const mapStatus = (raw: string): string => {
+    switch (raw) {
+        case 'COMPLETED': return 'Delivered';
+        case 'IN_TRANSIT':
+        case 'ASSIGNED':
+        case 'ARRIVED':
+            return 'In Transit';
+        case 'PENDING': return 'Pending';
+        case 'TAMPERED': return 'Tampered';
+        case 'CANCELLED': return 'Cancelled';
+        default: return raw;
+    }
+};
 
 export default function DeliveryRecordsScreen() {
     const theme = useTheme();
     const navigation = useNavigation<any>();
+    const riderId = useAuthStore((state: any) => state.user?.userId);
+
     const [searchQuery, setSearchQuery] = useState('');
-    const [filter, setFilter] = useState('All'); // All, Today, Week, Month
+    const [filter, setFilter] = useState('All');
     const [viewMode, setViewMode] = useState<'list' | 'grid'>('list');
 
-    // Mock Data removed — waiting for backend integration
-    const historyData: any[] = [];
+    const [historyData, setHistoryData] = useState<any[]>([]);
+    const [loading, setLoading] = useState(true);
+    const [refreshing, setRefreshing] = useState(false);
+    const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-    const getStatusColor = (status) => {
+    const fetchDeliveries = useCallback(async (isRefresh = false) => {
+        if (!riderId || !supabase) {
+            setLoading(false);
+            return;
+        }
+
+        if (isRefresh) setRefreshing(true);
+        else setLoading(true);
+
+        setErrorMsg(null);
+
+        try {
+            const { data, error } = await supabase
+                .from('deliveries')
+                .select('*')
+                .eq('rider_id', riderId)
+                .order('created_at', { ascending: false });
+
+            if (error) {
+                console.error('[DeliveryRecords] Supabase error:', error.message);
+                setErrorMsg('Failed to load delivery records.');
+            } else {
+                const mapped = (data || []).map((d: any) => ({
+                    id: d.id,
+                    trk: d.tracking_number || d.id,
+                    status: mapStatus(d.status),
+                    rawStatus: d.status,
+                    date: d.created_at
+                        ? new Date(d.created_at).toLocaleDateString('en-US', {
+                              year: 'numeric',
+                              month: 'short',
+                              day: 'numeric',
+                          })
+                        : 'N/A',
+                    time: d.created_at
+                        ? new Date(d.created_at).toLocaleTimeString('en-US', {
+                              hour: '2-digit',
+                              minute: '2-digit',
+                          })
+                        : '',
+                    customer: d.customer_id || 'Unknown',
+                    earnings: d.estimated_fare != null ? `₱${Number(d.estimated_fare).toFixed(2)}` : '—',
+                    address: d.dropoff_address || d.pickup_address || 'N/A',
+                }));
+                setHistoryData(mapped);
+            }
+        } catch (err) {
+            console.error('[DeliveryRecords] fetch error:', err);
+            setErrorMsg('Something went wrong.');
+        } finally {
+            setLoading(false);
+            setRefreshing(false);
+        }
+    }, [riderId]);
+
+    // Fetch on mount
+    useEffect(() => {
+        fetchDeliveries();
+    }, [fetchDeliveries]);
+
+    // Re-fetch when screen gains focus
+    useFocusEffect(
+        useCallback(() => {
+            fetchDeliveries();
+        }, [fetchDeliveries])
+    );
+
+    const getStatusColor = (status: string) => {
         switch (status) {
             case 'Delivered': return '#4CAF50';
+            case 'In Transit': return '#2196F3';
+            case 'Pending': return '#FF9800';
             case 'Cancelled': return '#F44336';
+            case 'Tampered': return '#D32F2F';
             default: return '#757575';
         }
     };
 
-    const parseDate = (dateStr) => {
-        // Parse "Dec 2, 2025" format
-        return new Date(dateStr);
-    };
-
-    // Use actual current date
+    // Use actual current date for filter comparisons
     const currentDate = new Date();
 
     const filteredData = historyData.filter(item => {
         const matchesSearch = item.trk.toLowerCase().includes(searchQuery.toLowerCase()) ||
             item.customer.toLowerCase().includes(searchQuery.toLowerCase());
 
-        const itemDate = parseDate(item.date);
         let matchesFilter = true;
 
         if (filter === 'Today') {
-            matchesFilter = item.date === 'Dec 2, 2025';
+            const itemDate = new Date(item.date);
+            matchesFilter =
+                itemDate.getDate() === currentDate.getDate() &&
+                itemDate.getMonth() === currentDate.getMonth() &&
+                itemDate.getFullYear() === currentDate.getFullYear();
         } else if (filter === 'This Week') {
-            // Simple week check (within 7 days back)
+            const itemDate = new Date(item.date);
             const diffTime = Math.abs(currentDate.getTime() - itemDate.getTime());
             const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
             matchesFilter = diffDays <= 7;
         } else if (filter === 'This Month') {
+            const itemDate = new Date(item.date);
             matchesFilter = itemDate.getMonth() === currentDate.getMonth() &&
                 itemDate.getFullYear() === currentDate.getFullYear();
         }
@@ -54,9 +144,12 @@ export default function DeliveryRecordsScreen() {
 
     const totalEarnings = filteredData
         .filter(item => item.status === 'Delivered')
-        .reduce((sum, item) => sum + parseFloat(item.earnings.replace('₱', '')), 0);
+        .reduce((sum, item) => {
+            const val = parseFloat(item.earnings.replace('₱', ''));
+            return sum + (isNaN(val) ? 0 : val);
+        }, 0);
 
-    const renderItem = ({ item }) => (
+    const renderItem = ({ item }: { item: any }) => (
         <Card style={[styles.card, { backgroundColor: theme.colors.surface }]} mode="elevated" onPress={() => navigation.navigate('DeliveryDetail', { delivery: item })}>
             <Card.Content>
                 <View style={styles.cardHeader}>
@@ -96,7 +189,7 @@ export default function DeliveryRecordsScreen() {
         </Card>
     );
 
-    const renderGridItem = ({ item }) => (
+    const renderGridItem = ({ item }: { item: any }) => (
         <Card style={[styles.gridCard, { backgroundColor: theme.colors.surface }]} mode="elevated" onPress={() => navigation.navigate('DeliveryDetail', { delivery: item })}>
             <Card.Content style={{ padding: 12 }}>
                 <Text variant="labelLarge" style={{ fontWeight: 'bold', fontSize: 12 }} numberOfLines={1}>{item.trk}</Text>
@@ -125,7 +218,7 @@ export default function DeliveryRecordsScreen() {
                     <IconButton icon="arrow-left" onPress={() => navigation.goBack()} />
                     <Text variant="headlineSmall" style={{ fontWeight: 'bold' }}>History & Earnings</Text>
                     <IconButton
-                        icon={viewMode === 'list' ? 'view-grid' : 'view-list'} // Toggle icon
+                        icon={viewMode === 'list' ? 'view-grid' : 'view-list'}
                         onPress={() => setViewMode(prev => prev === 'list' ? 'grid' : 'list')}
                     />
                 </View>
@@ -167,16 +260,44 @@ export default function DeliveryRecordsScreen() {
                     ))}
                 </View>
 
-                <FlatList
-                    key={viewMode} // Forces re-render when switching modes
-                    data={filteredData}
-                    renderItem={viewMode === 'list' ? renderItem : renderGridItem}
-                    keyExtractor={item => item.id}
-                    contentContainerStyle={styles.listContent}
-                    showsVerticalScrollIndicator={false}
-                    numColumns={viewMode === 'list' ? 1 : 2}
-                    columnWrapperStyle={viewMode === 'grid' ? { justifyContent: 'space-between' } : undefined}
-                />
+                {loading ? (
+                    <View style={styles.emptyState}>
+                        <ActivityIndicator size="large" color={theme.colors.primary} />
+                        <Text style={{ marginTop: 10, color: theme.colors.onSurfaceVariant }}>Loading records...</Text>
+                    </View>
+                ) : errorMsg ? (
+                    <View style={styles.emptyState}>
+                        <MaterialCommunityIcons name="alert-circle-outline" size={60} color={theme.colors.error} />
+                        <Text style={{ marginTop: 10, color: theme.colors.error }}>{errorMsg}</Text>
+                        <TouchableOpacity onPress={() => fetchDeliveries()} style={{ marginTop: 16 }}>
+                            <Text style={{ color: theme.colors.primary, fontWeight: 'bold' }}>Tap to retry</Text>
+                        </TouchableOpacity>
+                    </View>
+                ) : (
+                    <FlatList
+                        key={viewMode}
+                        data={filteredData}
+                        renderItem={viewMode === 'list' ? renderItem : renderGridItem}
+                        keyExtractor={item => item.id}
+                        contentContainerStyle={styles.listContent}
+                        showsVerticalScrollIndicator={false}
+                        numColumns={viewMode === 'list' ? 1 : 2}
+                        columnWrapperStyle={viewMode === 'grid' ? { justifyContent: 'space-between' } : undefined}
+                        refreshControl={
+                            <RefreshControl
+                                refreshing={refreshing}
+                                onRefresh={() => fetchDeliveries(true)}
+                                colors={[theme.colors.primary]}
+                            />
+                        }
+                        ListEmptyComponent={
+                            <View style={styles.emptyState}>
+                                <MaterialCommunityIcons name="package-variant-closed" size={60} color={theme.colors.onSurfaceVariant} />
+                                <Text style={{ marginTop: 10, color: theme.colors.onSurfaceVariant }}>No delivery records yet</Text>
+                            </View>
+                        }
+                    />
+                )}
             </View>
         </View>
     );
@@ -185,10 +306,8 @@ export default function DeliveryRecordsScreen() {
 const styles = StyleSheet.create({
     container: {
         flex: 1,
-        // backgroundColor: '#F7F9FC', // Handled by inline check relative to theme in root or ThemeProvider, removing hardcode
     },
     header: {
-        // backgroundColor: 'white', // Theme
         paddingBottom: 20,
         elevation: 2,
         borderBottomLeftRadius: 24,
@@ -223,7 +342,6 @@ const styles = StyleSheet.create({
     searchBar: {
         marginHorizontal: 20,
         marginBottom: 12,
-        // backgroundColor: 'white',
         elevation: 1,
         borderRadius: 12,
     },
@@ -234,9 +352,7 @@ const styles = StyleSheet.create({
     },
     filterChip: {
         marginRight: 8,
-        // backgroundColor: 'white',
         borderWidth: 1,
-        // borderColor: '#eee',
     },
     listContent: {
         paddingHorizontal: 20,
@@ -244,12 +360,10 @@ const styles = StyleSheet.create({
     },
     card: {
         marginBottom: 12,
-        // backgroundColor: 'white',
         borderRadius: 12,
     },
     gridCard: {
         marginBottom: 12,
-        // backgroundColor: 'white',
         borderRadius: 12,
         width: '48%',
     },
@@ -277,5 +391,10 @@ const styles = StyleSheet.create({
     rowText: {
         color: '#444',
         flex: 1,
+    },
+    emptyState: {
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginTop: 100,
     },
 });

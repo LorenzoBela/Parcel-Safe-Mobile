@@ -8,6 +8,7 @@ import {
     notifyNearbyRiders,
     subscribeToBookingStatus,
     cancelBooking,
+    checkActiveBookings,
     BookingRequest,
     SEARCH_RADIUS_KM,
 } from '../../services/riderMatchingService';
@@ -148,6 +149,15 @@ export default function SearchingRiderScreen() {
 
             // Create the booking in Firebase ONLY if it's new
             if (!existingBookingId) {
+                // Guard: prevent creating duplicate bookings
+                const existing = await checkActiveBookings(authedUserId);
+                if (existing) {
+                    console.log('[SearchingRider] Blocked: active booking already exists:', existing.bookingId);
+                    setSearchFailed(true);
+                    setStatusText('You already have an active delivery. Complete it first.');
+                    return;
+                }
+
                 await createPendingBooking(bookingRequest);
                 // Notify riders within 3km radius
                 const result = await notifyNearbyRiders(bookingRequest);

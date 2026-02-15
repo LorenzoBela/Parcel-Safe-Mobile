@@ -1,53 +1,134 @@
-import React, { useState } from 'react';
-import { View, StyleSheet, FlatList, Image, TouchableOpacity, ScrollView } from 'react-native';
+import React, { useState, useEffect, useCallback } from 'react';
+import { View, StyleSheet, FlatList, TouchableOpacity, ScrollView, RefreshControl, ActivityIndicator } from 'react-native';
 import { Text, Card, Searchbar, Chip, useTheme, Surface, IconButton } from 'react-native-paper';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { supabase } from '../../services/supabaseClient';
+import useAuthStore from '../../store/authStore';
+
+/** Map Supabase DeliveryStatus to display-friendly labels */
+const mapStatus = (raw: string): string => {
+    switch (raw) {
+        case 'COMPLETED': return 'Delivered';
+        case 'IN_TRANSIT': return 'In Transit';
+        case 'ASSIGNED': return 'In Transit';
+        case 'PENDING': return 'Pending';
+        case 'ARRIVED': return 'In Transit';
+        case 'TAMPERED': return 'Tampered';
+        case 'CANCELLED': return 'Cancelled';
+        default: return raw;
+    }
+};
 
 export default function DeliveryLogScreen() {
     const navigation = useNavigation<any>();
     const theme = useTheme();
+    const userId = useAuthStore((state: any) => state.user?.userId);
+
     const [searchQuery, setSearchQuery] = useState('');
     const [selectedFilter, setSelectedFilter] = useState('All');
     const [showFilters, setShowFilters] = useState(false);
     const [viewMode, setViewMode] = useState<'list' | 'grid'>('list');
 
+    const [logs, setLogs] = useState<any[]>([]);
+    const [loading, setLoading] = useState(true);
+    const [refreshing, setRefreshing] = useState(false);
+    const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
     const FILTERS = ['All', 'Delivered', 'In Transit', 'Cancelled', 'Tampered'];
 
-    // Mock data with images and tampering cases
-    // Mock data removed — replaced with empty state until backend integration
-    const logs: any[] = [];
+    const fetchDeliveries = useCallback(async (isRefresh = false) => {
+        if (!userId || !supabase) {
+            setLoading(false);
+            return;
+        }
+
+        if (isRefresh) setRefreshing(true);
+        else setLoading(true);
+
+        setErrorMsg(null);
+
+        try {
+            const { data, error } = await supabase
+                .from('deliveries')
+                .select('*')
+                .eq('customer_id', userId)
+                .order('created_at', { ascending: false });
+
+            if (error) {
+                console.error('[DeliveryLog] Supabase error:', error.message);
+                setErrorMsg('Failed to load delivery history.');
+            } else {
+                const mapped = (data || []).map((d: any) => ({
+                    id: d.id,
+                    trk: d.tracking_number || d.id,
+                    status: mapStatus(d.status),
+                    rawStatus: d.status,
+                    date: d.created_at
+                        ? new Date(d.created_at).toLocaleDateString('en-US', {
+                              year: 'numeric',
+                              month: 'short',
+                              day: 'numeric',
+                          })
+                        : 'N/A',
+                    rider: d.rider_name || 'Unassigned',
+                    price: d.estimated_fare != null ? `₱${Number(d.estimated_fare).toFixed(2)}` : '—',
+                    serviceType: 'Parcel Delivery',
+                    pickupAddress: d.pickup_address,
+                    dropoffAddress: d.dropoff_address,
+                }));
+                setLogs(mapped);
+            }
+        } catch (err) {
+            console.error('[DeliveryLog] fetch error:', err);
+            setErrorMsg('Something went wrong.');
+        } finally {
+            setLoading(false);
+            setRefreshing(false);
+        }
+    }, [userId]);
+
+    // Fetch on mount
+    useEffect(() => {
+        fetchDeliveries();
+    }, [fetchDeliveries]);
+
+    // Re-fetch when screen gains focus
+    useFocusEffect(
+        useCallback(() => {
+            fetchDeliveries();
+        }, [fetchDeliveries])
+    );
 
     const filteredLogs = logs.filter(log => {
         const matchesSearch = log.trk.toLowerCase().includes(searchQuery.toLowerCase());
-
         const matchesFilter = selectedFilter === 'All' || log.status === selectedFilter;
-
         return matchesSearch && matchesFilter;
     });
 
-    const getStatusColor = (status) => {
+    const getStatusColor = (status: string) => {
         switch (status) {
-            case 'Delivered': return '#4CAF50'; // Green
-            case 'In Transit': return '#2196F3'; // Blue
-            case 'Cancelled': return '#9E9E9E'; // Grey
-            case 'Tampered': return '#D32F2F'; // Red
+            case 'Delivered': return '#4CAF50';
+            case 'In Transit': return '#2196F3';
+            case 'Pending': return '#FF9800';
+            case 'Cancelled': return '#9E9E9E';
+            case 'Tampered': return '#D32F2F';
             default: return '#9E9E9E';
         }
     };
 
-    const getStatusIcon = (status) => {
+    const getStatusIcon = (status: string) => {
         switch (status) {
             case 'Delivered': return 'check-circle';
             case 'In Transit': return 'truck-delivery';
+            case 'Pending': return 'clock-outline';
             case 'Cancelled': return 'close-circle';
             case 'Tampered': return 'alert-circle';
             default: return 'help-circle';
         }
     };
 
-    const renderItem = ({ item }) => (
+    const renderItem = ({ item }: { item: any }) => (
         <Card
             style={[
                 styles.card,
@@ -75,7 +156,6 @@ export default function DeliveryLogScreen() {
                         )}
                     </View>
 
-                    {/* Show status color bar for grid view instead of big chip to save space */}
                     {viewMode === 'grid' && (
                         <View style={{ height: 4, backgroundColor: getStatusColor(item.status), borderRadius: 2, marginBottom: 8, marginTop: 4 }} />
                     )}
@@ -154,22 +234,44 @@ export default function DeliveryLogScreen() {
                 </View>
             )}
 
-            <FlatList
-                key={viewMode} // Force re-render when switching modes
-                data={filteredLogs}
-                renderItem={renderItem}
-                keyExtractor={item => item.trk}
-                contentContainerStyle={styles.listContent}
-                showsVerticalScrollIndicator={false}
-                numColumns={viewMode === 'grid' ? 2 : 1}
-                columnWrapperStyle={viewMode === 'grid' ? { justifyContent: 'space-between' } : undefined}
-                ListEmptyComponent={
-                    <View style={styles.emptyState}>
-                        <MaterialCommunityIcons name="package-variant-closed" size={60} color={theme.colors.onSurfaceVariant} />
-                        <Text style={{ marginTop: 10, color: theme.colors.onSurfaceVariant }}>No deliveries found</Text>
-                    </View>
-                }
-            />
+            {loading ? (
+                <View style={styles.emptyState}>
+                    <ActivityIndicator size="large" color={theme.colors.primary} />
+                    <Text style={{ marginTop: 10, color: theme.colors.onSurfaceVariant }}>Loading deliveries...</Text>
+                </View>
+            ) : errorMsg ? (
+                <View style={styles.emptyState}>
+                    <MaterialCommunityIcons name="alert-circle-outline" size={60} color={theme.colors.error} />
+                    <Text style={{ marginTop: 10, color: theme.colors.error }}>{errorMsg}</Text>
+                    <TouchableOpacity onPress={() => fetchDeliveries()} style={{ marginTop: 16 }}>
+                        <Text style={{ color: theme.colors.primary, fontWeight: 'bold' }}>Tap to retry</Text>
+                    </TouchableOpacity>
+                </View>
+            ) : (
+                <FlatList
+                    key={viewMode}
+                    data={filteredLogs}
+                    renderItem={renderItem}
+                    keyExtractor={item => item.id}
+                    contentContainerStyle={styles.listContent}
+                    showsVerticalScrollIndicator={false}
+                    numColumns={viewMode === 'grid' ? 2 : 1}
+                    columnWrapperStyle={viewMode === 'grid' ? { justifyContent: 'space-between' } : undefined}
+                    refreshControl={
+                        <RefreshControl
+                            refreshing={refreshing}
+                            onRefresh={() => fetchDeliveries(true)}
+                            colors={[theme.colors.primary]}
+                        />
+                    }
+                    ListEmptyComponent={
+                        <View style={styles.emptyState}>
+                            <MaterialCommunityIcons name="package-variant-closed" size={60} color={theme.colors.onSurfaceVariant} />
+                            <Text style={{ marginTop: 10, color: theme.colors.onSurfaceVariant }}>No deliveries found</Text>
+                        </View>
+                    }
+                />
+            )}
         </View>
     );
 }
@@ -220,7 +322,7 @@ const styles = StyleSheet.create({
         marginBottom: 16,
     },
     cardGrid: {
-        flex: 0.48, // Slightly less than 50% to allow for spacing
+        flex: 0.48,
         marginBottom: 16,
     },
     cardInner: {
@@ -249,7 +351,6 @@ const styles = StyleSheet.create({
         color: '#666',
         marginLeft: 6,
     },
-
     alertContainer: {
         flexDirection: 'row',
         alignItems: 'center',
@@ -261,7 +362,6 @@ const styles = StyleSheet.create({
         fontWeight: 'bold',
         marginLeft: 4,
     },
-
     footer: {
         flexDirection: 'row',
         justifyContent: 'space-between',

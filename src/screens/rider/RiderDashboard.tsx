@@ -595,7 +595,14 @@ export default function RiderDashboard() {
             setIncomingRequest(null);
             setShowTripPreview(true);
         } else {
-            Alert.alert('Error', 'Failed to accept order. Please try again.');
+            // Booking was already accepted by another rider (race condition handled)
+            setShowOrderModal(false);
+            setIncomingRequest(null);
+            Alert.alert(
+                'Order Unavailable',
+                'This delivery was already accepted by another rider. You will be notified of new orders.',
+                [{ text: 'OK' }]
+            );
         }
     }, [incomingRequest, riderId, riderName, riderPhone, boxIdForMonitoring, navigation]);
 
@@ -616,6 +623,17 @@ export default function RiderDashboard() {
         setShowOrderModal(false);
         setIncomingRequest(null);
     }, [incomingRequest, riderId]);
+
+    // Handle order taken by another rider (auto-dismiss via real-time listener)
+    const handleOrderTaken = useCallback(() => {
+        setShowOrderModal(false);
+        setIncomingRequest(null);
+        Alert.alert(
+            'Order Unavailable',
+            'This delivery was already accepted by another rider. You will be notified of new orders.',
+            [{ text: 'OK' }]
+        );
+    }, []);
 
     // Trip Preview State
     const [showTripPreview, setShowTripPreview] = useState(false);
@@ -893,9 +911,11 @@ export default function RiderDashboard() {
                 visible={showOrderModal}
                 request={incomingRequest?.data || null}
                 requestId={incomingRequest?.requestId || ''}
+                riderId={riderId}
                 onAccept={handleAcceptOrder}
                 onReject={handleRejectOrder}
                 onExpire={handleOrderExpire}
+                onTaken={handleOrderTaken}
             />
 
             <CancellationModal

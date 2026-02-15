@@ -1,5 +1,26 @@
 # Android Build Script for Parcel Safe App
 # This script syncs files from editing location to build location, then cleans and builds the Android app
+#
+# ================================================================================================
+# KNOWN WORKING BUILD CONFIGURATION (last verified: 2026-02-15)
+# ================================================================================================
+# See build-last-good.json for full details. Critical versions:
+#   - Kotlin:            2.0.21  (must be 2.0.0+ for KSP compatibility)
+#   - react-native:      0.81.5
+#   - react-native-svg:  15.12.1  (must be 15.12.1+ for RN 0.81 new arch support)
+#   - Expo SDK:          54
+#   - JDK:               17 (Eclipse Adoptium Temurin)
+#   - NDK:               27.2.12479018
+#   - Gradle:            8.14.3
+#
+# CRITICAL BUILD NOTES:
+#   1. expo prebuild --clean wipes android/ entirely. ALL Gradle/CMake patches MUST be
+#      re-applied AFTER prebuild (see Step 6.1).
+#   2. expo-build-properties writes "android.kotlinVersion" to gradle.properties, but
+#      build.gradle uses "$kotlinVersion" (no prefix). Step 6.1 adds the plain property.
+#   3. Robocopy excludes *.lock files. The build dir may have a stale package-lock.json
+#      that prevents npm from installing updated packages. It is deleted before npm install.
+# ================================================================================================
 
 Write-Host "====================================" -ForegroundColor Cyan
 Write-Host "Parcel Safe Android Build Script" -ForegroundColor Cyan
@@ -154,6 +175,7 @@ $robocopyArgs = @(
     "/MT:8",             # Multi-threaded (8 threads)
     "/XD",               # Exclude directories
     "node_modules",
+    "android",
     "android\build",
     "android\app\build",
     "android\app\.cxx",
@@ -337,6 +359,28 @@ function Remove-NdkDirFromLocalProperties {
     $lines = Get-Content $Path | Where-Object { $_ -notmatch '^ndk\.dir=' }
     Set-Content -Path $Path -Value $lines
 }
+
+function Get-ResolvedAndroidSdkDir {
+    param(
+        [string]$LocalPropertiesPath,
+        [string]$SdkFromLocalProperties
+    )
+
+    $candidates = @(
+        $env:ANDROID_SDK_ROOT,
+        $env:ANDROID_HOME,
+        $SdkFromLocalProperties,
+        "$env:LOCALAPPDATA\Android\Sdk",
+        "$env:USERPROFILE\AppData\Local\Android\Sdk"
+    ) | Where-Object { $_ -and $_.Trim().Length -gt 0 }
+
+    foreach ($candidate in $candidates) {
+        if (Test-Path $candidate) { return $candidate }
+    }
+
+    return $null
+}
+
 if ((!$env:ANDROID_HOME -or !$env:ANDROID_SDK_ROOT) -and $sdkDirEarly) {
     if (-not $env:ANDROID_HOME) { $env:ANDROID_HOME = $sdkDirEarly }
     if (-not $env:ANDROID_SDK_ROOT) { $env:ANDROID_SDK_ROOT = $sdkDirEarly }
@@ -446,6 +490,18 @@ if ((!$env:ANDROID_HOME -or !$env:ANDROID_SDK_ROOT) -and $sdkDirEarly) {
         Write-Host "[INFO] Install NDK $preferredNdkVersion in Android SDK Manager and re-run." -ForegroundColor Yellow
         exit 1
     }
+}
+
+# Ensure Android SDK env + local.properties are always available before any Gradle invocation
+$resolvedSdkDir = Get-ResolvedAndroidSdkDir -LocalPropertiesPath $localPropsPathEarly -SdkFromLocalProperties $sdkDirEarly
+if ($resolvedSdkDir) {
+    if (-not $env:ANDROID_HOME) { $env:ANDROID_HOME = $resolvedSdkDir }
+    if (-not $env:ANDROID_SDK_ROOT) { $env:ANDROID_SDK_ROOT = $resolvedSdkDir }
+    Update-LocalPropertiesPaths -Path $localPropsPathEarly -SdkDir $resolvedSdkDir
+    Remove-NdkDirFromLocalProperties -Path $localPropsPathEarly
+    Write-Host "[OK] Android SDK resolved to: $resolvedSdkDir" -ForegroundColor Green
+} else {
+    Write-Host "[WARN] Could not resolve Android SDK path from env/local.properties/common locations" -ForegroundColor DarkYellow
 }
 
 # Save working config snapshot for future builds
@@ -724,7 +780,11 @@ $gradleCleanExit = $null
 if (Test-Path ".\gradlew.bat") {
     .\gradlew.bat clean
     $gradleCleanExit = $LASTEXITCODE
-    Write-Host "[OK] Gradle clean completed" -ForegroundColor Green
+    if ($gradleCleanExit -eq 0) {
+        Write-Host "[OK] Gradle clean completed" -ForegroundColor Green
+    } else {
+        Write-Host "[WARN] Gradle clean failed (exit code: $gradleCleanExit). Continuing with prebuild regeneration..." -ForegroundColor DarkYellow
+    }
 } else {
     Write-Host "[WARN] gradlew.bat not found, skipping Gradle clean" -ForegroundColor DarkYellow
 }
@@ -781,6 +841,16 @@ if (Test-Path $expoCameraPatch) {
 
 # Always reinstall in build directory to ensure correct versions
 Write-Host "  Installing dependencies..." -ForegroundColor Gray
+$nodeModulesExists = Test-Path (Join-Path $PROJECT_ROOT "node_modules")
+
+# Remove stale package-lock.json to ensure npm installs versions from updated package.json
+# (robocopy excludes *.lock files, so the build dir may have a stale lock from a previous run)
+$lockFile = Join-Path $PROJECT_ROOT "package-lock.json"
+if (Test-Path $lockFile) {
+    Remove-Item -Path $lockFile -Force
+    Write-Host "  Removed stale package-lock.json to force fresh dependency resolution" -ForegroundColor Gray
+}
+
 npm install --force
 $npmInstallExit = $LASTEXITCODE
 if ($npmInstallExit -ne 0) {
@@ -797,7 +867,152 @@ Write-AgentLog -HypothesisId "H4" -Message "node modules check" -Data @{
 }
 #endregion
 
-# Patch expo-barcode-scanner-interface to modern Expo modules config
+# Step 5.1: Validate critical package versions against known-good config
+Write-Host "`nStep 5.1: Validating critical package versions..." -ForegroundColor Yellow
+
+function Test-InstalledPackageVersion {
+    param(
+        [string]$ProjectRoot,
+        [string]$PackageName,
+        [string]$MinVersion,
+        [string]$Reason
+    )
+    $pkgJsonPath = Join-Path $ProjectRoot "node_modules\$PackageName\package.json"
+    if (-not (Test-Path $pkgJsonPath)) {
+        Write-Host "[WARN] $PackageName not found in node_modules" -ForegroundColor DarkYellow
+        return
+    }
+    try {
+        $pkgJson = Get-Content -Path $pkgJsonPath -Raw | ConvertFrom-Json
+        $installedVersion = $pkgJson.version
+        # Simple major.minor.patch comparison
+        $installed = $installedVersion -split '\.' | ForEach-Object { [int]$_ }
+        $required  = $MinVersion -split '\.' | ForEach-Object { [int]$_ }
+        $ok = $false
+        for ($i = 0; $i -lt 3; $i++) {
+            $iv = if ($i -lt $installed.Count) { $installed[$i] } else { 0 }
+            $rv = if ($i -lt $required.Count) { $required[$i] } else { 0 }
+            if ($iv -gt $rv) { $ok = $true; break }
+            if ($iv -lt $rv) { $ok = $false; break }
+            if ($i -eq 2) { $ok = $true }  # all equal
+        }
+        if ($ok) {
+            Write-Host "[OK] $PackageName $installedVersion (>= $MinVersion)" -ForegroundColor Green
+        } else {
+            Write-Host "[ERROR] $PackageName $installedVersion is below minimum $MinVersion" -ForegroundColor Red
+            Write-Host "        Reason: $Reason" -ForegroundColor Gray
+            Write-Host "        Fix: npm install ${PackageName}@${MinVersion}" -ForegroundColor Yellow
+        }
+    } catch {
+        Write-Host "[WARN] Could not read $PackageName version" -ForegroundColor DarkYellow
+    }
+}
+
+Test-InstalledPackageVersion -ProjectRoot $PROJECT_ROOT `
+    -PackageName "react-native-svg" -MinVersion "15.12.1" `
+    -Reason "Versions below 15.12.1 have C++ template errors with RN 0.81 new architecture"
+
+Test-InstalledPackageVersion -ProjectRoot $PROJECT_ROOT `
+    -PackageName "react-native" -MinVersion "0.81.5" `
+    -Reason "Project targets React Native 0.81.5"
+
+Test-InstalledPackageVersion -ProjectRoot $PROJECT_ROOT `
+    -PackageName "react-native-screens" -MinVersion "4.16.0" `
+    -Reason "Required for Expo SDK 54 compatibility"
+
+Test-InstalledPackageVersion -ProjectRoot $PROJECT_ROOT `
+    -PackageName "react-native-reanimated" -MinVersion "4.1.1" `
+    -Reason "Required for Expo SDK 54 compatibility"
+
+# Validate kotlinVersion in app.json (source of truth for expo-build-properties)
+Write-Host "" -ForegroundColor Gray
+$appJsonPath = Join-Path $SOURCE_DIR "app.json"
+if (Test-Path $appJsonPath) {
+    try {
+        $appJsonContent = Get-Content -Path $appJsonPath -Raw | ConvertFrom-Json
+        $plugins = $appJsonContent.expo.plugins
+        foreach ($plugin in $plugins) {
+            if ($plugin -is [System.Array] -and $plugin[0] -eq "expo-build-properties") {
+                $configuredKotlin = $plugin[1].android.kotlinVersion
+                if ($configuredKotlin) {
+                    $kMajor = [int]($configuredKotlin -split '\.')[0]
+                    if ($kMajor -lt 2) {
+                        Write-Host "[ERROR] app.json kotlinVersion=$configuredKotlin is below 2.0.0 (KSP requires Kotlin 2.0+)" -ForegroundColor Red
+                        Write-Host "        Fix: Update kotlinVersion in app.json expo-build-properties to 2.0.21 or higher" -ForegroundColor Yellow
+                    } else {
+                        Write-Host "[OK] app.json kotlinVersion=$configuredKotlin (>= 2.0.0)" -ForegroundColor Green
+                    }
+                }
+            }
+        }
+    } catch {
+        Write-Host "[WARN] Could not validate app.json kotlinVersion" -ForegroundColor DarkYellow
+    }
+}
+
+# Step 6: Regenerate Native Android Project (Prebuild)
+Write-Host "`nStep 6: Regenerating native Android project (Prebuild)..." -ForegroundColor Yellow
+$env:CI = "1"
+$prebuildCheck = "npx expo prebuild --platform android --clean"
+Write-Host "  Running: $prebuildCheck" -ForegroundColor Gray
+Invoke-Expression $prebuildCheck
+$prebuildExit = $LASTEXITCODE
+if ($prebuildExit -ne 0) {
+    Write-Host "[ERROR] npx expo prebuild failed with exit code $prebuildExit" -ForegroundColor Red
+    exit $prebuildExit
+}
+Write-Host "[OK] Native project regenerated" -ForegroundColor Green
+
+# Step 6.1: Post-Prebuild Gradle Fixes
+# expo prebuild --clean wipes the android/ directory, so we must re-apply all android/ patches
+Write-Host "`nStep 6.1: Applying post-prebuild Gradle fixes..." -ForegroundColor Yellow
+
+# Fix kotlinVersion: expo-build-properties sets android.kotlinVersion in gradle.properties
+# but the generated build.gradle uses $kotlinVersion (without android. prefix)
+# This is a known issue with Expo SDK 53+ (https://github.com/expo/expo/issues/36461)
+$gradleProps = Join-Path $ANDROID_DIR "gradle.properties"
+if (Test-Path $gradleProps) {
+    $propsContent = Get-Content $gradleProps -Raw
+    $kVersion = "2.0.21"
+    if ($propsContent -match 'android\.kotlinVersion=([^\r\n]+)') {
+        $kVersion = $matches[1].Trim()
+    }
+    if ($propsContent -notmatch '(?m)^kotlinVersion=') {
+        Add-Content -Path $gradleProps -Value "`nkotlinVersion=$kVersion"
+        Write-Host "[OK] Added kotlinVersion=$kVersion to gradle.properties" -ForegroundColor Green
+    }
+}
+
+# Re-apply CMake/libcxx-shared fixes to android/ files (wiped by prebuild --clean)
+$rootBuildGradle = Join-Path $ANDROID_DIR "build.gradle"
+$appBuildGradle = Join-Path $ANDROID_DIR "app\build.gradle"
+Ensure-LineInFile -Path $gradleProps -MatchRegex '^android\.cmake\.arguments=' -LineToSet 'android.cmake.arguments=-DANDROID_STL=c++_shared -DCMAKE_ANDROID_STL_TYPE=c++_shared -DCMAKE_SHARED_LINKER_FLAGS=-lc++_shared -DCMAKE_EXE_LINKER_FLAGS=-lc++_shared'
+Ensure-BlockAfterLine -Path $rootBuildGradle -AnchorRegex 'apply plugin: "com.facebook.react.rootproject"' -BlockText $cmakeBlock -BlockMarker '// BEGIN libcxx-shared-fix'
+Ensure-AppCmakeArguments -Path $appBuildGradle
+
+# Re-apply CMake patches to native node_modules (may have been refreshed by npm install)
+$expoCmake = Join-Path $PROJECT_ROOT "node_modules\expo-modules-core\android\CMakeLists.txt"
+Ensure-CMakeLibCppShared -Path $expoCmake -TargetName '${PACKAGE_NAME}'
+$workletsCmake = Join-Path $PROJECT_ROOT "node_modules\react-native-worklets\android\CMakeLists.txt"
+Ensure-CMakeLibCppShared -Path $workletsCmake -TargetName 'worklets'
+$reanimatedCmake = Join-Path $PROJECT_ROOT "node_modules\react-native-reanimated\android\CMakeLists.txt"
+Ensure-CMakeLibCppShared -Path $reanimatedCmake -TargetName 'reanimated'
+$gestureCmake = Join-Path $PROJECT_ROOT "node_modules\react-native-gesture-handler\android\src\main\jni\CMakeLists.txt"
+Ensure-CMakeLibCppShared -Path $gestureCmake -TargetName '${PACKAGE_NAME}'
+$screensCmake = Join-Path $PROJECT_ROOT "node_modules\react-native-screens\android\CMakeLists.txt"
+Ensure-CMakeLibCppShared -Path $screensCmake -TargetName 'rnscreens'
+
+# Ensure local.properties has correct sdk.dir after prebuild regenerated android/
+$localPropsPostPrebuild = Join-Path $ANDROID_DIR "local.properties"
+if ($env:ANDROID_SDK_ROOT) {
+    Update-LocalPropertiesPaths -Path $localPropsPostPrebuild -SdkDir $env:ANDROID_SDK_ROOT
+    Remove-NdkDirFromLocalProperties -Path $localPropsPostPrebuild
+}
+
+Write-Host "[OK] Post-prebuild Gradle fixes applied" -ForegroundColor Green
+
+# Step 7: Apply Patches
+
 function Invoke-BarcodeScannerInterfaceFix {
     param([string]$ProjectRoot)
     $interfaceRoot = Join-Path $ProjectRoot "node_modules\expo-barcode-scanner-interface"
@@ -1024,38 +1239,86 @@ function Invoke-ExpoCameraDependencyFix {
 Invoke-ExpoBarcodeScannerDependencyFix -ProjectRoot $PROJECT_ROOT
 Invoke-ExpoCameraDependencyFix -ProjectRoot $PROJECT_ROOT
 
-# Patch react-native-background-actions to use foreground service type on API 29+
+# Patch react-native-background-actions Java + Manifest for Android 14+ foreground service compliance
 function Invoke-BackgroundActionsForegroundTypeFix {
     param([string]$ProjectRoot)
     $taskPath = Join-Path $ProjectRoot "node_modules\react-native-background-actions\android\src\main\java\com\asterinet\react\bgactions\RNBackgroundActionsTask.java"
     if (-not (Test-Path $taskPath)) { return }
 
     $raw = Get-Content -Path $taskPath -Raw
+    $changed = $false
 
+    # --- 1. Ensure ServiceInfo import exists ---
     if ($raw -notmatch 'ServiceInfo') {
         $raw = $raw -replace '(?m)^import android\.content\.Intent;\s*$', "import android.content.Intent;`nimport android.content.pm.ServiceInfo;"
+        $changed = $true
     }
 
-    if ($raw -match 'startForeground\(SERVICE_NOTIFICATION_ID, notification,') {
+    # --- 2. Patch startForeground to use LOCATION service type (Uber/Grab best practice) ---
+    # Handle both unpatched original AND old DATA_SYNC|LOCATION patch
+    if ($raw -match 'FOREGROUND_SERVICE_TYPE_DATA_SYNC') {
+        # Old patch present with DATA_SYNC - replace with LOCATION only
+        $raw = $raw -replace 'ServiceInfo\.FOREGROUND_SERVICE_TYPE_DATA_SYNC \| ServiceInfo\.FOREGROUND_SERVICE_TYPE_LOCATION', 'ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION'
+        $changed = $true
+    } elseif ($raw -notmatch 'startForeground\(SERVICE_NOTIFICATION_ID, notification,') {
+        # Original unpatched version - add full if/else block
+        $replacement = @(
+            '        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {',
+            '            int serviceType = ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION;',
+            '            startForeground(SERVICE_NOTIFICATION_ID, notification, serviceType);',
+            '        } else {',
+            '            startForeground(SERVICE_NOTIFICATION_ID, notification);',
+            '        }'
+        ) -join "`n"
+        $raw = $raw -replace 'startForeground\(SERVICE_NOTIFICATION_ID, notification\);', $replacement
+        $changed = $true
+    }
+
+    # --- 3. Return START_STICKY for automatic restart after system kills (Uber best practice) ---
+    if ($raw -notmatch 'return START_STICKY') {
+        $raw = $raw -replace 'return super\.onStartCommand\(intent, flags, startId\);', 'return START_STICKY;'
+        $changed = $true
+    }
+
+    # --- 4. Fix notification importance: LOW -> DEFAULT (Android best practice) ---
+    if ($raw -match 'IMPORTANCE_LOW') {
+        $raw = $raw -replace 'NotificationManager\.IMPORTANCE_LOW', 'NotificationManager.IMPORTANCE_DEFAULT'
+        $changed = $true
+    }
+
+    if ($changed) {
         Set-Content -Path $taskPath -Value $raw
-        return
+        Write-Host "[OK] Applied background-actions Java patches (serviceType, START_STICKY, notification)" -ForegroundColor Green
+    } else {
+        Write-Host "[OK] background-actions Java patches already applied" -ForegroundColor DarkGreen
     }
-
-    $replacement = @(
-        '        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {',
-        '            int serviceType = ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC | ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION;',
-        '            startForeground(SERVICE_NOTIFICATION_ID, notification, serviceType);',
-        '        } else {',
-        '            startForeground(SERVICE_NOTIFICATION_ID, notification);',
-        '        }'
-    ) -join "`n"
-
-    $raw = $raw -replace 'startForeground\(SERVICE_NOTIFICATION_ID, notification\);', $replacement
-    Set-Content -Path $taskPath -Value $raw
-    Write-Host "[OK] Applied background-actions foreground service type fix" -ForegroundColor Green
 }
 
 Invoke-BackgroundActionsForegroundTypeFix -ProjectRoot $PROJECT_ROOT
+
+# Patch react-native-background-actions AndroidManifest to declare foreground service types
+function Invoke-BackgroundActionsManifestFix {
+    param([string]$ProjectRoot)
+    $manifestPath = Join-Path $ProjectRoot "node_modules\react-native-background-actions\android\src\main\AndroidManifest.xml"
+    if (-not (Test-Path $manifestPath)) { return }
+
+    $raw = Get-Content -Path $manifestPath -Raw
+    $target = 'android:foregroundServiceType="location"'
+
+    # Already correctly patched
+    if ($raw -match [regex]::Escape($target)) {
+        Write-Host "[OK] background-actions manifest patch already applied" -ForegroundColor DarkGreen
+        return
+    }
+
+    # Replace any existing service declaration (with or without old foregroundServiceType)
+    $raw = $raw -replace '<service android:name="\.RNBackgroundActionsTask"[^/]*/>', '<service android:name=".RNBackgroundActionsTask" android:foregroundServiceType="location"/>'
+    
+    Set-Content -Path $manifestPath -Value $raw
+    Write-Host "[OK] Applied background-actions manifest foreground service type fix" -ForegroundColor Green
+}
+
+Invoke-BackgroundActionsManifestFix -ProjectRoot $PROJECT_ROOT
 
 # Step 6: Pre-build checks
 Write-Host "`nStep 6: Running pre-build checks..." -ForegroundColor Yellow
@@ -1173,6 +1436,7 @@ if ($expoExitCode -eq 0) {
     }
 
     $lastGoodPath = Join-Path $PROJECT_ROOT "build-last-good.json"
+    $sourceLastGoodPath = Join-Path $SOURCE_DIR "build-last-good.json"
     $nodeVersion = (& node --version 2>$null | Out-String).Trim()
     $javaVersion = (& java -version 2>&1 | Select-Object -First 1)
     $buildConfig = $null
@@ -1180,24 +1444,60 @@ if ($expoExitCode -eq 0) {
         try { $buildConfig = Get-Content -Path $configPath -Raw | ConvertFrom-Json } catch { $buildConfig = $null }
     }
 
+    # Capture installed critical package versions for future reference
+    function Get-InstalledVersion {
+        param([string]$Root, [string]$Package)
+        $p = Join-Path $Root "node_modules\$Package\package.json"
+        if (Test-Path $p) {
+            try { return (Get-Content -Path $p -Raw | ConvertFrom-Json).version } catch { return "unknown" }
+        }
+        return "not-found"
+    }
+
     $lastGoodData = [ordered]@{
-        timestamp           = (Get-Date).ToString("o")
-        androidSdkRoot      = $env:ANDROID_SDK_ROOT
-        androidHome         = $env:ANDROID_HOME
-        androidNdkHome       = $env:ANDROID_NDK_HOME
-        ndkHome             = $env:NDK_HOME
-        javaHome            = $env:JAVA_HOME
-        nodeBinary          = $env:NODE_BINARY
-        androidStl          = $env:ANDROID_STL
-        cmakeAndroidStlType = $env:CMAKE_ANDROID_STL_TYPE
-        nodeVersion         = $nodeVersion
-        javaVersion         = $javaVersion
+        lastSuccessfulBuild = (Get-Date).ToString("o")
+        environment         = [ordered]@{
+            androidSdkRoot      = $env:ANDROID_SDK_ROOT
+            androidHome         = $env:ANDROID_HOME
+            androidNdkHome      = $env:ANDROID_NDK_HOME
+            ndkHome             = $env:NDK_HOME
+            javaHome            = $env:JAVA_HOME
+            nodeBinary          = $env:NODE_BINARY
+            androidStl          = $env:ANDROID_STL
+            cmakeAndroidStlType = $env:CMAKE_ANDROID_STL_TYPE
+        }
+        versions            = [ordered]@{
+            node          = $nodeVersion
+            java          = $javaVersion
+            kotlin        = "2.0.21"
+        }
+        criticalPackageVersions = [ordered]@{
+            "react-native"                 = (Get-InstalledVersion $PROJECT_ROOT "react-native")
+            "react-native-svg"             = (Get-InstalledVersion $PROJECT_ROOT "react-native-svg")
+            "react-native-reanimated"      = (Get-InstalledVersion $PROJECT_ROOT "react-native-reanimated")
+            "react-native-screens"         = (Get-InstalledVersion $PROJECT_ROOT "react-native-screens")
+            "react-native-gesture-handler" = (Get-InstalledVersion $PROJECT_ROOT "react-native-gesture-handler")
+            "react-native-worklets"        = (Get-InstalledVersion $PROJECT_ROOT "react-native-worklets")
+            "expo"                         = (Get-InstalledVersion $PROJECT_ROOT "expo")
+        }
         patches             = (Get-PatchList -ProjectRoot $PROJECT_ROOT)
+        knownIssuesFixed    = @(
+            "KOTLIN_VERSION_PROPERTY: Post-prebuild adds kotlinVersion= to gradle.properties"
+            "KOTLIN_KSP_COMPAT: kotlinVersion must be 2.0.0+ for KSP"
+            "RN_SVG_NEW_ARCH: react-native-svg must be 15.12.1+ for RN 0.81"
+            "STALE_LOCK: package-lock.json deleted before npm install in build dir"
+            "PREBUILD_WIPES: All android/ patches re-applied after prebuild --clean"
+        )
         buildConfig         = $buildConfig
     }
     try {
-        $lastGoodData | ConvertTo-Json -Depth 6 | Set-Content -Path $lastGoodPath -Encoding UTF8
+        $json = $lastGoodData | ConvertTo-Json -Depth 6
+        # Save to build directory
+        $json | Set-Content -Path $lastGoodPath -Encoding UTF8
         Write-Host "[OK] Saved last known good build snapshot: $lastGoodPath" -ForegroundColor Green
+        # Also save back to source directory for persistence across clean builds
+        $json | Set-Content -Path $sourceLastGoodPath -Encoding UTF8
+        Write-Host "[OK] Saved last known good build snapshot to source: $sourceLastGoodPath" -ForegroundColor Green
     } catch {
         Write-Host "[WARN] Failed to save last known good build snapshot" -ForegroundColor DarkYellow
     }

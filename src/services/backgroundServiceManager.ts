@@ -361,6 +361,26 @@ async function startForegroundService(): Promise<void> {
             }
         }
 
+        // CRITICAL: Verify location services are enabled on the device
+        // Without this, the foreground service with location type will fail
+        try {
+            const RNAndroidLocationEnabler = require('react-native-android-location-enabler');
+            const isLocationEnabled = await RNAndroidLocationEnabler.check();
+            if (!isLocationEnabled) {
+                if (__DEV__) console.warn('[BackgroundService] Location services disabled, service may not work optimally');
+                // Note: We don't block startup, but log warning. Location type is secondary to dataSync.
+                // The service can still run with dataSync type even if location is disabled.
+            }
+        } catch (e) {
+            // Library not available or check failed - continue anyway
+            // Location services check is a best-effort, not critical
+            if (__DEV__) console.log('[BackgroundService] Could not verify location services status');
+        }
+
+        // Ensure notification channel exists before starting foreground service
+        // This prevents crashes if channels weren't created properly
+        await setupNotificationChannels();
+
         const options = {
             taskName: 'Parcel Safe Background Service',
             taskTitle: 'Parcel Safe - Ready for Orders',
@@ -376,14 +396,46 @@ async function startForegroundService(): Promise<void> {
                 value: 0,
                 indeterminate: true,
             },
+            parameters: {
+                delay: BACKGROUND_CONFIG.HEARTBEAT_INTERVAL,
+            },
+            notification: {
+                channelId: BACKGROUND_CONFIG.CHANNELS.FOREGROUND_SERVICE,
+                channelName: 'Background Service',
+                channelDescription: 'Keeps the app running to receive delivery orders',
+                android: {
+                    // Use LOCATION as primary type (Uber/Grab best practice for delivery apps)
+                    // dataSync is deprecated per Android documentation
+                    foregroundServiceTypes: ['location'], // CRITICAL: Must match AndroidManifest.xml
+                },
+            },
         };
 
-        await BackgroundService.start(foregroundServiceTask, options);
-        backgroundState.isForegroundServiceActive = true;
-        // if (__DEV__) console.log('[BackgroundService] Foreground service started');
-    } catch (error) {
-        if (__DEV__) console.error('[BackgroundService] Foreground service error:', error);
-        throw error; // Re-throw to prevent silent failures
+        // Start foreground service with proper error handling
+        // Android 14+ can throw SecurityException if permissions are revoked or service type is invalid
+        try {
+            await BackgroundService.start(foregroundServiceTask, options);
+            backgroundState.isForegroundServiceActive = true;
+            if (__DEV__) console.log('[BackgroundService] Foreground service started successfully');
+        } catch (startError: any) {
+            // Handle SecurityException specifically (thrown when permissions are missing or service type is invalid)
+            const errorMessage = startError?.message || String(startError);
+            if (errorMessage.includes('SecurityException') || errorMessage.includes('permission')) {
+                if (__DEV__) console.error('[BackgroundService] SecurityException - Missing permissions or invalid service type:', errorMessage);
+                throw new Error('Cannot start foreground service: Permission denied. Please enable location permissions.');
+            } else if (errorMessage.includes('ForegroundServiceStartNotAllowedException')) {
+                if (__DEV__) console.error('[BackgroundService] Cannot start foreground service from background');
+                throw new Error('Cannot start foreground service: App must be in foreground');
+            } else {
+                // Unknown error - re-throw
+                throw startError;
+            }
+        }
+    } catch (error: any) {
+        if (__DEV__) console.error('[BackgroundService] Foreground service setup error:', error);
+        // Don't re-throw - allow app to continue without foreground service
+        // The app can still function with FCM and background fetch
+        backgroundState.isForegroundServiceActive = false;
     }
 }
 
@@ -605,11 +657,13 @@ export async function setupNotificationChannels(): Promise<void> {
         );
 
         // Foreground service channel
+        // Android best practice: Use DEFAULT importance minimum for foreground services
+        // LOW importance may prevent notification from showing properly
         await Notifications.setNotificationChannelAsync(
             BACKGROUND_CONFIG.CHANNELS.FOREGROUND_SERVICE,
             {
                 name: 'Background Service',
-                importance: Notifications.AndroidImportance.LOW,
+                importance: Notifications.AndroidImportance.DEFAULT,
                 sound: null,
                 enableVibrate: false,
                 showBadge: false,

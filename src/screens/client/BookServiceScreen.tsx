@@ -1,10 +1,11 @@
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { View, StyleSheet, Alert, ActivityIndicator, TouchableOpacity, Modal, Animated, ScrollView } from 'react-native';
-import { Text, TextInput, Button, useTheme, Card, Divider } from 'react-native-paper';
+import { Text, TextInput, Button, useTheme, Card, Divider, List } from 'react-native-paper';
 import MapboxGL from '../../components/map/MapboxWrapper';
 import * as Location from 'expo-location';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { supabase } from '../../services/supabaseClient'; // Import Supabase
 
 // Fallback initial region (Manila)
 const INITIAL_REGION = {
@@ -44,6 +45,9 @@ export default function BookServiceScreen() {
     const [pickupCoords, setPickupCoords] = useState<{ latitude: number; longitude: number } | null>(null);
     const [dropoffCoords, setDropoffCoords] = useState<{ latitude: number; longitude: number } | null>(null);
 
+    // Saved Addresses
+    const [savedAddresses, setSavedAddresses] = useState<any[]>([]);
+
     // Which input is currently focused/active for map selection
     const [activeField, setActiveField] = useState<'pickup' | 'dropoff'>('pickup');
 
@@ -56,6 +60,9 @@ export default function BookServiceScreen() {
     } | null>(null);
     const [loadingRoute, setLoadingRoute] = useState(false);
 
+    // Active booking guard — prevents spam bookings
+    const [hasActiveBooking, setHasActiveBooking] = useState(false);
+
     const activeQuery = activeField === 'pickup' ? pickupText : dropoffText;
 
     useEffect(() => {
@@ -65,7 +72,7 @@ export default function BookServiceScreen() {
         }
     }, [MAPBOX_TOKEN]);
 
-    // EC-Update: Check for active bookings on focus to restore state (handles back navigation)
+    // EC-Update: Check for active bookings on focus to restore state AND block spam
     useFocusEffect(
         useCallback(() => {
             if (!userId) return;
@@ -76,7 +83,8 @@ export default function BookServiceScreen() {
                     const activeBooking = await checkActiveBookings(userId);
 
                     if (activeBooking) {
-                        console.log('[BookService] Restoring active booking:', activeBooking.bookingId);
+                        setHasActiveBooking(true);
+                        console.log('[BookService] Active booking detected:', activeBooking.bookingId, activeBooking.status);
 
                         if (activeBooking.status === 'PENDING') {
                             // Restore "Searching Rider" screen
@@ -99,9 +107,12 @@ export default function BookServiceScreen() {
                                 shareToken: activeBooking.shareToken
                             });
                         }
+                    } else {
+                        setHasActiveBooking(false);
                     }
                 } catch (error) {
                     console.error('[BookService] Error checking persistence:', error);
+                    setHasActiveBooking(false);
                 }
             };
 
@@ -175,6 +186,62 @@ export default function BookServiceScreen() {
         // Simple random token generator
         setSessionToken(Math.random().toString(36).substring(2) + Math.random().toString(36).substring(2));
     }, []);
+
+    // Fetch saved addresses
+    useEffect(() => {
+        const fetchSavedAddresses = async () => {
+            // Only fetch if we have a userId, we might also want to re-fetch on focus if user adds new address
+            if (!userId) return;
+
+            const { data } = await supabase!
+                .from('profiles')
+                .select('saved_addresses')
+                .eq('id', userId)
+                .single();
+
+            if (data?.saved_addresses) {
+                const parsed = typeof data.saved_addresses === 'string'
+                    ? JSON.parse(data.saved_addresses)
+                    : data.saved_addresses;
+                setSavedAddresses(Array.isArray(parsed) ? parsed : []);
+            }
+        };
+        fetchSavedAddresses();
+    }, [userId]);
+
+    // Suggestion Selection Handler for Saved Addresses
+    const handleSelectSavedAddress = (addr: any) => {
+        const coords = {
+            latitude: addr.latitude || 0,
+            longitude: addr.longitude || 0,
+        };
+
+        if (!coords.latitude || !coords.longitude) {
+            // If saved address lacks coords (old data), maybe run geocode, but for now just skip
+            return;
+        }
+
+        cameraRef.current?.setCamera({
+            centerCoordinate: [coords.longitude, coords.latitude],
+            zoomLevel: 15,
+            animationDuration: 1000,
+        });
+
+        if (activeField === 'pickup') {
+            setPickupCoords(coords);
+            setPickupText(addr.address);
+            setActiveField('dropoff');
+            dropoffInputRef.current?.focus();
+        } else {
+            setDropoffCoords(coords);
+            setDropoffText(addr.address);
+        }
+
+        // Hide suggestions by clearing focus (optional, but effectively we want to close the list)
+        // Actually we just hide it by ensuring list logic handles it.
+        // We might want to clear search text if any? 
+        // But activeQuery depends on input text.
+    };
 
     useEffect(() => {
         if (!MAPBOX_TOKEN) return;
@@ -440,7 +507,7 @@ export default function BookServiceScreen() {
         calculateRoute();
     }, [pickupCoords, dropoffCoords, MAPBOX_TOKEN]);
 
-    const handleConfirm = () => {
+    const handleConfirm = async () => {
         if (!pickupCoords || !dropoffCoords) {
             Alert.alert('Missing Location', 'Please select both Pickup and Dropoff locations.');
             return;
@@ -449,6 +516,28 @@ export default function BookServiceScreen() {
         if (!routeData) {
             Alert.alert('Calculating Route', 'Please wait while we calculate your route.');
             return;
+        }
+
+        // Block new bookings if there is already an active one
+        if (hasActiveBooking) {
+            Alert.alert(
+                'Active Delivery Exists',
+                'You already have an active delivery in progress. Please wait for it to complete before creating a new booking.'
+            );
+            return;
+        }
+
+        // Double-check with a fresh query to prevent race conditions
+        if (userId) {
+            const activeBooking = await checkActiveBookings(userId);
+            if (activeBooking) {
+                setHasActiveBooking(true);
+                Alert.alert(
+                    'Active Delivery Exists',
+                    'You already have an active delivery in progress. Please wait for it to complete before creating a new booking.'
+                );
+                return;
+            }
         }
 
         console.log('[BookService] Confirmed Booking - Route Data:', routeData);
@@ -651,14 +740,51 @@ export default function BookServiceScreen() {
             {/* Helper text removed */}
 
             {/* Suggestions List */}
-            {(isSearching || searchError || suggestions.length > 0) && (
+            {/* Logic: Show if searching OR if we have valid saved addresses and inputs are focused (implied by this rendering conditionally if activeField set?) */}
+            {/* Actually we want to show this overlay if there is a query OR if the field is empty (to show saved/recent) */}
+            {/* We need to tweak the conditional. Let's say: if isSearching OR suggestions>0 OR (activeField && !routeData) */}
+            {/* Simplest: If the query > 2 chars, we show suggestions. If query is empty, we show saved addresses + current location option. */}
+            {(isSearching || searchError || suggestions.length > 0 || (activeQuery.length === 0 && !routeData)) && (
                 <View style={[styles.suggestionsContainer, { top: 160 }]}>
                     <ScrollView
                         keyboardShouldPersistTaps="handled"
                         showsVerticalScrollIndicator={false}
                         contentContainerStyle={{ flexGrow: 1 }}
                     >
-                        {/* "Set location on map" - Always visible when searching if no exact match yet */}
+                        {/* Saved Addresses Section - Visible when NOT searching provided we have some */}
+                        {!isSearching && suggestions.length === 0 && savedAddresses.length > 0 && (
+                            <View>
+                                <List.Subheader style={{ color: theme.colors.primary }}>Saved Locations</List.Subheader>
+                                {savedAddresses.map((addr: any) => (
+                                    <TouchableOpacity
+                                        key={addr.id}
+                                        style={styles.suggestionItem}
+                                        onPress={() => handleSelectSavedAddress(addr)}
+                                    >
+                                        <View style={[styles.iconCircle, { backgroundColor: '#FFF3E0' }]}>
+                                            <MaterialCommunityIcons
+                                                name={addr.label.toLowerCase().includes('home') ? 'home' : addr.label.toLowerCase().includes('office') ? 'office-building' : 'star'}
+                                                size={20}
+                                                color="#F57C00"
+                                            />
+                                        </View>
+                                        <View style={{ marginLeft: 12 }}>
+                                            <Text variant="bodyMedium" style={{ fontWeight: 'bold', color: '#F57C00' }}>
+                                                {addr.label}
+                                            </Text>
+                                            <Text variant="bodySmall" numberOfLines={1} style={{ color: theme.colors.onSurfaceVariant }}>
+                                                {addr.address}
+                                            </Text>
+                                        </View>
+                                    </TouchableOpacity>
+                                ))}
+                                <Divider style={{ marginVertical: 8 }} />
+                            </View>
+                        )}
+
+
+                        {/* "My Current Location" - Only for pickup */}
+                        {/* Show "Set location on map" - Always visible when searching or if query is empty */}
                         <TouchableOpacity
                             style={styles.suggestionItem}
                             onPress={() => {

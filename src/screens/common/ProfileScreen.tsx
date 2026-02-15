@@ -9,6 +9,7 @@ export default function ProfileScreen() {
     const navigation = useNavigation<any>();
     const theme = useTheme();
     const [profile, setProfile] = useState<any>(null);
+    const [defaultAddress, setDefaultAddress] = useState<string>('Not set');
     const [refreshing, setRefreshing] = useState(false);
 
     const fetchProfile = async () => {
@@ -20,6 +21,29 @@ export default function ProfileScreen() {
                 .eq('id', user.id)
                 .single();
             setProfile(data);
+
+            // Parse saved_addresses to find default
+            if (data?.saved_addresses) {
+                try {
+                    const addresses = typeof data.saved_addresses === 'string'
+                        ? JSON.parse(data.saved_addresses)
+                        : data.saved_addresses;
+
+                    if (Array.isArray(addresses)) {
+                        const def = addresses.find((a: any) => a.isDefault);
+                        if (def) {
+                            setDefaultAddress(def.address);
+                        } else {
+                            setDefaultAddress(data.home_address || 'Not set');
+                        }
+                    }
+                } catch (e) {
+                    console.error("Error parsing addresses", e);
+                    setDefaultAddress(data.home_address || 'Not set');
+                }
+            } else {
+                setDefaultAddress(data?.home_address || 'Not set');
+            }
         }
     };
 
@@ -68,9 +92,10 @@ export default function ProfileScreen() {
                     />
                     <Divider />
                     <List.Item
-                        title="Address"
-                        description={profile?.home_address || 'Not set'}
-                        left={props => <List.Icon {...props} icon="map-marker" />}
+                        title="Default Address"
+                        description={defaultAddress}
+                        descriptionNumberOfLines={2}
+                        left={props => <List.Icon {...props} icon="map-marker-star" />}
                     />
                     <List.Item
                         title="Saved Addresses"

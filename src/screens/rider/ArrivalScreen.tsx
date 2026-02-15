@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { View, StyleSheet, Alert, ScrollView, Platform, Linking } from 'react-native';
 import { Text, Button, Card, TextInput, Portal, Modal, IconButton } from 'react-native-paper';
 import { useNavigation, useRoute } from '@react-navigation/native';
@@ -144,7 +144,7 @@ export default function ArrivalScreen() {
 
     // EC-97: Low-Light State
     const [lowLightState, setLowLightState] = useState<LowLightState | null>(null);
-    const [tamperDeliveryFlagged, setTamperDeliveryFlagged] = useState(false);
+    const tamperDeliveryFlaggedRef = useRef(false);
 
     // EC-02: BLE Transfer State
     const [showBleModal, setShowBleModal] = useState(false);
@@ -201,15 +201,15 @@ export default function ArrivalScreen() {
         const unsubscribeTamper = subscribeToTamper(params.boxId, (state) => {
             setTamperState(state);
             if (state?.detected) {
-                if (!tamperDeliveryFlagged) {
-                    setTamperDeliveryFlagged(true);
+                if (!tamperDeliveryFlaggedRef.current) {
+                    tamperDeliveryFlaggedRef.current = true;
                     updateDeliveryStatus(params.deliveryId, 'TAMPERED', {
                         tampered_at: Date.now(),
                         tamper_lockdown: Boolean(state.lockdown),
                     });
                 }
                 Alert.alert(
-                    '🚨 SECURITY ALERT',
+                    'SECURITY ALERT',
                     'Box tamper detected! The box is now in lockdown mode. Contact support.',
                     [{ text: 'Contact Support', style: 'destructive' }]
                 );
@@ -235,7 +235,9 @@ export default function ArrivalScreen() {
             unsubscribeTamper();
             unsubscribeLowLight();
         };
-    }, [params.boxId, params.deliveryId, tamperDeliveryFlagged]);
+    }, [params.boxId, params.deliveryId]);
+
+    const [deliveryOtp, setDeliveryOtp] = useState<string | null>(null);
 
     useEffect(() => {
         const unsubscribe = subscribeToDelivery(params.deliveryId, (delivery) => {
@@ -244,6 +246,26 @@ export default function ArrivalScreen() {
             }
             setDeliveryStatus(delivery.status);
         });
+
+        // Fetch OTP from Supabase (source of truth for OTP)
+        const fetchOtp = async () => {
+            try {
+                const { supabase } = await import('../../services/supabaseClient');
+                if (supabase) {
+                    const { data } = await supabase
+                        .from('deliveries')
+                        .select('otp_code')
+                        .eq('id', params.deliveryId)
+                        .single();
+                    if (data?.otp_code) {
+                        setDeliveryOtp(data.otp_code);
+                    }
+                }
+            } catch (e) {
+                console.error('[ArrivalScreen] Failed to fetch OTP:', e);
+            }
+        };
+        fetchOtp();
 
         return unsubscribe;
     }, [params.deliveryId]);
@@ -397,46 +419,6 @@ export default function ArrivalScreen() {
         return () => clearInterval(interval);
     }, [waitTimerState]);
 
-    // Simulated GPS check (in real app, use expo-location)
-    const checkLocation = useCallback(() => {
-        // Simulate getting current position
-        const simulatedLat = params.targetLat + (Math.random() - 0.5) * 0.001;
-        const simulatedLng = params.targetLng + (Math.random() - 0.5) * 0.001;
-        const position = { lat: simulatedLat, lng: simulatedLng, accuracy: 15 };
-
-        setCurrentPosition(position);
-        const result = checkGeofence(position, geofence);
-        setIsInsideGeoFence(result.isInside);
-        setDistanceMeters(result.distanceMeters);
-
-        if (result.isInside) {
-            updateDeliveryStatus(params.deliveryId, 'ARRIVED', {
-                arrived_at: Date.now(),
-            });
-        }
-
-        // EC-12: Suggest geofence expansion if needed
-        if (!result.isInside && result.needsExpansion) {
-            Alert.alert(
-                'GPS Accuracy Issue',
-                `You appear to be ${result.distanceMeters}m from the delivery point. Would you like to expand the geofence?`,
-                [
-                    { text: 'Cancel', style: 'cancel' },
-                    {
-                        text: 'Expand',
-                        onPress: () => {
-                            const expanded = expandGeofence(geofence, result.suggestedRadiusMeters);
-                            setGeofence(expanded);
-                            // Re-check with expanded geofence
-                            const newResult = checkGeofence(position, expanded);
-                            setIsInsideGeoFence(newResult.isInside);
-                        }
-                    }
-                ]
-            );
-        }
-    }, [geofence, params.targetLat, params.targetLng]);
-
     // EC-11: Start wait timer (Customer Not Home)
     const handleCustomerNotHome = async () => {
         setIsLoading(true);
@@ -547,6 +529,11 @@ export default function ArrivalScreen() {
 
     // EC-02: BLE OTP Transfer
     const handleBleTransfer = async () => {
+        if (!deliveryOtp) {
+            Alert.alert('OTP Unavailable', 'Could not retrieve the delivery OTP. Please try again.');
+            return;
+        }
+
         setShowBleModal(true);
         setBleStatus('scanning');
         setBleMessage('Scanning for nearby box...');
@@ -554,7 +541,7 @@ export default function ArrivalScreen() {
         try {
             const result = await bleOtpService.sendOtpToBox(
                 params.boxId,
-                '123456', // Would come from delivery OTP
+                deliveryOtp,
                 params.deliveryId,
                 {
                     onScanStart: () => {

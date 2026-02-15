@@ -3,7 +3,8 @@ import { View, StyleSheet, Alert, ScrollView } from 'react-native';
 import { Text, Button, Card, Avatar } from 'react-native-paper';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import SwipeConfirmButton from '../../components/SwipeConfirmButton';
-import { subscribeToDelivery, updateDeliveryStatus, calculateHaversineDistance, DeliveryRecord } from '../../services/riderMatchingService';
+import { subscribeToDelivery, updateDeliveryStatus, calculateHaversineDistance, markRiderAvailable, DeliveryRecord } from '../../services/riderMatchingService';
+import useAuthStore from '../../store/authStore';
 import { uploadDeliveryProofPhoto } from '../../services/proofPhotoService';
 import { subscribeToLocation, LocationData } from '../../services/firebaseClient';
 
@@ -24,6 +25,7 @@ export default function DeliveryCompletionScreen() {
     const navigation = useNavigation<any>();
     const route = useRoute();
     const params = (route.params as CompletionRouteParams | undefined) || {};
+    const riderId = useAuthStore((state: any) => state.user?.userId) as string | undefined;
     const deliveryId = params.deliveryId;
     const boxId = params.boxId || '';
     const [status, setStatus] = useState<string>('IN_TRANSIT');
@@ -208,6 +210,12 @@ export default function DeliveryCompletionScreen() {
             }
 
             setStatus('COMPLETED');
+
+            // Restore rider availability so they can receive new orders
+            if (riderId) {
+                await markRiderAvailable(riderId);
+            }
+
             Alert.alert('Delivery Completed', 'All required delivery states are now satisfied.', [
                 {
                     text: 'Back to Dashboard',

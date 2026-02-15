@@ -26,7 +26,6 @@
         "ACCESS_BACKGROUND_LOCATION",
         "FOREGROUND_SERVICE",
         "FOREGROUND_SERVICE_LOCATION",
-        "FOREGROUND_SERVICE_DATA_SYNC",
         "WAKE_LOCK",
         "REQUEST_IGNORE_BATTERY_OPTIMIZATIONS",
         "POST_NOTIFICATIONS",
@@ -41,7 +40,12 @@
     "plugins": [
       "expo-location",
       "@react-native-google-signin/google-signin",
-      "@rnmapbox/maps",
+      [
+        "@rnmapbox/maps",
+        {
+          "RNMapboxMapsImpl": "mapbox"
+        }
+      ],
       [
         "expo-notifications",
         {
@@ -60,6 +64,17 @@
       ],
       "./scripts/withAndroidManifestHelpers.js",
       "expo-font",
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "kotlinVersion": "2.0.21",
+            "compileSdkVersion": 35,
+            "targetSdkVersion": 34,
+            "buildToolsVersion": "35.0.0"
+          }
+        }
+      ],
       "@react-native-community/datetimepicker"
     ],
     "extra": {

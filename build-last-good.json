@@ -1,0 +1,162 @@
+﻿{
+    "lastSuccessfulBuild":  "2026-02-15T11:54:24.7622416+08:00",
+    "environment":  {
+                        "androidSdkRoot":  "C:/Users/Lorenzo Bela/AppData/Local/Android/Sdk",
+                        "androidHome":  "C:/Users/Lorenzo Bela/AppData/Local/Android/Sdk",
+                        "androidNdkHome":  "C:\\Users\\Lorenzo Bela\\AppData\\Local\\Android\\Sdk\\ndk\\27.2.12479018",
+                        "ndkHome":  "C:\\Users\\Lorenzo Bela\\AppData\\Local\\Android\\Sdk\\ndk\\27.2.12479018",
+                        "javaHome":  "C:\\Program Files\\Eclipse Adoptium\\jdk-17.0.17.10-hotspot\\",
+                        "nodeBinary":  "C:\\Program Files\\nodejs\\node.exe",
+                        "androidStl":  "c++_shared",
+                        "cmakeAndroidStlType":  "c++_shared"
+                    },
+    "versions":  {
+                     "node":  "v22.16.0",
+                     "java":  {
+                                  "Exception":  {
+                                                    "SerializedRemoteException":  null,
+                                                    "SerializedRemoteInvocationInfo":  null,
+                                                    "ErrorRecord":  {
+                                                                        "Exception":  {
+                                                                                          "Message":  "openjdk version \"17.0.17\" 2025-10-21",
+                                                                                          "Data":  {
+
+                                                                                                   },
+                                                                                          "InnerException":  null,
+                                                                                          "TargetSite":  null,
+                                                                                          "StackTrace":  null,
+                                                                                          "HelpLink":  null,
+                                                                                          "Source":  null,
+                                                                                          "HResult":  -2146233087
+                                                                                      },
+                                                                        "TargetObject":  null,
+                                                                        "CategoryInfo":  {
+                                                                                             "Category":  0,
+                                                                                             "Activity":  "",
+                                                                                             "Reason":  "ParentContainsErrorRecordException",
+                                                                                             "TargetName":  "",
+                                                                                             "TargetType":  ""
+                                                                                         },
+                                                                        "FullyQualifiedErrorId":  "RuntimeException",
+                                                                        "ErrorDetails":  null,
+                                                                        "InvocationInfo":  null,
+                                                                        "ScriptStackTrace":  null,
+                                                                        "PipelineIterationInfo":  [
+
+                                                                                                  ]
+                                                                    },
+                                                    "WasThrownFromThrowStatement":  false,
+                                                    "Message":  "openjdk version \"17.0.17\" 2025-10-21",
+                                                    "Data":  {
+
+                                                             },
+                                                    "InnerException":  null,
+                                                    "TargetSite":  null,
+                                                    "StackTrace":  null,
+                                                    "HelpLink":  null,
+                                                    "Source":  null,
+                                                    "HResult":  -2146233087
+                                                },
+                                  "TargetObject":  "openjdk version \"17.0.17\" 2025-10-21",
+                                  "CategoryInfo":  {
+                                                       "Category":  0,
+                                                       "Activity":  "",
+                                                       "Reason":  "RemoteException",
+                                                       "TargetName":  "openjdk version \"17.0.17\" 2025-10-21",
+                                                       "TargetType":  "String"
+                                                   },
+                                  "FullyQualifiedErrorId":  "NativeCommandError",
+                                  "ErrorDetails":  null,
+                                  "InvocationInfo":  {
+                                                         "MyCommand":  {
+                                                                           "Path":  "C:\\Program Files\\Eclipse Adoptium\\jdk-17.0.17.10-hotspot\\\\bin\\java.exe",
+                                                                           "Extension":  ".exe",
+                                                                           "Definition":  "C:\\Program Files\\Eclipse Adoptium\\jdk-17.0.17.10-hotspot\\\\bin\\java.exe",
+                                                                           "Source":  "C:\\Program Files\\Eclipse Adoptium\\jdk-17.0.17.10-hotspot\\\\bin\\java.exe",
+                                                                           "Version":  {
+                                                                                           "Major":  17,
+                                                                                           "Minor":  0,
+                                                                                           "Build":  17,
+                                                                                           "Revision":  0,
+                                                                                           "MajorRevision":  0,
+                                                                                           "MinorRevision":  0
+                                                                                       },
+                                                                           "Visibility":  0,
+                                                                           "OutputType":  [
+                                                                                              {
+                                                                                                  "Name":  "System.String",
+                                                                                                  "Type":  "string",
+                                                                                                  "TypeDefinitionAst":  null
+                                                                                              }
+                                                                                          ],
+                                                                           "Name":  "java.exe",
+                                                                           "CommandType":  32,
+                                                                           "ModuleName":  "",
+                                                                           "Module":  null,
+                                                                           "RemotingCapability":  1,
+                                                                           "Parameters":  null,
+                                                                           "ParameterSets":  null
+                                                                       },
+                                                         "BoundParameters":  {
+
+                                                                             },
+                                                         "UnboundArguments":  [
+
+                                                                              ],
+                                                         "ScriptLineNumber":  1441,
+                                                         "OffsetInLine":  21,
+                                                         "HistoryId":  -1,
+                                                         "ScriptName":  "C:\\Users\\Lorenzo Bela\\Downloads\\Thesis 24-25 Smart Top Box\\mobile\\build-android.ps1",
+                                                         "Line":  "    $javaVersion = (\u0026 java -version 2\u003e\u00261 | Select-Object -First 1)\r\n",
+                                                         "PositionMessage":  "At C:\\Users\\Lorenzo Bela\\Downloads\\Thesis 24-25 Smart Top Box\\mobile\\build-android.ps1:1441 char:21\r\n+     $javaVersion = (\u0026 java -version 2\u003e\u00261 | Select-Object -First 1)\r\n+                     ~~~~~~~~~~~~~~~~~~~~",
+                                                         "PSScriptRoot":  "C:\\Users\\Lorenzo Bela\\Downloads\\Thesis 24-25 Smart Top Box\\mobile",
+                                                         "PSCommandPath":  "C:\\Users\\Lorenzo Bela\\Downloads\\Thesis 24-25 Smart Top Box\\mobile\\build-android.ps1",
+                                                         "InvocationName":  "\u0026",
+                                                         "PipelineLength":  0,
+                                                         "PipelinePosition":  0,
+                                                         "ExpectingInput":  false,
+                                                         "CommandOrigin":  1,
+                                                         "DisplayScriptPosition":  null
+                                                     },
+                                  "ScriptStackTrace":  "at \u003cScriptBlock\u003e, C:\\Users\\Lorenzo Bela\\Downloads\\Thesis 24-25 Smart Top Box\\mobile\\build-android.ps1: line 1441",
+                                  "PipelineIterationInfo":  [
+                                                                0,
+                                                                0,
+                                                                0
+                                                            ],
+                                  "writeErrorStream":  true,
+                                  "PSMessageDetails":  null
+                              },
+                     "kotlin":  "2.0.21"
+                 },
+    "criticalPackageVersions":  {
+                                    "react-native":  "0.81.5",
+                                    "react-native-svg":  "15.12.1",
+                                    "react-native-reanimated":  "4.1.6",
+                                    "react-native-screens":  "4.16.0",
+                                    "react-native-gesture-handler":  "2.28.0",
+                                    "react-native-worklets":  "0.5.1",
+                                    "expo":  "54.0.33"
+                                },
+    "patches":  "react-native+0.81.5.patch",
+    "knownIssuesFixed":  [
+                             "KOTLIN_VERSION_PROPERTY: Post-prebuild adds kotlinVersion= to gradle.properties",
+                             "KOTLIN_KSP_COMPAT: kotlinVersion must be 2.0.0+ for KSP",
+                             "RN_SVG_NEW_ARCH: react-native-svg must be 15.12.1+ for RN 0.81",
+                             "STALE_LOCK: package-lock.json deleted before npm install in build dir",
+                             "PREBUILD_WIPES: All android/ patches re-applied after prebuild --clean"
+                         ],
+    "buildConfig":  {
+                        "timestamp":  "2026-02-15T11:44:36.8472073+08:00",
+                        "projectRoot":  "C:\\Dev\\TopBox\\mobile",
+                        "androidDir":  "C:\\Dev\\TopBox\\mobile\\android",
+                        "androidSdkRoot":  "C:/Users/Lorenzo Bela/AppData/Local/Android/Sdk",
+                        "androidHome":  "C:/Users/Lorenzo Bela/AppData/Local/Android/Sdk",
+                        "androidNdkHome":  "C:\\Users\\Lorenzo Bela\\AppData\\Local\\Android\\Sdk\\ndk\\27.2.12479018",
+                        "ndkHome":  "C:\\Users\\Lorenzo Bela\\AppData\\Local\\Android\\Sdk\\ndk\\27.2.12479018",
+                        "javaHome":  "C:\\Program Files\\Eclipse Adoptium\\jdk-17.0.17.10-hotspot\\",
+                        "nodeBinary":  "C:\\Program Files\\nodejs\\node.exe",
+                        "androidStl":  "c++_shared",
+                        "cmakeAndroidStlType":  "c++_shared"
+                    }
+}

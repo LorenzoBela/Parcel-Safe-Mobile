@@ -6,7 +6,7 @@
  */
 
 import { getFirebaseDatabase } from './firebaseClient';
-import { ref, get, set, update, remove, onValue, off, onDisconnect } from 'firebase/database';
+import { ref, get, set, update, remove, onValue, off, onDisconnect, runTransaction } from 'firebase/database';
 import { showIncomingOrderNotification } from './pushNotificationService';
 import statusUpdateService from './statusUpdateService';
 import { supabase } from './supabaseClient';
@@ -350,6 +350,19 @@ export async function notifyNearbyRiders(
         }
     }
 
+    // Store notified rider IDs in the pending booking so that acceptOrder()
+    // can later cancel their requests when one rider wins the race.
+    if (notifiedRiders.length > 0) {
+        try {
+            const db = getFirebaseDatabase();
+            await update(ref(db, `/pending_bookings/${booking.bookingId}`), {
+                notified_riders: notifiedRiders,
+            });
+        } catch (err) {
+            console.error('[RiderMatching] Failed to store notified riders on booking:', err);
+        }
+    }
+
     return {
         notifiedCount: notifiedRiders.length,
         riders: notifiedRiders,
@@ -357,7 +370,12 @@ export async function notifyNearbyRiders(
 }
 
 /**
- * Accept an order as a rider
+ * Accept an order as a rider (atomic via runTransaction to prevent race conditions)
+ *
+ * Uses Firebase runTransaction() on /pending_bookings/{bookingId} to guarantee
+ * that only one rider can accept a booking even if multiple riders tap "Accept"
+ * simultaneously. The losing rider(s) receive `false` so the UI can show
+ * "This delivery was already accepted by another rider."
  */
 export async function acceptOrder(
     riderId: string,
@@ -372,21 +390,38 @@ export async function acceptOrder(
     try {
         const db = getFirebaseDatabase();
         const bookingRef = ref(db, `/pending_bookings/${bookingId}`);
-        const bookingSnapshot = await get(bookingRef);
+        const acceptedAt = Date.now();
 
-        if (!bookingSnapshot.exists()) {
+        // --- Atomic claim via runTransaction ---
+        // If two riders call this at the same time, Firebase will retry the
+        // loser's handler with the updated data. The loser will see
+        // status !== 'SEARCHING' and return `undefined` to abort.
+        const txResult = await runTransaction(bookingRef, (currentData) => {
+            if (!currentData) {
+                // Booking no longer exists — abort
+                return undefined;
+            }
+            if (currentData.status !== 'SEARCHING' || currentData.accepted_by) {
+                // Already accepted by another rider — abort
+                return undefined;
+            }
+            // Claim the booking for this rider
+            return {
+                ...currentData,
+                status: 'ACCEPTED',
+                accepted_by: riderId,
+                accepted_at: acceptedAt,
+            };
+        });
+
+        if (!txResult.committed) {
+            // Transaction aborted — booking was already taken or missing
+            console.log('[RiderMatching] Booking already taken or missing:', bookingId);
             return false;
         }
 
-        const booking = bookingSnapshot.val() as any;
-        const acceptedAt = Date.now();
-
-        // Update the pending booking
-        await update(bookingRef, {
-            status: 'ACCEPTED',
-            accepted_by: riderId,
-            accepted_at: acceptedAt,
-        });
+        // Transaction succeeded — this rider won the race.
+        const booking = txResult.snapshot.val() as any;
 
         // Mark the request as accepted
         await update(ref(db, `/rider_requests/${riderId}/${requestId}`), {
@@ -428,13 +463,17 @@ export async function acceptOrder(
             updated_at: acceptedAt,
         });
 
+        // Cancel other riders' pending requests for this booking
+        const notifiedRiders: string[] = booking.notified_riders || [];
+        await cancelOtherRiderRequests(bookingId, riderId, notifiedRiders);
+
         // Sync Accept to Supabase
         if (supabase) {
             const updates: any = {
                 rider_id: riderId,
                 rider_name: metadata?.riderName,
                 rider_phone: metadata?.riderPhone,
-                status: 'ASSIGNED', // Or 'ACCEPTED' if your DB enum distinguishes
+                status: 'ASSIGNED',
                 accepted_at: new Date(acceptedAt).toISOString(),
                 updated_at: new Date(acceptedAt).toISOString(),
             };
@@ -458,6 +497,59 @@ export async function acceptOrder(
         return true;
     } catch (error) {
         console.error('Error accepting order:', error);
+        return false;
+    }
+}
+
+/**
+ * Cancel other riders' pending requests after a booking has been accepted.
+ *
+ * Marks all PENDING requests for the given bookingId as 'TAKEN' so that
+ * other riders' IncomingOrderModals can auto-dismiss with a clear message.
+ */
+async function cancelOtherRiderRequests(
+    bookingId: string,
+    acceptedRiderId: string,
+    notifiedRiderIds: string[]
+): Promise<void> {
+    const db = getFirebaseDatabase();
+
+    for (const riderId of notifiedRiderIds) {
+        if (riderId === acceptedRiderId) continue;
+
+        try {
+            const requestsRef = ref(db, `/rider_requests/${riderId}`);
+            const snapshot = await get(requestsRef);
+            if (!snapshot.exists()) continue;
+
+            const requests = snapshot.val();
+            for (const [reqId, reqData] of Object.entries(requests as Record<string, any>)) {
+                if (reqData.booking_id === bookingId && reqData.status === 'PENDING') {
+                    await update(ref(db, `/rider_requests/${riderId}/${reqId}`), {
+                        status: 'TAKEN',
+                    });
+                }
+            }
+        } catch (err) {
+            console.error(`[RiderMatching] Failed to cancel request for rider ${riderId}:`, err);
+            // Non-critical — continue with other riders
+        }
+    }
+}
+
+/**
+ * Mark rider as available again (e.g. after delivery completes)
+ */
+export async function markRiderAvailable(riderId: string): Promise<boolean> {
+    try {
+        const db = getFirebaseDatabase();
+        await update(ref(db, `/online_riders/${riderId}`), {
+            is_available: true,
+        });
+        console.log('[RiderMatching] Rider marked available:', riderId);
+        return true;
+    } catch (error) {
+        console.error('[RiderMatching] Failed to mark rider available:', error);
         return false;
     }
 }
@@ -581,6 +673,35 @@ export async function updateDeliveryStatus(
             updated_at: Date.now(),
             ...(additionalFields || {}),
         });
+
+        // Sync status to Supabase (Source of Truth)
+        if (supabase) {
+            const supabaseUpdates: Record<string, any> = {
+                status,
+                updated_at: new Date().toISOString(),
+            };
+            // Map common additional fields to Supabase columns
+            if (additionalFields?.picked_up_at) {
+                supabaseUpdates.picked_up_at = new Date(additionalFields.picked_up_at as number).toISOString();
+            }
+            if (additionalFields?.completed_at) {
+                supabaseUpdates.delivered_at = new Date(additionalFields.completed_at as number).toISOString();
+            }
+            if (additionalFields?.proof_photo_url) {
+                supabaseUpdates.proof_photo_url = additionalFields.proof_photo_url;
+            }
+            const { error: sbError } = await supabase
+                .from('deliveries')
+                .update(supabaseUpdates)
+                .eq('id', deliveryId);
+            if (sbError) {
+                console.error('[updateDeliveryStatus] Supabase sync failed:', sbError.message);
+                // Don't fail the whole operation — Firebase is already updated
+            } else {
+                console.log('[updateDeliveryStatus] Supabase synced:', deliveryId, status);
+            }
+        }
+
         return true;
     } catch (error) {
         console.error('Error updating delivery status:', error);
@@ -790,21 +911,32 @@ export async function checkActiveBookings(userId: string): Promise<any | null> {
         // 1. Check for Pending Bookings (in Firebase)
         // These are bookings that are "Searching for Riders"
         const db = getFirebaseDatabase();
-        const pendingRef = ref(db, `bookings`);
+        const pendingRef = ref(db, `pending_bookings`);
         const pendingSnapshot = await get(pendingRef);
 
         if (pendingSnapshot.exists()) {
             const bookings = pendingSnapshot.val();
             // Iterate to find a booking for this user
             for (const key in bookings) {
-                if (bookings[key].customerId === userId && bookings[key].status === 'PENDING') {
-                    // Check if it's not stale (e.g. older than 10 mins)
-                    const createdAt = bookings[key].createdAt;
+                const b = bookings[key];
+                if (b.customer_id === userId && (b.status === 'SEARCHING' || b.status === 'ACCEPTED')) {
+                    // Check if it's not stale (e.g. older than 10 mins for SEARCHING)
+                    const createdAt = b.created_at;
                     const now = Date.now();
-                    if (now - createdAt < 10 * 60 * 1000) {
+                    if (b.status === 'ACCEPTED' || (now - createdAt < 10 * 60 * 1000)) {
                         return {
-                            ...bookings[key],
-                            status: 'PENDING'
+                            bookingId: key,
+                            customerId: b.customer_id,
+                            pickupAddress: b.pickup_address,
+                            dropoffAddress: b.dropoff_address,
+                            pickupLat: b.pickup_lat,
+                            pickupLng: b.pickup_lng,
+                            dropoffLat: b.dropoff_lat,
+                            dropoffLng: b.dropoff_lng,
+                            estimatedFare: b.estimated_fare,
+                            shareToken: b.share_token,
+                            riderId: b.accepted_by || null,
+                            status: b.status === 'SEARCHING' ? 'PENDING' : b.status,
                         };
                     }
                 }
@@ -812,29 +944,31 @@ export async function checkActiveBookings(userId: string): Promise<any | null> {
         }
 
         // 2. Check for Active Deliveries (in Supabase/PostgreSQL)
-        // These are bookings that have been accepted by a rider
-        const { data, error } = await supabase
-            .from('deliveries')
-            .select('*')
-            .eq('customer_id', userId)
-            .in('status', ['ASSIGNED', 'PICKED_UP', 'IN_TRANSIT', 'ARRIVED'])
-            .order('created_at', { ascending: false })
-            .limit(1);
+        // These are bookings that have been created or accepted by a rider
+        if (supabase) {
+            const { data, error } = await supabase
+                .from('deliveries')
+                .select('*')
+                .eq('customer_id', userId)
+                .in('status', ['PENDING', 'ASSIGNED', 'PICKED_UP', 'IN_TRANSIT', 'ARRIVED'])
+                .order('created_at', { ascending: false })
+                .limit(1);
 
-        if (!error && data && data.length > 0) {
-            const delivery = data[0];
-            return {
-                bookingId: delivery.id,
-                riderId: delivery.rider_id,
-                shareToken: delivery.share_token,
-                status: delivery.status,
-                // Map other fields as needed for restoration
-                pickupLat: delivery.pickup_lat,
-                pickupLng: delivery.pickup_lng,
-                dropoffLat: delivery.dropoff_lat,
-                dropoffLng: delivery.dropoff_lng,
-                estimatedFare: delivery.estimated_fare
-            };
+            if (!error && data && data.length > 0) {
+                const delivery = data[0];
+                return {
+                    bookingId: delivery.id,
+                    riderId: delivery.rider_id,
+                    shareToken: delivery.share_token,
+                    status: delivery.status,
+                    // Map other fields as needed for restoration
+                    pickupLat: delivery.pickup_lat,
+                    pickupLng: delivery.pickup_lng,
+                    dropoffLat: delivery.dropoff_lat,
+                    dropoffLng: delivery.dropoff_lng,
+                    estimatedFare: delivery.estimated_fare
+                };
+            }
         }
 
         return null;

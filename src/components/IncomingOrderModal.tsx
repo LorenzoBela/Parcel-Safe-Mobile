@@ -10,23 +10,29 @@ import { View, StyleSheet, Animated, Vibration, Modal as RNModal } from 'react-n
 import { Text, Button, Surface, useTheme, IconButton, Divider } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { RiderOrderRequest } from '../services/riderMatchingService';
+import { getFirebaseDatabase } from '../services/firebaseClient';
+import { ref, onValue, off } from 'firebase/database';
 
 interface IncomingOrderModalProps {
     visible: boolean;
     request: RiderOrderRequest | null;
     requestId: string;
+    riderId?: string;
     onAccept: () => void;
     onReject: () => void;
     onExpire: () => void;
+    onTaken?: () => void;
 }
 
 export default function IncomingOrderModal({
     visible,
     request,
     requestId,
+    riderId,
     onAccept,
     onReject,
     onExpire,
+    onTaken,
 }: IncomingOrderModalProps) {
     const theme = useTheme();
     const [timeLeft, setTimeLeft] = useState(30);
@@ -93,6 +99,25 @@ export default function IncomingOrderModal({
 
         return () => clearInterval(timer);
     }, [visible, request?.bookingId, onExpire]); // Depend on bookingId, not the whole request object
+
+    // Real-time listener: auto-dismiss when another rider accepts (status → TAKEN)
+    useEffect(() => {
+        if (!visible || !riderId || !requestId) return;
+
+        const db = getFirebaseDatabase();
+        const requestRef = ref(db, `/rider_requests/${riderId}/${requestId}`);
+
+        const unsubscribe = onValue(requestRef, (snapshot) => {
+            if (!snapshot.exists()) return;
+            const data = snapshot.val();
+            if (data.status === 'TAKEN') {
+                // Another rider accepted — auto-dismiss this modal
+                onTaken?.();
+            }
+        });
+
+        return () => off(requestRef);
+    }, [visible, riderId, requestId, onTaken]);
 
     if (!request) return null;
 

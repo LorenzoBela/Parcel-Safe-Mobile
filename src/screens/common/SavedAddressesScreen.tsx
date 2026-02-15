@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { View, StyleSheet, ScrollView, Alert, TouchableOpacity } from 'react-native';
-import { Text, Button, useTheme, Surface, IconButton, TextInput, Portal, Modal, Divider } from 'react-native-paper';
+import { Text, Button, useTheme, Surface, IconButton, TextInput, Portal, Modal, Divider, Checkbox } from 'react-native-paper';
 import { useNavigation } from '@react-navigation/native';
 import { supabase } from '../../services/supabaseClient';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -13,6 +13,7 @@ interface SavedAddress {
     details?: string; // e.g., "Unit 402"
     latitude?: number;
     longitude?: number;
+    isDefault?: boolean;
 }
 
 export default function SavedAddressesScreen() {
@@ -27,9 +28,10 @@ export default function SavedAddressesScreen() {
     const [label, setLabel] = useState('');
     const [addressText, setAddressText] = useState('');
     const [details, setDetails] = useState('');
+    const [isDefault, setIsDefault] = useState(false);
     const [saving, setSaving] = useState(false);
     const [locationCoords, setLocationCoords] = useState<{ latitude: number; longitude: number } | null>(null);
-    
+
     // Location Picker State
     const [showLocationPicker, setShowLocationPicker] = useState(false);
 
@@ -96,6 +98,7 @@ export default function SavedAddressesScreen() {
             label,
             address: addressText,
             details,
+            isDefault: isDefault,
             ...(locationCoords && { latitude: locationCoords.latitude, longitude: locationCoords.longitude })
         };
 
@@ -105,6 +108,15 @@ export default function SavedAddressesScreen() {
         } else {
             updatedList = [...addresses, newAddress];
         }
+
+        // If setting as default, unset others
+        if (isDefault) {
+            updatedList = updatedList.map(a =>
+                a.id === newAddress.id ? a : { ...a, isDefault: false }
+            );
+        }
+
+        // Check if there's no default at all, maybe force first one? Optional.
 
         const success = await saveAddressesToDB(updatedList);
         setSaving(false);
@@ -138,6 +150,7 @@ export default function SavedAddressesScreen() {
         setLabel(addr.label);
         setAddressText(addr.address);
         setDetails(addr.details || '');
+        setIsDefault(!!addr.isDefault);
         if (addr.latitude && addr.longitude) {
             setLocationCoords({ latitude: addr.latitude, longitude: addr.longitude });
         } else {
@@ -156,6 +169,7 @@ export default function SavedAddressesScreen() {
         setLabel('');
         setAddressText('');
         setDetails('');
+        setIsDefault(false);
         setLocationCoords(null);
     };
 
@@ -180,6 +194,11 @@ export default function SavedAddressesScreen() {
                                         color={theme.colors.primary}
                                     />
                                     <Text variant="titleMedium" style={[styles.cardLabel, { color: theme.colors.onSurface }]}>{addr.label}</Text>
+                                    {addr.isDefault && (
+                                        <View style={[styles.defaultBadge, { backgroundColor: theme.colors.primaryContainer }]}>
+                                            <Text style={{ fontSize: 10, color: theme.colors.primary, fontWeight: 'bold' }}>DEFAULT</Text>
+                                        </View>
+                                    )}
                                 </View>
                                 <View style={{ flexDirection: 'row' }}>
                                     <IconButton icon="pencil" size={20} onPress={() => openEdit(addr)} />
@@ -228,7 +247,7 @@ export default function SavedAddressesScreen() {
 
                     <View>
                         <TextInput
-                            label="Full Address"
+                            label="Full Address (Tap map icon)"
                             value={addressText}
                             onChangeText={setAddressText}
                             mode="outlined"
@@ -263,6 +282,19 @@ export default function SavedAddressesScreen() {
                         placeholder="Landmarks, Unit No, etc."
                         style={styles.input}
                     />
+
+                    <TouchableOpacity
+                        style={styles.checkboxContainer}
+                        onPress={() => setIsDefault(!isDefault)}
+                        activeOpacity={0.7}
+                    >
+                        <Checkbox.Android
+                            status={isDefault ? 'checked' : 'unchecked'}
+                            onPress={() => setIsDefault(!isDefault)}
+                            color={theme.colors.primary}
+                        />
+                        <Text variant="bodyMedium" style={{ marginLeft: 8 }}>Set as default address</Text>
+                    </TouchableOpacity>
 
                     <View style={styles.modalActions}>
                         <Button onPress={() => setModalVisible(false)} style={{ flex: 1, marginRight: 8 }}>Cancel</Button>
@@ -323,6 +355,12 @@ const styles = StyleSheet.create({
         marginLeft: 8,
         fontWeight: 'bold',
     },
+    defaultBadge: {
+        paddingHorizontal: 6,
+        paddingVertical: 2,
+        borderRadius: 4,
+        marginLeft: 8,
+    },
     addButton: {
         position: 'absolute',
         bottom: 24,
@@ -339,6 +377,12 @@ const styles = StyleSheet.create({
     input: {
         marginBottom: 16,
         backgroundColor: 'transparent',
+    },
+    checkboxContainer: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        marginBottom: 16,
+        marginLeft: -8, // Align checkbox with input left edge roughly
     },
     modalActions: {
         flexDirection: 'row',

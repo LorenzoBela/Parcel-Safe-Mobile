@@ -83,6 +83,7 @@ export default function TrackOrderScreen() {
     const customerId = useAuthStore((state: any) => state.user?.userId) as string | undefined;
 
     const deliveryStatus = mapStatusToCancellationStatus(delivery?.status);
+    const isTerminalState = ['COMPLETED', 'TAMPERED', 'CANCELLED'].includes(delivery?.status || '');
 
     const MAPBOX_TOKEN = process.env.EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN;
 
@@ -163,15 +164,6 @@ export default function TrackOrderScreen() {
             });
         }
 
-        // EC-86: Monitor display health
-        const unsubscribeDisplay = delivery?.box_id
-            ? subscribeToDisplay(delivery.box_id, (displayState) => {
-                if (displayState) {
-                    setDisplayStatus(displayState.status);
-                }
-            })
-            : () => undefined;
-
         // EC-32: Monitor cancellation
         const unsubscribeCancellation = subscribeToCancellation(deliveryId, (state) => {
             // Only consider it cancelled if the state exists AND is marked as cancelled
@@ -182,22 +174,34 @@ export default function TrackOrderScreen() {
             }
         });
 
-        const unsubscribeBox = delivery?.box_id
-            ? subscribeToBoxLocation(delivery.box_id, (location) => {
-                if (location) {
-                    setBoxLiveLocation({ lat: location.lat, lng: location.lng });
-                }
-            })
-            : () => undefined;
-
         return () => {
             unsubscribeDelivery();
             unsubscribeRiderLocation();
-            unsubscribeDisplay();
             unsubscribeCancellation();
+        };
+    }, [MAPBOX_TOKEN, deliveryId, params.riderId, navigation]);
+
+    // Box-dependent subscriptions (separate to avoid tearing down delivery/rider subs)
+    useEffect(() => {
+        if (!delivery?.box_id) return;
+
+        const unsubscribeDisplay = subscribeToDisplay(delivery.box_id, (displayState) => {
+            if (displayState) {
+                setDisplayStatus(displayState.status);
+            }
+        });
+
+        const unsubscribeBox = subscribeToBoxLocation(delivery.box_id, (location) => {
+            if (location) {
+                setBoxLiveLocation({ lat: location.lat, lng: location.lng });
+            }
+        });
+
+        return () => {
+            unsubscribeDisplay();
             unsubscribeBox();
         };
-    }, [MAPBOX_TOKEN, deliveryId, params.riderId, delivery?.box_id, navigation]);
+    }, [delivery?.box_id]);
 
     useEffect(() => {
         if (!delivery?.rider_id) {
@@ -455,8 +459,12 @@ export default function TrackOrderScreen() {
                 <View style={[styles.handleBar, { backgroundColor: theme.colors.outline }]} />
 
                 <View style={styles.statusHeader}>
-                    <View>
-                        {cancellation && delivery?.status === 'CANCELLED' ? (
+                    <View style={{ flex: 1 }}>
+                        {delivery?.status === 'COMPLETED' ? (
+                            <Text variant="titleLarge" style={{ fontWeight: 'bold', color: '#4CAF50' }}>Delivery Complete!</Text>
+                        ) : delivery?.status === 'TAMPERED' ? (
+                            <Text variant="titleLarge" style={{ fontWeight: 'bold', color: theme.colors.error }}>Security Alert</Text>
+                        ) : cancellation && delivery?.status === 'CANCELLED' ? (
                             <Text variant="titleLarge" style={{ fontWeight: 'bold', color: theme.colors.error }}>Delivery Cancelled</Text>
                         ) : (
                             <Text variant="titleLarge" style={{ fontWeight: 'bold', color: theme.colors.onSurface }}>
@@ -464,29 +472,47 @@ export default function TrackOrderScreen() {
                             </Text>
                         )}
 
-                        {cancellation && delivery?.status === 'CANCELLED' ? (
+                        {delivery?.status === 'COMPLETED' ? (
+                            <Text variant="bodyMedium" style={{ color: theme.colors.onSurfaceVariant }}>
+                                Your package has been delivered successfully.
+                            </Text>
+                        ) : delivery?.status === 'TAMPERED' ? (
+                            <Text variant="bodyMedium" style={{ color: theme.colors.error }}>
+                                Tampering was detected on the delivery box. Contact support immediately.
+                            </Text>
+                        ) : cancellation && delivery?.status === 'CANCELLED' ? (
                             <Text variant="bodyMedium" style={{ color: theme.colors.onSurfaceVariant }}>
                                 Reason: {formatCancellationReason(cancellation.reason)}
                             </Text>
                         ) : (
                             <Text variant="bodyMedium" style={{ color: theme.colors.onSurfaceVariant }}>
-                                {delivery?.status ? `Status: ${delivery.status}` : 'On the way to your location'}
+                                {delivery?.status === 'PICKED_UP' ? 'Package picked up - rider is on the way'
+                                    : delivery?.status === 'IN_TRANSIT' ? 'Your package is in transit'
+                                    : delivery?.status === 'ARRIVED' ? 'Rider has arrived at your location'
+                                    : delivery?.status === 'ASSIGNED' ? 'Rider is heading to pickup'
+                                    : 'On the way to your location'}
                             </Text>
                         )}
 
                         {/* EC-86: Display hint when keypad unavailable */}
-                        {displayStatus === 'FAILED' && (
+                        {displayStatus === 'FAILED' && !isTerminalState && (
                             <Text variant="bodySmall" style={{ color: theme.colors.error, marginTop: 4 }}>
-                                ℹ️ Keypad display unavailable - use app to unlock
+                                Keypad display unavailable - use app to unlock
                             </Text>
                         )}
                     </View>
-                    {!cancellation && (
+                    {!isTerminalState && !cancellation && (
                         <Surface style={styles.etaBadge} elevation={0}>
                             <Text style={{ color: 'white', fontWeight: 'bold' }}>
                                 {eta !== null ? `${eta} min` : 'Calculating...'}
                             </Text>
                         </Surface>
+                    )}
+                    {delivery?.status === 'COMPLETED' && (
+                        <MaterialCommunityIcons name="check-circle" size={48} color="#4CAF50" />
+                    )}
+                    {delivery?.status === 'TAMPERED' && (
+                        <MaterialCommunityIcons name="alert-circle" size={48} color={theme.colors.error} />
                     )}
                 </View>
 
@@ -544,44 +570,100 @@ export default function TrackOrderScreen() {
                     </View>
                 </View>
 
-                <Button
-                    mode="outlined"
-                    style={styles.cancelBtn}
-                    icon="share-variant"
-                    onPress={handleShareTracking}
-                >
-                    Share Tracking Link
-                </Button>
-
-                {!cancellation && (
-                    <Button
-                        mode="contained"
-                        style={styles.viewOtpBtn}
-                        icon="lock-open"
-                        onPress={() => {
-                            const boxId = delivery?.box_id;
-                            if (!boxId) {
-                                return;
-                            }
-                            navigation.navigate('OTP', { boxId });
-                        }}
-                        disabled={!delivery?.box_id}
-                    >
-                        View Secure OTP
-                    </Button>
+                {/* Completed state: show proof photo and go-home buttons */}
+                {delivery?.status === 'COMPLETED' && (
+                    <View>
+                        {delivery?.proof_photo_url && (
+                            <Card style={{ marginBottom: 12, borderRadius: 12 }} mode="elevated">
+                                <Card.Title title="Proof of Delivery" titleVariant="titleSmall" />
+                                <Card.Cover source={{ uri: delivery.proof_photo_url }} style={{ height: 180 }} />
+                            </Card>
+                        )}
+                        <Button
+                            mode="contained"
+                            style={styles.viewOtpBtn}
+                            icon="home"
+                            onPress={() => navigation.navigate('Home')}
+                        >
+                            Back to Home
+                        </Button>
+                        <Button
+                            mode="outlined"
+                            style={{ marginTop: 8, borderRadius: 12 }}
+                            icon="history"
+                            onPress={() => navigation.navigate('DeliveryLog')}
+                        >
+                            View Delivery History
+                        </Button>
+                    </View>
                 )}
 
-                {/* Customer Cancel Button - Only show if cancellation is allowed */}
-                {!cancellation && canCancelResult.canCancel && (
-                    <Button
-                        mode="outlined"
-                        style={styles.cancelBtn}
-                        icon="close-circle"
-                        textColor={theme.colors.error}
-                        onPress={() => setShowCancelModal(true)}
-                    >
-                        Cancel Order
-                    </Button>
+                {/* Tampered state: show support button */}
+                {delivery?.status === 'TAMPERED' && (
+                    <View>
+                        <Button
+                            mode="contained"
+                            style={styles.viewOtpBtn}
+                            icon="headset"
+                            buttonColor={theme.colors.error}
+                            onPress={() => Alert.alert('Support', 'Please contact support at support@parcel-safe.app or call +63 XXX XXX XXXX.')}
+                        >
+                            Contact Support
+                        </Button>
+                        <Button
+                            mode="outlined"
+                            style={{ marginTop: 8, borderRadius: 12 }}
+                            icon="home"
+                            onPress={() => navigation.navigate('Home')}
+                        >
+                            Back to Home
+                        </Button>
+                    </View>
+                )}
+
+                {/* Active delivery actions - only show when NOT in terminal state */}
+                {!isTerminalState && (
+                    <>
+                        <Button
+                            mode="outlined"
+                            style={styles.cancelBtn}
+                            icon="share-variant"
+                            onPress={handleShareTracking}
+                        >
+                            Share Tracking Link
+                        </Button>
+
+                        {!cancellation && (
+                            <Button
+                                mode="contained"
+                                style={styles.viewOtpBtn}
+                                icon="lock-open"
+                                onPress={() => {
+                                    const boxId = delivery?.box_id;
+                                    if (!boxId) {
+                                        return;
+                                    }
+                                    navigation.navigate('OTP', { boxId });
+                                }}
+                                disabled={!delivery?.box_id}
+                            >
+                                View Secure OTP
+                            </Button>
+                        )}
+
+                        {/* Customer Cancel Button - Only show if cancellation is allowed */}
+                        {!cancellation && canCancelResult.canCancel && (
+                            <Button
+                                mode="outlined"
+                                style={styles.cancelBtn}
+                                icon="close-circle"
+                                textColor={theme.colors.error}
+                                onPress={() => setShowCancelModal(true)}
+                            >
+                                Cancel Order
+                            </Button>
+                        )}
+                    </>
                 )}
             </View>
 
