@@ -3,13 +3,22 @@ import { View, StyleSheet, ScrollView } from 'react-native';
 import { Text, Card, Title, Paragraph, DataTable, useTheme, Button, Divider } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 export default function RatesScreen() {
     const theme = useTheme();
     const navigation = useNavigation();
 
+    const insets = useSafeAreaInsets();
+
     return (
-        <ScrollView style={[styles.container, { backgroundColor: theme.colors.background }]} contentContainerStyle={styles.content}>
+        <ScrollView
+            style={[styles.container, { backgroundColor: theme.colors.background }]}
+            contentContainerStyle={[
+                styles.content,
+                { paddingTop: insets.top + 20, paddingBottom: insets.bottom + 20 }
+            ]}
+        >
             <View style={styles.header}>
                 <MaterialCommunityIcons name="tag-multiple" size={40} color={theme.colors.primary} />
                 <Text variant="headlineMedium" style={[styles.headerTitle, { color: theme.colors.primary }]}>

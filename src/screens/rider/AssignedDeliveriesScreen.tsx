@@ -9,9 +9,12 @@ import useAuthStore from '../../store/authStore';
 import dayjs from 'dayjs';
 import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/datetimepicker';
 
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+
 export default function AssignedDeliveriesScreen() {
     const theme = useTheme();
     const navigation = useNavigation<any>();
+    const insets = useSafeAreaInsets();
     const [searchQuery, setSearchQuery] = useState('');
 
     const [filter, setFilter] = useState('All'); // All, Pending, Completed
@@ -272,13 +275,13 @@ export default function AssignedDeliveriesScreen() {
 
     return (
         <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
-            <View style={[styles.header, { backgroundColor: theme.colors.surface }]}>
+            <View style={[styles.header, { backgroundColor: theme.colors.surface, paddingTop: Math.max(insets.top, 20) }]}>
                 <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
                     <View>
                         <Text variant="headlineMedium" style={{ fontWeight: 'bold', color: theme.colors.onSurface }}>Assigned Deliveries</Text>
                         <Text variant="bodyMedium" style={{ color: theme.colors.onSurfaceVariant }}>{dayjs().format('dddd, MMM D')}</Text>
                     </View>
-                    <View style={{ flexDirection: 'row' }}>
+                    <View style={{ flexDirection: 'row', marginRight: 4 }}>
                         <IconButton
                             icon={viewMode === 'list' ? 'view-grid' : 'view-list'}
                             onPress={() => setViewMode(viewMode === 'list' ? 'grid' : 'list')}

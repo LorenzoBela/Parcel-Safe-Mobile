@@ -2,7 +2,7 @@ import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { View, StyleSheet, Alert, ActivityIndicator, TouchableOpacity, Modal, Animated, ScrollView } from 'react-native';
 import { Text, TextInput, Button, useTheme, Card, Divider, List } from 'react-native-paper';
-import MapboxGL from '../../components/map/MapboxWrapper';
+import MapboxGL, { StyleURL } from '../../components/map/MapboxWrapper';
 import * as Location from 'expo-location';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { supabase } from '../../services/supabaseClient'; // Import Supabase
@@ -27,9 +27,12 @@ type MapboxSuggestion = {
     coordinates?: [number, number];
 };
 
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+
 export default function BookServiceScreen() {
     const navigation = useNavigation<any>();
     const theme = useTheme();
+    const insets = useSafeAreaInsets();
     // EC-Update: Get userId for persistence check
     const userId = useAuthStore((state: any) => state.user?.userId);
     const MAPBOX_TOKEN = process.env.EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN;
@@ -609,6 +612,7 @@ export default function BookServiceScreen() {
             {MAPBOX_TOKEN ? (
                 <MapboxGL.MapView
                     style={StyleSheet.absoluteFillObject}
+                    styleURL={theme.dark ? StyleURL.Dark : StyleURL.Street}
                     onPress={handleMapPress}
                     logoEnabled={false}
                     attributionEnabled={false}
@@ -672,13 +676,13 @@ export default function BookServiceScreen() {
             )}
 
             {/* Back Button */}
-            <TouchableOpacity style={[styles.backButton, { backgroundColor: theme.colors.surface }]} onPress={() => navigation.goBack()}>
+            <TouchableOpacity style={[styles.backButton, { backgroundColor: theme.colors.surface, top: 50 + insets.top }]} onPress={() => navigation.goBack()}>
                 <MaterialCommunityIcons name="arrow-left" size={24} color={theme.colors.onSurface} />
             </TouchableOpacity>
 
             {/* Float Input Panel */}
-            <View style={styles.inputContainer}>
-                <View style={[styles.minimalCard, { backgroundColor: theme.colors.surface, shadowColor: '#000' }]}>
+            <View style={[styles.inputContainer, { top: 45 + insets.top }]}>
+                <View style={[styles.minimalCard, { backgroundColor: theme.dark ? '#1E1E1E' : 'white', shadowColor: '#000' }]}>
 
                     {/* Visual Connector */}
                     <View style={styles.connectorColumn}>
@@ -745,7 +749,7 @@ export default function BookServiceScreen() {
             {/* We need to tweak the conditional. Let's say: if isSearching OR suggestions>0 OR (activeField && !routeData) */}
             {/* Simplest: If the query > 2 chars, we show suggestions. If query is empty, we show saved addresses + current location option. */}
             {(isSearching || searchError || suggestions.length > 0 || (activeQuery.length === 0 && !routeData)) && (
-                <View style={[styles.suggestionsContainer, { top: 160 }]}>
+                <View style={[styles.suggestionsContainer, { top: 160 + insets.top, backgroundColor: theme.colors.elevation.level3 }]}>
                     <ScrollView
                         keyboardShouldPersistTaps="handled"
                         showsVerticalScrollIndicator={false}
@@ -758,18 +762,18 @@ export default function BookServiceScreen() {
                                 {savedAddresses.map((addr: any) => (
                                     <TouchableOpacity
                                         key={addr.id}
-                                        style={styles.suggestionItem}
+                                        style={[styles.suggestionItem, { borderBottomColor: theme.colors.outlineVariant }]}
                                         onPress={() => handleSelectSavedAddress(addr)}
                                     >
-                                        <View style={[styles.iconCircle, { backgroundColor: '#FFF3E0' }]}>
+                                        <View style={[styles.iconCircle, { backgroundColor: theme.dark ? theme.colors.secondaryContainer : '#FFF3E0' }]}>
                                             <MaterialCommunityIcons
                                                 name={addr.label.toLowerCase().includes('home') ? 'home' : addr.label.toLowerCase().includes('office') ? 'office-building' : 'star'}
                                                 size={20}
-                                                color="#F57C00"
+                                                color={theme.dark ? theme.colors.onSecondaryContainer : '#F57C00'}
                                             />
                                         </View>
                                         <View style={{ marginLeft: 12 }}>
-                                            <Text variant="bodyMedium" style={{ fontWeight: 'bold', color: '#F57C00' }}>
+                                            <Text variant="bodyMedium" style={{ fontWeight: 'bold', color: theme.dark ? theme.colors.primary : '#F57C00' }}>
                                                 {addr.label}
                                             </Text>
                                             <Text variant="bodySmall" numberOfLines={1} style={{ color: theme.colors.onSurfaceVariant }}>
@@ -793,8 +797,8 @@ export default function BookServiceScreen() {
                                 // Just focus the map
                             }}
                         >
-                            <View style={[styles.iconCircle, { backgroundColor: '#E3F2FD' }]}>
-                                <MaterialCommunityIcons name="map-marker-radius" size={20} color={theme.colors.primary} />
+                            <View style={[styles.iconCircle, { backgroundColor: theme.colors.secondaryContainer }]}>
+                                <MaterialCommunityIcons name="map-marker-radius" size={20} color={theme.colors.onSecondaryContainer} />
                             </View>
                             <View style={{ marginLeft: 12 }}>
                                 <Text variant="bodyMedium" style={{ fontWeight: 'bold', color: theme.colors.primary }}>
@@ -812,11 +816,11 @@ export default function BookServiceScreen() {
                                 style={styles.suggestionItem}
                                 onPress={handleSetPickupToCurrent}
                             >
-                                <View style={[styles.iconCircle, { backgroundColor: '#E8F5E9' }]}>
-                                    <MaterialCommunityIcons name="crosshairs-gps" size={20} color="#4CAF50" />
+                                <View style={[styles.iconCircle, { backgroundColor: theme.colors.tertiaryContainer }]}>
+                                    <MaterialCommunityIcons name="crosshairs-gps" size={20} color={theme.colors.onTertiaryContainer} />
                                 </View>
                                 <View style={{ marginLeft: 12 }}>
-                                    <Text variant="bodyMedium" style={{ fontWeight: 'bold', color: '#388E3C' }}>
+                                    <Text variant="bodyMedium" style={{ fontWeight: 'bold', color: theme.colors.tertiary }}>
                                         Use Current Location
                                     </Text>
                                 </View>
@@ -838,7 +842,7 @@ export default function BookServiceScreen() {
                                 style={styles.suggestionItem}
                                 onPress={() => handleSelectSuggestion(item)}
                             >
-                                <View style={[styles.iconCircle, { backgroundColor: '#F5F5F5' }]}>
+                                <View style={[styles.iconCircle, { backgroundColor: theme.colors.surfaceVariant }]}>
                                     <MaterialCommunityIcons name="map-marker-outline" size={20} color={theme.colors.onSurfaceVariant} />
                                 </View>
                                 <View style={{ marginLeft: 12, flex: 1 }}>
@@ -857,25 +861,18 @@ export default function BookServiceScreen() {
                 </View>
             )}
 
-            {/* Recenter FAB (Top) */}
+            {/* Recenter / Get Location FAB */}
+            {/* Recenter / Get Location FAB */}
             <TouchableOpacity
-                style={[styles.fab, { backgroundColor: theme.colors.surface, bottom: 240 }]}
-                onPress={handleRecenter}
-            >
-                <MaterialCommunityIcons name="crosshairs-gps" size={24} color={theme.colors.onSurface} />
-            </TouchableOpacity>
-
-            {/* Set Pickup to Current Location FAB (Bottom) */}
-            <TouchableOpacity
-                style={[styles.fab, { backgroundColor: theme.colors.surface }]}
+                style={[styles.floatingActionBtn, { backgroundColor: theme.colors.primary, bottom: 240 + insets.bottom }]}
                 onPress={handleSetPickupToCurrent}
             >
-                <MaterialCommunityIcons name="map-marker-plus" size={24} color={theme.colors.primary} />
+                <MaterialCommunityIcons name="crosshairs-gps" size={24} color={theme.colors.onPrimary} />
             </TouchableOpacity>
 
             {/* Bottom Sheet / Trip Details */}
             {routeData && (
-                <View style={styles.bottomPreviewContainer}>
+                <View style={[styles.bottomPreviewContainer, { bottom: 20 + insets.bottom }]}>
                     <Card style={[styles.bottomPreviewCard, { backgroundColor: theme.colors.surface }]} elevation={5}>
                         <Card.Content>
                             <View style={styles.previewHeader}>
@@ -975,7 +972,7 @@ const styles = StyleSheet.create({
         paddingHorizontal: 0,
     },
     minimalActiveInput: {
-        backgroundColor: '#F3F4F6', // Subtle gray highlight for active input
+        backgroundColor: 'transparent', // Changed from grey to transparent to keep it white
         borderRadius: 8,
     },
     backButton: {
@@ -994,11 +991,12 @@ const styles = StyleSheet.create({
         position: 'absolute',
         left: 20,
         right: 20,
-        backgroundColor: 'white',
+        top: 160,
+        backgroundColor: '#fff', // Will be overridden dynamically
         borderRadius: 12,
         elevation: 5,
         paddingVertical: 4,
-        maxHeight: 260, // Increased to fit scrollable content better without blocking whole map
+        maxHeight: 260,
         zIndex: 15,
     },
     suggestionItem: {
@@ -1014,10 +1012,10 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         padding: 16,
     },
-    fab: {
+    floatingActionBtn: {
         position: 'absolute',
         right: 20,
-        bottom: 180, // Above bottom sheet
+        bottom: 240,
         width: 48,
         height: 48,
         borderRadius: 24,

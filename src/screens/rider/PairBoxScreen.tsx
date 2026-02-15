@@ -19,8 +19,11 @@ import {
 const SESSION_OPTIONS = [4, 12, 24, 48];
 const PAIRED_BOX_CACHE_KEY_PREFIX = 'parcelSafe:lastPairedBoxId:';
 
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+
 export default function PairBoxScreen() {
     const theme = useTheme();
+    const insets = useSafeAreaInsets();
     const authedUserId = useAuthStore((state: any) => state.user?.userId) as string | undefined;
     const authedRole = useAuthStore((state: any) => state.role) as string | null;
     const [permission, requestPermission] = useCameraPermissions();
@@ -171,7 +174,7 @@ export default function PairBoxScreen() {
     }
 
     return (
-        <View style={styles.container}>
+        <View style={[styles.container, { paddingTop: Math.max(insets.top, 20), paddingBottom: insets.bottom + 20 }]}>
             <Surface style={styles.header} elevation={2}>
                 <Text variant="titleLarge" style={{ fontWeight: 'bold' }}>Pair a Smart Box</Text>
                 <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
@@ -325,7 +328,6 @@ export default function PairBoxScreen() {
 const styles = StyleSheet.create({
     container: {
         flex: 1,
-        padding: 16,
         backgroundColor: '#F7F9FC',
     },
     header: {

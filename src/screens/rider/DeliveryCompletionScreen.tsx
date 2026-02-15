@@ -21,8 +21,11 @@ interface CompletionRouteParams {
     boxId?: string;
 }
 
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+
 export default function DeliveryCompletionScreen() {
     const navigation = useNavigation<any>();
+    const insets = useSafeAreaInsets();
     const route = useRoute();
     const params = (route.params as CompletionRouteParams | undefined) || {};
     const riderId = useAuthStore((state: any) => state.user?.userId) as string | undefined;
@@ -250,7 +253,7 @@ export default function DeliveryCompletionScreen() {
     };
 
     return (
-        <ScrollView contentContainerStyle={styles.container}>
+        <ScrollView contentContainerStyle={[styles.container, { paddingTop: Math.max(insets.top, 20), paddingBottom: insets.bottom + 20 }]}>
             <Avatar.Icon size={88} icon={isCompleted ? 'check-circle' : 'package-variant-closed-check'} style={styles.icon} color="white" />
             <Text variant="headlineMedium" style={styles.title}>Delivery Flow Checkpoint</Text>
             <Text variant="bodyMedium" style={styles.subtitle}>Current status: {status}</Text>
@@ -354,7 +357,7 @@ const styles = StyleSheet.create({
     container: {
         flexGrow: 1,
         backgroundColor: '#f4f6fb',
-        padding: 20,
+        paddingHorizontal: 20,
     },
     icon: {
         backgroundColor: '#2563eb',

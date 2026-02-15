@@ -1,8 +1,11 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { View, StyleSheet, ScrollView, Alert, KeyboardAvoidingView, Platform } from 'react-native';
-import { Text, TextInput, Button, useTheme, Chip, Divider, Surface, Card } from 'react-native-paper';
+import { Text, TextInput, Button, useTheme, Chip, Surface, Card, ActivityIndicator } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { supabase } from '../../services/supabaseClient';
+import dayjs from 'dayjs';
 
 const ISSUE_CATEGORIES = [
     'Late Delivery',
@@ -12,6 +15,15 @@ const ISSUE_CATEGORIES = [
     'Other'
 ];
 
+interface Order {
+    id: string;
+    tracking_number: string;
+    created_at: string;
+    package_description: string;
+    status: string;
+    dropoff_address: string;
+}
+
 export default function ReportScreen() {
     const theme = useTheme();
     const navigation = useNavigation();
@@ -19,12 +31,37 @@ export default function ReportScreen() {
     const [selectedOrder, setSelectedOrder] = useState<string | null>(null);
     const [description, setDescription] = useState('');
     const [loading, setLoading] = useState(false);
+    const [orders, setOrders] = useState<Order[]>([]);
+    const [fetchingOrders, setFetchingOrders] = useState(true);
 
-    // Mock Orders for selection
-    const RECENT_ORDERS = [
-        { id: 'ORD-2024-001', date: 'Today, 2:30 PM', summary: 'Grocery Delivery', status: 'Active' },
-        { id: 'ORD-2024-002', date: 'Yesterday', summary: 'Document Parcel', status: 'Completed' },
-    ];
+    useEffect(() => {
+        fetchOrders();
+    }, []);
+
+    const fetchOrders = async () => {
+        try {
+            const { data: { user } } = await supabase.auth.getUser();
+            if (!user) {
+                setFetchingOrders(false);
+                return;
+            }
+
+            const { data, error } = await supabase
+                .from('deliveries')
+                .select('id, tracking_number, created_at, package_description, status, dropoff_address')
+                .eq('customer_id', user.id)
+                .order('created_at', { ascending: false })
+                .limit(5);
+
+            if (error) throw error;
+            setOrders(data || []);
+        } catch (error) {
+            console.error('Error fetching orders:', error);
+            // Don't alert on mount, just show empty or error state
+        } finally {
+            setFetchingOrders(false);
+        }
+    };
 
     const handleSubmit = async () => {
         if (!selectedOrder) {
@@ -41,21 +78,44 @@ export default function ReportScreen() {
         }
 
         setLoading(true);
-        // Simulate API call
-        setTimeout(() => {
-            setLoading(false);
+        try {
+            const { data: { user } } = await supabase.auth.getUser();
+            if (!user) throw new Error('User not authenticated');
+
+            const { error } = await supabase
+                .from('issue_reports')
+                .insert({
+                    user_id: user.id,
+                    order_id: selectedOrder,
+                    category: selectedCategory,
+                    description: description.trim(),
+                    status: 'OPEN'
+                });
+
+            if (error) throw error;
+
             Alert.alert('Report Submitted', 'We have received your report and will investigate shortly.', [
                 { text: 'OK', onPress: () => navigation.goBack() }
             ]);
-        }, 1500);
+        } catch (error) {
+            console.error('Error submitting report:', error);
+            Alert.alert('Error', 'Failed to submit report. Please try again.');
+        } finally {
+            setLoading(false);
+        }
     };
+
+    const insets = useSafeAreaInsets();
 
     return (
         <KeyboardAvoidingView
             style={[styles.container, { backgroundColor: theme.colors.background }]}
             behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         >
-            <ScrollView contentContainerStyle={styles.content}>
+            <ScrollView contentContainerStyle={[styles.content, {
+                paddingBottom: insets.bottom + 20,
+                paddingTop: insets.top + 20
+            }]}>
                 <View style={styles.header}>
                     <MaterialCommunityIcons name="file-document-edit-outline" size={48} color={theme.colors.error} />
                     <Text variant="headlineMedium" style={[styles.title, { color: theme.colors.error }]}>Report an Issue</Text>
@@ -66,28 +126,35 @@ export default function ReportScreen() {
 
                 <Surface style={[styles.section, { backgroundColor: theme.colors.surface }]} elevation={1}>
                     <Text variant="titleMedium" style={[styles.sectionTitle, { color: theme.colors.onSurface }]}>Select Order</Text>
-                    {RECENT_ORDERS.map((order) => (
-                        <Card
-                            key={order.id}
-                            style={[
-                                styles.orderCard,
-                                { backgroundColor: theme.colors.surface, borderColor: theme.colors.outline },
-                                selectedOrder === order.id && { borderColor: theme.colors.primary, backgroundColor: theme.colors.secondaryContainer }
-                            ]}
-                            onPress={() => setSelectedOrder(order.id)}
-                            mode="outlined"
-                        >
-                            <Card.Content style={styles.orderCardContent}>
-                                <View>
-                                    <Text variant="titleSmall" style={{ fontWeight: 'bold' }}>{order.id}</Text>
-                                    <Text variant="bodySmall">{order.summary} • {order.date}</Text>
-                                </View>
-                                {selectedOrder === order.id && (
-                                    <MaterialCommunityIcons name="check-circle" size={24} color={theme.colors.primary} />
-                                )}
-                            </Card.Content>
-                        </Card>
-                    ))}
+                    {fetchingOrders ? (
+                        <ActivityIndicator style={{ padding: 20 }} />
+                    ) : orders.length > 0 ? (
+                        orders.map((order) => (
+                            <Card
+                                key={order.id}
+                                style={[
+                                    styles.orderCard,
+                                    { backgroundColor: theme.colors.surface, borderColor: theme.colors.outline },
+                                    selectedOrder === order.id && { borderColor: theme.colors.primary, backgroundColor: theme.colors.secondaryContainer }
+                                ]}
+                                onPress={() => setSelectedOrder(order.id)}
+                                mode="outlined"
+                            >
+                                <Card.Content style={styles.orderCardContent}>
+                                    <View style={{ flex: 1 }}>
+                                        <Text variant="titleSmall" style={{ fontWeight: 'bold' }}>{order.tracking_number || 'Order #' + order.id.slice(0, 8)}</Text>
+                                        <Text variant="bodySmall" numberOfLines={1}>{order.package_description || 'No description'} • {dayjs(order.created_at).format('MMM D, h:mm A')}</Text>
+                                        <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>{order.status}</Text>
+                                    </View>
+                                    {selectedOrder === order.id && (
+                                        <MaterialCommunityIcons name="check-circle" size={24} color={theme.colors.primary} />
+                                    )}
+                                </Card.Content>
+                            </Card>
+                        ))
+                    ) : (
+                        <Text style={{ textAlign: 'center', color: theme.colors.onSurfaceVariant, padding: 20 }}>No recent orders found.</Text>
+                    )}
                 </Surface>
 
                 <Surface style={[styles.section, { backgroundColor: theme.colors.surface }]} elevation={1}>

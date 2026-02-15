@@ -3,10 +3,13 @@ import { StyleSheet, ScrollView, View } from 'react-native';
 import { Text, List, Button, useTheme, Card, Divider } from 'react-native-paper';
 import { useNavigation } from '@react-navigation/native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 export default function HelpCenterScreen() {
     const theme = useTheme();
     const navigation = useNavigation();
+
+    const insets = useSafeAreaInsets();
 
     const FAQs = [
         {
@@ -24,7 +27,13 @@ export default function HelpCenterScreen() {
     ];
 
     return (
-        <ScrollView style={[styles.container, { backgroundColor: theme.colors.background }]}>
+        <ScrollView
+            style={[styles.container, { backgroundColor: theme.colors.background }]}
+            contentContainerStyle={{
+                paddingBottom: insets.bottom + 20,
+                paddingTop: insets.top
+            }}
+        >
             <View style={styles.header}>
                 <MaterialCommunityIcons name="lifebuoy" size={60} color={theme.colors.primary} />
                 <Text variant="headlineMedium" style={[styles.title, { color: theme.colors.onSurface }]}>Help Center</Text>

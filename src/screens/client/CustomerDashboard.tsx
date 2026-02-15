@@ -4,6 +4,7 @@ import { Text, Card, Button, useTheme, Avatar, Surface, Portal, Modal, IconButto
 import { useNavigation } from '@react-navigation/native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import dayjs from 'dayjs';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAppTheme } from '../../context/ThemeContext'; // Import custom hook if needed, or just useTheme from paper
 import * as Location from 'expo-location';
 import { CustomerHardwareBanner } from '../../components';
@@ -147,10 +148,10 @@ export default function CustomerDashboard() {
 
     const getStatusIcon = (status) => {
         switch (status) {
-            case 'Delivered': return { icon: 'check', color: '#4CAF50', bg: '#E8F5E9' };
-            case 'Tampered': return { icon: 'alert-circle', color: '#D32F2F', bg: '#FFEBEE' };
-            case 'Cancelled': return { icon: 'close', color: '#9E9E9E', bg: '#F5F5F5' };
-            default: return { icon: 'information', color: '#2196F3', bg: '#E3F2FD' };
+            case 'Delivered': return { icon: 'check', color: theme.colors.primary, bg: theme.colors.primaryContainer };
+            case 'Tampered': return { icon: 'alert-circle', color: theme.colors.error, bg: theme.colors.errorContainer };
+            case 'Cancelled': return { icon: 'close', color: theme.colors.onSurfaceVariant, bg: theme.colors.surfaceVariant };
+            default: return { icon: 'information', color: theme.colors.secondary, bg: theme.colors.secondaryContainer };
         }
     };
 
@@ -170,16 +171,18 @@ export default function CustomerDashboard() {
         return 'Good Evening,';
     };
 
+    const insets = useSafeAreaInsets();
+
     return (
         <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
             {/* Attractive Header with Weather Background */}
             <ImageBackground
                 source={{ uri: weather ? (weatherBackgroundImages[weather.condition] || weatherBackgroundImages['Sunny']) : weatherBackgroundImages['Sunny'] }}
-                style={styles.headerBackground}
+                style={[styles.headerBackground, { height: 180 + insets.top }]}
                 imageStyle={{ borderBottomLeftRadius: 20, borderBottomRightRadius: 20 }}
                 resizeMode="cover"
             >
-                <View style={styles.headerOverlay}>
+                <View style={[styles.headerOverlay, { paddingBottom: 20 }]}>
                     <View style={styles.headerContent}>
                         <View>
                             <View style={styles.locationContainer}>
@@ -202,7 +205,10 @@ export default function CustomerDashboard() {
 
             <ScrollView
                 style={{ backgroundColor: theme.colors.background }}
-                contentContainerStyle={styles.scrollContent}
+                contentContainerStyle={[
+                    styles.scrollContent,
+                    { paddingBottom: 80 + insets.bottom }
+                ]}
                 showsVerticalScrollIndicator={false}
                 refreshControl={
                     <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
@@ -337,9 +343,9 @@ export default function CustomerDashboard() {
 
                 <View style={styles.actionsGrid}>
                     {/* Book button removed from here, promoted to Hero Card */}
-                    <QuickAction icon="calculator" label="Rates" onPress={() => navigation.navigate('Rates')} color="#4CAF50" />
-                    <QuickAction icon="history" label="History" onPress={() => navigation.navigate('DeliveryLog')} color="#2196F3" />
-                    <QuickAction icon="file-document-outline" label="Report" onPress={() => navigation.navigate('Report')} color="#FF9800" />
+                    <QuickAction icon="calculator" label="Rates" onPress={() => navigation.navigate('Rates')} color={theme.colors.primary} />
+                    <QuickAction icon="history" label="History" onPress={() => navigation.navigate('DeliveryLog')} color={theme.colors.secondary} />
+                    <QuickAction icon="file-document-outline" label="Report" onPress={() => navigation.navigate('Report')} color={theme.colors.tertiary} />
                 </View>
 
                 {/* Recent Activity */}
@@ -382,20 +388,20 @@ export default function CustomerDashboard() {
 
             {/* Premium Share Warning Modal */}
             <Portal>
-                <Modal visible={shareModalVisible} onDismiss={() => setShareModalVisible(false)} contentContainerStyle={styles.modalContainer}>
+                <Modal visible={shareModalVisible} onDismiss={() => setShareModalVisible(false)} contentContainerStyle={[styles.modalContainer, { backgroundColor: theme.colors.surface }]}>
                     <View style={styles.modalContent}>
-                        <Surface style={[styles.warningIconSurface, { backgroundColor: '#FFF3E0' }]} elevation={2}>
-                            <MaterialCommunityIcons name="shield-lock-outline" size={48} color="#F57C00" />
+                        <Surface style={[styles.warningIconSurface, { backgroundColor: theme.colors.errorContainer }]} elevation={2}>
+                            <MaterialCommunityIcons name="shield-lock-outline" size={48} color={theme.colors.error} />
                         </Surface>
 
-                        <Text variant="headlineSmall" style={[styles.modalTitle, { marginTop: 16, color: '#F57C00' }]}>
+                        <Text variant="headlineSmall" style={[styles.modalTitle, { marginTop: 16, color: theme.colors.error }]}>
                             Security Warning
                         </Text>
 
-                        <Text variant="bodyLarge" style={{ textAlign: 'center', marginBottom: 24, color: '#555', lineHeight: 24 }}>
+                        <Text variant="bodyLarge" style={{ textAlign: 'center', marginBottom: 24, color: theme.colors.onSurface, lineHeight: 24 }}>
                             You are about to share a live tracking link.
                             {'\n\n'}
-                            <Text style={{ fontWeight: 'bold', color: '#333' }}>Only share this with the intended recipient.</Text>
+                            <Text style={{ fontWeight: 'bold', color: theme.colors.onSurface }}>Only share this with the intended recipient.</Text>
                             {'\n'}
                             They may be able to <Text style={{ color: theme.colors.primary, fontWeight: 'bold' }}>unlock the box</Text> depending on your settings.
                         </Text>
@@ -412,8 +418,8 @@ export default function CustomerDashboard() {
                         <Button
                             mode="outlined"
                             onPress={() => setShareModalVisible(false)}
-                            style={{ width: '100%', borderColor: '#ddd' }}
-                            textColor="#777"
+                            style={{ width: '100%', borderColor: theme.colors.outline }}
+                            textColor={theme.colors.onSurfaceVariant}
                         >
                             Cancel
                         </Button>
@@ -423,10 +429,10 @@ export default function CustomerDashboard() {
 
             {/* Proof of Delivery Modal */}
             <Portal>
-                <Modal visible={modalVisible} onDismiss={() => setModalVisible(false)} contentContainerStyle={styles.modalContainer}>
+                <Modal visible={modalVisible} onDismiss={() => setModalVisible(false)} contentContainerStyle={[styles.modalContainer, { backgroundColor: theme.colors.surface }]}>
                     <View style={styles.modalContent}>
                         <IconButton icon="close" size={24} onPress={() => setModalVisible(false)} style={styles.closeButton} />
-                        <Text variant="titleMedium" style={styles.modalTitle}>Delivery Proof</Text>
+                        <Text variant="titleMedium" style={[styles.modalTitle, { color: theme.colors.onSurface }]}>Delivery Proof</Text>
                         {/* Image removed from history, keeping modal structure if needed for active delivery later */}
                         <Text>No proof image available.</Text>
                     </View>
@@ -519,7 +525,6 @@ const styles = StyleSheet.create({
     },
     deliveryCard: {
         marginBottom: 24,
-        backgroundColor: 'white',
         borderRadius: 16,
     },
     deliveryHeader: {
@@ -528,7 +533,7 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         padding: 16,
         borderBottomWidth: 1,
-        borderBottomColor: '#F0F0F0',
+        borderBottomColor: 'rgba(0,0,0,0.05)',
     },
     deliveryIdContainer: {
         flexDirection: 'row',
@@ -584,7 +589,6 @@ const styles = StyleSheet.create({
 
 
     modalContainer: {
-        backgroundColor: 'white',
         padding: 20,
         margin: 20,
         borderRadius: 16,
@@ -605,7 +609,6 @@ const styles = StyleSheet.create({
     },
     activityCard: {
         marginBottom: 12,
-        backgroundColor: 'white',
         borderRadius: 12,
     },
     activityContent: {

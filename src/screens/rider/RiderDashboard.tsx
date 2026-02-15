@@ -69,9 +69,12 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const PAIRED_BOX_CACHE_KEY_PREFIX = 'parcelSafe:lastPairedBoxId:';
 
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+
 export default function RiderDashboard() {
     const navigation = useNavigation<any>();
     const theme = useTheme();
+    const insets = useSafeAreaInsets();
     const [isOnline, setIsOnline] = useState(true);
     const [currentTime, setCurrentTime] = useState(dayjs());
     const [locationName, setLocationName] = useState('Locating...');
@@ -259,7 +262,6 @@ export default function RiderDashboard() {
             startMonitoring(boxIdForMonitoring);
         }
 
-        // EC-03: Subscribe to battery state
         // EC-03: Subscribe to battery state
         const unsubscribeBattery = boxIdForMonitoring ? subscribeToBattery(boxIdForMonitoring, (state) => {
             setBatteryState(state);
@@ -1720,7 +1722,15 @@ const styles = StyleSheet.create({
         borderRadius: 16,
         justifyContent: 'center',
         alignItems: 'center',
-        marginBottom: 8,
+    },
+    header: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        paddingHorizontal: 20,
+        paddingBottom: 20,
+        borderBottomLeftRadius: 30,
+        borderBottomRightRadius: 30,
     },
     actionLabel: {
         color: '#555',

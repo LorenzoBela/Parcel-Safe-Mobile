@@ -90,10 +90,13 @@ interface RouteParams {
     riderName?: string;
 }
 
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+
 export default function ArrivalScreen() {
     const navigation = useNavigation<any>();
     const route = useRoute();
     const params = route.params as RouteParams | undefined;
+    const insets = useSafeAreaInsets();
 
     if (!params?.deliveryId || !params?.boxId) {
         return (
@@ -765,7 +768,7 @@ export default function ArrivalScreen() {
     };
 
     return (
-        <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+        <ScrollView style={styles.container} contentContainerStyle={[styles.content, { paddingTop: Math.max(insets.top, 20), paddingBottom: insets.bottom + 20 }]}>
             {/* EC-18: Tamper Alert Banner */}
             {tamperState?.detected && (
                 <Card style={styles.tamperBanner}>
@@ -1110,8 +1113,7 @@ const styles = StyleSheet.create({
         backgroundColor: '#f5f5f5',
     },
     content: {
-        padding: 20,
-        paddingBottom: 40,
+        flexGrow: 1,
     },
     title: {
         textAlign: 'center',

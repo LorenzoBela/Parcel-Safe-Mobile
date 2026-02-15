@@ -25,7 +25,7 @@ import AssignedDeliveriesScreen from '../screens/rider/AssignedDeliveriesScreen'
 import BoxControlsScreen from '../screens/rider/BoxControlsScreen';
 import ArrivalScreen from '../screens/rider/ArrivalScreen';
 import DeliveryCompletionScreen from '../screens/rider/DeliveryCompletionScreen';
-import DeliveryRecordsScreen from '../screens/rider/DeliveryRecordsScreen';
+import DeliveryRecordsScreen from '../screens/rider/DeliveryRecordsScreen'; // Force resolve
 import TheftAlertScreen from '../screens/rider/TheftAlertScreen';
 import TrackMyBoxScreen from '../screens/rider/TrackMyBoxScreen';
 import CancellationConfirmationScreen from '../screens/rider/CancellationConfirmationScreen';

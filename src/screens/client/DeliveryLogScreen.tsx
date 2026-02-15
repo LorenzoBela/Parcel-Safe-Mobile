@@ -3,6 +3,7 @@ import { View, StyleSheet, FlatList, TouchableOpacity, ScrollView, RefreshContro
 import { Text, Card, Searchbar, Chip, useTheme, Surface, IconButton } from 'react-native-paper';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { supabase } from '../../services/supabaseClient';
 import useAuthStore from '../../store/authStore';
 
@@ -36,6 +37,7 @@ export default function DeliveryLogScreen() {
     const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
     const FILTERS = ['All', 'Delivered', 'In Transit', 'Cancelled', 'Tampered'];
+    const insets = useSafeAreaInsets();
 
     const fetchDeliveries = useCallback(async (isRefresh = false) => {
         if (!userId || !supabase) {
@@ -66,10 +68,10 @@ export default function DeliveryLogScreen() {
                     rawStatus: d.status,
                     date: d.created_at
                         ? new Date(d.created_at).toLocaleDateString('en-US', {
-                              year: 'numeric',
-                              month: 'short',
-                              day: 'numeric',
-                          })
+                            year: 'numeric',
+                            month: 'short',
+                            day: 'numeric',
+                        })
                         : 'N/A',
                     rider: d.rider_name || 'Unassigned',
                     price: d.estimated_fare != null ? `₱${Number(d.estimated_fare).toFixed(2)}` : '—',
@@ -191,7 +193,7 @@ export default function DeliveryLogScreen() {
 
     return (
         <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
-            <View style={[styles.header, { backgroundColor: theme.colors.surface }]}>
+            <View style={[styles.header, { backgroundColor: theme.colors.surface, paddingTop: insets.top + 10 }]}>
                 <Text variant="headlineSmall" style={[styles.title, { color: theme.colors.onSurface }]}>Delivery History</Text>
                 <View style={{ flexDirection: 'row' }}>
                     <IconButton

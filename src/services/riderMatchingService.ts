@@ -70,6 +70,7 @@ export interface DeliveryRecord {
     created_at: number;
     accepted_at?: number;
     updated_at?: number;
+    proof_photo_url?: string;
 }
 
 export interface RiderLiveLocation {

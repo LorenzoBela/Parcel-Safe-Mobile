@@ -5,10 +5,13 @@ import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { useAppTheme } from '../../context/ThemeContext';
 import { supabase } from '../../services/supabaseClient';
 
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+
 export default function SettingsScreen() {
     const theme = useTheme();
     const { isDarkMode, toggleTheme } = useAppTheme();
     const navigation = useNavigation<any>();
+    const insets = useSafeAreaInsets();
     const [notifications, setNotifications] = useState(true);
     const [profile, setProfile] = useState<any>(null);
 
@@ -31,12 +34,12 @@ export default function SettingsScreen() {
     );
 
     return (
-        <ScrollView style={[styles.container, { backgroundColor: theme.colors.background }]}>
+        <ScrollView style={[styles.container, { backgroundColor: theme.colors.background, paddingTop: insets.top }]}>
             {/* Profile Header */}
             <Surface style={[styles.profileHeader, { backgroundColor: theme.colors.surface }]} elevation={1}>
-                <Avatar.Image 
-                    size={60} 
-                    source={{ uri: profile?.avatar_url || 'https://i.pravatar.cc/150?img=12' }} 
+                <Avatar.Image
+                    size={60}
+                    source={{ uri: profile?.avatar_url || 'https://i.pravatar.cc/150?img=12' }}
                 />
                 <View style={styles.profileInfo}>
                     <Text variant="titleMedium" style={{ color: theme.colors.onSurface, fontWeight: 'bold' }}>

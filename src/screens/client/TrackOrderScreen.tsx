@@ -40,6 +40,9 @@ interface TrackRouteParams {
     pickupLng?: number;
     dropoffLat?: number;
     dropoffLng?: number;
+    completed_at?: number;
+    proof_photo_url?: string;
+    rider_avatar_url?: string; // rider profile pic
 }
 
 function mapStatusToCancellationStatus(status: string | undefined): DeliveryStatus {
@@ -63,10 +66,13 @@ function mapStatusToCancellationStatus(status: string | undefined): DeliveryStat
     }
 }
 
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+
 export default function TrackOrderScreen() {
     const navigation = useNavigation<any>();
     const route = useRoute<any>();
     const theme = useTheme();
+    const insets = useSafeAreaInsets();
     const [displayStatus, setDisplayStatus] = useState<'OK' | 'DEGRADED' | 'FAILED'>('OK');
     const [cancellation, setCancellation] = useState<CancellationState | null>(null);
     const [showCancelModal, setShowCancelModal] = useState(false);
@@ -448,14 +454,14 @@ export default function TrackOrderScreen() {
             )}
 
             {/* Header Actions */}
-            <View style={styles.headerActions}>
+            <View style={[styles.headerActions, { top: 20 + insets.top }]}>
                 <Surface style={[styles.iconButtonSurface, { backgroundColor: theme.colors.surface }]} elevation={2}>
                     <IconButton icon="arrow-left" size={24} iconColor={theme.colors.onSurface} onPress={() => navigation.goBack()} />
                 </Surface>
             </View>
 
             {/* Bottom Sheet Info */}
-            <View style={[styles.bottomSheet, { backgroundColor: theme.colors.surface }]}>
+            <View style={[styles.bottomSheet, { backgroundColor: theme.colors.surface, paddingBottom: 24 + insets.bottom }]}>
                 <View style={[styles.handleBar, { backgroundColor: theme.colors.outline }]} />
 
                 <View style={styles.statusHeader}>
@@ -488,9 +494,9 @@ export default function TrackOrderScreen() {
                             <Text variant="bodyMedium" style={{ color: theme.colors.onSurfaceVariant }}>
                                 {delivery?.status === 'PICKED_UP' ? 'Package picked up - rider is on the way'
                                     : delivery?.status === 'IN_TRANSIT' ? 'Your package is in transit'
-                                    : delivery?.status === 'ARRIVED' ? 'Rider has arrived at your location'
-                                    : delivery?.status === 'ASSIGNED' ? 'Rider is heading to pickup'
-                                    : 'On the way to your location'}
+                                        : delivery?.status === 'ARRIVED' ? 'Rider has arrived at your location'
+                                            : delivery?.status === 'ASSIGNED' ? 'Rider is heading to pickup'
+                                                : 'On the way to your location'}
                             </Text>
                         )}
 
@@ -693,7 +699,6 @@ const styles = StyleSheet.create({
     },
     headerActions: {
         position: 'absolute',
-        top: 50,
         left: 20,
         zIndex: 10,
     },

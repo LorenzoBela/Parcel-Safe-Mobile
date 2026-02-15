@@ -41,8 +41,11 @@ const PAIRED_BOX_CACHE_KEY_PREFIX = 'parcelSafe:lastPairedBoxId:';
 // Demo box ID (would come from navigation params in production)
 const DEMO_BOX_ID = 'BOX_001';
 
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+
 export default function BoxControlsScreen() {
     const navigation = useNavigation();
+    const insets = useSafeAreaInsets();
     const route = useRoute<any>();
     const theme = useTheme();
     const animationRef = useRef<LottieView>(null);
@@ -105,9 +108,9 @@ export default function BoxControlsScreen() {
 
     // Initialize Logs and Subscriptions
     useEffect(() => {
-                const unsubscribeBoxState = subscribeToBoxState(boxId, (state) => {
-                    setBoxState(state);
-                });
+        const unsubscribeBoxState = subscribeToBoxState(boxId, (state) => {
+            setBoxState(state);
+        });
         addLog("Control Panel accessed", "info");
         addLog("Telemetry stream connected", "success");
 
@@ -478,7 +481,7 @@ export default function BoxControlsScreen() {
 
     return (
         <View style={styles.container}>
-            <ScrollView contentContainerStyle={styles.scrollContent}>
+            <ScrollView contentContainerStyle={[styles.scrollContent, { paddingTop: Math.max(insets.top, 20), paddingBottom: insets.bottom + 20 }]}>
 
                 {!isPaired && (
                     <Surface style={styles.pairingBanner} elevation={3}>
@@ -814,7 +817,7 @@ export default function BoxControlsScreen() {
                             )}
                         </View>
 
-                        <View style={styles.modalFooter}>
+                        <View style={[styles.modalFooter, { paddingBottom: Math.max(16, insets.bottom + 16) }]}>
                             {bleStatus === 'error' && (
                                 <Button mode="contained" onPress={handleBleTransfer} style={{ flex: 1 }}>
                                     Retry

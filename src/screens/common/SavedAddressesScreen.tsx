@@ -5,6 +5,7 @@ import { useNavigation } from '@react-navigation/native';
 import { supabase } from '../../services/supabaseClient';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import LocationPicker, { LocationData } from '../../components/LocationPicker';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 interface SavedAddress {
     id: string;
@@ -19,6 +20,7 @@ interface SavedAddress {
 export default function SavedAddressesScreen() {
     const theme = useTheme();
     const navigation = useNavigation();
+    const insets = useSafeAreaInsets();
     const [loading, setLoading] = useState(false);
     const [addresses, setAddresses] = useState<SavedAddress[]>([]);
 
@@ -175,7 +177,7 @@ export default function SavedAddressesScreen() {
 
     return (
         <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
-            <ScrollView contentContainerStyle={styles.scrollContent}>
+            <ScrollView contentContainerStyle={[styles.scrollContent, { paddingTop: insets.top + 20, paddingBottom: 100 + insets.bottom }]}>
                 {loading ? (
                     <Text style={{ textAlign: 'center', marginTop: 20 }}>Loading addresses...</Text>
                 ) : addresses.length === 0 ? (
@@ -225,7 +227,7 @@ export default function SavedAddressesScreen() {
                 mode="contained"
                 icon="plus"
                 onPress={openAdd}
-                style={styles.addButton}
+                style={[styles.addButton, { bottom: 24 + insets.bottom }]}
                 contentStyle={{ paddingVertical: 8 }}
             >
                 Add New Address

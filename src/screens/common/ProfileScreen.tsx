@@ -4,6 +4,7 @@ import { useFocusEffect } from '@react-navigation/native';
 import { supabase } from '../../services/supabaseClient';
 import { Text, Avatar, Button, List, Divider, useTheme } from 'react-native-paper';
 import { useNavigation } from '@react-navigation/native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 export default function ProfileScreen() {
     const navigation = useNavigation<any>();
@@ -11,6 +12,8 @@ export default function ProfileScreen() {
     const [profile, setProfile] = useState<any>(null);
     const [defaultAddress, setDefaultAddress] = useState<string>('Not set');
     const [refreshing, setRefreshing] = useState(false);
+
+    const insets = useSafeAreaInsets();
 
     const fetchProfile = async () => {
         const { data: { user } } = await supabase!.auth.getUser();
@@ -62,6 +65,10 @@ export default function ProfileScreen() {
     return (
         <ScrollView
             style={[styles.container, { backgroundColor: theme.colors.background }]}
+            contentContainerStyle={{
+                paddingBottom: insets.bottom + 20,
+                paddingTop: insets.top
+            }}
             refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
         >
             <View style={[styles.header, { backgroundColor: theme.colors.surface }]}>

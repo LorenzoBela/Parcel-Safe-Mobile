@@ -8,10 +8,13 @@ import dayjs from 'dayjs';
 
 const { width } = Dimensions.get('window');
 
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+
 export default function JobDetailScreen() {
     const navigation = useNavigation<any>();
     const route = useRoute<any>();
     const theme = useTheme();
+    const insets = useSafeAreaInsets();
     const MAPBOX_TOKEN = process.env.EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN;
 
     // Get job data from params (or use mock data)
@@ -75,7 +78,7 @@ export default function JobDetailScreen() {
     return (
         <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
             {/* Header */}
-            <Surface style={[styles.header, { backgroundColor: theme.colors.surface }]} elevation={2}>
+            <Surface style={[styles.header, { backgroundColor: theme.colors.surface, paddingTop: insets.top + 10 }]} elevation={2}>
                 <IconButton
                     icon="arrow-left"
                     size={24}
