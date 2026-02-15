@@ -139,6 +139,7 @@ const SafePointAnnotation = createMockComponent('PointAnnotation');
 const SafeShapeSource = createMockComponent('ShapeSource');
 const SafeLineLayer = createMockComponent('LineLayer');
 const SafeCircleLayer = createMockComponent('CircleLayer');
+const SafeFillLayer = createMockComponent('FillLayer');
 const SafeMarkerView = createMockComponent('MarkerView');
 const SafeUserLocation = createMockComponent('UserLocation');
 
@@ -214,6 +215,7 @@ const MapboxGL = {
     CircleLayer: SafeCircleLayer,
     MarkerView: SafeMarkerView,
     UserLocation: SafeUserLocation,
+    FillLayer: SafeFillLayer,
     setAccessToken,
     setTelemetryEnabled,
     StyleURL,

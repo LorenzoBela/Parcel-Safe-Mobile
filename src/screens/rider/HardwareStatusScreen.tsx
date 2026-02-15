@@ -276,6 +276,12 @@ export default function HardwareStatusScreen({ route, navigation }: HardwareStat
                                     valueColor="#ef4444"
                                 />
                             )}
+                            {health.camera?.last_upload_object_path && (
+                                <DetailRow
+                                    label="Last Photo"
+                                    value={health.camera.last_upload_object_path}
+                                />
+                            )}
                         </View>
                     </View>
 

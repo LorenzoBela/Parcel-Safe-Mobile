@@ -27,6 +27,7 @@ import * as Clipboard from 'expo-clipboard';
 import CustomerCancellationModal from '../../components/modals/CustomerCancellationModal';
 import useAuthStore from '../../store/authStore';
 import { lineString } from '@turf/helpers';
+import circle from '@turf/circle';
 // MapboxGL is already imported from wrapper
 
 interface TrackRouteParams {
@@ -75,6 +76,7 @@ export default function TrackOrderScreen() {
     const [boxLiveLocation, setBoxLiveLocation] = useState<{ lat: number; lng: number } | null>(null);
     const [routeCoordinates, setRouteCoordinates] = useState<number[][] | null>(null);
     const [riderProfile, setRiderProfile] = useState<RiderProfile | null>(null);
+    const [eta, setEta] = useState<number | null>(null);
 
     const params = (route.params || {}) as TrackRouteParams;
     const deliveryId = params.bookingId;
@@ -87,6 +89,11 @@ export default function TrackOrderScreen() {
     const destination = {
         latitude: delivery?.dropoff_lat ?? params.dropoffLat ?? 0,
         longitude: delivery?.dropoff_lng ?? params.dropoffLng ?? 0,
+    };
+
+    const pickupLocation = {
+        latitude: delivery?.pickup_lat ?? params.pickupLat ?? 0,
+        longitude: delivery?.pickup_lng ?? params.pickupLng ?? 0,
     };
 
     const isPickedUp = ['PICKED_UP', 'IN_TRANSIT'].includes(delivery?.status || '');
@@ -258,7 +265,7 @@ export default function TrackOrderScreen() {
             return;
         }
 
-        const baseUrl = process.env.EXPO_PUBLIC_TRACKING_WEB_BASE_URL || 'https://parcel-safe.web.app';
+        const baseUrl = process.env.EXPO_PUBLIC_TRACKING_WEB_BASE_URL || 'https://parcel-safe.vercel.app';
         const url = `${baseUrl}/track/${token}`;
         await Share.share({
             message: `Track your Parcel-Safe delivery: ${url}`,
@@ -280,6 +287,11 @@ export default function TrackOrderScreen() {
                 const json = await response.json();
                 if (json.routes && json.routes.length > 0) {
                     setRouteCoordinates(json.routes[0].geometry.coordinates);
+                    // Calculate ETA in minutes
+                    const durationSeconds = json.routes[0].duration;
+                    if (durationSeconds) {
+                        setEta(Math.ceil(durationSeconds / 60));
+                    }
                 }
             } catch (error) {
                 console.error('Error fetching route:', error);
@@ -315,6 +327,20 @@ export default function TrackOrderScreen() {
         },
         properties: {},
     };
+
+    // Generate 50m radius circle for geofence visual
+    // Note: radius is in kilometers for turf/circle, so 50m = 0.05km
+    const geofenceCircle = circle(
+        [destination.longitude, destination.latitude],
+        0.05,
+        { steps: 64, units: 'kilometers' }
+    );
+
+    const pickupGeofenceCircle = circle(
+        [pickupLocation.longitude, pickupLocation.latitude],
+        0.05,
+        { steps: 64, units: 'kilometers' }
+    );
 
     return (
         <View style={styles.container}>
@@ -375,14 +401,36 @@ export default function TrackOrderScreen() {
                     </MapboxGL.PointAnnotation>
 
                     {/* Geo-fence */}
-                    <MapboxGL.ShapeSource id="destination" shape={destinationPoint}>
-                        <MapboxGL.CircleLayer
-                            id="destination-fence"
+                    {/* Pickup Geo-fence (Blue) */}
+                    <MapboxGL.ShapeSource id="pickup-fence-source" shape={pickupGeofenceCircle}>
+                        <MapboxGL.FillLayer
+                            id="pickup-fence-fill"
                             style={{
-                                circleRadius: 60,
-                                circleColor: 'rgba(76, 175, 80, 0.25)', // More visible green fill
-                                circleStrokeColor: 'rgba(76, 175, 80, 0.8)', // Solid strong border
-                                circleStrokeWidth: 3,
+                                fillColor: 'rgba(33, 150, 243, 0.25)', // Blue fill
+                            }}
+                        />
+                        <MapboxGL.LineLayer
+                            id="pickup-fence-outline"
+                            style={{
+                                lineColor: 'rgba(33, 150, 243, 0.8)', // Blue border
+                                lineWidth: 2,
+                            }}
+                        />
+                    </MapboxGL.ShapeSource>
+
+                    {/* Dropoff Geo-fence (Green) */}
+                    <MapboxGL.ShapeSource id="destination" shape={geofenceCircle}>
+                        <MapboxGL.FillLayer
+                            id="destination-fence-fill"
+                            style={{
+                                fillColor: 'rgba(76, 175, 80, 0.25)',
+                            }}
+                        />
+                        <MapboxGL.LineLayer
+                            id="destination-fence-outline"
+                            style={{
+                                lineColor: 'rgba(76, 175, 80, 0.8)',
+                                lineWidth: 2,
                             }}
                         />
                     </MapboxGL.ShapeSource>
@@ -435,7 +483,9 @@ export default function TrackOrderScreen() {
                     </View>
                     {!cancellation && (
                         <Surface style={styles.etaBadge} elevation={0}>
-                            <Text style={{ color: 'white', fontWeight: 'bold' }}>10 min</Text>
+                            <Text style={{ color: 'white', fontWeight: 'bold' }}>
+                                {eta !== null ? `${eta} min` : 'Calculating...'}
+                            </Text>
                         </Surface>
                     )}
                 </View>

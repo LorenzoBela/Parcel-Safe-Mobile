@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { View, StyleSheet, Alert, ScrollView, Platform } from 'react-native';
-import { Text, Button, Card, TextInput, Portal, Modal } from 'react-native-paper';
+import { View, StyleSheet, Alert, ScrollView, Platform, Linking } from 'react-native';
+import { Text, Button, Card, TextInput, Portal, Modal, IconButton } from 'react-native-paper';
 import { useNavigation, useRoute } from '@react-navigation/native';
 
 // Optional expo-image-picker import (may not be available in all environments)
@@ -762,6 +762,21 @@ export default function ArrivalScreen() {
         </Card>
     );
 
+    const handleNavigate = () => {
+        if (!params.targetAddress) return;
+
+        const scheme = Platform.select({ ios: 'maps:0,0?q=', android: 'geo:0,0?q=' });
+        const label = params.targetAddress;
+        const url = Platform.select({
+            ios: `${scheme}${label}`,
+            android: `${scheme}0,0?q=${label}`
+        });
+
+        if (url) {
+            Linking.openURL(url);
+        }
+    };
+
     return (
         <ScrollView style={styles.container} contentContainerStyle={styles.content}>
             {/* EC-18: Tamper Alert Banner */}
@@ -868,24 +883,35 @@ export default function ArrivalScreen() {
                     </Text>
 
                     {/* EC-12: Address info and update button */}
-                    <View style={styles.addressContainer}>
-                        <Text style={styles.addressLabel}>Delivery Address:</Text>
-                        <Text style={styles.address}>{params.targetAddress}</Text>
-                        <Button
-                            mode="text"
-                            onPress={() => setShowAddressModal(true)}
-                            icon="map-marker-question"
-                            compact
-                        >
-                            Wrong Address?
-                        </Button>
+                    <View style={[styles.addressContainer, { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }]}>
+                        <View style={{ flex: 1 }}>
+                            <Text style={styles.addressLabel}>Delivery Address:</Text>
+                            <Text style={styles.address}>{params.targetAddress}</Text>
+                        </View>
+                        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                            <Button
+                                mode="text"
+                                onPress={() => setShowAddressModal(true)}
+                                icon="map-marker-question"
+                                compact
+                            >
+                                Wrong?
+                            </Button>
+                            <IconButton
+                                icon="navigation"
+                                mode="contained"
+                                containerColor="#E3F2FD" // Light blue
+                                iconColor="#1976D2" // Blue
+                                size={24}
+                                onPress={handleNavigate}
+                                style={{ margin: 0, marginLeft: 8 }}
+                            />
+                        </View>
                     </View>
                 </Card.Content>
             </Card>
 
-            <Button mode="contained" onPress={checkLocation} style={styles.button}>
-                📍 Check GPS Location
-            </Button>
+
 
             {!isPickupConfirmed && (
                 <Card style={styles.infoCard}>
@@ -930,26 +956,17 @@ export default function ArrivalScreen() {
                         </Button>
                     )}
 
-                    <Button
-                        mode="contained"
-                        disabled={!isInsideGeoFence}
-                        onPress={handleProceedToHandover}
-                        style={styles.button}
-                    >
-                        Proceed to Handover
-                    </Button>
+                    <View style={{ marginTop: 16 }}>
+                        <SwipeConfirmButton
+                            label="Swipe to Confirm Arrival"
+                            onConfirm={handleProceedToHandover}
+                            disabled={!isInsideGeoFence || isLoading}
+                        />
+                    </View>
                 </>
             )}
 
-            {/* Geofence Info */}
-            <Card style={styles.infoCard}>
-                <Card.Content>
-                    <Text style={styles.infoTitle}>Geofence Settings</Text>
-                    <Text style={styles.infoText}>
-                        Radius: {geofence.radiusMeters}m (adjustable for GPS errors)
-                    </Text>
-                </Card.Content>
-            </Card>
+
 
             {/* EC-02: BLE OTP Transfer Card */}
             <Card style={styles.bleCard}>

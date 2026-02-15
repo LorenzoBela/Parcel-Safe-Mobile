@@ -64,7 +64,7 @@ export default function JobDetailScreen() {
     const handleStartTrip = () => {
         navigation.navigate('Arrival', {
             deliveryId: jobData.id,
-            boxId: 'BOX_001',
+            boxId: jobData.boxId || 'BOX_001', // Fallback if missing, but prefer dynamic
             targetLat: jobData.dropoffLat,
             targetLng: jobData.dropoffLng,
             targetAddress: jobData.address,
@@ -87,78 +87,78 @@ export default function JobDetailScreen() {
                 </View>
             </Surface>
 
-            <ScrollView style={{ flex: 1 }}>
-                {/* Map Section */}
-                <View style={styles.mapContainer}>
-                    {MAPBOX_TOKEN ? (
-                        <MapboxGL.MapView
-                            style={styles.map}
-                            logoEnabled={false}
-                            attributionEnabled={false}
-                            styleURL={MapboxGL.StyleURL.Street}
-                            scrollEnabled={true}
-                            pitchEnabled={true}
-                            rotateEnabled={true}
-                            zoomEnabled={true}
+            {/* Map Section - Fixed at top */}
+            <View style={styles.mapContainer}>
+                {MAPBOX_TOKEN ? (
+                    <MapboxGL.MapView
+                        style={styles.map}
+                        logoEnabled={false}
+                        attributionEnabled={false}
+                        styleURL={MapboxGL.StyleURL.Street}
+                        scrollEnabled={true}
+                        pitchEnabled={true}
+                        rotateEnabled={true}
+                        zoomEnabled={true}
+                    >
+                        <MapboxGL.Camera
+                            zoomLevel={12}
+                            centerCoordinate={[
+                                (jobData.pickupLng + jobData.dropoffLng) / 2,
+                                (jobData.pickupLat + jobData.dropoffLat) / 2
+                            ]}
+                            animationMode="flyTo"
+                            animationDuration={1000}
+                        />
+
+                        {/* Pickup Marker */}
+                        <MapboxGL.PointAnnotation
+                            id="pickup-marker"
+                            coordinate={[jobData.pickupLng, jobData.pickupLat]}
                         >
-                            <MapboxGL.Camera
-                                zoomLevel={12}
-                                centerCoordinate={[
-                                    (jobData.pickupLng + jobData.dropoffLng) / 2,
-                                    (jobData.pickupLat + jobData.dropoffLat) / 2
-                                ]}
-                                animationMode="flyTo"
-                                animationDuration={1000}
-                            />
+                            <View style={styles.pickupMarker}>
+                                <MaterialCommunityIcons name="package-variant" size={20} color="white" />
+                            </View>
+                        </MapboxGL.PointAnnotation>
 
-                            {/* Pickup Marker */}
-                            <MapboxGL.PointAnnotation
-                                id="pickup-marker"
-                                coordinate={[jobData.pickupLng, jobData.pickupLat]}
+                        {/* Dropoff Marker */}
+                        <MapboxGL.PointAnnotation
+                            id="dropoff-marker"
+                            coordinate={[jobData.dropoffLng, jobData.dropoffLat]}
+                        >
+                            <View style={styles.dropoffMarker}>
+                                <MaterialCommunityIcons name="map-marker" size={24} color="white" />
+                            </View>
+                        </MapboxGL.PointAnnotation>
+
+                        {/* Route Line */}
+                        {routeGeometry && (
+                            <MapboxGL.ShapeSource
+                                id="route-line"
+                                shape={{
+                                    type: 'Feature',
+                                    geometry: routeGeometry,
+                                    properties: {},
+                                }}
                             >
-                                <View style={styles.pickupMarker}>
-                                    <MaterialCommunityIcons name="package-variant" size={20} color="white" />
-                                </View>
-                            </MapboxGL.PointAnnotation>
-
-                            {/* Dropoff Marker */}
-                            <MapboxGL.PointAnnotation
-                                id="dropoff-marker"
-                                coordinate={[jobData.dropoffLng, jobData.dropoffLat]}
-                            >
-                                <View style={styles.dropoffMarker}>
-                                    <MaterialCommunityIcons name="map-marker" size={24} color="white" />
-                                </View>
-                            </MapboxGL.PointAnnotation>
-
-                            {/* Route Line */}
-                            {routeGeometry && (
-                                <MapboxGL.ShapeSource
-                                    id="route-line"
-                                    shape={{
-                                        type: 'Feature',
-                                        geometry: routeGeometry,
-                                        properties: {},
+                                <MapboxGL.LineLayer
+                                    id="route-line-layer"
+                                    style={{
+                                        lineColor: '#2196F3',
+                                        lineWidth: 4,
+                                        lineOpacity: 0.8,
                                     }}
-                                >
-                                    <MapboxGL.LineLayer
-                                        id="route-line-layer"
-                                        style={{
-                                            lineColor: '#2196F3',
-                                            lineWidth: 4,
-                                            lineOpacity: 0.8,
-                                        }}
-                                    />
-                                </MapboxGL.ShapeSource>
-                            )}
-                        </MapboxGL.MapView>
-                    ) : (
-                        <View style={[styles.map, styles.mapFallback]}>
-                            <Text>Map unavailable</Text>
-                        </View>
-                    )}
-                </View>
+                                />
+                            </MapboxGL.ShapeSource>
+                        )}
+                    </MapboxGL.MapView>
+                ) : (
+                    <View style={[styles.map, styles.mapFallback]}>
+                        <Text>Map unavailable</Text>
+                    </View>
+                )}
+            </View>
 
+            <ScrollView style={{ flex: 1 }}>
                 {/* Trip Summary */}
                 <View style={{ padding: 16 }}>
                     <Card style={{ marginBottom: 16 }} mode="elevated">

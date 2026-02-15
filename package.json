@@ -57,6 +57,8 @@
     "@react-navigation/stack": "^7.6.13",
     "@rnmapbox/maps": "^10.2.10",
     "@supabase/supabase-js": "^2.90.1",
+    "@turf/circle": "^7.3.4",
+    "@turf/helpers": "^7.3.4",
     "axios": "^1.13.4",
     "dayjs": "^1.11.19",
     "expo": "~54.0.25",

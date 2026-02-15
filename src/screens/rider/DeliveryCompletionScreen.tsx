@@ -3,8 +3,9 @@ import { View, StyleSheet, Alert, ScrollView } from 'react-native';
 import { Text, Button, Card, Avatar } from 'react-native-paper';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import SwipeConfirmButton from '../../components/SwipeConfirmButton';
-import { subscribeToDelivery, updateDeliveryStatus } from '../../services/riderMatchingService';
+import { subscribeToDelivery, updateDeliveryStatus, calculateHaversineDistance, DeliveryRecord } from '../../services/riderMatchingService';
 import { uploadDeliveryProofPhoto } from '../../services/proofPhotoService';
+import { subscribeToLocation, LocationData } from '../../services/firebaseClient';
 
 // Optional expo-image-picker import (may not be available in all environments)
 let ImagePicker: any = null;
@@ -26,23 +27,66 @@ export default function DeliveryCompletionScreen() {
     const deliveryId = params.deliveryId;
     const boxId = params.boxId || '';
     const [status, setStatus] = useState<string>('IN_TRANSIT');
+    const [delivery, setDelivery] = useState<DeliveryRecord | null>(null);
     const [isSaving, setIsSaving] = useState(false);
     const [proofPhotoUri, setProofPhotoUri] = useState<string | null>(null);
     const [proofPhotoUrl, setProofPhotoUrl] = useState<string | null>(null);
+    const [currentLocation, setCurrentLocation] = useState<LocationData | null>(null);
+    const [distanceToTarget, setDistanceToTarget] = useState<number | null>(null);
+    const [isInsideGeofence, setIsInsideGeofence] = useState(false);
 
     useEffect(() => {
         if (!deliveryId) {
             return;
         }
 
-        const unsubscribe = subscribeToDelivery(deliveryId, (delivery) => {
-            if (delivery?.status) {
-                setStatus(delivery.status);
+        const unsubscribe = subscribeToDelivery(deliveryId, (data) => {
+            if (data) {
+                setDelivery(data);
+                if (data.status) {
+                    setStatus(data.status);
+                }
             }
         });
 
         return unsubscribe;
     }, [deliveryId]);
+
+    // Subscribe to real-time location
+    useEffect(() => {
+        if (!boxId) return;
+        const unsubscribe = subscribeToLocation(boxId, (loc) => {
+            setCurrentLocation(loc);
+        });
+        return unsubscribe;
+    }, [boxId]);
+
+    // Calculate geofence status
+    useEffect(() => {
+        if (!currentLocation || !delivery) return;
+
+        let targetLat, targetLng;
+        // If not picked up, target is pickup.
+        // If picked up but not arrived/completed, target is dropoff.
+        // Logic depends on 'isPickedUp' derived state
+        if (!['PICKED_UP', 'IN_TRANSIT', 'ARRIVED', 'COMPLETED'].includes(status)) {
+            targetLat = delivery.pickup_lat;
+            targetLng = delivery.pickup_lng;
+        } else {
+            targetLat = delivery.dropoff_lat;
+            targetLng = delivery.dropoff_lng;
+        }
+
+        if (targetLat && targetLng) {
+            const distKm = calculateHaversineDistance(
+                currentLocation.latitude, currentLocation.longitude,
+                targetLat, targetLng
+            );
+            const distMeters = Math.round(distKm * 1000);
+            setDistanceToTarget(distMeters);
+            setIsInsideGeofence(distMeters <= 50); // 50m radius
+        }
+    }, [currentLocation, delivery, status]);
 
     const isPickedUp = useMemo(
         () => ['PICKED_UP', 'IN_TRANSIT', 'COMPLETED'].includes(status),
@@ -209,12 +253,17 @@ export default function DeliveryCompletionScreen() {
                     <Text style={styles.cardText}>
                         {isPickedUp ? 'Package pickup is already recorded.' : 'Swipe to mark package as picked up.'}
                     </Text>
+                    {!isPickedUp && !isInsideGeofence && (
+                        <Text style={{ color: '#ef4444', fontWeight: 'bold', marginTop: 4 }}>
+                            ⚠️ Outside Geofence ({distanceToTarget}m). Move closer.
+                        </Text>
+                    )}
                     {!isPickedUp && (
                         <View style={styles.swipeWrap}>
                             <SwipeConfirmButton
                                 label="Swipe to confirm pickup"
                                 onConfirm={handleFallbackPickup}
-                                disabled={isSaving}
+                                disabled={isSaving || !isInsideGeofence}
                             />
                         </View>
                     )}
@@ -227,12 +276,17 @@ export default function DeliveryCompletionScreen() {
                     <Text style={styles.cardText}>
                         {isArrived ? 'Arrival is already recorded.' : 'Swipe to mark rider as arrived at destination.'}
                     </Text>
+                    {!isArrived && !isInsideGeofence && (
+                        <Text style={{ color: '#ef4444', fontWeight: 'bold', marginTop: 4 }}>
+                            ⚠️ Outside Geofence ({distanceToTarget}m). Move closer.
+                        </Text>
+                    )}
                     {!isArrived && (
                         <View style={styles.swipeWrap}>
                             <SwipeConfirmButton
                                 label="Swipe to confirm arrival"
                                 onConfirm={handleArrived}
-                                disabled={isSaving}
+                                disabled={isSaving || !isInsideGeofence}
                             />
                         </View>
                     )}
@@ -264,12 +318,17 @@ export default function DeliveryCompletionScreen() {
                             </Text>
                         )}
                     </View>
+                    {!isCompleted && !isInsideGeofence && (
+                        <Text style={{ color: '#ef4444', fontWeight: 'bold', marginTop: 4 }}>
+                            ⚠️ Outside Geofence ({distanceToTarget}m). Move closer.
+                        </Text>
+                    )}
                     {!isCompleted && (
                         <View style={styles.swipeWrap}>
                             <SwipeConfirmButton
                                 label="Swipe to complete order"
                                 onConfirm={handleComplete}
-                                disabled={isSaving || !proofPhotoUri}
+                                disabled={isSaving || !proofPhotoUri || !isInsideGeofence}
                             />
                         </View>
                     )}

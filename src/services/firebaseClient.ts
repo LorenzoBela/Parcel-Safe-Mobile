@@ -697,6 +697,10 @@ export interface CameraState {
     failure_reason: string;
     timestamp: number;
     delivery_id: string;
+    last_upload_delivery_id?: string;
+    last_upload_object_path?: string;
+    last_upload_public_url?: string;
+    last_upload_timestamp?: number;
     severity?: 'LOW' | 'MEDIUM' | 'HIGH';
     message?: string;
 }
@@ -717,6 +721,56 @@ export function subscribeToCamera(
     });
 
     return () => off(cameraRef);
+}
+
+export interface PhotoAuditState {
+    delivery_id?: string;
+    box_id?: string;
+    latest_photo_url?: string;
+    latest_photo_object_path?: string;
+    latest_photo_uploaded_at?: number;
+}
+
+export interface DeliveryProofState {
+    proof_photo_url?: string;
+    proof_photo_object_path?: string;
+    proof_photo_uploaded_at?: number;
+}
+
+/**
+ * Subscribe to photo audit log written by firmware at audit_logs/{deliveryId}
+ */
+export function subscribeToPhotoAuditLog(
+    deliveryId: string,
+    callback: (state: PhotoAuditState | null) => void
+): () => void {
+    const db = getFirebaseDatabase();
+    const auditRef = ref(db, `audit_logs/${deliveryId}`);
+
+    const unsubscribe = onValue(auditRef, (snapshot) => {
+        const data = snapshot.val();
+        callback(data as PhotoAuditState | null);
+    });
+
+    return () => off(auditRef);
+}
+
+/**
+ * Subscribe to delivery proof photo fields at deliveries/{deliveryId}
+ */
+export function subscribeToDeliveryProof(
+    deliveryId: string,
+    callback: (state: DeliveryProofState | null) => void
+): () => void {
+    const db = getFirebaseDatabase();
+    const deliveryRef = ref(db, `deliveries/${deliveryId}`);
+
+    const unsubscribe = onValue(deliveryRef, (snapshot) => {
+        const data = snapshot.val();
+        callback(data as DeliveryProofState | null);
+    });
+
+    return () => off(deliveryRef);
 }
 
 // ==================== EC-97: Low-Light Face Detection ====================

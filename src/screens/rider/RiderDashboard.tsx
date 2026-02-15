@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { View, StyleSheet, ScrollView, Switch, ImageBackground, Alert, RefreshControl, TouchableOpacity, Dimensions } from 'react-native';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { View, StyleSheet, ScrollView, Switch, ImageBackground, Alert, RefreshControl, TouchableOpacity, Dimensions, Linking, Platform } from 'react-native';
 import { Text, Card, Button, Avatar, ProgressBar, MD3Colors, Surface, Chip, useTheme, IconButton } from 'react-native-paper';
 import { useNavigation } from '@react-navigation/native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -110,6 +110,9 @@ export default function RiderDashboard() {
     // EC-46: Clock Skew Warning
     const [clockSkewWarning, setClockSkewWarning] = useState(false);
 
+    // EC-Update: Route Duration State
+    const [duration, setDuration] = useState('-- min');
+
     // EC-10: Photo Queue Status
     const [photoQueueCount, setPhotoQueueCount] = useState(0);
     const [photoQueueFull, setPhotoQueueFull] = useState(false);
@@ -173,6 +176,45 @@ export default function RiderDashboard() {
             .catch(() => setCachedBoxId(null));
     }, [riderId]);
 
+    const [activeDelivery, setActiveDelivery] = useState<any>(null);
+
+    // Dynamic delivery state — populated from real sources when available
+    const nextDelivery = useMemo(() => activeDelivery ? {
+        id: activeDelivery.id,
+        boxId: activeDelivery.assigned_box_id || activeDelivery.box_id, // Ensure boxId is passed
+        address: activeDelivery.dropoff_address,
+        customer: activeDelivery.recipient_name || 'Customer',
+        time: activeDelivery.expected_arrival || '--:--',
+        phone: activeDelivery.recipient_phone || 'No Phone',
+        pickupAddress: activeDelivery.pickup_address,
+        pickupTime: activeDelivery.created_at ? dayjs(activeDelivery.created_at).format('h:mm A') : '--:--',
+        dropoffTime: activeDelivery.expected_arrival ? dayjs(activeDelivery.expected_arrival).format('h:mm A') : '--:--',
+        fare: activeDelivery.estimated_fare ? `₱${activeDelivery.estimated_fare}` : '--',
+        distance: distance, // Updated by Mapbox
+        estimatedTime: duration, // Updated by Mapbox
+        packageType: 'Standard', // Default
+        weight: 'N/A',
+        priority: 'Standard',
+        specialInstructions: activeDelivery.package_description || '',
+        pickupLat: activeDelivery.pickup_lat,
+        pickupLng: activeDelivery.pickup_lng,
+        dropoffLat: activeDelivery.dropoff_lat,
+        dropoffLng: activeDelivery.dropoff_lng,
+    } : null, [activeDelivery, distance, duration]);
+
+    // Use active delivery destination if available, otherwise default
+    const destination = useMemo(() => nextDelivery ? {
+        latitude: nextDelivery.dropoffLat,
+        longitude: nextDelivery.dropoffLng,
+        title: "Delivery Destination",
+        description: nextDelivery.address
+    } : {
+        latitude: 14.5831,
+        longitude: 120.9794,
+        title: "Delivery Destination",
+        description: "Rizal Park, Manila"
+    }, [nextDelivery]);
+
     // Check for active deliveries
     useEffect(() => {
         if (!riderId) return;
@@ -186,19 +228,22 @@ export default function RiderDashboard() {
                 }
                 const { data, error } = await supabase
                     .from('deliveries')
-                    .select('id, status')
+                    .select('*')
                     .eq('rider_id', riderId)
-                    .in('status', ['PENDING', 'IN_TRANSIT', 'ARRIVED'])
+                    .in('status', ['ASSIGNED', 'PENDING', 'IN_TRANSIT', 'ARRIVED']) // EC-Update: Added ASSIGNED
                     .limit(1);
 
                 if (!error && data && data.length > 0) {
                     setHasActiveDelivery(true);
+                    setActiveDelivery(data[0]);
                 } else {
                     setHasActiveDelivery(false);
+                    setActiveDelivery(null);
                 }
             } catch (err) {
                 console.error('[RiderDashboard] Failed to check active deliveries:', err);
                 setHasActiveDelivery(false);
+                setActiveDelivery(null);
             }
         };
 
@@ -614,13 +659,7 @@ export default function RiderDashboard() {
         }
     };
 
-    // Fixed destination for demo (e.g., Rizal Park, Manila)
-    const destination = {
-        latitude: 14.5831,
-        longitude: 120.9794,
-        title: "Delivery Destination",
-        description: "Rizal Park, Manila"
-    };
+
 
     useEffect(() => {
         const timer = setInterval(() => {
@@ -644,10 +683,7 @@ export default function RiderDashboard() {
             return;
         }
 
-        const destination = {
-            latitude: 14.5831,
-            longitude: 120.9794,
-        };
+
 
         try {
             const url = `https://api.mapbox.com/directions/v5/mapbox/driving/${riderLocation.coords.longitude},${riderLocation.coords.latitude};${destination.longitude},${destination.latitude}?geometries=geojson&access_token=${MAPBOX_TOKEN}`;
@@ -662,12 +698,16 @@ export default function RiderDashboard() {
                 // Update distance with actual route distance
                 const distanceKm = (route.distance / 1000).toFixed(2);
                 setDistance(`${distanceKm} km`);
+
+                // Update duration
+                const durationMins = Math.round(route.duration / 60);
+                setDuration(`${durationMins} min`);
             }
         } catch (error) {
             console.error('Route calculation error:', error);
             setRouteGeometry(null);
         }
-    }, [riderLocation, MAPBOX_TOKEN]);
+    }, [riderLocation, MAPBOX_TOKEN, destination]);
 
     // Calculate route when rider location changes
     useEffect(() => {
@@ -768,6 +808,22 @@ export default function RiderDashboard() {
         setRefreshing(false);
     }, [fetchLocation]);
 
+    const handleNavigate = () => {
+        if (!nextDelivery) return;
+
+        const scheme = Platform.select({ ios: 'maps:0,0?q=', android: 'geo:0,0?q=' });
+        const latLng = `${nextDelivery.dropoffLat},${nextDelivery.dropoffLng}`;
+        const label = nextDelivery.address;
+        const url = Platform.select({
+            ios: `${scheme}${label}@${latLng}`,
+            android: `${scheme}${latLng}(${label})`
+        });
+
+        if (url) {
+            Linking.openURL(url);
+        }
+    };
+
     const toggleLock = () => {
         Alert.alert(
             isLocked ? "Unlock Box?" : "Lock Box?",
@@ -788,16 +844,7 @@ export default function RiderDashboard() {
     // Live weather state
     const [weather, setWeather] = useState<WeatherData | null>(null);
 
-    // Dynamic delivery state — populated from real sources when available
-    const nextDelivery: {
-        id: string; address: string; customer: string; time: string;
-        phone: string; pickupAddress: string; pickupTime: string;
-        dropoffTime: string; fare: string; distance: string;
-        estimatedTime: string; packageType: string; weight: string;
-        priority: string; specialInstructions: string;
-        pickupLat: number; pickupLng: number;
-        dropoffLat: number; dropoffLng: number;
-    } | null = null;
+
 
     const boxStatus = {
         battery: batteryState?.percentage ? batteryState.percentage / 100 : 0,
@@ -1259,10 +1306,22 @@ export default function RiderDashboard() {
 
                             <View style={styles.divider} />
 
-                            <View style={styles.addressContainer}>
-                                <MaterialCommunityIcons name="map-marker" size={20} color={theme.colors.primary} style={{ marginTop: 2 }} />
-                                <Text variant="bodyMedium" style={styles.address}>{nextDelivery.address}</Text>
+                            <View style={[styles.addressContainer, { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }]}>
+                                <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center' }}>
+                                    <MaterialCommunityIcons name="map-marker" size={20} color={theme.colors.primary} style={{ marginTop: 2, marginRight: 4 }} />
+                                    <Text variant="bodyMedium" style={[styles.address, { flex: 1, marginBottom: 0 }]}>{nextDelivery.address}</Text>
+                                </View>
+                                <IconButton
+                                    icon="navigation"
+                                    mode="contained"
+                                    containerColor={theme.colors.primaryContainer}
+                                    iconColor={theme.colors.primary}
+                                    size={24}
+                                    onPress={handleNavigate}
+                                    style={{ margin: 0, marginLeft: 8 }}
+                                />
                             </View>
+
 
                             <View style={styles.jobMeta}>
                                 <View style={styles.metaItem}>

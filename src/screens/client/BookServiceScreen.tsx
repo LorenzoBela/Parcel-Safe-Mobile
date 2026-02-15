@@ -1,10 +1,10 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import { useNavigation, useFocusEffect } from '@react-navigation/native';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { View, StyleSheet, Alert, ActivityIndicator, TouchableOpacity, Modal, Animated, ScrollView } from 'react-native';
 import { Text, TextInput, Button, useTheme, Card, Divider } from 'react-native-paper';
 import MapboxGL from '../../components/map/MapboxWrapper';
 import * as Location from 'expo-location';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { useNavigation } from '@react-navigation/native';
 
 // Fallback initial region (Manila)
 const INITIAL_REGION = {
@@ -13,6 +13,11 @@ const INITIAL_REGION = {
     latitudeDelta: 0.05,
     longitudeDelta: 0.05,
 };
+
+// Start of EC-Update: Imports for persistence
+import { checkActiveBookings } from '../../services/riderMatchingService';
+import useAuthStore from '../../store/authStore';
+// End of EC-Update
 
 type MapboxSuggestion = {
     id: string;
@@ -24,6 +29,8 @@ type MapboxSuggestion = {
 export default function BookServiceScreen() {
     const navigation = useNavigation<any>();
     const theme = useTheme();
+    // EC-Update: Get userId for persistence check
+    const userId = useAuthStore((state: any) => state.user?.userId);
     const MAPBOX_TOKEN = process.env.EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN;
 
     const [pickupText, setPickupText] = useState('');
@@ -58,25 +65,64 @@ export default function BookServiceScreen() {
         }
     }, [MAPBOX_TOKEN]);
 
+    // EC-Update: Check for active bookings on focus to restore state (handles back navigation)
+    useFocusEffect(
+        useCallback(() => {
+            if (!userId) return;
+
+            const checkPersistence = async () => {
+                try {
+                    // Check for any active booking for this user
+                    const activeBooking = await checkActiveBookings(userId);
+
+                    if (activeBooking) {
+                        console.log('[BookService] Restoring active booking:', activeBooking.bookingId);
+
+                        if (activeBooking.status === 'PENDING') {
+                            // Restore "Searching Rider" screen
+                            navigation.navigate('SearchingRider', {
+                                pickup: activeBooking.pickupAddress,
+                                dropoff: activeBooking.dropoffAddress,
+                                pickupLat: activeBooking.pickupLat,
+                                pickupLng: activeBooking.pickupLng,
+                                dropoffLat: activeBooking.dropoffLat,
+                                dropoffLng: activeBooking.dropoffLng,
+                                estimatedFare: activeBooking.estimatedFare,
+                                existingBookingId: activeBooking.bookingId, // Pass ID to resume
+                                shareToken: activeBooking.shareToken
+                            });
+                        } else if (['ASSIGNED', 'IN_TRANSIT', 'ARRIVED', 'PICKED_UP'].includes(activeBooking.status)) {
+                            // Restore "Track Order" screen
+                            navigation.navigate('TrackOrder', {
+                                bookingId: activeBooking.bookingId,
+                                riderId: activeBooking.riderId,
+                                shareToken: activeBooking.shareToken
+                            });
+                        }
+                    }
+                } catch (error) {
+                    console.error('[BookService] Error checking persistence:', error);
+                }
+            };
+
+            checkPersistence();
+        }, [userId, navigation])
+    );
+    // End of EC-Update
+
 
     // Helper to get nicer names (POIs) from Mapbox
     const reverseGeocodeMapbox = async (lat: number, lng: number): Promise<string | null> => {
         if (!MAPBOX_TOKEN) return null;
         try {
-            const url = `https://api.mapbox.com/geocoding/v5/mapbox.places/${lng},${lat}.json?access_token=${MAPBOX_TOKEN}&types=address,place&limit=1`;
+            // Added 'poi' and 'poi.landmark' to types to prioritize specific places over just streets
+            const url = `https://api.mapbox.com/geocoding/v5/mapbox.places/${lng},${lat}.json?access_token=${MAPBOX_TOKEN}&types=poi,poi.landmark,address,place&limit=1`;
             const response = await fetch(url);
             const data = await response.json();
 
             if (data.features && data.features.length > 0) {
                 // Mapbox returns the most relevant feature first based on types
-                return data.features[0].place_name;
-                // Alternatively use data.features[0].text for shorter name (e.g. "Adamson University" vs "Adamson University, San Marcelino...")
-                // Let's use .text for the input field to keep it clean, or place_name if we want full context. 
-                // User asked for "Adamson University", so .text is likely better for the main display, 
-                // but .place_name is safer for unique identification.
-                // Let's try .text if it's a POI, otherwise place_name? 
-                // Actually usually data.features[0].text is just the name. 
-                // Let's stick to data.features[0].text for cleanliness in the input box.
+                // We prefer the specific POI name (e.g. "Adamson University") over the address if available
                 return data.features[0].text;
             }
         } catch (error) {
@@ -158,10 +204,10 @@ export default function BookServiceScreen() {
                     `q=${encodeURIComponent(activeQuery.trim())}`,
                     `access_token=${MAPBOX_TOKEN}`,
                     `session_token=${sessionToken}`,
-                    `limit=5`, // Reduced to 5 to prevent UI clutter
+                    `limit=10`, // Increased to 10 for better variety
                     `language=en`,
                     `country=PH`,
-                    `types=address,brand,place,locality,neighborhood,street`, // Broad types for "Grab-like" feeling
+                    `types=poi,address,brand,place,locality,neighborhood,street`, // Added 'poi' for Grab-like feeling
                     `proximity=${proximity}`
                 ].join('&');
 
@@ -346,7 +392,22 @@ export default function BookServiceScreen() {
             const url = `https://api.mapbox.com/directions/v5/mapbox/driving/${pickupCoords.longitude},${pickupCoords.latitude};${dropoffCoords.longitude},${dropoffCoords.latitude}?geometries=geojson&access_token=${MAPBOX_TOKEN}`;
 
             const response = await fetch(url);
+
+            if (!response.ok) {
+                const errText = await response.text();
+                console.error('[Mapbox Directions] Error:', response.status, errText);
+                console.error('[Mapbox Directions] URL:', url); // Log URL to check coords
+                setRouteData(null);
+                return;
+            }
+
             const data = await response.json();
+
+            if (data.code !== 'Ok' && data.code !== 'Success') {
+                console.error('[Mapbox Directions] API returned error code:', data.code, data.message);
+                setRouteData(null);
+                return;
+            }
 
             if (data.routes && data.routes.length > 0) {
                 const route = data.routes[0];

@@ -252,6 +252,7 @@ export async function createPendingBooking(request: BookingRequest): Promise<boo
                     otp_code: otpCode,
                     status: 'PENDING',
                     created_at: new Date(request.createdAt).toISOString(),
+                    updated_at: new Date(request.createdAt).toISOString(),
                 });
 
             if (error) {
@@ -776,6 +777,69 @@ export async function getRiderProfile(riderId: string): Promise<RiderProfile | n
         return data as RiderProfile;
     } catch (error) {
         console.error('Error in getRiderProfile:', error);
+        return null;
+    }
+}
+
+/**
+ * Checks for any active booking for the current user.
+ * Returns the booking details if found, or null otherwise.
+ */
+export async function checkActiveBookings(userId: string): Promise<any | null> {
+    try {
+        // 1. Check for Pending Bookings (in Firebase)
+        // These are bookings that are "Searching for Riders"
+        const db = getFirebaseDatabase();
+        const pendingRef = ref(db, `bookings`);
+        const pendingSnapshot = await get(pendingRef);
+
+        if (pendingSnapshot.exists()) {
+            const bookings = pendingSnapshot.val();
+            // Iterate to find a booking for this user
+            for (const key in bookings) {
+                if (bookings[key].customerId === userId && bookings[key].status === 'PENDING') {
+                    // Check if it's not stale (e.g. older than 10 mins)
+                    const createdAt = bookings[key].createdAt;
+                    const now = Date.now();
+                    if (now - createdAt < 10 * 60 * 1000) {
+                        return {
+                            ...bookings[key],
+                            status: 'PENDING'
+                        };
+                    }
+                }
+            }
+        }
+
+        // 2. Check for Active Deliveries (in Supabase/PostgreSQL)
+        // These are bookings that have been accepted by a rider
+        const { data, error } = await supabase
+            .from('deliveries')
+            .select('*')
+            .eq('customer_id', userId)
+            .in('status', ['ASSIGNED', 'PICKED_UP', 'IN_TRANSIT', 'ARRIVED'])
+            .order('created_at', { ascending: false })
+            .limit(1);
+
+        if (!error && data && data.length > 0) {
+            const delivery = data[0];
+            return {
+                bookingId: delivery.id,
+                riderId: delivery.rider_id,
+                shareToken: delivery.share_token,
+                status: delivery.status,
+                // Map other fields as needed for restoration
+                pickupLat: delivery.pickup_lat,
+                pickupLng: delivery.pickup_lng,
+                dropoffLat: delivery.dropoff_lat,
+                dropoffLng: delivery.dropoff_lng,
+                estimatedFare: delivery.estimated_fare
+            };
+        }
+
+        return null;
+    } catch (error) {
+        console.error('Error checking active bookings:', error);
         return null;
     }
 }

@@ -44,8 +44,13 @@ export default function SearchingRiderScreen() {
     const [statusText, setStatusText] = useState(STATUS_MESSAGES[0]);
     const [searchFailed, setSearchFailed] = useState(false);
     const [progress, setProgress] = useState(0);
-    const [bookingId] = useState(generateBookingId());
-    const [shareToken] = useState(generateShareToken());
+
+    // EC-Update: Check for existing booking ID from params
+    const { existingBookingId, shareToken: existingShareToken } = route.params || {};
+
+    const [bookingId] = useState(existingBookingId || generateBookingId());
+    const [shareToken] = useState(existingShareToken || generateShareToken());
+
     const [notifiedRidersCount, setNotifiedRidersCount] = useState(0);
     const authedUserId = useAuthStore((state: any) => state.user?.userId) as string | undefined;
 
@@ -141,16 +146,20 @@ export default function SearchingRiderScreen() {
                 shareToken,
             };
 
-            // Create the booking in Firebase
-            await createPendingBooking(bookingRequest);
+            // Create the booking in Firebase ONLY if it's new
+            if (!existingBookingId) {
+                await createPendingBooking(bookingRequest);
+                // Notify riders within 3km radius
+                const result = await notifyNearbyRiders(bookingRequest);
+                setNotifiedRidersCount(result.notifiedCount);
 
-            // Notify riders within 3km radius
-            const result = await notifyNearbyRiders(bookingRequest);
-            setNotifiedRidersCount(result.notifiedCount);
-
-            if (result.notifiedCount === 0) {
-                // No riders available within 3km
-                setStatusText('No riders available nearby. Expanding search...');
+                if (result.notifiedCount === 0) {
+                    // No riders available within 3km
+                    setStatusText('No riders available nearby. Expanding search...');
+                }
+            } else {
+                // If resuming, just update status text
+                setStatusText('Resuming search for riders...');
             }
         };
         createBookingAndNotify();
