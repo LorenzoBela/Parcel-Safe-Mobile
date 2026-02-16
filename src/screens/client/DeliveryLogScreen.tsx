@@ -5,6 +5,7 @@ import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { supabase } from '../../services/supabaseClient';
+import { triggerDeliverySync } from '../../services/deliverySyncService';
 import useAuthStore from '../../store/authStore';
 
 /** Map Supabase DeliveryStatus to display-friendly labels */
@@ -20,6 +21,24 @@ const mapStatus = (raw: string): string => {
         default: return raw;
     }
 };
+
+const getDistanceFromLatLonInKm = (lat1: number, lon1: number, lat2: number, lon2: number) => {
+    var R = 6371; // Radius of the earth in km
+    var dLat = deg2rad(lat2 - lat1);  // deg2rad below
+    var dLon = deg2rad(lon2 - lon1);
+    var a =
+        Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+        Math.cos(deg2rad(lat1)) * Math.cos(deg2rad(lat2)) *
+        Math.sin(dLon / 2) * Math.sin(dLon / 2)
+        ;
+    var c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    var d = R * c; // Distance in km
+    return d;
+}
+
+const deg2rad = (deg: number) => {
+    return deg * (Math.PI / 180)
+}
 
 export default function DeliveryLogScreen() {
     const navigation = useNavigation<any>();
@@ -53,7 +72,7 @@ export default function DeliveryLogScreen() {
         try {
             const { data, error } = await supabase
                 .from('deliveries')
-                .select('*')
+                .select('*, customer:customer_id(full_name)')
                 .eq('customer_id', userId)
                 .order('created_at', { ascending: false });
 
@@ -76,8 +95,18 @@ export default function DeliveryLogScreen() {
                     rider: d.rider_name || 'Unassigned',
                     price: d.estimated_fare != null ? `₱${Number(d.estimated_fare).toFixed(2)}` : '—',
                     serviceType: 'Parcel Delivery',
-                    pickupAddress: d.pickup_address,
-                    dropoffAddress: d.dropoff_address,
+                    // Map actual coordinates and details
+                    pickupLat: d.pickup_lat,
+                    pickupLng: d.pickup_lng,
+                    dropoffLat: d.dropoff_lat,
+                    dropoffLng: d.dropoff_lng,
+                    pickupAddress: d.pickup_address || 'No pickup address',
+                    dropoffAddress: d.dropoff_address || 'No dropoff address',
+                    address: d.dropoff_address || 'No address provided', // Legacy field
+                    customer: d.recipient_name || d.customer?.full_name || 'Unknown',
+                    distance: d.pickup_lat && d.pickup_lng && d.dropoff_lat && d.dropoff_lng
+                        ? `${getDistanceFromLatLonInKm(d.pickup_lat, d.pickup_lng, d.dropoff_lat, d.dropoff_lng).toFixed(2)} km`
+                        : 'N/A',
                 }));
                 setLogs(mapped);
             }
@@ -95,10 +124,10 @@ export default function DeliveryLogScreen() {
         fetchDeliveries();
     }, [fetchDeliveries]);
 
-    // Re-fetch when screen gains focus
+    // Re-fetch when screen gains focus (sync first, then fetch)
     useFocusEffect(
         useCallback(() => {
-            fetchDeliveries();
+            triggerDeliverySync().then(() => fetchDeliveries());
         }, [fetchDeliveries])
     );
 
@@ -171,8 +200,8 @@ export default function DeliveryLogScreen() {
 
                     <View style={styles.divider} />
 
-                    <View style={styles.footer}>
-                        <View style={{ flex: 1 }}>
+                    <View style={[styles.footer, viewMode === 'grid' && styles.footerGrid]}>
+                        <View style={{ flex: viewMode === 'grid' ? 0 : 1 }}>
                             <View style={styles.detailRow}>
                                 <MaterialCommunityIcons name="calendar" size={14} color="#888" />
                                 <Text variant="bodySmall" style={styles.detailText} numberOfLines={1}>{item.date}</Text>
@@ -184,7 +213,15 @@ export default function DeliveryLogScreen() {
                                 </View>
                             )}
                         </View>
-                        <Text variant="titleMedium" style={{ fontWeight: 'bold', color: theme.colors.primary }}>{item.price}</Text>
+                        <Text
+                            variant="titleMedium"
+                            style={[
+                                { fontWeight: 'bold', color: theme.colors.primary },
+                                viewMode === 'grid' && { marginTop: 4 }
+                            ]}
+                        >
+                            {item.price}
+                        </Text>
                     </View>
                 </View>
             </View>
@@ -369,6 +406,10 @@ const styles = StyleSheet.create({
         justifyContent: 'space-between',
         alignItems: 'center',
         marginTop: 'auto',
+    },
+    footerGrid: {
+        flexDirection: 'column',
+        alignItems: 'flex-start',
     },
     riderInfo: {
         flexDirection: 'row',

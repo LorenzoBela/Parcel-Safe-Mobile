@@ -19,8 +19,8 @@ export const SEARCH_RADIUS_KM = 3;
 // Earth's radius in kilometers (for Haversine formula)
 const EARTH_RADIUS_KM = 6371;
 
-// Request expiry time (30 seconds to accept/reject)
-export const REQUEST_EXPIRY_MS = 30 * 1000;
+// Request expiry time (2 minutes to accept/reject - to account for clock skew)
+export const REQUEST_EXPIRY_MS = 120 * 1000;
 
 /**
  * Rider location data structure
@@ -80,6 +80,42 @@ export interface RiderLiveLocation {
 }
 
 export { generateShareToken };
+
+/**
+ * Ensure a user profile exists in Supabase before inserting a delivery.
+ * This prevents FK constraint violations on customer_id / rider_id.
+ */
+async function ensureProfileExists(userId: string): Promise<void> {
+    if (!supabase || !userId) return;
+    try {
+        const { data } = await supabase
+            .from('profiles')
+            .select('id')
+            .eq('id', userId)
+            .maybeSingle();
+
+        if (!data) {
+            // Profile doesn't exist -- create a minimal placeholder
+            const { error } = await supabase
+                .from('profiles')
+                .upsert({
+                    id: userId,
+                    email: `${userId}@placeholder.local`,
+                    role: 'CUSTOMER',
+                    full_name: null,
+                    updated_at: new Date().toISOString(),
+                }, { onConflict: 'id' });
+
+            if (error) {
+                console.warn('[ensureProfileExists] Could not create placeholder profile:', error.message);
+            } else {
+                console.log('[Profile] Created placeholder profile for:', userId);
+            }
+        }
+    } catch (err) {
+        console.warn('[ensureProfileExists] Check failed:', err);
+    }
+}
 
 /**
  * Rider order request structure (sent to rider)
@@ -227,6 +263,7 @@ export async function createPendingBooking(request: BookingRequest): Promise<boo
             created_at: request.createdAt,
             share_token: shareToken,
         });
+        console.log(`[Booking] Created pending booking in Firebase: ${request.bookingId}`);
 
         await set(ref(db, `/share_tokens/${shareToken}`), {
             delivery_id: request.bookingId,
@@ -235,39 +272,52 @@ export async function createPendingBooking(request: BookingRequest): Promise<boo
 
         // Sync to Supabase (Source of Truth)
         if (supabase) {
-            const otpCode = generateOTP();
-            const { error } = await supabase
-                .from('deliveries')
-                .insert({
-                    id: request.bookingId,
-                    tracking_number: request.bookingId, // Use bookingId as tracking number for now
-                    customer_id: request.customerId,
-                    pickup_lat: request.pickupLat,
-                    pickup_lng: request.pickupLng,
-                    pickup_address: request.pickupAddress,
-                    dropoff_lat: request.dropoffLat,
-                    dropoff_lng: request.dropoffLng,
-                    dropoff_address: request.dropoffAddress,
-                    estimated_fare: request.estimatedFare,
-                    share_token: shareToken,
-                    otp_code: otpCode,
-                    status: 'PENDING',
-                    created_at: new Date(request.createdAt).toISOString(),
-                    updated_at: new Date(request.createdAt).toISOString(),
-                });
+            try {
+                const otpCode = generateOTP();
 
-            if (error) {
-                console.error('[RiderMatching] Failed to create Supabase delivery:', error.message);
-                // We don't block the flow here, but we should log it. 
-                // In a robust system, we might want to fail the whole operation or queue it.
-            } else {
-                console.log('[RiderMatching] Created Supabase delivery:', request.bookingId);
+                // Ensure customer profile exists (FK constraint)
+                await ensureProfileExists(request.customerId);
+
+                const { error } = await supabase
+                    .from('deliveries')
+                    .upsert({
+                        id: request.bookingId,
+                        tracking_number: request.bookingId,
+                        customer_id: request.customerId,
+                        pickup_lat: request.pickupLat,
+                        pickup_lng: request.pickupLng,
+                        pickup_address: request.pickupAddress,
+                        dropoff_lat: request.dropoffLat,
+                        dropoff_lng: request.dropoffLng,
+                        dropoff_address: request.dropoffAddress,
+                        estimated_fare: request.estimatedFare,
+                        share_token: shareToken,
+                        otp_code: otpCode,
+                        status: 'PENDING',
+                        created_at: new Date(request.createdAt).toISOString(),
+                        updated_at: new Date(request.createdAt).toISOString(),
+                    }, { onConflict: 'id' });
+
+                if (error) {
+                    console.error('[RiderMatching] Supabase delivery upsert failed:', {
+                        message: error.message,
+                        code: error.code,
+                        details: error.details,
+                        hint: error.hint,
+                    });
+                    // Queue for retry
+                    await statusUpdateService.queueStatusUpdate(request.bookingId, 'UNKNOWN_BOX', 'PENDING');
+                } else {
+                    console.log(`[Booking] Synced booking to Supabase: ${request.bookingId}`);
+                }
+            } catch (sbError) {
+                console.error('[RiderMatching] Supabase sync exception:', sbError);
             }
         }
 
         return true;
     } catch (error) {
-        console.error('Error creating pending booking:', error);
+        console.error(`[Booking] Error creating pending booking: ${error}`);
         return false;
     }
 }
@@ -393,22 +443,46 @@ export async function acceptOrder(
         const bookingRef = ref(db, `/pending_bookings/${bookingId}`);
         const acceptedAt = Date.now();
 
+        // GUARDRAIL: Box ID is required for delivery security
+        if (!metadata?.boxId) {
+            console.warn('[RiderMatching] Attempted to accept order without paired boxId');
+            return false;
+        }
+
+        // console.log(`[RiderMatching] acceptOrder called by ${riderId} for booking ${bookingId}`);
+
+        // EC-FIX: Pre-fetch data to populate local cache.
+        // runTransaction passes null initially if data isn't cached, causing us to abort prematurely.
+        const snapshot = await get(bookingRef);
+        if (!snapshot.exists()) {
+            console.log(`[Booking] Accept failed - Booking ${bookingId} does not exist`);
+            return false;
+        }
+
         // --- Atomic claim via runTransaction ---
         // If two riders call this at the same time, Firebase will retry the
         // loser's handler with the updated data. The loser will see
         // status !== 'SEARCHING' and return `undefined` to abort.
         const txResult = await runTransaction(bookingRef, (currentData) => {
-            if (!currentData) {
-                // Booking no longer exists — abort
+            // If currentData is null (common on first local run), fallback to our pre-fetched snapshot.
+            // If the server has different data, the transaction will fail and retry with that real data.
+            const dataToProcess = currentData || snapshot.val();
+
+            if (!dataToProcess) {
+                // Booking truly believes it doesn't exist?
+                console.log('[Booking] Transaction aborted: Booking data is null/missing.');
                 return undefined;
             }
-            if (currentData.status !== 'SEARCHING' || currentData.accepted_by) {
+
+            if (dataToProcess.status !== 'SEARCHING' || dataToProcess.accepted_by) {
                 // Already accepted by another rider — abort
+                console.log(`[Booking] Accept aborted - Booking ${bookingId} status is ${dataToProcess.status}, accepted by ${dataToProcess.accepted_by}`);
                 return undefined;
             }
+
             // Claim the booking for this rider
             return {
-                ...currentData,
+                ...dataToProcess,
                 status: 'ACCEPTED',
                 accepted_by: riderId,
                 accepted_at: acceptedAt,
@@ -417,11 +491,11 @@ export async function acceptOrder(
 
         if (!txResult.committed) {
             // Transaction aborted — booking was already taken or missing
-            console.log('[RiderMatching] Booking already taken or missing:', bookingId);
+            console.log(`[Booking] Accept transaction not committed for ${bookingId}`);
             return false;
         }
 
-        // Transaction succeeded — this rider won the race.
+        console.log(`[Booking] Rider ${riderId} successfully accepted booking ${bookingId}`);
         const booking = txResult.snapshot.val() as any;
 
         // Mark the request as accepted
@@ -468,36 +542,80 @@ export async function acceptOrder(
         const notifiedRiders: string[] = booking.notified_riders || [];
         await cancelOtherRiderRequests(bookingId, riderId, notifiedRiders);
 
-        // Sync Accept to Supabase
+        // Sync Accept to Supabase (use upsert in case the initial insert was missed)
         if (supabase) {
-            const updates: any = {
-                rider_id: riderId,
-                rider_name: metadata?.riderName,
-                rider_phone: metadata?.riderPhone,
-                status: 'ASSIGNED',
-                accepted_at: new Date(acceptedAt).toISOString(),
-                updated_at: new Date(acceptedAt).toISOString(),
-            };
+            try {
+                // Ensure rider profile exists (FK constraint)
+                await ensureProfileExists(riderId);
 
-            if (metadata?.boxId) {
-                updates.box_id = metadata.boxId;
-            }
+                // Validate box_id FK: only include if box exists in Supabase
+                let safeBoxId: string | null = null;
+                if (metadata?.boxId) {
+                    const { data: boxExists } = await supabase
+                        .from('smart_boxes')
+                        .select('id')
+                        .eq('id', metadata.boxId)
+                        .maybeSingle();
+                    if (boxExists) {
+                        safeBoxId = metadata.boxId;
+                    } else {
+                        // Try by hardware_mac_address
+                        const { data: boxByMac } = await supabase
+                            .from('smart_boxes')
+                            .select('id')
+                            .eq('hardware_mac_address', metadata.boxId)
+                            .maybeSingle();
+                        safeBoxId = boxByMac?.id || null;
+                    }
+                }
 
-            const { error } = await supabase
-                .from('deliveries')
-                .update(updates)
-                .eq('id', bookingId);
+                const upsertData: any = {
+                    id: bookingId,
+                    tracking_number: bookingId,
+                    rider_id: riderId,
+                    rider_name: metadata?.riderName,
+                    rider_phone: metadata?.riderPhone,
+                    customer_id: booking.customer_id,
+                    pickup_lat: booking.pickup_lat,
+                    pickup_lng: booking.pickup_lng,
+                    pickup_address: booking.pickup_address,
+                    dropoff_lat: booking.dropoff_lat,
+                    dropoff_lng: booking.dropoff_lng,
+                    dropoff_address: booking.dropoff_address,
+                    share_token: shareToken,
+                    otp_code: generateOTP(),
+                    status: 'ASSIGNED',
+                    accepted_at: new Date(acceptedAt).toISOString(),
+                    updated_at: new Date(acceptedAt).toISOString(),
+                    created_at: new Date(booking.created_at || acceptedAt).toISOString(),
+                };
 
-            if (error) {
-                console.error('[RiderMatching] Failed to update Supabase delivery on accept:', error.message);
-            } else {
-                console.log('[RiderMatching] Updated Supabase delivery on accept:', bookingId);
+                if (safeBoxId) {
+                    upsertData.box_id = safeBoxId;
+                }
+
+                const { error } = await supabase
+                    .from('deliveries')
+                    .upsert(upsertData, { onConflict: 'id' });
+
+                if (error) {
+                    console.error('[RiderMatching] Supabase accept upsert failed:', {
+                        message: error.message,
+                        code: error.code,
+                        details: error.details,
+                        hint: error.hint,
+                    });
+                } else {
+                    console.log('[RiderMatching] Upserted Supabase delivery on accept:', bookingId);
+                }
+            } catch (sbError) {
+                console.error('[RiderMatching] Supabase accept sync exception:', sbError);
             }
         }
 
         return true;
     } catch (error) {
-        console.error('Error accepting order:', error);
+        console.error(`[Booking] Error accepting order ${bookingId}:`, error);
         return false;
     }
 }
@@ -547,7 +665,7 @@ export async function markRiderAvailable(riderId: string): Promise<boolean> {
         await update(ref(db, `/online_riders/${riderId}`), {
             is_available: true,
         });
-        console.log('[RiderMatching] Rider marked available:', riderId);
+        // console.log('[RiderMatching] Rider marked available:', riderId);
         return true;
     } catch (error) {
         console.error('[RiderMatching] Failed to mark rider available:', error);
@@ -582,6 +700,7 @@ export async function rejectOrder(
 export async function cancelBooking(bookingId: string): Promise<boolean> {
     try {
         const db = getFirebaseDatabase();
+        console.log('[Booking] Cancelling booking:', bookingId);
         await update(ref(db, `/pending_bookings/${bookingId}`), {
             status: 'CANCELLED',
             cancelled_at: Date.now(),
@@ -677,29 +796,38 @@ export async function updateDeliveryStatus(
 
         // Sync status to Supabase (Source of Truth)
         if (supabase) {
-            const supabaseUpdates: Record<string, any> = {
-                status,
-                updated_at: new Date().toISOString(),
-            };
-            // Map common additional fields to Supabase columns
-            if (additionalFields?.picked_up_at) {
-                supabaseUpdates.picked_up_at = new Date(additionalFields.picked_up_at as number).toISOString();
-            }
-            if (additionalFields?.completed_at) {
-                supabaseUpdates.delivered_at = new Date(additionalFields.completed_at as number).toISOString();
-            }
-            if (additionalFields?.proof_photo_url) {
-                supabaseUpdates.proof_photo_url = additionalFields.proof_photo_url;
-            }
-            const { error: sbError } = await supabase
-                .from('deliveries')
-                .update(supabaseUpdates)
-                .eq('id', deliveryId);
-            if (sbError) {
-                console.error('[updateDeliveryStatus] Supabase sync failed:', sbError.message);
-                // Don't fail the whole operation — Firebase is already updated
-            } else {
-                console.log('[updateDeliveryStatus] Supabase synced:', deliveryId, status);
+            try {
+                const supabaseUpdates: Record<string, any> = {
+                    status,
+                    updated_at: new Date().toISOString(),
+                };
+                if (additionalFields?.picked_up_at) {
+                    supabaseUpdates.picked_up_at = new Date(additionalFields.picked_up_at as number).toISOString();
+                }
+                if (additionalFields?.completed_at) {
+                    supabaseUpdates.delivered_at = new Date(additionalFields.completed_at as number).toISOString();
+                }
+                if (additionalFields?.proof_photo_url) {
+                    supabaseUpdates.proof_photo_url = additionalFields.proof_photo_url;
+                }
+                const { error: sbError } = await supabase
+                    .from('deliveries')
+                    .update(supabaseUpdates)
+                    .eq('id', deliveryId);
+                if (sbError) {
+                    console.error('[updateDeliveryStatus] Supabase sync failed:', {
+                        message: sbError.message,
+                        code: sbError.code,
+                        details: sbError.details,
+                        hint: sbError.hint,
+                        deliveryId,
+                        status,
+                    });
+                } else {
+                    // console.log('[updateDeliveryStatus] Supabase synced:', deliveryId, status);
+                }
+            } catch (sbException) {
+                console.error('[updateDeliveryStatus] Supabase sync exception:', sbException);
             }
         }
 
@@ -742,13 +870,21 @@ export function subscribeToRiderRequests(
         }
 
         const requestsData = snapshot.val();
+        // console.log('[RiderMatching] subscribeToRiderRequests - Raw Snapshot:', requestsData);
         const requests: Array<{ requestId: string; data: RiderOrderRequest }> = [];
 
         for (const [requestId, data] of Object.entries(requestsData)) {
             const requestData = data as any;
 
             // Only include pending requests that haven't expired
-            if (requestData.status === 'PENDING' && requestData.expires_at > Date.now()) {
+            // const timeUntilExpiry = requestData.expires_at - Date.now();
+            // console.log(`[RiderMatching] Checking req ${requestId}: Status=${requestData.status}, Expires=${requestData.expires_at}, Now=${Date.now()}, Remaining=${timeUntilExpiry}ms`);
+
+            // Allow requests that expire up to 1 minute ago (grace period for clock skew)
+            const GRACE_PERIOD_MS = 60 * 1000;
+            const isNotExpired = requestData.expires_at > (Date.now() - GRACE_PERIOD_MS);
+
+            if (requestData.status === 'PENDING' && isNotExpired) {
                 requests.push({
                     requestId,
                     data: {
@@ -786,6 +922,7 @@ export async function updateRiderStatus(
     pushToken?: string
 ): Promise<boolean> {
     try {
+        // console.log('[RiderMatching] updateRiderStatus called for:', riderId, 'Available:', isAvailable);
         const db = getFirebaseDatabase();
         const updateData: any = {
             lat,
@@ -839,14 +976,15 @@ export async function removeRiderFromOnline(riderId: string): Promise<boolean> {
 }
 /**
  * Subscribe to box location updates (for real-time parcel tracking)
+ * Reads from `locations/{boxId}` — the same path the ESP32 hardware and web use.
  */
 export function subscribeToBoxLocation(
     boxId: string,
     callback: (location: { lat: number; lng: number; heading?: number; lastUpdated?: number } | null) => void
 ): () => void {
     const db = getFirebaseDatabase();
-    // Assuming box location is stored at /boxes/{boxId}/location based on rule book and usage
-    const boxRef = ref(db, `/boxes/${boxId}/location`);
+    // Must match web & hardware path: locations/{boxId}
+    const boxRef = ref(db, `locations/${boxId}`);
 
     const unsubscribe = onValue(boxRef, (snapshot) => {
         if (!snapshot.exists()) {
@@ -855,16 +993,19 @@ export function subscribeToBoxLocation(
         }
 
         const data = snapshot.val();
-        if (typeof data.lat !== 'number' || typeof data.lng !== 'number') {
+        // Normalize: hardware writes latitude/longitude, but interface expects lat/lng
+        const lat = data.lat ?? data.latitude;
+        const lng = data.lng ?? data.longitude;
+        if (typeof lat !== 'number' || typeof lng !== 'number') {
             callback(null);
             return;
         }
 
         callback({
-            lat: data.lat,
-            lng: data.lng,
+            lat,
+            lng,
             heading: data.heading,
-            lastUpdated: data.last_updated || Date.now(), // Fallback if not provided by hardware
+            lastUpdated: data.last_updated || data.timestamp || Date.now(),
         });
     });
 

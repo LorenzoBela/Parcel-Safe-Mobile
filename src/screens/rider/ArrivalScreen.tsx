@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { View, StyleSheet, Alert, ScrollView, Platform, Linking } from 'react-native';
 import { Text, Button, Card, TextInput, Portal, Modal, IconButton } from 'react-native-paper';
 import { useNavigation, useRoute } from '@react-navigation/native';
+import * as Location from 'expo-location';
 
 // Optional expo-image-picker import (may not be available in all environments)
 let ImagePicker: any = null;
@@ -112,7 +113,13 @@ export default function ArrivalScreen() {
     }
 
     // Geofence State
-    const [isInsideGeoFence, setIsInsideGeoFence] = useState(false);
+    // EC-XX: Dual-Check Geofence State
+    const [isInsideGeoFence, setIsInsideGeoFence] = useState(false); // Master switch (Phone && (Box || Offline))
+    const [isPhoneInside, setIsPhoneInside] = useState(false);
+    const [isBoxInside, setIsBoxInside] = useState(false);
+    const [isBoxOffline, setIsBoxOffline] = useState(false);
+    const [boxLocationLastSeen, setBoxLocationLastSeen] = useState<number>(0);
+
     const [currentPosition, setCurrentPosition] = useState({ lat: 0, lng: 0, accuracy: 25 });
     const [geofence, setGeofence] = useState<GeofenceConfig>(
         createDefaultGeofence(params.targetLat, params.targetLng)
@@ -275,30 +282,100 @@ export default function ArrivalScreen() {
 
     const isPickupConfirmed = ['PICKED_UP', 'IN_TRANSIT', 'COMPLETED'].includes(deliveryStatus);
 
+    // 1. Track PHONE Location (The "Golden Rule")
     useEffect(() => {
-        const unsubscribeLocation = subscribeToLocation(params.boxId, (location) => {
-            if (!location) {
+        let subscription: Location.LocationSubscription | null = null;
+
+        const startPhoneTracking = async () => {
+            const { status } = await Location.requestForegroundPermissionsAsync();
+            if (status !== 'granted') {
+                Alert.alert('Permission Denied', 'Phone location is required to verify arrival.');
                 return;
             }
 
-            const position = {
-                lat: location.latitude,
-                lng: location.longitude,
-                accuracy: 15,
-            };
+            subscription = await Location.watchPositionAsync(
+                {
+                    accuracy: Location.Accuracy.High,
+                    timeInterval: 2000,
+                    distanceInterval: 5,
+                },
+                (location) => {
+                    const position = {
+                        lat: location.coords.latitude,
+                        lng: location.coords.longitude,
+                        accuracy: location.coords.accuracy || 25,
+                    };
 
-            setCurrentPosition(position);
-            const result = checkGeofence(position, geofence);
-            setIsInsideGeoFence(result.isInside);
-            setDistanceMeters(result.distanceMeters);
+                    // Update current position for UI/Map
+                    setCurrentPosition(position);
 
-            if (result.isInside) {
-                setHasBeenInsideGeofence(true);
+                    // Check if Phone is inside
+                    const result = checkGeofence(position, geofence);
+                    setIsPhoneInside(result.isInside);
+                    setDistanceMeters(result.distanceMeters); // Distance from Phone to Target
+
+                    if (result.isInside) {
+                        setHasBeenInsideGeofence(true);
+                    }
+                }
+            );
+        };
+
+        startPhoneTracking();
+
+        return () => {
+            if (subscription) {
+                subscription.remove();
+            }
+        };
+    }, [geofence]);
+
+    // 2. Track BOX Location (The "Secondary Check")
+    useEffect(() => {
+        const unsubscribeLocation = subscribeToLocation(params.boxId, (location) => {
+            if (!location) {
+                setIsBoxOffline(true);
+                return;
+            }
+
+            const now = Date.now();
+            const dataTimestamp = location.server_timestamp || location.timestamp || 0;
+            const isStale = (now - dataTimestamp) > 120000; // 2 minutes
+
+            setBoxLocationLastSeen(dataTimestamp);
+            setIsBoxOffline(isStale);
+
+            if (!isStale) {
+                const position = {
+                    lat: location.latitude,
+                    lng: location.longitude,
+                    accuracy: 15, // Assume acceptable accuracy for Box GPS
+                };
+                const result = checkGeofence(position, geofence);
+                setIsBoxInside(result.isInside);
             }
         });
 
         return unsubscribeLocation;
     }, [geofence, params.boxId]);
+
+    // 3. The "Master Switch" (Dual Check Logic)
+    useEffect(() => {
+        // Rule 1: Phone MUST be inside
+        if (!isPhoneInside) {
+            setIsInsideGeoFence(false);
+            return;
+        }
+
+        // Rule 2: Box MUST be inside OR Box is Offline (Fallback)
+        // If Box is online and reporting location, it must be close.
+        // If Box is offline/stale, we trust the Rider's phone location (Fallback).
+        if (isBoxOffline) {
+            setIsInsideGeoFence(true); // Allow fallback
+        } else {
+            setIsInsideGeoFence(isBoxInside); // Strict check
+        }
+    }, [isPhoneInside, isBoxInside, isBoxOffline]);
 
     useEffect(() => {
         const canAutoRecoverPickup = ['ASSIGNED', 'PICKUP_PENDING', 'ARRIVED'].includes(deliveryStatus);
@@ -767,9 +844,95 @@ export default function ArrivalScreen() {
         }
     };
 
+    // EC-12: Render System Status (Horizontal Scroll)
+    const renderSystemStatus = () => {
+        const statuses = [];
+
+        // Tamper (Always Critical - Keep as full banner above, but also show here if we want, or skip)
+        // Leaving Tamper as full banner because it's a security emergency.
+
+        // Lockout
+        if (lockoutState?.active) {
+            statuses.push(
+                <Card key="lockout" style={[styles.statusPill, styles.statusPillError]}>
+                    <View style={styles.pillContent}>
+                        <Text style={styles.pillIcon}>🔒</Text>
+                        <View>
+                            <Text style={[styles.pillTitle, styles.textError]}>LOCKED</Text>
+                            <Text style={[styles.pillText, styles.textError]}>{lockoutCountdown}</Text>
+                        </View>
+                    </View>
+                </Card>
+            );
+        }
+
+        // Battery
+        if (batteryState?.lowBatteryWarning) {
+            const isCritical = batteryState.criticalBatteryWarning;
+            statuses.push(
+                <Card key="battery" style={[styles.statusPill, isCritical ? styles.statusPillError : styles.statusPillWarning]}>
+                    <View style={styles.pillContent}>
+                        <Text style={styles.pillIcon}>{isCritical ? '🔴' : '🟡'}</Text>
+                        <View>
+                            <Text style={[styles.pillTitle, isCritical ? styles.textError : styles.textWarning]}>
+                                {isCritical ? 'CRITICAL' : 'BATTERY'}
+                            </Text>
+                            <Text style={[styles.pillText, isCritical ? styles.textError : styles.textWarning]}>
+                                {batteryState.percentage}%
+                            </Text>
+                        </View>
+                    </View>
+                </Card>
+            );
+        }
+
+        // GPS
+        if (bgLocationState && bgLocationState.status !== 'RUNNING') {
+            statuses.push(
+                <Card key="gps" style={[styles.statusPill, styles.statusPillInfo]}>
+                    <View style={styles.pillContent}>
+                        <Text style={styles.pillIcon}>📍</Text>
+                        <View>
+                            <Text style={[styles.pillTitle, styles.textInfo]}>GPS PAUSED</Text>
+                            <Text style={[styles.pillText, styles.textInfo]}>Check Settings</Text>
+                        </View>
+                    </View>
+                </Card>
+            );
+        }
+
+        // Low Light
+        if (lowLightState?.isLowLight) {
+            const isCritical = lowLightState.fallbackRequired;
+            statuses.push(
+                <Card key="light" style={[styles.statusPill, isCritical ? styles.statusPillError : styles.statusPillWarning]}>
+                    <View style={styles.pillContent}>
+                        <Text style={styles.pillIcon}>{isCritical ? '📷' : '🌙'}</Text>
+                        <View>
+                            <Text style={[styles.pillTitle, isCritical ? styles.textError : styles.textWarning]}>
+                                {isCritical ? 'FALLBACK' : 'LOW LIGHT'}
+                            </Text>
+                            <Text style={[styles.pillText, isCritical ? styles.textError : styles.textWarning]}>
+                                {isCritical ? 'FaceID N/A' : 'Flash On'}
+                            </Text>
+                        </View>
+                    </View>
+                </Card>
+            );
+        }
+
+        if (statuses.length === 0) return null;
+
+        return (
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.systemStatusContainer} contentContainerStyle={styles.systemStatusContent}>
+                {statuses}
+            </ScrollView>
+        );
+    };
+
     return (
         <ScrollView style={styles.container} contentContainerStyle={[styles.content, { paddingTop: Math.max(insets.top, 20), paddingBottom: insets.bottom + 20 }]}>
-            {/* EC-18: Tamper Alert Banner */}
+            {/* Critical Security Alerts (Full Width) */}
             {tamperState?.detected && (
                 <Card style={styles.tamperBanner}>
                     <Card.Content style={styles.bannerContent}>
@@ -782,147 +945,106 @@ export default function ArrivalScreen() {
                 </Card>
             )}
 
-            {/* EC-04: OTP Lockout Banner */}
-            {lockoutState?.active && (
-                <Card style={styles.lockoutBanner}>
-                    <Card.Content style={styles.bannerContent}>
-                        <Text style={styles.bannerIcon}>🔒</Text>
-                        <View style={{ flex: 1 }}>
-                            <Text style={styles.lockoutTitle}>OTP LOCKOUT</Text>
-                            <Text style={styles.lockoutText}>
-                                {lockoutState.attempt_count} failed attempts • Unlocks in {lockoutCountdown}
-                            </Text>
-                        </View>
-                    </Card.Content>
-                </Card>
-            )}
+            {/* System Status Pills */}
+            {renderSystemStatus()}
 
-            {/* EC-03: Battery Warning Banner */}
-            {batteryState?.lowBatteryWarning && (
-                <Card style={[styles.batteryBanner, batteryState.criticalBatteryWarning && styles.criticalBattery]}>
-                    <Card.Content style={styles.bannerContent}>
-                        <Text style={styles.bannerIcon}>{batteryState.criticalBatteryWarning ? '🔴' : '🟡'}</Text>
-                        <View style={{ flex: 1 }}>
-                            <Text style={[styles.batteryTitle, batteryState.criticalBatteryWarning && { color: 'white' }]}>
-                                {batteryState.criticalBatteryWarning ? 'CRITICAL BATTERY' : 'LOW BATTERY'}
-                            </Text>
-                            <Text style={[styles.batteryText, batteryState.criticalBatteryWarning && { color: 'rgba(255,255,255,0.9)' }]}>
-                                Box battery at {batteryState.percentage}%
-                            </Text>
-                        </View>
-                    </Card.Content>
-                </Card>
-            )}
-
-            {/* EC-15: Background Location Status */}
-            {bgLocationState && bgLocationState.status !== 'RUNNING' && (
-                <Card style={styles.bgLocationBanner}>
-                    <Card.Content style={styles.bannerContent}>
-                        <Text style={styles.bannerIcon}>📍</Text>
-                        <View style={{ flex: 1 }}>
-                            <Text style={styles.bgLocationTitle}>GPS TRACKING {bgLocationState.status}</Text>
-                            <Text style={styles.bgLocationText}>
-                                {bgLocationState.lastError || 'Background tracking not active'}
-                            </Text>
-                        </View>
-                    </Card.Content>
-                </Card>
-            )}
-
-            {/* EC-97: Low-Light Warning Banner */}
-            {lowLightState?.isLowLight && (
-                <Card style={[styles.lowLightBanner, lowLightState.fallbackRequired && styles.lowLightCritical]}>
-                    <Card.Content style={styles.bannerContent}>
-                        <Text style={styles.bannerIcon}>{lowLightState.fallbackRequired ? '📷' : '🌙'}</Text>
-                        <View style={{ flex: 1 }}>
-                            <Text style={[styles.lowLightTitle, lowLightState.fallbackRequired && { color: 'white' }]}>
-                                {lowLightState.fallbackRequired ? 'CAMERA FALLBACK' : 'LOW LIGHT DETECTED'}
-                            </Text>
-                            <Text style={[styles.lowLightText, lowLightState.fallbackRequired && { color: 'rgba(255,255,255,0.9)' }]}>
-                                {getLowLightMessage(lowLightState)}
-                            </Text>
-                            {lowLightState.tier !== 'NORMAL' && (
-                                <Text style={[styles.lowLightTier, lowLightState.fallbackRequired && { color: 'rgba(255,255,255,0.7)' }]}>
-                                    Mode: {lowLightState.tier} {lowLightState.flashUsed && '⚡'} {lowLightState.nightModeEnabled && '🌙'}
-                                </Text>
-                            )}
-                        </View>
-                    </Card.Content>
-                </Card>
-            )}
-
-            <Text variant="headlineMedium" style={styles.title}>
+            <Text variant="headlineMedium" style={styles.pageTitle}>
                 Arrival & Verification
             </Text>
 
-            {/* Geofence Status Card */}
-            <Card style={[styles.statusCard, { borderColor: isInsideGeoFence ? '#22c55e' : '#ef4444' }]}>
+            {/* New Visual Geofence Card */}
+            <Card mode="elevated" style={[styles.statusCard, isInsideGeoFence ? styles.borderSuccess : styles.borderError]}>
                 <Card.Content>
                     <View style={styles.statusHeader}>
-                        <Text variant="titleLarge" style={{ color: isInsideGeoFence ? '#22c55e' : '#ef4444' }}>
-                            {isInsideGeoFence ? '✓ INSIDE GEO-FENCE' : '✗ OUTSIDE GEO-FENCE'}
+                        <Text variant="titleMedium" style={{ fontWeight: 'bold', color: '#333' }}>
+                            Verification Zone
                         </Text>
                         {distanceMeters !== null && (
-                            <Text style={styles.distance}>{distanceMeters}m away</Text>
+                            <View style={styles.distanceBadge}>
+                                <Text style={styles.distanceText}>{distanceMeters}m away</Text>
+                            </View>
                         )}
                     </View>
-                    <Text variant="bodyMedium" style={styles.statusText}>
-                        {isInsideGeoFence
-                            ? 'You can now proceed with the delivery.'
-                            : 'Please move closer to the delivery point.'}
-                    </Text>
 
-                    {/* EC-12: Address info and update button */}
-                    <View style={[styles.addressContainer, { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }]}>
-                        <View style={{ flex: 1 }}>
-                            <Text style={styles.addressLabel}>Delivery Address:</Text>
-                            <Text style={styles.address}>{params.targetAddress}</Text>
+                    <View style={styles.checksContainer}>
+                        {/* Phone Status */}
+                        <View style={styles.checkItem}>
+                            <View style={[styles.checkCircle, isPhoneInside ? styles.bgSuccess : styles.bgError]}>
+                                <Text style={styles.checkIcon}>{isPhoneInside ? '✓' : '✗'}</Text>
+                            </View>
+                            <Text style={styles.checkLabel}>Phone GPS</Text>
                         </View>
-                        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                            <Button
-                                mode="text"
-                                onPress={() => setShowAddressModal(true)}
+
+                        <View style={styles.checkDivider} />
+
+                        {/* Box Status */}
+                        <View style={styles.checkItem}>
+                            <View style={[
+                                styles.checkCircle,
+                                isBoxOffline ? styles.bgWarning : (isBoxInside ? styles.bgSuccess : styles.bgError)
+                            ]}>
+                                <Text style={styles.checkIcon}>
+                                    {isBoxOffline ? '?' : (isBoxInside ? '✓' : '✗')}
+                                </Text>
+                            </View>
+                            <Text style={styles.checkLabel}>{isBoxOffline ? 'Box Offline' : 'Smart Box'}</Text>
+                        </View>
+                    </View>
+
+                    <View style={[styles.statusMessageContainer, isInsideGeoFence ? styles.bgSubtleSuccess : styles.bgSubtleError]}>
+                        <Text style={[styles.statusMessageText, isInsideGeoFence ? styles.textSuccess : styles.textError]}>
+                            {isInsideGeoFence
+                                ? (isBoxOffline ? '⚠️ Box is offline. Using Phone GPS backup.' : 'You are at the location.')
+                                : (!isPhoneInside
+                                    ? 'Move closer to the drop-off point.'
+                                    : 'Phone is here, but Box is detected elsewhere.')}
+                        </Text>
+                    </View>
+
+                    {/* Address & Navigation */}
+                    <View style={styles.addressRow}>
+                        <View style={{ flex: 1 }}>
+                            <Text style={styles.addressLabel}>TARGET ADDRESS</Text>
+                            <Text numberOfLines={2} style={styles.address}>{params.targetAddress}</Text>
+                        </View>
+                        <View style={styles.navActions}>
+                            <IconButton
                                 icon="map-marker-question"
-                                compact
-                            >
-                                Wrong?
-                            </Button>
+                                size={20}
+                                onPress={() => setShowAddressModal(true)}
+                            />
                             <IconButton
                                 icon="navigation"
                                 mode="contained"
-                                containerColor="#E3F2FD" // Light blue
-                                iconColor="#1976D2" // Blue
+                                containerColor="#E3F2FD"
+                                iconColor="#1976D2"
                                 size={24}
                                 onPress={handleNavigate}
-                                style={{ margin: 0, marginLeft: 8 }}
                             />
                         </View>
                     </View>
                 </Card.Content>
             </Card>
 
-
-
             {!isPickupConfirmed && (
-                <Card style={styles.infoCard}>
+                <Card style={styles.actionCard}>
                     <Card.Content>
-                        <Text style={styles.infoTitle}>Pickup Confirmation</Text>
-                        <Text style={styles.infoText}>
-                            Swipe to confirm package pickup before handover. If you forgot earlier, use fallback below.
-                        </Text>
-                        <View style={{ marginTop: 10 }}>
+                        <Text style={styles.actionTitle}>Step 1: Confirm Pickup</Text>
+                        <View style={{ marginTop: 16 }}>
                             <SwipeConfirmButton
-                                label="Swipe to confirm package picked up"
+                                label="Swipe to Pick Up"
                                 onConfirm={handlePickupSwipe}
                                 disabled={!isInsideGeoFence}
                             />
                         </View>
                         <Button
                             mode="text"
-                            style={{ marginTop: 8 }}
+                            compact
+                            labelStyle={{ fontSize: 12, color: '#666' }}
+                            style={{ marginTop: 8, alignSelf: 'center' }}
                             onPress={ensurePickupConfirmed}
                         >
-                            Fallback: I already picked it up
+                            Trouble? Use Fallback
                         </Button>
                     </Card.Content>
                 </Card>
@@ -933,70 +1055,66 @@ export default function ArrivalScreen() {
                 renderWaitingUI()
             ) : (
                 <>
-                    {/* EC-11: Customer Not Home Button */}
+                    {/* Customer Not Home Button */}
                     {isInsideGeoFence && (
                         <Button
                             mode="outlined"
                             onPress={handleCustomerNotHome}
-                            style={styles.button}
+                            style={styles.auxButton}
                             icon="account-off"
+                            textColor="#555"
                             loading={isLoading}
                         >
                             Customer Not Home
                         </Button>
                     )}
 
-                    <View style={{ marginTop: 16 }}>
-                        <SwipeConfirmButton
-                            label="Swipe to Confirm Arrival"
-                            onConfirm={handleProceedToHandover}
-                            disabled={!isInsideGeoFence || isLoading}
-                        />
-                    </View>
+                    {!(!isPickupConfirmed) && ( // Ensure we don't show Arrival swipe if Pickup isn't done, though logic handles flow
+                        <View style={{ marginTop: 24, paddingHorizontal: 4 }}>
+                            <Text style={[styles.actionTitle, { marginBottom: 16, marginLeft: 4 }]}>Step 2: Confirm Arrival</Text>
+                            <SwipeConfirmButton
+                                label="Swipe to Arrive"
+                                onConfirm={handleProceedToHandover}
+                                disabled={!isInsideGeoFence || isLoading}
+                            />
+                        </View>
+                    )}
                 </>
             )}
 
+            {/* Helper Cards (BLE, Cancel) */}
+            <View style={styles.helperCardsRow}>
+                {/* BLE Card */}
+                <Card style={[styles.helperCard, styles.bleCard]} onPress={handleBleTransfer}>
+                    <Card.Content style={styles.helperCardContent}>
+                        <View style={styles.helperIconContainer}>
+                            <Text style={{ fontSize: 20 }}>📡</Text>
+                        </View>
+                        <View>
+                            <Text style={styles.helperTitle}>BLE Transfer</Text>
+                            <Text style={styles.helperText}>Send OTP Manually</Text>
+                        </View>
+                    </Card.Content>
+                </Card>
 
+                {/* Cancel Card */}
+                <Card style={[styles.helperCard, styles.cancelCard]} onPress={() => setShowCancelModal(true)}>
+                    <Card.Content style={styles.helperCardContent}>
+                        <View style={styles.helperIconContainer}>
+                            <Text style={{ fontSize: 20 }}>❌</Text>
+                        </View>
+                        <View>
+                            <Text style={[styles.helperTitle, { color: '#ef4444' }]}>Cancel</Text>
+                            <Text style={styles.helperText}>Abort Delivery</Text>
+                        </View>
+                    </Card.Content>
+                </Card>
+            </View>
 
-            {/* EC-02: BLE OTP Transfer Card */}
-            <Card style={styles.bleCard}>
-                <Card.Content>
-                    <Text style={styles.infoTitle}>📡 Box Offline?</Text>
-                    <Text style={styles.infoText}>
-                        If the box was offline during assignment, send OTP via Bluetooth.
-                    </Text>
-                    <Button
-                        mode="outlined"
-                        onPress={handleBleTransfer}
-                        icon="bluetooth"
-                        style={{ marginTop: 12 }}
-                    >
-                        Send OTP via Bluetooth
-                    </Button>
-                </Card.Content>
-            </Card>
-
-            {/* EC-32: Cancel Delivery Card */}
-            <Card style={styles.cancelCard}>
-                <Card.Content>
-                    <Text style={styles.infoTitle}>⚠️ Need to Cancel?</Text>
-                    <Text style={styles.infoText}>
-                        If you cannot complete this delivery, you can cancel and return the package.
-                    </Text>
-                    <Button
-                        mode="outlined"
-                        onPress={() => setShowCancelModal(true)}
-                        icon="cancel"
-                        textColor="#ef4444"
-                        style={{ marginTop: 12, borderColor: '#ef4444' }}
-                    >
-                        Cancel Delivery
-                    </Button>
-                </Card.Content>
-            </Card>
-
-            {/* EC-02: BLE Transfer Modal */}
+            {/* Modals ... */}
+            {/* ... keeping existing modals ... */}
             <Portal>
+
                 <Modal
                     visible={showBleModal}
                     onDismiss={closeBleModal}
@@ -1110,274 +1228,314 @@ export default function ArrivalScreen() {
 const styles = StyleSheet.create({
     container: {
         flex: 1,
-        backgroundColor: '#f5f5f5',
+        backgroundColor: '#f8f9fa', // Lighter gray for better contrast
     },
     content: {
         flexGrow: 1,
+        paddingHorizontal: 16,
     },
-    title: {
+    pageTitle: {
         textAlign: 'center',
-        marginBottom: 24,
+        marginBottom: 20,
         fontWeight: 'bold',
+        color: '#1a1a1a',
     },
+
+    // System Status Container
+    systemStatusContainer: {
+        marginBottom: 20,
+    },
+    systemStatusContent: {
+        gap: 12,
+        paddingRight: 16, // Padding for horizontal scroll
+    },
+    statusPill: {
+        width: 130, // Fixed width cards for horizontal scroll
+        borderRadius: 16,
+        elevation: 2,
+    },
+    pillContent: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        padding: 12,
+        paddingVertical: 10,
+    },
+    pillIcon: {
+        fontSize: 20,
+        marginRight: 8,
+    },
+    pillTitle: {
+        fontSize: 10,
+        fontWeight: 'bold',
+        textTransform: 'uppercase',
+    },
+    pillText: {
+        fontSize: 12,
+        fontWeight: '600',
+    },
+
+    // Status Colors
+    statusPillError: { backgroundColor: '#FEE2E2', borderLeftWidth: 4, borderLeftColor: '#EF4444' }, // Red-ish
+    statusPillWarning: { backgroundColor: '#FEF3C7', borderLeftWidth: 4, borderLeftColor: '#F59E0B' }, // Amber
+    statusPillInfo: { backgroundColor: '#DBEAFE', borderLeftWidth: 4, borderLeftColor: '#3B82F6' }, // Blue
+    textError: { color: '#B91C1C' },
+    textWarning: { color: '#B45309' },
+    textInfo: { color: '#1E40AF' },
+    textSuccess: { color: '#15803d' },
+
+    // Geofence Card (Verification Zone)
     statusCard: {
-        marginBottom: 16,
-        borderWidth: 3,
-        borderRadius: 12,
+        marginBottom: 20,
+        borderRadius: 16,
+        borderWidth: 2,
+        elevation: 3,
+        backgroundColor: 'white',
     },
+    borderSuccess: { borderColor: '#22c55e' },
+    borderError: { borderColor: '#ef4444' },
+
     statusHeader: {
         flexDirection: 'row',
         justifyContent: 'space-between',
         alignItems: 'center',
-        marginBottom: 8,
+        marginBottom: 16,
     },
-    distance: {
-        fontSize: 14,
-        color: '#666',
-        fontWeight: '600',
+    distanceBadge: {
+        backgroundColor: '#F3F4F6',
+        paddingHorizontal: 10,
+        paddingVertical: 4,
+        borderRadius: 12,
     },
-    statusText: {
-        color: '#666',
-        marginBottom: 12,
-    },
-    addressContainer: {
-        marginTop: 12,
-        paddingTop: 12,
-        borderTopWidth: 1,
-        borderTopColor: '#e0e0e0',
-    },
-    addressLabel: {
+    distanceText: {
         fontSize: 12,
-        color: '#888',
-        marginBottom: 4,
+        fontWeight: 'bold',
+        color: '#4B5563',
     },
-    address: {
-        fontSize: 14,
-        fontWeight: '500',
-        marginBottom: 8,
-    },
-    button: {
-        marginBottom: 12,
-    },
-    waitCard: {
-        marginVertical: 16,
-        backgroundColor: '#fff8e1',
-        borderColor: '#ffc107',
-        borderWidth: 2,
-    },
-    timerContainer: {
+
+    // Checks (Phone/Box)
+    checksContainer: {
+        flexDirection: 'row',
         alignItems: 'center',
+        justifyContent: 'center',
         marginBottom: 20,
     },
-    timerLabel: {
-        fontSize: 12,
-        fontWeight: '700',
-        color: '#f59e0b',
-        letterSpacing: 1,
+    checkItem: {
+        alignItems: 'center',
+        width: 100,
     },
-    timerDisplay: {
-        fontSize: 64,
+    checkCircle: {
+        width: 48,
+        height: 48,
+        borderRadius: 24,
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginBottom: 8,
+        borderWidth: 2,
+        borderColor: 'white',
+        elevation: 2,
+    },
+    checkIcon: {
+        fontSize: 24,
+        color: 'white',
         fontWeight: 'bold',
-        fontFamily: 'monospace',
-        color: '#d97706',
     },
-    timerSubtext: {
-        fontSize: 14,
-        color: '#666',
+    bgSuccess: { backgroundColor: '#22c55e' },
+    bgError: { backgroundColor: '#ef4444' },
+    bgWarning: { backgroundColor: '#F59E0B' },
+    checkLabel: {
+        fontSize: 12,
+        color: '#555',
+        fontWeight: '600',
     },
-    photoPreview: {
-        backgroundColor: '#e8f5e9',
+    checkDivider: {
+        height: 2,
+        width: 30,
+        backgroundColor: '#E5E7EB',
+        marginHorizontal: 10,
+        top: -14, // align with circles
+    },
+
+    // Status Message Box
+    statusMessageContainer: {
         padding: 12,
         borderRadius: 8,
         marginBottom: 16,
+        alignItems: 'center',
     },
-    photoLabel: {
-        color: '#2e7d32',
+    bgSubtleSuccess: { backgroundColor: '#DCFCE7' },
+    bgSubtleError: { backgroundColor: '#FEE2E2' },
+    statusMessageText: {
         textAlign: 'center',
-        fontWeight: '500',
-    },
-    waitActions: {
-        gap: 12,
-    },
-    infoCard: {
-        marginTop: 8,
-        backgroundColor: '#f0f9ff',
-    },
-    infoTitle: {
-        fontSize: 12,
+        fontSize: 13,
         fontWeight: '600',
-        color: '#0369a1',
+    },
+
+    // Address
+    addressRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        borderTopWidth: 1,
+        borderTopColor: '#f0f0f0',
+        paddingTop: 12,
+    },
+    addressLabel: {
+        fontSize: 10,
+        color: '#888',
+        fontWeight: 'bold',
+        marginBottom: 2,
+    },
+    address: {
+        fontSize: 14,
+        color: '#333',
+    },
+    navActions: {
+        flexDirection: 'row',
+        alignItems: 'center',
+    },
+
+    // Action Card
+    actionCard: {
+        backgroundColor: 'white',
+        borderRadius: 12,
+        elevation: 1,
+        marginBottom: 20,
+    },
+    actionTitle: {
+        fontSize: 14,
+        fontWeight: 'bold',
+        color: '#1a1a1a',
         marginBottom: 4,
     },
-    infoText: {
-        fontSize: 13,
-        color: '#666',
-    },
-    modal: {
-        backgroundColor: 'white',
-        padding: 24,
-        margin: 20,
-        borderRadius: 12,
-    },
-    modalTitle: {
-        marginBottom: 8,
-    },
-    modalSubtext: {
-        color: '#666',
-        marginBottom: 16,
-    },
-    input: {
-        marginBottom: 12,
-    },
-    modalActions: {
+
+    // Helper Buttons Row
+    helperCardsRow: {
         flexDirection: 'row',
-        justifyContent: 'flex-end',
         gap: 12,
-        marginTop: 8,
+        marginTop: 10,
+        marginBottom: 30,
     },
-    // EC-18: Tamper Banner
-    tamperBanner: {
-        backgroundColor: '#DC2626',
-        marginBottom: 12,
+    helperCard: {
+        flex: 1,
         borderRadius: 12,
     },
-    bannerContent: {
+    helperCardContent: {
+        padding: 12,
         flexDirection: 'row',
         alignItems: 'center',
     },
-    bannerIcon: {
-        fontSize: 24,
-        marginRight: 12,
+    helperIconContainer: {
+        width: 40,
+        height: 40,
+        borderRadius: 20,
+        backgroundColor: '#f5f5f5',
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginRight: 10,
     },
-    tamperTitle: {
-        color: 'white',
-        fontWeight: 'bold',
-        fontSize: 14,
-    },
-    tamperText: {
-        color: 'rgba(255,255,255,0.9)',
+    helperTitle: {
         fontSize: 12,
-    },
-    // EC-04: Lockout Banner
-    lockoutBanner: {
-        backgroundColor: '#FFEDD5',
-        marginBottom: 12,
-        borderRadius: 12,
-        borderLeftWidth: 4,
-        borderLeftColor: '#EA580C',
-    },
-    lockoutTitle: {
-        color: '#C2410C',
         fontWeight: 'bold',
-        fontSize: 14,
+        color: '#333',
     },
-    lockoutText: {
-        color: '#EA580C',
-        fontSize: 12,
+    helperText: {
+        fontSize: 10,
+        color: '#666',
     },
-    // EC-03: Battery Banner
-    batteryBanner: {
-        backgroundColor: '#FEF3C7',
-        marginBottom: 12,
-        borderRadius: 12,
-        borderLeftWidth: 4,
-        borderLeftColor: '#D97706',
-    },
-    criticalBattery: {
-        backgroundColor: '#DC2626',
-        borderLeftColor: '#DC2626',
-    },
-    batteryTitle: {
-        color: '#92400E',
-        fontWeight: 'bold',
-        fontSize: 14,
-    },
-    batteryText: {
-        color: '#B45309',
-        fontSize: 12,
-    },
-    // EC-15: Background Location Banner
-    bgLocationBanner: {
-        backgroundColor: '#DBEAFE',
-        marginBottom: 12,
-        borderRadius: 12,
-        borderLeftWidth: 4,
-        borderLeftColor: '#2563EB',
-    },
-    bgLocationTitle: {
-        color: '#1E40AF',
-        fontWeight: 'bold',
-        fontSize: 14,
-    },
-    bgLocationText: {
-        color: '#3B82F6',
-        fontSize: 12,
-    },
-    bleCard: {
-        marginTop: 16,
-        backgroundColor: '#EFF6FF',
-        borderLeftWidth: 4,
-        borderLeftColor: '#3B82F6',
-    },
-    // EC-32: Cancel Card
-    cancelCard: {
-        marginTop: 16,
-        backgroundColor: '#FEF2F2',
-        borderLeftWidth: 4,
-        borderLeftColor: '#EF4444',
-    },
+    bleCard: { backgroundColor: '#F0F9FF', borderLeftWidth: 0 },
+    cancelCard: { backgroundColor: '#FEF2F2', borderLeftWidth: 0 },
+
+    // BLE Modal
     bleModal: {
         backgroundColor: 'white',
-        padding: 24,
+        padding: 20,
         margin: 20,
-        borderRadius: 16,
+        borderRadius: 12,
+        alignItems: 'center',
     },
     bleStatusContainer: {
+        marginBottom: 16,
         alignItems: 'center',
-        marginVertical: 24,
+        justifyContent: 'center',
     },
     bleStatusIcon: {
-        fontSize: 64,
+        fontSize: 48,
+        marginBottom: 8,
     },
     bleStatusText: {
         fontSize: 18,
         fontWeight: 'bold',
-        textAlign: 'center',
         marginBottom: 8,
+        textAlign: 'center',
     },
     bleMessageText: {
         fontSize: 14,
         color: '#666',
         textAlign: 'center',
-        marginBottom: 24,
+        marginBottom: 20,
     },
     bleActions: {
-        alignItems: 'center',
+        width: '100%',
+        gap: 10,
     },
-    // EC-97: Low-Light Banner
-    lowLightBanner: {
-        backgroundColor: '#FEF3C7', // Amber/yellow for warning
-        marginBottom: 12,
+
+    // Generic Modal & Forms
+    modal: {
+        backgroundColor: 'white',
+        padding: 20,
+        margin: 20,
         borderRadius: 12,
-        borderLeftWidth: 4,
-        borderLeftColor: '#F59E0B',
     },
-    lowLightCritical: {
-        backgroundColor: '#7C3AED', // Purple for fallback/critical
-        borderLeftColor: '#7C3AED',
-    },
-    lowLightTitle: {
-        color: '#92400E',
+    modalTitle: {
+        textAlign: 'center',
         fontWeight: 'bold',
-        fontSize: 14,
+        marginBottom: 8,
     },
-    lowLightText: {
-        color: '#B45309',
-        fontSize: 12,
+    modalSubtext: {
+        textAlign: 'center',
+        color: '#666',
+        marginBottom: 20,
     },
-    lowLightTier: {
-        color: '#78716C',
-        fontSize: 10,
-        marginTop: 4,
+    input: {
+        marginBottom: 12,
+        backgroundColor: 'white',
     },
+    modalActions: {
+        flexDirection: 'row',
+        justifyContent: 'flex-end',
+        gap: 12,
+        marginTop: 16,
+    },
+    button: {
+        marginTop: 8,
+        borderColor: '#ccc',
+    },
+
+    // Misc (retained)
+    auxButton: {
+        marginTop: 10,
+        borderColor: '#ccc',
+    },
+
+    // Waiting UI (Updated slightly)
+    waitCard: {
+        marginVertical: 16,
+        backgroundColor: '#fffbeb',
+        borderColor: '#fbbf24',
+        borderWidth: 2,
+        borderRadius: 16,
+    },
+    timerContainer: { alignItems: 'center', marginBottom: 20 },
+    timerLabel: { fontSize: 12, fontWeight: '800', color: '#b45309', letterSpacing: 1.5 },
+    timerDisplay: { fontSize: 64, fontWeight: 'bold', fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace', color: '#d97706' },
+    timerSubtext: { fontSize: 14, color: '#78350f' },
+    photoPreview: { backgroundColor: '#ecfccb', padding: 12, borderRadius: 8, marginBottom: 16 },
+    photoLabel: { color: '#365314', textAlign: 'center', fontWeight: 'bold' },
+    waitActions: { gap: 12 },
+
+    // Retained for critical banner compatibility if needed
+    bannerContent: { flexDirection: 'row', alignItems: 'center' },
+    bannerIcon: { fontSize: 24, marginRight: 12 },
+    tamperBanner: { backgroundColor: '#DC2626', marginBottom: 12, borderRadius: 12 },
+    tamperTitle: { color: 'white', fontWeight: 'bold', fontSize: 14 },
+    tamperText: { color: 'rgba(255,255,255,0.9)', fontSize: 12 },
 });

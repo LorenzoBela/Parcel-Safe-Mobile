@@ -17,6 +17,7 @@ import {
     subscribeToGpsHealth,
     GpsHealthState
 } from './firebaseClient';
+import { backgroundLocationService } from './backgroundLocationService';
 // Firebase native database import removed - using JS SDK via firebaseClient
 
 
@@ -183,8 +184,19 @@ class LocationRedundancyManager {
 
         // Subscribe to location updates
         this.unsubscribeLocation = subscribeToLocation(this.boxId, (location) => {
-            if (location && location.source === 'box') {
+            if (!location) return;
+
+            if (location.source === 'box') {
                 this.handleBoxLocationUpdate(location);
+            } else if (this.state.source === 'phone' || !this.state.isBoxOnline) {
+                // EC-FIX: Loopback - Update UI with phone location from Firebase
+                // This ensures the rider sees exactly what the customer sees
+                if (location.source === 'phone' || location.source === 'phone_background') {
+                    this.updateState({
+                        lastLocation: location,
+                        source: 'phone'
+                    });
+                }
             }
         });
 
@@ -302,49 +314,26 @@ class LocationRedundancyManager {
     }
 
     private async startPhoneGpsFallback(): Promise<void> {
-        if (this.phoneGpsWatchId) return; // Already running
+        if (this.state.phoneGpsActive) return; // Already active
 
-        // Cancellation token to avoid races (e.g., box comes back online while fallback is starting).
-        const sessionToken = ++this.phoneGpsSessionToken;
+        if (!this.boxId) {
+            console.warn('[Redundancy] Cannot start phone GPS without boxId');
+            return;
+        }
 
-        try {
-            const { status } = await Location.requestForegroundPermissionsAsync();
-            if (sessionToken !== this.phoneGpsSessionToken) return; // Cancelled while awaiting
+        console.log('[Redundancy] activating phone GPS fallback (Background Service)');
 
-            if (status !== 'granted') {
-                console.error('[Redundancy] Location permission denied');
-                this.updateState({ source: 'none' });
-                return;
-            }
+        // EC-15: Use BackgroundLocationService for robust tracking
+        const success = await backgroundLocationService.start(this.boxId);
 
+        if (success) {
             this.updateState({
                 phoneGpsActive: true,
                 source: 'phone',
             });
-
-            // Start watching location with power-efficient settings
-            const subscription = await Location.watchPositionAsync(
-                {
-                    accuracy: Location.Accuracy.Balanced, // Balance accuracy vs power
-                    timeInterval: CONFIG.PHONE_GPS_INTERVAL,
-                    distanceInterval: 10, // Only update if moved 10+ meters
-                },
-                (location) => this.handlePhoneLocationUpdate(location)
-            );
-
-            // If we were cancelled while awaiting watchPositionAsync, immediately tear down.
-            if (sessionToken !== this.phoneGpsSessionToken) {
-                subscription.remove();
-                return;
-            }
-
-            this.phoneGpsWatchId = subscription;
-
-            console.log('[Redundancy] Phone GPS fallback activated');
-        } catch (error) {
-            console.error('[Redundancy] Failed to start phone GPS:', error);
-            if (sessionToken !== this.phoneGpsSessionToken) return;
-            this.updateState({ source: 'none', phoneGpsActive: false });
+        } else {
+            console.error('[Redundancy] Failed to start background location service');
+            this.updateState({ source: 'none' });
         }
     }
 

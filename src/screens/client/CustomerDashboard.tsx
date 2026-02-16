@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { View, StyleSheet, ScrollView, TouchableOpacity, ImageBackground, Image, Alert, RefreshControl, Share } from 'react-native';
 import { Text, Card, Button, useTheme, Avatar, Surface, Portal, Modal, IconButton } from 'react-native-paper';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import dayjs from 'dayjs';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -14,6 +14,8 @@ import {
     CancellationState,
     formatCancellationReason
 } from '../../services/cancellationService';
+import { supabase } from '../../services/supabaseClient';
+
 import useAuthStore from '../../store/authStore';
 import { fetchWeather, weatherBackgroundImages, WeatherData } from '../../services/weatherService';
 
@@ -35,18 +37,17 @@ export default function CustomerDashboard() {
     const displayName = authedUser?.fullName || authedUser?.name || authedUser?.email || 'User';
     const avatarUri = authedUser?.photo || null;
 
-    // Dynamic — will be populated when a real active delivery exists
-    const activeDeliveryId: string | null = null;
-
     // Dynamic data — populated from real sources when available
-    const activeDelivery: {
+    const [activeDelivery, setActiveDelivery] = useState<{
         id: string; status: string; eta: string; rider: string; location: string;
-    } | null = null;
+    } | null>(null);
 
-    const recentActivity: {
+    const activeDeliveryId = activeDelivery?.id || null;
+
+    const [recentActivity, setRecentActivity] = useState<{
         id: number; trackingId: string; type: string; date: string;
         serviceType: string; status: string;
-    }[] = [];
+    }[]>([]);
 
     const handleShare = () => {
         setShareModalVisible(true);
@@ -105,44 +106,92 @@ export default function CustomerDashboard() {
         fetchLocation();
     }, [fetchLocation]);
 
-    useEffect(() => {
-        // EC-86: Monitor display health — only subscribe when box ID is known
-        if (!activeDelivery) return;
-        const boxId = activeDelivery.id; // Will use actual box ID from delivery context
-        const unsubscribe = subscribeToDisplay(boxId, (displayState) => {
-            if (displayState) {
-                setDisplayStatus(displayState.status);
+    const fetchActiveDelivery = useCallback(async () => {
+        console.log('Fetching active delivery...');
+        if (!authedUser?.userId) return;
+
+        try {
+            const { data, error } = await supabase
+                .from('deliveries')
+                .select('*, rider:rider_id(full_name)')
+                .eq('customer_id', authedUser.userId)
+                .in('status', ['PENDING', 'ASSIGNED', 'IN_TRANSIT', 'ARRIVED'])
+                .order('created_at', { ascending: false })
+                .limit(1)
+                .single();
+
+            if (error && error.code !== 'PGRST116') { // PGRST116 is "The result contains 0 rows"
+                console.log('Error fetching active delivery:', error);
+                setActiveDelivery(null);
+                return;
             }
-        });
-        return () => unsubscribe();
-    }, [activeDelivery]);
 
-    // EC-32: Monitor cancellation state for active delivery
-    useEffect(() => {
-        if (!activeDeliveryId) return;
-        const unsubscribe = subscribeToCancellation(activeDeliveryId, (state) => {
-            setCancellation(state);
-        });
-        return () => unsubscribe();
-    }, [activeDeliveryId]);
+            if (data) {
+                setActiveDelivery({
+                    id: data.id,
+                    status: data.status,
+                    eta: data.estimated_dropoff_time ? dayjs(data.estimated_dropoff_time).format('h:mm A') : 'Calculating...',
+                    rider: data.rider?.full_name || 'Finding a rider...',
+                    location: data.status === 'PENDING' ? (data.pickup_address || 'Pickup Point') : (data.dropoff_address || 'Dropoff Point')
+                });
+            } else {
+                setActiveDelivery(null);
+            }
 
-    // Fetch live weather when device coords are available
+        } catch (error) {
+            console.log('Error in fetchActiveDelivery:', error);
+            setActiveDelivery(null);
+        }
+    }, [authedUser?.userId]);
+
     useEffect(() => {
-        if (!deviceCoords) return;
-        fetchWeather(deviceCoords.lat, deviceCoords.lng).then((data) => {
-            if (data) setWeather(data);
-        });
-    }, [deviceCoords]);
+        fetchActiveDelivery();
+    }, [fetchActiveDelivery]);
+
+    const fetchRecentActivity = useCallback(async () => {
+        if (!authedUser?.userId) return;
+
+        try {
+            const { data, error } = await supabase
+                .from('deliveries')
+                .select('*')
+                .eq('customer_id', authedUser.userId)
+                .order('created_at', { ascending: false })
+                .limit(3);
+
+            if (error) {
+                console.log('Error fetching recent activity:', error);
+                return;
+            }
+
+            if (data) {
+                const mappedActivity = data.map((item: any) => ({
+                    id: item.id,
+                    trackingId: item.tracking_number || item.id,
+                    type: 'Delivery',
+                    date: dayjs(item.created_at).format('MMM D, YYYY'),
+                    serviceType: 'Standard Delivery',
+                    status: item.status
+                }));
+                setRecentActivity(mappedActivity);
+            }
+        } catch (error) {
+            console.log('Error in fetchRecentActivity:', error);
+        }
+    }, [authedUser?.userId]);
 
     const onRefresh = useCallback(async () => {
         setRefreshing(true);
-        await fetchLocation();
+        await Promise.all([fetchLocation(), fetchActiveDelivery(), fetchRecentActivity()]);
         setRefreshing(false);
-    }, [fetchLocation]);
+    }, [fetchLocation, fetchActiveDelivery, fetchRecentActivity]);
 
-
-
-
+    useFocusEffect(
+        useCallback(() => {
+            fetchActiveDelivery();
+            fetchRecentActivity();
+        }, [fetchActiveDelivery, fetchRecentActivity])
+    );
 
     const hideModal = () => setModalVisible(false);
 
@@ -288,7 +337,7 @@ export default function CustomerDashboard() {
                         <Card.Actions style={styles.deliveryActions}>
                             <Button
                                 mode="contained"
-                                onPress={() => navigation.navigate('TrackOrder')}
+                                onPress={() => navigation.navigate('TrackOrder', { bookingId: activeDelivery.id })}
                                 icon="map"
                                 style={{ flex: 1, marginRight: 4 }}
                                 contentStyle={{ paddingHorizontal: 0 }}

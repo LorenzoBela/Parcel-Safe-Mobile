@@ -45,6 +45,7 @@ export default function SearchingRiderScreen() {
     const [statusText, setStatusText] = useState(STATUS_MESSAGES[0]);
     const [searchFailed, setSearchFailed] = useState(false);
     const [progress, setProgress] = useState(0);
+    const [retryTrigger, setRetryTrigger] = useState(0); // Added to force re-run of search logic
 
     // EC-Update: Check for existing booking ID from params
     const { existingBookingId, shareToken: existingShareToken } = route.params || {};
@@ -73,9 +74,9 @@ export default function SearchingRiderScreen() {
     } = route.params || {};
 
     useEffect(() => {
-        console.log('[SearchingRider] Received params:', route.params);
-        console.log('[SearchingRider] Estimated Fare:', estimatedFare);
-        console.log('[SearchingRider] Estimated Cost:', estimatedCost);
+        console.log('[Booking] Received params:', route.params);
+        console.log('[Booking] Estimated Fare:', estimatedFare);
+        console.log('[Booking] Estimated Cost:', estimatedCost);
     }, []);
 
     useEffect(() => {
@@ -128,6 +129,7 @@ export default function SearchingRiderScreen() {
         // Create booking and notify nearby riders
         const createBookingAndNotify = async () => {
             if (!authedUserId) {
+                console.log('[Booking] Search failed: User not authenticated');
                 setSearchFailed(true);
                 setStatusText('Please log in again to continue booking');
                 return;
@@ -151,16 +153,18 @@ export default function SearchingRiderScreen() {
             if (!existingBookingId) {
                 // Guard: prevent creating duplicate bookings
                 const existing = await checkActiveBookings(authedUserId);
-                if (existing) {
-                    console.log('[SearchingRider] Blocked: active booking already exists:', existing.bookingId);
+                if (existing && existing.bookingId !== bookingId) {
+                    console.log(`[Booking] Blocked: Active booking exists (${existing.bookingId})`);
                     setSearchFailed(true);
                     setStatusText('You already have an active delivery. Complete it first.');
                     return;
                 }
 
+                console.log(`[Booking] Creating new booking request: ${bookingId}`);
                 await createPendingBooking(bookingRequest);
                 // Notify riders within 3km radius
                 const result = await notifyNearbyRiders(bookingRequest);
+                console.log(`[Booking] Notified ${result.notifiedCount} riders`);
                 setNotifiedRidersCount(result.notifiedCount);
 
                 if (result.notifiedCount === 0) {
@@ -178,6 +182,7 @@ export default function SearchingRiderScreen() {
         const unsubscribeStatus = subscribeToBookingStatus(bookingId, async (status, riderId) => {
             if (status === 'ACCEPTED' && riderId) {
                 // Rider accepted! Navigate to tracking
+                console.log(`[Booking] Rider ${riderId} accepted booking ${bookingId}`);
                 setStatusText('Rider found! Connecting...');
 
                 // Start ongoing notification for tracking
@@ -202,6 +207,7 @@ export default function SearchingRiderScreen() {
 
         // 5 minute timeout - if no rider found, show failure state
         const timeoutTimer = setTimeout(() => {
+            console.log(`[Booking] Search timed out for ${bookingId}`);
             setSearchFailed(true);
             setStatusText("We couldn't find a rider at this time");
             progressAnim.stopAnimation();
@@ -209,13 +215,14 @@ export default function SearchingRiderScreen() {
         }, SEARCH_TIMEOUT_MS);
 
         return () => {
+            // console.log('[Booking] Cleanup triggered for:', bookingId);
             clearInterval(progressInterval);
             clearInterval(statusInterval);
             clearTimeout(timeoutTimer);
             progressAnim.stopAnimation();
             unsubscribeStatus();
         };
-    }, [searchFailed, authedUserId, estimatedCost, estimatedFare, shareToken]);
+    }, [searchFailed, authedUserId, estimatedCost, estimatedFare, shareToken, retryTrigger]);
 
     const handleCancel = () => {
         Alert.alert(
@@ -226,19 +233,33 @@ export default function SearchingRiderScreen() {
                 {
                     text: 'Yes',
                     style: 'destructive',
-                    onPress: () => navigation.goBack()
+                    // EC-Fix: Cancel the booking in backend to prevent auto-resume loop
+                    onPress: async () => {
+                        try {
+                            if (bookingId) {
+                                console.log(`[Booking] User cancelled booking ${bookingId}`);
+                                await cancelBooking(bookingId);
+                            }
+                        } catch (error) {
+                            console.error(`[Booking] Error cancelling booking: ${error}`);
+                        } finally {
+                            navigation.goBack();
+                        }
+                    }
                 },
             ]
         );
     };
 
     const handleRetry = () => {
+        console.log(`[Booking] User initiated retry for booking`);
         // Reset state and restart the search
         setSearchFailed(false);
         setProgress(0);
         setStatusText(STATUS_MESSAGES[0]);
         statusIndex.current = 0;
         progressAnim.setValue(0);
+        setRetryTrigger(prev => prev + 1); // Trigger the effect again
     };
 
     return (

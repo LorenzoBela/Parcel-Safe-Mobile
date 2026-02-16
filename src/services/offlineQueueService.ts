@@ -12,8 +12,8 @@ const QUEUE_STORAGE_KEY = 'offline_location_queue';
 const MAX_QUEUE_SIZE = 100; // Prevent unlimited growth
 
 export interface QueuedLocation {
-    lat: number;
-    lng: number;
+    latitude: number;
+    longitude: number;
     timestamp: number;
     speed: number;
     heading: number;
@@ -70,8 +70,8 @@ class OfflineQueueService {
      */
     public async enqueueLocationUpdate(
         boxId: string,
-        lat: number,
-        lng: number,
+        latitude: number,
+        longitude: number,
         speed: number,
         heading: number
     ): Promise<void> {
@@ -80,8 +80,8 @@ class OfflineQueueService {
 
         const locationData: QueuedLocation = {
             boxId,
-            lat,
-            lng,
+            latitude,
+            longitude,
             speed,
             heading,
             timestamp: Date.now(), // Capture *actual* time of location
@@ -148,8 +148,8 @@ class OfflineQueueService {
                 // We will send them sequentially or just send the batch if your backend supports history.
                 // Assuming standard "location" node:
                 updates[`/locations/${item.boxId}`] = {
-                    lat: item.lat,
-                    lng: item.lng,
+                    latitude: item.latitude,
+                    longitude: item.longitude,
                     speed: item.speed,
                     heading: item.heading,
                     timestamp: item.timestamp, // Original timestamp
@@ -186,8 +186,8 @@ class OfflineQueueService {
         const updates: any = {};
 
         updates[`/locations/${data.boxId}`] = {
-            lat: data.lat,
-            lng: data.lng,
+            latitude: data.latitude,
+            longitude: data.longitude,
             speed: data.speed,
             heading: data.heading,
             timestamp: data.timestamp,

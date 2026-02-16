@@ -1,10 +1,11 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { NavigationContainer } from '@react-navigation/native';
 import { createStackNavigator } from '@react-navigation/stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 
 import { useTheme } from 'react-native-paper'; // Import useTheme
+import { triggerDeliverySync } from '../services/deliverySyncService';
 
 import LoginScreen from '../screens/auth/LoginScreen';
 import RegisterScreen from '../screens/auth/RegisterScreen';
@@ -180,6 +181,11 @@ const AdminNavigator = () => {
 };
 
 export default function AppNavigator() {
+    // Layer 4: Trigger Firebase-to-Supabase sync on app startup
+    useEffect(() => {
+        triggerDeliverySync().catch(() => {});
+    }, []);
+
     return (
         <NavigationContainer>
             <Stack.Navigator id="RootStack" initialRouteName="Login" screenOptions={{ headerShown: false }}>

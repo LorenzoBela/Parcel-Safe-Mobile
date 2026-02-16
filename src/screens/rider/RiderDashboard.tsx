@@ -4,6 +4,13 @@ import { Text, Card, Button, Avatar, ProgressBar, MD3Colors, Surface, Chip, useT
 import { useNavigation } from '@react-navigation/native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import dayjs from 'dayjs';
+import utc from 'dayjs/plugin/utc';
+import timezone from 'dayjs/plugin/timezone';
+
+dayjs.extend(utc);
+dayjs.extend(timezone);
+
+const PH_TIMEZONE = 'Asia/Manila';
 import * as Location from 'expo-location';
 import MapboxGL, { isMapboxNativeAvailable, MapFallback } from '../../components/map/MapboxWrapper';
 import LottieView from 'lottie-react-native';
@@ -109,6 +116,7 @@ export default function RiderDashboard() {
     // EC-08: GPS Spoofing Detection
     const [gpsSpoofWarning, setGpsSpoofWarning] = useState(false);
     const [lastGpsLocation, setLastGpsLocation] = useState<LocationData | null>(null);
+    const lastGpsLocationRef = useRef<LocationData | null>(null);
 
     // EC-46: Clock Skew Warning
     const [clockSkewWarning, setClockSkewWarning] = useState(false);
@@ -128,8 +136,29 @@ export default function RiderDashboard() {
         startMonitoring,
         activateTracking,
         deactivateTracking,
-        gpsHealth // EC-84
+        gpsHealth, // EC-84
+        lastLocation // EC-Redundancy: Use this for reliable updates
     } = useLocationRedundancy();
+
+    // EC-FIX: Sync riderLocation state with redundancy service updates
+    useEffect(() => {
+        if (lastLocation) {
+            setRiderLocation({
+                coords: {
+                    latitude: lastLocation.latitude,
+                    longitude: lastLocation.longitude,
+                    altitude: null,
+                    accuracy: null,
+                    altitudeAccuracy: null,
+                    heading: lastLocation.heading || 0,
+                    speed: lastLocation.speed || 0,
+                },
+                timestamp: lastLocation.timestamp,
+            });
+        }
+    }, [lastLocation]);
+
+
 
     // EC-85: Recall State
     const [recallState, setRecallState] = useState<{ isRecalled: boolean; returnOtp: string | null }>({ isRecalled: false, returnOtp: null });
@@ -181,17 +210,39 @@ export default function RiderDashboard() {
 
     const [activeDelivery, setActiveDelivery] = useState<any>(null);
 
+    // EC-FIX: Automatically manage tracking lifecycle based on active delivery
+    // Moved here to ensure activeDelivery is defined
+    useEffect(() => {
+        if (activeDelivery) {
+            const boxId = activeDelivery.assigned_box_id || activeDelivery.box_id;
+            if (boxId) {
+                console.log('[RiderDashboard] Starting monitoring for box:', boxId);
+                startMonitoring(boxId);
+
+                // Activate tracking immediately for active deliveries
+                // We track even if just assigned, to show rider approaching pickup
+                if (activeDelivery.status && activeDelivery.status !== 'COMPLETED' && activeDelivery.status !== 'CANCELLED') {
+                    console.log('[RiderDashboard] Activating tracking');
+                    activateTracking();
+                }
+            }
+        } else {
+            // No active delivery, stop tracking
+            deactivateTracking();
+        }
+    }, [activeDelivery?.id, activeDelivery?.status, activeDelivery?.assigned_box_id]);
+
     // Dynamic delivery state — populated from real sources when available
     const nextDelivery = useMemo(() => activeDelivery ? {
         id: activeDelivery.id,
         boxId: activeDelivery.assigned_box_id || activeDelivery.box_id, // Ensure boxId is passed
         address: activeDelivery.dropoff_address,
-        customer: activeDelivery.recipient_name || 'Customer',
-        time: activeDelivery.expected_arrival || '--:--',
-        phone: activeDelivery.recipient_phone || 'No Phone',
+        customer: activeDelivery.recipient_name || activeDelivery.customer?.full_name || 'Customer',
+        time: activeDelivery.accepted_at || activeDelivery.created_at || '--:--',
+        phone: activeDelivery.recipient_phone || activeDelivery.customer?.phone_number || 'No Phone',
         pickupAddress: activeDelivery.pickup_address,
-        pickupTime: activeDelivery.created_at ? dayjs(activeDelivery.created_at).format('h:mm A') : '--:--',
-        dropoffTime: activeDelivery.expected_arrival ? dayjs(activeDelivery.expected_arrival).format('h:mm A') : '--:--',
+        pickupTime: activeDelivery.created_at ? dayjs.utc(activeDelivery.created_at).tz(PH_TIMEZONE).format('h:mm A') : '--:--',
+        dropoffTime: activeDelivery.accepted_at ? dayjs.utc(activeDelivery.accepted_at).tz(PH_TIMEZONE).format('h:mm A') : (activeDelivery.created_at ? dayjs.utc(activeDelivery.created_at).tz(PH_TIMEZONE).format('h:mm A') : '--:--'),
         fare: activeDelivery.estimated_fare ? `₱${activeDelivery.estimated_fare}` : '--',
         distance: distance, // Updated by Mapbox
         estimatedTime: duration, // Updated by Mapbox
@@ -205,18 +256,19 @@ export default function RiderDashboard() {
         dropoffLng: activeDelivery.dropoff_lng,
     } : null, [activeDelivery, distance, duration]);
 
-    // Use active delivery destination if available, otherwise default
-    const destination = useMemo(() => nextDelivery ? {
-        latitude: nextDelivery.dropoffLat,
-        longitude: nextDelivery.dropoffLng,
+    // Derive destination directly from activeDelivery (NOT nextDelivery) to avoid
+    // circular dependency: nextDelivery → destination → fetchRoute → distance/duration → nextDelivery
+    const destination = useMemo(() => activeDelivery ? {
+        latitude: activeDelivery.dropoff_lat,
+        longitude: activeDelivery.dropoff_lng,
         title: "Delivery Destination",
-        description: nextDelivery.address
+        description: activeDelivery.dropoff_address
     } : {
         latitude: 14.5831,
         longitude: 120.9794,
         title: "Delivery Destination",
         description: "Rizal Park, Manila"
-    }, [nextDelivery]);
+    }, [activeDelivery]);
 
     // Check for active deliveries
     useEffect(() => {
@@ -231,9 +283,9 @@ export default function RiderDashboard() {
                 }
                 const { data, error } = await supabase
                     .from('deliveries')
-                    .select('*')
+                    .select('*, customer:profiles!deliveries_customer_id_fkey(full_name, phone_number)')
                     .eq('rider_id', riderId)
-                    .in('status', ['ASSIGNED', 'PENDING', 'IN_TRANSIT', 'ARRIVED']) // EC-Update: Added ASSIGNED
+                    .in('status', ['ASSIGNED', 'PENDING', 'IN_TRANSIT', 'ARRIVED'])
                     .limit(1);
 
                 if (!error && data && data.length > 0) {
@@ -305,18 +357,18 @@ export default function RiderDashboard() {
 
         // EC-08: Subscribe to GPS location for spoofing detection
         const unsubscribeLocation = subscribeToLocation(boxIdForMonitoring, (location) => {
-            if (location && lastGpsLocation) {
+            if (location && lastGpsLocationRef.current) {
                 // Calculate distance using Haversine approximation
                 const R = 6371000;
-                const dLat = (location.latitude - lastGpsLocation.latitude) * Math.PI / 180;
-                const dLon = (location.longitude - lastGpsLocation.longitude) * Math.PI / 180;
+                const dLat = (location.latitude - lastGpsLocationRef.current.latitude) * Math.PI / 180;
+                const dLon = (location.longitude - lastGpsLocationRef.current.longitude) * Math.PI / 180;
                 const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-                    Math.cos(lastGpsLocation.latitude * Math.PI / 180) * Math.cos(location.latitude * Math.PI / 180) *
+                    Math.cos(lastGpsLocationRef.current.latitude * Math.PI / 180) * Math.cos(location.latitude * Math.PI / 180) *
                     Math.sin(dLon / 2) * Math.sin(dLon / 2);
                 const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
                 const distanceMeters = R * c;
 
-                const timeDelta = (location.timestamp - lastGpsLocation.timestamp) / 1000;
+                const timeDelta = (location.timestamp - lastGpsLocationRef.current.timestamp) / 1000;
                 if (timeDelta > 0 && isSpeedAnomaly(distanceMeters, timeDelta)) {
                     setGpsSpoofWarning(true);
                     Alert.alert(
@@ -332,6 +384,7 @@ export default function RiderDashboard() {
                 }
             }
             setLastGpsLocation(location);
+            lastGpsLocationRef.current = location;
         });
 
         // EC-82: Subscribe to Keypad
@@ -367,7 +420,7 @@ export default function RiderDashboard() {
             unsubscribeKeypad();
             unsubscribeHinge();
         };
-    }, [boxIdForMonitoring, lastGpsLocation]);
+    }, [boxIdForMonitoring]);
 
     // EC-01/EC-06: Check for pending syncs periodically
     useEffect(() => {
@@ -385,11 +438,14 @@ export default function RiderDashboard() {
 
     // Subscribe to incoming order requests when rider is online
     useEffect(() => {
+        console.log('[RiderDashboard] Online status effect triggered. isOnline:', isOnline, 'riderId:', riderId);
+
         if (!riderId) {
             return;
         }
 
         if (!isOnline) {
+            console.log('[RiderDashboard] Rider is offline. Removing from online_riders.');
             // Remove from online riders when going offline
             removeRiderFromOnline(riderId);
             return;
@@ -406,12 +462,20 @@ export default function RiderDashboard() {
         initNotifications();
 
         // Update rider status as online with current location
+        // EC-FIX: Use lastLocation from redundancy hook if available, otherwise fallback to riderLocation
         const updateLocation = async () => {
-            if (riderLocation) {
+            const locToUse = lastLocation ? {
+                coords: {
+                    latitude: lastLocation.latitude,
+                    longitude: lastLocation.longitude
+                }
+            } : riderLocation;
+
+            if (locToUse) {
                 await updateRiderStatus(
                     riderId,
-                    riderLocation.coords.latitude,
-                    riderLocation.coords.longitude,
+                    locToUse.coords.latitude,
+                    locToUse.coords.longitude,
                     true,
                     pushToken || undefined
                 );
@@ -420,7 +484,9 @@ export default function RiderDashboard() {
         updateLocation();
 
         // Subscribe to incoming order requests
+        console.log('[RiderDashboard] Subscribing to rider requests for:', riderId);
         const unsubscribeRequests = subscribeToRiderRequests(riderId, (requests) => {
+            console.log('[RiderDashboard] Received rider requests update. Count:', requests.length);
             if (requests.length > 0) {
                 // Show the first pending request
                 const latestRequest = requests[0];
@@ -456,18 +522,30 @@ export default function RiderDashboard() {
     }, [isOnline, riderLocation, riderId, pushToken]);
 
     useEffect(() => {
-        if (!isOnline || !riderLocation || !riderId) {
+        if (!isOnline || !riderId) {
             return;
         }
 
-        updateRiderStatus(
-            riderId,
-            riderLocation.coords.latitude,
-            riderLocation.coords.longitude,
-            true,
-            pushToken || undefined
-        );
-    }, [isOnline, riderLocation, riderId, pushToken]);
+        // EC-FIX: Prefer lastLocation from redundancy service (Unified Location)
+        // This ensures we push updates even if the UI map hasn't re-rendered
+        const loc = lastLocation ? {
+            latitude: lastLocation.latitude,
+            longitude: lastLocation.longitude
+        } : (riderLocation ? {
+            latitude: riderLocation.coords.latitude,
+            longitude: riderLocation.coords.longitude
+        } : null);
+
+        if (loc) {
+            updateRiderStatus(
+                riderId,
+                loc.latitude,
+                loc.longitude,
+                true,
+                pushToken || undefined
+            );
+        }
+    }, [isOnline, lastLocation, riderLocation, riderId, pushToken]);
 
     // EC-78: Subscribe to Reassignment Updates
     useEffect(() => {
@@ -565,6 +643,16 @@ export default function RiderDashboard() {
     const handleAcceptOrder = useCallback(async () => {
         if (!incomingRequest || !riderId) return;
 
+        // GUARDRAIL: Rider must have a paired box
+        if (!isPaired || !boxIdForMonitoring) {
+            Alert.alert(
+                'No Box Paired',
+                'You must pair with a Smart Box before accepting orders to ensure safety and tracking.',
+                [{ text: 'OK', onPress: () => navigation.navigate('BoxPairing') }]
+            );
+            return;
+        }
+
         const success = await acceptOrder(
             riderId,
             incomingRequest.data.bookingId,
@@ -606,7 +694,7 @@ export default function RiderDashboard() {
                 [{ text: 'OK' }]
             );
         }
-    }, [incomingRequest, riderId, riderName, riderPhone, boxIdForMonitoring, navigation]);
+    }, [incomingRequest, riderId, riderName, riderPhone, boxIdForMonitoring, isPaired, navigation]);
 
     // Handle rejecting an order
     const handleRejectOrder = useCallback(async () => {
@@ -696,17 +784,42 @@ export default function RiderDashboard() {
         }
     }, [MAPBOX_TOKEN]);
 
+    // Track last route fetch location to prevent spamming API
+    const lastRouteFetchLocation = useRef<{ latitude: number, longitude: number } | null>(null);
+
     // Fetch route from Mapbox Directions API
     const fetchRoute = useCallback(async () => {
-        if (!riderLocation || !MAPBOX_TOKEN) {
-            setRouteGeometry(null);
+        // EC-FIX: Use lastLocation (live) if available, otherwise riderLocation (initial)
+        const currentLoc = lastLocation ? {
+            latitude: lastLocation.latitude,
+            longitude: lastLocation.longitude
+        } : (riderLocation ? {
+            latitude: riderLocation.coords.latitude,
+            longitude: riderLocation.coords.longitude
+        } : null);
+
+        if (!currentLoc || !MAPBOX_TOKEN || !destination) {
+            // Keep existing geometry if we just lost location momentarily
             return;
         }
 
-
+        // Throttle: Only fetch if moved > 20 meters from last fetch
+        if (lastRouteFetchLocation.current) {
+            const dist = calculateDistance(
+                currentLoc.latitude,
+                currentLoc.longitude,
+                lastRouteFetchLocation.current.latitude,
+                lastRouteFetchLocation.current.longitude
+            );
+            // calculateDistance returns string "X.XX km" - parse it
+            const distKm = parseFloat(dist);
+            if (distKm < 0.02) { // 20 meters
+                return;
+            }
+        }
 
         try {
-            const url = `https://api.mapbox.com/directions/v5/mapbox/driving/${riderLocation.coords.longitude},${riderLocation.coords.latitude};${destination.longitude},${destination.latitude}?geometries=geojson&access_token=${MAPBOX_TOKEN}`;
+            const url = `https://api.mapbox.com/directions/v5/mapbox/driving/${currentLoc.longitude},${currentLoc.latitude};${destination.longitude},${destination.latitude}?geometries=geojson&access_token=${MAPBOX_TOKEN}`;
 
             const response = await fetch(url);
             const data = await response.json();
@@ -714,6 +827,7 @@ export default function RiderDashboard() {
             if (data.routes && data.routes.length > 0) {
                 const route = data.routes[0];
                 setRouteGeometry(route.geometry);
+                lastRouteFetchLocation.current = currentLoc;
 
                 // Update distance with actual route distance
                 const distanceKm = (route.distance / 1000).toFixed(2);
@@ -725,14 +839,14 @@ export default function RiderDashboard() {
             }
         } catch (error) {
             console.error('Route calculation error:', error);
-            setRouteGeometry(null);
+            // do not clear geometry on error, keep stale route
         }
-    }, [riderLocation, MAPBOX_TOKEN, destination]);
+    }, [riderLocation, lastLocation, MAPBOX_TOKEN, destination]);
 
-    // Calculate route when rider location changes
+    // Calculate route when location changes
     useEffect(() => {
         fetchRoute();
-    }, [fetchRoute]);
+    }, [fetchRoute, lastLocation]); // Add lastLocation dependency explicitly
 
 
 
@@ -774,6 +888,7 @@ export default function RiderDashboard() {
         try {
             // EC-FIX: Try to get last known position first for immediate UI feedback
             const lastKnown = await Location.getLastKnownPositionAsync({});
+            console.log('[RiderDashboard] fetchLocation - lastKnown:', lastKnown);
             if (lastKnown) {
                 setRiderLocation(lastKnown);
 
@@ -1219,7 +1334,7 @@ export default function RiderDashboard() {
                 {nextDelivery ? (
                     <Card style={styles.jobCard} mode="elevated">
                         <View style={styles.mapContainer}>
-                            {riderLocation && MAPBOX_TOKEN ? (
+                            {(lastLocation || riderLocation) && MAPBOX_TOKEN ? (
                                 <MapboxGL.MapView
                                     style={styles.map}
                                     logoEnabled={false}
@@ -1231,16 +1346,22 @@ export default function RiderDashboard() {
                                     zoomEnabled={true}
                                 >
                                     <MapboxGL.Camera
-                                        zoomLevel={14}
-                                        centerCoordinate={[riderLocation.coords.longitude, riderLocation.coords.latitude]}
+                                        zoomLevel={15}
+                                        centerCoordinate={[
+                                            lastLocation ? lastLocation.longitude : riderLocation!.coords.longitude,
+                                            lastLocation ? lastLocation.latitude : riderLocation!.coords.latitude
+                                        ]}
                                         animationMode="easeTo"
-                                        animationDuration={500}
+                                        animationDuration={1000}
                                     />
 
                                     {/* Rider Location Marker */}
                                     <MapboxGL.PointAnnotation
                                         id="rider-location"
-                                        coordinate={[riderLocation.coords.longitude, riderLocation.coords.latitude]}
+                                        coordinate={[
+                                            lastLocation ? lastLocation.longitude : riderLocation!.coords.longitude,
+                                            lastLocation ? lastLocation.latitude : riderLocation!.coords.latitude
+                                        ]}
                                         title="Your Location"
                                     >
                                         <View style={{
@@ -1373,10 +1494,21 @@ export default function RiderDashboard() {
                             <Button
                                 mode="contained"
                                 style={{ flex: 1 }}
-                                onPress={() => navigation.navigate('Arrival')}
+                                onPress={() => {
+                                    const isPickup = !['PICKED_UP', 'IN_TRANSIT', 'ARRIVED', 'COMPLETED'].includes(activeDelivery.status);
+                                    navigation.navigate('Arrival', {
+                                        deliveryId: nextDelivery.id,
+                                        boxId: nextDelivery.boxId,
+                                        targetLat: isPickup ? nextDelivery.pickupLat : nextDelivery.dropoffLat,
+                                        targetLng: isPickup ? nextDelivery.pickupLng : nextDelivery.dropoffLng,
+                                        targetAddress: isPickup ? nextDelivery.pickupAddress : nextDelivery.address,
+                                        customerPhone: nextDelivery.phone,
+                                        riderName: riderName
+                                    });
+                                }}
                                 buttonColor={theme.colors.primary}
                             >
-                                Start Trip
+                                {['PICKED_UP', 'IN_TRANSIT', 'ARRIVED'].includes(activeDelivery.status) ? 'Resume Trip' : 'Start Trip'}
                             </Button>
                         </Card.Actions>
                     </Card>

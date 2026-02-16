@@ -4,6 +4,7 @@ import { Text, Card, Button, Chip, Searchbar, Surface, useTheme, IconButton, Ava
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { supabase } from '../../services/supabaseClient';
+import { triggerDeliverySync } from '../../services/deliverySyncService';
 import useAuthStore from '../../store/authStore';
 
 /** Map Supabase DeliveryStatus to display-friendly labels */
@@ -95,10 +96,10 @@ export default function DeliveryRecordsScreen() {
         fetchDeliveries();
     }, [fetchDeliveries]);
 
-    // Re-fetch when screen gains focus
+    // Re-fetch when screen gains focus (sync first, then fetch)
     useFocusEffect(
         useCallback(() => {
-            fetchDeliveries();
+            triggerDeliverySync().then(() => fetchDeliveries());
         }, [fetchDeliveries])
     );
 

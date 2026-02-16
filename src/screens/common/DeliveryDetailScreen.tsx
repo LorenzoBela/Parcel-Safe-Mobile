@@ -10,6 +10,7 @@ export default function DeliveryDetailScreen() {
     const route = useRoute<any>();
     const theme = useTheme();
     const { delivery } = route.params;
+    console.log('[DeliveryDetail] Received delivery:', JSON.stringify(delivery, null, 2));
     const MAPBOX_TOKEN = process.env.EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN;
 
     const [routeGeometry, setRouteGeometry] = useState<any>(null);
@@ -63,7 +64,7 @@ export default function DeliveryDetailScreen() {
 
             try {
                 const url = `https://api.mapbox.com/directions/v5/mapbox/driving/${pickupLng},${pickupLat};${dropoffLng},${dropoffLat}?geometries=geojson&access_token=${MAPBOX_TOKEN}`;
-                
+
                 const response = await fetch(url);
                 const data = await response.json();
 
@@ -151,9 +152,9 @@ export default function DeliveryDetailScreen() {
                 {/* Status Card */}
                 <Surface style={styles.statusCard} elevation={2}>
                     <View style={styles.statusHeader}>
-                        <View>
+                        <View style={{ flex: 1, marginRight: 10 }}>
                             <Text variant="labelSmall" style={{ color: '#888' }}>Tracking Number</Text>
-                            <Text variant="titleMedium" style={{ fontWeight: 'bold' }}>{delivery.trk}</Text>
+                            <Text variant="titleMedium" style={{ fontWeight: 'bold' }} numberOfLines={1} ellipsizeMode="middle">{delivery.trk}</Text>
                         </View>
                         <Chip
                             icon={getStatusIcon(delivery.status)}
@@ -166,16 +167,12 @@ export default function DeliveryDetailScreen() {
                     <View style={styles.divider} />
                     <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 8 }}>
                         <View>
-                            <Text variant="labelSmall" style={{ color: '#888' }}>Time</Text>
-                            <Text variant="bodyMedium" style={{ fontWeight: '500' }}>{delivery.time}</Text>
+                            <Text variant="labelSmall" style={{ color: '#888' }}>Date</Text>
+                            <Text variant="bodyMedium" style={{ fontWeight: '500' }}>{delivery.date || delivery.time}</Text>
                         </View>
                         <View>
                             <Text variant="labelSmall" style={{ color: '#888' }}>Distance</Text>
-                            <Text variant="bodyMedium" style={{ fontWeight: '500' }}>{delivery.distance}</Text>
-                        </View>
-                        <View>
-                            <Text variant="labelSmall" style={{ color: '#888' }}>Priority</Text>
-                            <Text variant="bodyMedium" style={{ fontWeight: '500' }}>{delivery.priority}</Text>
+                            <Text variant="bodyMedium" style={{ fontWeight: '500' }}>{delivery.distance || 'N/A'}</Text>
                         </View>
                     </View>
                 </Surface>
@@ -184,25 +181,26 @@ export default function DeliveryDetailScreen() {
                 <Card style={styles.card} mode="elevated">
                     <Card.Content>
                         <Text variant="titleMedium" style={styles.sectionTitle}>Item Details</Text>
-                        <View style={styles.detailRow}>
-                            <MaterialCommunityIcons name="package-variant" size={24} color={theme.colors.primary} />
-                            <View style={styles.detailTextContainer}>
-                                <Text variant="bodyLarge" style={styles.detailLabel}>Item Type</Text>
-                                <Text variant="bodyMedium" style={styles.detailValue}>{delivery.type}</Text>
-                            </View>
-                        </View>
+
                         <View style={styles.detailRow}>
                             <MaterialCommunityIcons name="account" size={24} color={theme.colors.primary} />
                             <View style={styles.detailTextContainer}>
-                                <Text variant="bodyLarge" style={styles.detailLabel}>Recipient</Text>
+                                <Text variant="bodyLarge" style={styles.detailLabel}>Customer Name</Text>
                                 <Text variant="bodyMedium" style={styles.detailValue}>{delivery.customer}</Text>
+                            </View>
+                        </View>
+                        <View style={styles.detailRow}>
+                            <MaterialCommunityIcons name="map-marker-outline" size={24} color={theme.colors.primary} />
+                            <View style={styles.detailTextContainer}>
+                                <Text variant="bodyLarge" style={styles.detailLabel}>Pickup Address</Text>
+                                <Text variant="bodyMedium" style={styles.detailValue}>{delivery.pickupAddress || 'N/A'}</Text>
                             </View>
                         </View>
                         <View style={styles.detailRow}>
                             <MaterialCommunityIcons name="map-marker" size={24} color={theme.colors.primary} />
                             <View style={styles.detailTextContainer}>
-                                <Text variant="bodyLarge" style={styles.detailLabel}>Address</Text>
-                                <Text variant="bodyMedium" style={styles.detailValue}>{delivery.address}</Text>
+                                <Text variant="bodyLarge" style={styles.detailLabel}>Dropoff Address</Text>
+                                <Text variant="bodyMedium" style={styles.detailValue}>{delivery.dropoffAddress || delivery.address}</Text>
                             </View>
                         </View>
                     </Card.Content>

@@ -129,8 +129,20 @@ export function subscribeToLocation(
     const locationRef = ref(db, `locations/${boxId}`);
 
     const unsubscribe = onValue(locationRef, (snapshot) => {
-        const data = snapshot.val();
-        callback(data as LocationData | null);
+        const rawData = snapshot.val();
+        if (!rawData) {
+            callback(null);
+            return;
+        }
+
+        // EC-Fix: Normalize lat/lng (legacy/mobile) to latitude/longitude
+        const data: LocationData = {
+            ...rawData,
+            latitude: rawData.latitude ?? rawData.lat,
+            longitude: rawData.longitude ?? rawData.lng,
+        };
+
+        callback(data);
     });
 
     return () => off(locationRef);

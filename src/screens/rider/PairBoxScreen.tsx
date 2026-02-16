@@ -14,6 +14,10 @@ import {
     parsePairingQr,
     revokePairing,
     subscribeToRiderPairing,
+    startPairingExpirationMonitor,
+    stopPairingExpirationMonitor,
+    getPairingRemainingMs,
+    formatRemainingTime,
 } from '../../services/boxPairingService';
 
 const SESSION_OPTIONS = [4, 12, 24, 48];
@@ -33,6 +37,8 @@ export default function PairBoxScreen() {
     const [sessionHours, setSessionHours] = useState<number>(24);
     const [isPairing, setIsPairing] = useState(false);
     const [pairingState, setPairingState] = useState<BoxPairingState | null>(null);
+    const [remainingMs, setRemainingMs] = useState<number | null>(null);
+    const [expirationWarning, setExpirationWarning] = useState(false);
 
     const canScan = permission?.granted && !scanLocked && !isPairing;
 
@@ -49,6 +55,33 @@ export default function PairBoxScreen() {
         });
         return unsubscribe;
     }, [authedUserId]);
+
+    // Start background expiration monitor when rider is authenticated.
+    useEffect(() => {
+        if (!authedUserId) return;
+
+        startPairingExpirationMonitor(authedUserId, (event) => {
+            if (event.type === 'EXPIRED') {
+                setExpirationWarning(false);
+                Alert.alert(
+                    'Session Expired',
+                    `Your pairing with Box ${event.boxId} has expired and has been automatically removed.`,
+                );
+            } else if (event.type === 'WARNING') {
+                setExpirationWarning(true);
+            }
+        });
+
+        return () => stopPairingExpirationMonitor();
+    }, [authedUserId]);
+
+    // Update countdown timer every 30 seconds.
+    useEffect(() => {
+        const update = () => setRemainingMs(getPairingRemainingMs(pairingState));
+        update();
+        const interval = setInterval(update, 30_000);
+        return () => clearInterval(interval);
+    }, [pairingState]);
 
     const isScannedBoxPairedToMe = useMemo(() => {
         if (!scannedPayload?.boxId) return false;
@@ -197,9 +230,35 @@ export default function PairBoxScreen() {
                             Mode: {pairingState.mode === 'ONE_TIME' ? 'One-time' : 'Session'}
                         </Text>
                         {pairingState.mode === 'SESSION' && pairingState.expires_at && (
-                            <Text style={{ marginTop: 4, color: theme.colors.onSurfaceVariant }}>
-                                Expires: {new Date(pairingState.expires_at).toLocaleString()}
-                            </Text>
+                            <>
+                                <Text style={{ marginTop: 4, color: theme.colors.onSurfaceVariant }}>
+                                    Expires: {new Date(pairingState.expires_at).toLocaleString()}
+                                </Text>
+                                <View style={[
+                                    styles.countdownRow,
+                                    expirationWarning && { backgroundColor: '#FEF3C7' },
+                                ]}>
+                                    <MaterialCommunityIcons
+                                        name={expirationWarning ? 'clock-alert-outline' : 'clock-outline'}
+                                        size={18}
+                                        color={expirationWarning ? '#D97706' : theme.colors.onSurfaceVariant}
+                                    />
+                                    <Text style={{
+                                        marginLeft: 6,
+                                        fontWeight: expirationWarning ? 'bold' : 'normal',
+                                        color: expirationWarning ? '#D97706' : theme.colors.onSurfaceVariant,
+                                    }}>
+                                        {remainingMs !== null && remainingMs > 0
+                                            ? `Time remaining: ${formatRemainingTime(remainingMs)}`
+                                            : 'Session expired'}
+                                    </Text>
+                                </View>
+                                {expirationWarning && (
+                                    <Text style={{ marginTop: 4, color: '#D97706', fontSize: 12 }}>
+                                        Your session is expiring soon. The box will auto-unpair when time runs out.
+                                    </Text>
+                                )}
+                            </>
                         )}
                     </Card.Content>
                     <Card.Actions style={{ justifyContent: 'flex-end', padding: 16 }}>
@@ -383,5 +442,14 @@ const styles = StyleSheet.create({
     modeChip: {
         marginRight: 8,
         marginBottom: 8,
+    },
+    countdownRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        marginTop: 8,
+        paddingVertical: 6,
+        paddingHorizontal: 10,
+        borderRadius: 8,
+        backgroundColor: '#F1F5F9',
     },
 });

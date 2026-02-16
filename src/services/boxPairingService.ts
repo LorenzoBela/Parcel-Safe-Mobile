@@ -1,7 +1,8 @@
 import { getFirebaseDatabase } from './firebaseClient';
-import { onValue, off, ref, set, serverTimestamp } from 'firebase/database';
+import { onValue, off, ref, set, serverTimestamp, get } from 'firebase/database';
 import { setSmartBoxAssignedUser } from './supabaseClient';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { AppState, type NativeEventSubscription } from 'react-native';
 
 export type PairingMode = 'ONE_TIME' | 'SESSION';
 export type PairingStatus = 'ACTIVE' | 'EXPIRED' | 'REVOKED';
@@ -26,8 +27,20 @@ export interface PairingQrPayload {
     sessionHours?: number;
 }
 
+/** Callback fired when a pairing is about to expire or has expired. */
+export type ExpirationWarningCallback = (event: {
+    type: 'WARNING' | 'EXPIRED';
+    boxId: string;
+    riderId: string;
+    remainingMs: number;
+}) => void;
+
 const DEFAULT_SESSION_HOURS = 24;
 const PAIRED_BOX_CACHE_KEY_PREFIX = 'parcelSafe:lastPairedBoxId:';
+/** How often the background monitor checks expiration (ms). */
+const EXPIRATION_CHECK_INTERVAL_MS = 60_000; // 1 minute
+/** Warn the rider this many ms before expiration. */
+const EXPIRATION_WARNING_THRESHOLD_MS = 30 * 60 * 1000; // 30 minutes
 
 function isValidFirebaseKeySegment(value: string): boolean {
     // RTDB disallows: . # $ [ ] /
@@ -306,14 +319,187 @@ export async function revokePairing(boxId: string, riderId: string): Promise<voi
     });
 }
 
+/**
+ * Check if a pairing is currently active.
+ *
+ * When an expired pairing is detected the function will *lazily* mark it as
+ * EXPIRED in Firebase (fire-and-forget) so the database stays consistent and
+ * other consumers (web admin, sync routes) see the correct status.
+ */
 export function isPairingActive(state: BoxPairingState | null): boolean {
     if (!state || state.status !== 'ACTIVE') {
         return false;
     }
 
     if (state.expires_at && state.expires_at <= Date.now()) {
+        // Fire-and-forget: mark the pairing as EXPIRED in Firebase so the DB
+        // status stays consistent across all consumers.
+        if (state.box_id && state.rider_id) {
+            void markPairingExpired(state.box_id, state.rider_id);
+        }
         return false;
     }
 
     return true;
+}
+
+// ========================== Auto-Expiration Helpers ==========================
+
+/**
+ * Mark a pairing as EXPIRED in both `/pairings/{boxId}` and
+ * `/riders/{riderId}/pairing`.  Also clears the Supabase `currentRiderId`
+ * assignment so the admin dashboard stays up-to-date.
+ *
+ * This is idempotent -- calling it multiple times is harmless.
+ */
+export async function markPairingExpired(boxId: string, riderId: string): Promise<void> {
+    try {
+        const db = getFirebaseDatabase();
+        const now = Date.now();
+
+        // Only update if the pairing is still ACTIVE (avoids overwriting a REVOKED state).
+        const pairingSnap = await get(ref(db, `pairings/${boxId}`));
+        const current = pairingSnap.val() as BoxPairingState | null;
+        if (!current || current.status !== 'ACTIVE') return;
+
+        const expiredPayload = {
+            status: 'EXPIRED' as const,
+            expired_at: now,
+            last_updated: serverTimestamp(),
+        };
+
+        await set(ref(db, `pairings/${boxId}`), { ...current, ...expiredPayload });
+        await set(ref(db, `riders/${riderId}/pairing`), { ...current, ...expiredPayload });
+
+        // Best-effort: clear Supabase assignment.
+        try {
+            await setSmartBoxAssignedUser(boxId, null);
+        } catch {
+            // Supabase may be offline -- tolerable since Firebase is source of truth.
+        }
+
+        // Clear cached pairing so other screens know the rider is no longer paired.
+        try {
+            await AsyncStorage.removeItem(`${PAIRED_BOX_CACHE_KEY_PREFIX}${riderId}`);
+        } catch {
+            // ignore
+        }
+
+        console.log(`[Pairing] Marked pairing EXPIRED: box=${boxId} rider=${riderId}`);
+    } catch (error) {
+        // Non-critical -- the next check will retry.
+        console.warn('[Pairing] Failed to mark expired:', error);
+    }
+}
+
+// ======================== Background Expiration Monitor ========================
+
+let _monitorTimer: ReturnType<typeof setInterval> | null = null;
+let _monitorRiderId: string | null = null;
+let _monitorAppStateSub: NativeEventSubscription | null = null;
+let _expirationWarningCb: ExpirationWarningCallback | null = null;
+
+/**
+ * Start a background monitor that periodically checks the rider's active
+ * pairing and automatically marks it EXPIRED when the session elapses.
+ *
+ * It also fires an `ExpirationWarningCallback` 30 minutes before expiry so
+ * the UI can alert the rider.
+ *
+ * Call `stopPairingExpirationMonitor()` (or pass a different riderId) to stop.
+ */
+export function startPairingExpirationMonitor(
+    riderId: string,
+    onWarning?: ExpirationWarningCallback,
+): void {
+    // Avoid duplicate monitors for the same rider.
+    if (_monitorTimer && _monitorRiderId === riderId) return;
+    stopPairingExpirationMonitor();
+
+    _monitorRiderId = riderId;
+    _expirationWarningCb = onWarning ?? null;
+
+    const checkExpiration = async () => {
+        try {
+            const db = getFirebaseDatabase();
+            const snap = await get(ref(db, `riders/${riderId}/pairing`));
+            const state = snap.val() as BoxPairingState | null;
+
+            if (!state || state.status !== 'ACTIVE') return;
+
+            const now = Date.now();
+            if (state.expires_at) {
+                const remaining = state.expires_at - now;
+
+                if (remaining <= 0) {
+                    // Session expired -- mark it.
+                    await markPairingExpired(state.box_id, riderId);
+                    _expirationWarningCb?.({
+                        type: 'EXPIRED',
+                        boxId: state.box_id,
+                        riderId,
+                        remainingMs: 0,
+                    });
+                } else if (remaining <= EXPIRATION_WARNING_THRESHOLD_MS) {
+                    _expirationWarningCb?.({
+                        type: 'WARNING',
+                        boxId: state.box_id,
+                        riderId,
+                        remainingMs: remaining,
+                    });
+                }
+            }
+        } catch {
+            // Swallow -- will retry next interval.
+        }
+    };
+
+    // Run immediately, then on interval.
+    void checkExpiration();
+    _monitorTimer = setInterval(checkExpiration, EXPIRATION_CHECK_INTERVAL_MS);
+
+    // Also check whenever the app returns to the foreground (phone may have
+    // been asleep for hours).
+    _monitorAppStateSub = AppState.addEventListener('change', (nextState) => {
+        if (nextState === 'active') {
+            void checkExpiration();
+        }
+    });
+}
+
+/** Stop the background expiration monitor. */
+export function stopPairingExpirationMonitor(): void {
+    if (_monitorTimer) {
+        clearInterval(_monitorTimer);
+        _monitorTimer = null;
+    }
+    if (_monitorAppStateSub) {
+        _monitorAppStateSub.remove();
+        _monitorAppStateSub = null;
+    }
+    _monitorRiderId = null;
+    _expirationWarningCb = null;
+}
+
+/**
+ * Convenience: returns the milliseconds remaining until the pairing expires,
+ * or `null` if there is no expiration (ONE_TIME mode or no active pairing).
+ */
+export function getPairingRemainingMs(state: BoxPairingState | null): number | null {
+    if (!state || state.status !== 'ACTIVE' || !state.expires_at) return null;
+    const remaining = state.expires_at - Date.now();
+    return remaining > 0 ? remaining : 0;
+}
+
+/**
+ * Format remaining time as a human-readable string, e.g. "2h 15m" or "< 1 min".
+ */
+export function formatRemainingTime(ms: number | null): string {
+    if (ms === null || ms <= 0) return 'Expired';
+    const totalMinutes = Math.ceil(ms / 60_000);
+    if (totalMinutes < 1) return '< 1 min';
+    const hours = Math.floor(totalMinutes / 60);
+    const minutes = totalMinutes % 60;
+    if (hours === 0) return `${minutes}m`;
+    return minutes > 0 ? `${hours}h ${minutes}m` : `${hours}h`;
 }

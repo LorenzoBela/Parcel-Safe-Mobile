@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { View, StyleSheet, Dimensions, TouchableOpacity, Alert, Share } from 'react-native';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
+import { View, StyleSheet, Dimensions, TouchableOpacity, Alert, Share, Image, Animated, Easing } from 'react-native';
 import MapboxGL, { isMapboxNativeAvailable, MapFallback } from '../../components/map/MapboxWrapper';
 import { Text, Card, Avatar, Button, IconButton, Surface, useTheme } from 'react-native-paper';
 import { useNavigation, useRoute } from '@react-navigation/native';
@@ -26,8 +26,13 @@ import statusUpdateService from '../../services/statusUpdateService';
 import * as Clipboard from 'expo-clipboard';
 import CustomerCancellationModal from '../../components/modals/CustomerCancellationModal';
 import useAuthStore from '../../store/authStore';
-import { lineString } from '@turf/helpers';
+import { lineString, point } from '@turf/helpers';
 import circle from '@turf/circle';
+import bearing from '@turf/bearing';
+import lineSlice from '@turf/line-slice';
+import nearestPointOnLine from '@turf/nearest-point-on-line';
+import length from '@turf/length';
+import distanceTurf from '@turf/distance';
 // MapboxGL is already imported from wrapper
 
 interface TrackRouteParams {
@@ -68,21 +73,93 @@ function mapStatusToCancellationStatus(status: string | undefined): DeliveryStat
 
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+const RiderImage = require('../../../assets/Rider.png');
+
+// Pulse animation component for rider marker
+function PulseRing() {
+    const pulseAnim = useRef(new Animated.Value(0.4)).current;
+    const scaleAnim = useRef(new Animated.Value(1)).current;
+
+    useEffect(() => {
+        const pulse = Animated.loop(
+            Animated.parallel([
+                Animated.sequence([
+                    Animated.timing(pulseAnim, { toValue: 0, duration: 1500, easing: Easing.out(Easing.ease), useNativeDriver: true }),
+                    Animated.timing(pulseAnim, { toValue: 0.4, duration: 0, useNativeDriver: true }),
+                ]),
+                Animated.sequence([
+                    Animated.timing(scaleAnim, { toValue: 2, duration: 1500, easing: Easing.out(Easing.ease), useNativeDriver: true }),
+                    Animated.timing(scaleAnim, { toValue: 1, duration: 0, useNativeDriver: true }),
+                ]),
+            ])
+        );
+        pulse.start();
+        return () => pulse.stop();
+    }, [pulseAnim, scaleAnim]);
+
+    return (
+        <Animated.View
+            style={{
+                position: 'absolute',
+                width: 48,
+                height: 48,
+                borderRadius: 24,
+                backgroundColor: '#10b981',
+                opacity: pulseAnim,
+                transform: [{ scale: scaleAnim }],
+            }}
+        />
+    );
+}
+
 export default function TrackOrderScreen() {
     const navigation = useNavigation<any>();
     const route = useRoute<any>();
     const theme = useTheme();
     const insets = useSafeAreaInsets();
+    const cameraRef = useRef<any>(null);
     const [displayStatus, setDisplayStatus] = useState<'OK' | 'DEGRADED' | 'FAILED'>('OK');
     const [cancellation, setCancellation] = useState<CancellationState | null>(null);
     const [showCancelModal, setShowCancelModal] = useState(false);
     const [cancelLoading, setCancelLoading] = useState(false);
     const [delivery, setDelivery] = useState<DeliveryRecord | null>(null);
-    const [riderLiveLocation, setRiderLiveLocation] = useState<{ lat: number; lng: number } | null>(null);
-    const [boxLiveLocation, setBoxLiveLocation] = useState<{ lat: number; lng: number } | null>(null);
+    const [riderLiveLocation, setRiderLiveLocation] = useState<{ lat: number; lng: number; lastUpdated: number } | null>(null);
+    const [boxLiveLocation, setBoxLiveLocation] = useState<{ lat: number; lng: number; lastUpdated: number } | null>(null);
     const [routeCoordinates, setRouteCoordinates] = useState<number[][] | null>(null);
+    const [completedRouteCoords, setCompletedRouteCoords] = useState<number[][] | null>(null); // P1: traveled route
     const [riderProfile, setRiderProfile] = useState<RiderProfile | null>(null);
     const [eta, setEta] = useState<number | null>(null);
+    const [distanceToTarget, setDistanceToTarget] = useState<number | null>(null); // km
+
+    // EC-SMART-ROUTE: Refs for optimization (borrowed from Web)
+    const consecutiveOffRouteCount = useRef(0);
+    const recalcCount = useRef(0);
+    const lastRecalcTimestamp = useRef(0);
+    const isRecalculating = useRef(false);
+    const routeAverageSpeed = useRef<number>(25 / 3.6); // Default 25km/h in m/s
+    const MAX_RECALCS = 20;
+    const MIN_DIST_TO_RECALC_KM = 0.2; // 200m
+    const RECALC_COOLDOWN_MS = 8000; // 8s (faster rerouting)
+    const CONSECUTIVE_OFF_ROUTE_REQUIRED = 2; // React faster to off-route
+    const OFF_ROUTE_THRESHOLD_KM = 0.05; // 50m
+
+    // --- P2: ETA Smoothing & Stale Data ---
+    const smoothedEtaRef = useRef<number | null>(null);
+    const lastUpdateTimestamp = useRef<number>(Date.now());
+    const ETA_ALPHA = 0.3;
+
+    const smoothEta = (rawMinutes: number): number => {
+        if (smoothedEtaRef.current === null) {
+            smoothedEtaRef.current = rawMinutes;
+            return rawMinutes;
+        }
+        const delta = Math.abs(rawMinutes - smoothedEtaRef.current);
+        const pctChange = delta / Math.max(smoothedEtaRef.current, 1);
+        if (delta < 1 && pctChange < 0.1) return smoothedEtaRef.current; // Suppress flicker
+        const alpha = rawMinutes < smoothedEtaRef.current ? 0.5 : ETA_ALPHA;
+        smoothedEtaRef.current = Math.ceil(alpha * rawMinutes + (1 - alpha) * smoothedEtaRef.current);
+        return smoothedEtaRef.current;
+    };
 
     const params = (route.params || {}) as TrackRouteParams;
     const deliveryId = params.bookingId;
@@ -105,18 +182,33 @@ export default function TrackOrderScreen() {
 
     const isPickedUp = ['PICKED_UP', 'IN_TRANSIT'].includes(delivery?.status || '');
 
+    // Two-Phase Routing: determine the current route target
+    const routeTarget = isPickedUp ? destination : pickupLocation;
+
+    // EC-FIX: Smart Fallback Logic - Prefer the freshest data source
+    const useBoxLocation = useMemo(() => {
+        if (!boxLiveLocation) return false;
+        if (!riderLiveLocation) return true;
+        // If box location is newer than rider location (plus 5s grace period for network jitter), use box
+        return boxLiveLocation.lastUpdated > (riderLiveLocation.lastUpdated + 5000);
+    }, [boxLiveLocation, riderLiveLocation]);
+
+    const displayLocation = useBoxLocation ? boxLiveLocation : riderLiveLocation;
+
+    // Fallback coordinates if no live data available
+    const fallbackLat = delivery?.pickup_lat ?? params.pickupLat ?? destination.latitude;
+    const fallbackLng = delivery?.pickup_lng ?? params.pickupLng ?? destination.longitude;
+
     const boxLocation = {
-        latitude: boxLiveLocation?.lat ?? (isPickedUp ? RiderFallbackLat() : (delivery?.pickup_lat ?? params.pickupLat ?? destination.latitude)),
-        longitude: boxLiveLocation?.lng ?? (isPickedUp ? RiderFallbackLng() : (delivery?.pickup_lng ?? params.pickupLng ?? destination.longitude)),
+        latitude: boxLiveLocation?.lat ?? (isPickedUp ? fallbackLat : fallbackLat), // Logic: if picked up, box moves with rider. If not, box is at pickup.
+        longitude: boxLiveLocation?.lng ?? (isPickedUp ? fallbackLng : fallbackLng),
     };
 
-    // Helper to get rider location for fallback without circular dependency reference in const
-    function RiderFallbackLat() { return riderLiveLocation?.lat ?? delivery?.pickup_lat ?? destination.latitude; }
-    function RiderFallbackLng() { return riderLiveLocation?.lng ?? delivery?.pickup_lng ?? destination.longitude; }
-
-    const riderLocation = {
-        latitude: riderLiveLocation?.lat ?? (isPickedUp ? boxLocation.latitude : (delivery?.pickup_lat ?? params.pickupLat ?? destination.latitude)),
-        longitude: riderLiveLocation?.lng ?? (isPickedUp ? boxLocation.longitude : (delivery?.pickup_lng ?? params.pickupLng ?? destination.longitude)),
+    // The marker displayed as "Rider" on the map
+    const hasLiveLocation = !!(displayLocation?.lat && displayLocation?.lng);
+    const riderMarkerLocation = {
+        latitude: displayLocation?.lat ?? (isPickedUp ? boxLocation.latitude : fallbackLat),
+        longitude: displayLocation?.lng ?? (isPickedUp ? boxLocation.longitude : fallbackLng),
     };
 
     const riderDetails = {
@@ -166,7 +258,12 @@ export default function TrackOrderScreen() {
                     setRiderLiveLocation(null);
                     return;
                 }
-                setRiderLiveLocation({ lat: location.lat, lng: location.lng });
+                lastUpdateTimestamp.current = Date.now(); // P2: stale data tracking
+                setRiderLiveLocation({
+                    lat: location.lat,
+                    lng: location.lng,
+                    lastUpdated: location.lastUpdated || Date.now()
+                });
             });
         }
 
@@ -199,7 +296,12 @@ export default function TrackOrderScreen() {
 
         const unsubscribeBox = subscribeToBoxLocation(delivery.box_id, (location) => {
             if (location) {
-                setBoxLiveLocation({ lat: location.lat, lng: location.lng });
+                lastUpdateTimestamp.current = Date.now(); // P2: stale data tracking
+                setBoxLiveLocation({
+                    lat: location.lat,
+                    lng: location.lng,
+                    lastUpdated: location.lastUpdated || Date.now()
+                });
             }
         });
 
@@ -219,7 +321,12 @@ export default function TrackOrderScreen() {
                 setRiderLiveLocation(null);
                 return;
             }
-            setRiderLiveLocation({ lat: location.lat, lng: location.lng });
+            lastUpdateTimestamp.current = Date.now(); // P2: stale data tracking
+            setRiderLiveLocation({
+                lat: location.lat,
+                lng: location.lng,
+                lastUpdated: location.lastUpdated || Date.now()
+            });
         });
     }, [delivery?.rider_id]);
 
@@ -285,46 +392,164 @@ export default function TrackOrderScreen() {
 
     const canCancelResult = canCustomerCancel(deliveryStatus);
 
-    // Fetch route from Mapbox Directions API
-    useEffect(() => {
-        if (!riderLocation.latitude || !destination.latitude || !MAPBOX_TOKEN) return;
+    // EC-SMART-ROUTE: Efficient Route Fetching
+    const fetchAndSetRoute = async (startLat: number, startLng: number, endLat: number, endLng: number) => {
+        if (!MAPBOX_TOKEN) return;
+        try {
+            const response = await fetch(
+                `https://api.mapbox.com/directions/v5/mapbox/driving/${startLng},${startLat};${endLng},${endLat}?geometries=geojson&access_token=${MAPBOX_TOKEN}`
+            );
+            const json = await response.json();
+            if (json.routes && json.routes.length > 0) {
+                const route = json.routes[0].geometry.coordinates;
+                setRouteCoordinates(route);
+                recalcCount.current += 1;
 
-        const fetchRoute = async () => {
-            try {
-                const response = await fetch(
-                    `https://api.mapbox.com/directions/v5/mapbox/driving/${riderLocation.longitude},${riderLocation.latitude};${destination.longitude},${destination.latitude}?geometries=geojson&access_token=${MAPBOX_TOKEN}`
-                );
-                const json = await response.json();
-                if (json.routes && json.routes.length > 0) {
-                    setRouteCoordinates(json.routes[0].geometry.coordinates);
-                    // Calculate ETA in minutes
-                    const durationSeconds = json.routes[0].duration;
-                    if (durationSeconds) {
-                        setEta(Math.ceil(durationSeconds / 60));
+                // Update ETA and Speed
+                const durationSeconds = json.routes[0].duration;
+                const distanceMeters = json.routes[0].distance;
+
+                if (durationSeconds > 0) {
+                    routeAverageSpeed.current = distanceMeters / durationSeconds;
+                    setEta(smoothEta(Math.ceil(durationSeconds / 60)));
+                    setDistanceToTarget(distanceMeters / 1000); // Convert m → km
+                }
+            }
+        } catch (error) {
+            console.error('Error fetching route:', error);
+        }
+    };
+
+    // Initial Route Fetch
+    useEffect(() => {
+        if (!riderMarkerLocation.latitude || !routeTarget.latitude || !MAPBOX_TOKEN) return;
+        // Only fetch initial route if we don't have one yet
+        if (!routeCoordinates) {
+            fetchAndSetRoute(riderMarkerLocation.latitude, riderMarkerLocation.longitude, routeTarget.latitude, routeTarget.longitude);
+        }
+    }, [routeTarget.latitude, routeTarget.longitude, riderMarkerLocation.latitude, MAPBOX_TOKEN]);
+
+    // EC-SMART-ROUTE: Off-Route Detection & Recalculation
+    useEffect(() => {
+        if (!riderLiveLocation || !routeCoordinates || routeCoordinates.length < 2) return;
+
+        const checkRoute = async () => {
+            const { lat, lng } = riderLiveLocation;
+
+            // 1. Calculate Distance to current target (pickup or dropoff)
+            const distToDest = distanceTurf(
+                point([lng, lat]),
+                point([routeTarget.longitude, routeTarget.latitude]),
+                { units: 'kilometers' }
+            );
+
+            // Update distance to target for UI display
+            setDistanceToTarget(distToDest);
+
+            // 2. Check if Off-Route
+            const fullRouteLine = lineString(routeCoordinates);
+            const riderPoint = point([lng, lat]);
+            const snapped = nearestPointOnLine(fullRouteLine, riderPoint);
+            const distFromRoute = distanceTurf(riderPoint, snapped, { units: 'kilometers' });
+
+            if (distFromRoute > OFF_ROUTE_THRESHOLD_KM) {
+                // Rider is Off-Route
+                consecutiveOffRouteCount.current += 1;
+
+                if (
+                    !isRecalculating.current &&
+                    consecutiveOffRouteCount.current >= CONSECUTIVE_OFF_ROUTE_REQUIRED &&
+                    recalcCount.current < MAX_RECALCS &&
+                    distToDest > MIN_DIST_TO_RECALC_KM
+                ) {
+                    const now = Date.now();
+                    // Check Cooldown
+                    if (now - lastRecalcTimestamp.current > RECALC_COOLDOWN_MS) {
+                        console.log("Rider is off route (Mobile)! Recalculating...");
+                        isRecalculating.current = true;
+                        lastRecalcTimestamp.current = now;
+                        consecutiveOffRouteCount.current = 0;
+
+                        await fetchAndSetRoute(lat, lng, routeTarget.latitude, routeTarget.longitude);
+                        isRecalculating.current = false;
                     }
                 }
-            } catch (error) {
-                console.error('Error fetching route:', error);
+            } else {
+                // On Route - Reset counter
+                consecutiveOffRouteCount.current = 0;
+
+                // Update ETA using dynamic slicing (Web logic)
+                try {
+                    const startPoint = point(routeCoordinates[0]);
+                    const endPoint = point(routeCoordinates[routeCoordinates.length - 1]);
+                    const sliced = lineSlice(snapped, endPoint, fullRouteLine);
+                    const slicedDistanceKm = length(sliced, { units: 'kilometers' });
+
+                    // P1: Compute completed (traveled) segment
+                    try {
+                        const completedSlice = lineSlice(startPoint, snapped, fullRouteLine);
+                        const completedCoords = (completedSlice as any).geometry?.coordinates;
+                        if (completedCoords && completedCoords.length > 1) {
+                            setCompletedRouteCoords(completedCoords);
+                        }
+                    } catch { /* ignore slice errors for completed segment */ }
+
+                    // Calculate ETA based on route's average speed
+                    const distanceMeters = slicedDistanceKm * 1000;
+                    const estimatedSeconds = distanceMeters / routeAverageSpeed.current;
+                    setEta(smoothEta(Math.ceil(estimatedSeconds / 60)));
+                } catch (err) {
+                    // Fallback to simple distance if slicing fails
+                    const estimatedSeconds = (distToDest * 1000) / routeAverageSpeed.current;
+                    setEta(smoothEta(Math.ceil(estimatedSeconds / 60)));
+                }
             }
         };
 
-        // Debounce or throttle this in production? For now, fetch on significant location change?
-        // Actually, just fetching on mount or destination change is safer for quota.
-        // Updating route every second is expensive. Let's fetch once initially or if destination changes.
-        // If rider moves, we might want to update, but maybe just visually showing the rider moving along the static route is enough?
-        // User asked for "mapping the street not just lines".
-        fetchRoute();
-    }, [destination.latitude, destination.longitude, MAPBOX_TOKEN]); // Removed riderLocation dependency to avoid API spam
+        checkRoute();
+
+    }, [riderLiveLocation, routeTarget.latitude, routeTarget.longitude]);
+
+    // Two-Phase: Refetch route when the phase transitions (pre-pickup → post-pickup)
+    useEffect(() => {
+        // Skip if no rider location yet or if we're in a terminal state
+        if (!riderLiveLocation || isTerminalState) return;
+
+        // When isPickedUp changes, we need a fresh route to the new target
+        // Reset route state so the initial fetch effect re-triggers
+        setRouteCoordinates(null);
+        setCompletedRouteCoords(null); // P1: Clear traveled route on phase change
+        recalcCount.current = 0;
+        consecutiveOffRouteCount.current = 0;
+
+        console.log(`Phase transition (mobile): ${isPickedUp ? 'now routing to dropoff' : 'routing to pickup'}`);
+        fetchAndSetRoute(
+            riderLiveLocation.lat,
+            riderLiveLocation.lng,
+            routeTarget.latitude,
+            routeTarget.longitude,
+        );
+    }, [isPickedUp]); // Only fires when the pickup phase changes
 
     const routeGeoJson = {
         type: 'Feature' as const,
         geometry: {
             type: 'LineString' as const,
             coordinates: routeCoordinates || [
-                [riderLocation.longitude, riderLocation.latitude],
+                [riderMarkerLocation.longitude, riderMarkerLocation.latitude],
                 [boxLocation.longitude, boxLocation.latitude],
                 [destination.longitude, destination.latitude],
             ],
+        },
+        properties: {},
+    };
+
+    // P1: Completed route visual (traveled segment — dashed gray)
+    const completedRouteGeoJson = {
+        type: 'Feature' as const,
+        geometry: {
+            type: 'LineString' as const,
+            coordinates: completedRouteCoords || [],
         },
         properties: {},
     };
@@ -362,6 +587,7 @@ export default function TrackOrderScreen() {
                     attributionEnabled={false}
                 >
                     <MapboxGL.Camera
+                        ref={cameraRef}
                         zoomLevel={14}
                         centerCoordinate={[boxLocation.longitude, boxLocation.latitude]}
                     />
@@ -377,6 +603,21 @@ export default function TrackOrderScreen() {
                         />
                     </MapboxGL.ShapeSource>
 
+                    {/* P1: Completed Route (Traveled segment — dashed gray) */}
+                    {completedRouteCoords && completedRouteCoords.length > 1 && (
+                        <MapboxGL.ShapeSource id="completed-route" shape={completedRouteGeoJson}>
+                            <MapboxGL.LineLayer
+                                id="completed-route-line"
+                                style={{
+                                    lineColor: theme.dark ? '#94a3b8' : '#9ca3af',
+                                    lineWidth: 4,
+                                    lineOpacity: 0.5,
+                                    lineDasharray: [2, 2],
+                                }}
+                            />
+                        </MapboxGL.ShapeSource>
+                    )}
+
                     {/* Box Marker */}
                     <MapboxGL.PointAnnotation
                         id="box-marker"
@@ -388,16 +629,23 @@ export default function TrackOrderScreen() {
                         </View>
                     </MapboxGL.PointAnnotation>
 
-                    {/* Rider Marker */}
-                    <MapboxGL.PointAnnotation
-                        id="rider-marker"
-                        coordinate={[riderLocation.longitude, riderLocation.latitude]}
-                        title="Rider"
-                    >
-                        <View style={styles.markerContainer}>
-                            <Avatar.Icon size={40} icon="motorbike" style={{ backgroundColor: theme.colors.primary }} />
-                        </View>
-                    </MapboxGL.PointAnnotation>
+                    {/* Rider Marker — only show when we have real location data */}
+                    {hasLiveLocation && (
+                        <MapboxGL.PointAnnotation
+                            id="rider-marker"
+                            coordinate={[riderMarkerLocation.longitude, riderMarkerLocation.latitude]}
+                            title="Rider"
+                        >
+                            <View style={styles.riderMarkerOuter}>
+                                <PulseRing />
+                                <View style={styles.riderMarkerCircle}>
+                                    <Image source={RiderImage} style={styles.riderMarkerImage} />
+                                </View>
+                                {/* Direction triangle */}
+                                <View style={styles.riderDirectionCone} />
+                            </View>
+                        </MapboxGL.PointAnnotation>
+                    )}
 
                     {/* Destination Marker */}
                     <MapboxGL.PointAnnotation
@@ -429,15 +677,15 @@ export default function TrackOrderScreen() {
                     </MapboxGL.ShapeSource>
 
                     {/* Dropoff Geo-fence (Green) */}
-                    <MapboxGL.ShapeSource id="destination" shape={geofenceCircle}>
+                    <MapboxGL.ShapeSource id="dropoff-fence-source" shape={geofenceCircle}>
                         <MapboxGL.FillLayer
-                            id="destination-fence-fill"
+                            id="dropoff-fence-fill"
                             style={{
                                 fillColor: 'rgba(76, 175, 80, 0.25)',
                             }}
                         />
                         <MapboxGL.LineLayer
-                            id="destination-fence-outline"
+                            id="dropoff-fence-outline"
                             style={{
                                 lineColor: 'rgba(76, 175, 80, 0.8)',
                                 lineWidth: 2,
@@ -460,6 +708,24 @@ export default function TrackOrderScreen() {
                 </Surface>
             </View>
 
+            {/* Recenter on Rider Button */}
+            <View style={[styles.recenterActions, { top: 20 + insets.top }]}>
+                <Surface style={[styles.iconButtonSurface, { backgroundColor: theme.colors.surface }]} elevation={2}>
+                    <IconButton
+                        icon="crosshairs-gps"
+                        size={24}
+                        iconColor={theme.colors.primary}
+                        onPress={() => {
+                            cameraRef.current?.setCamera({
+                                centerCoordinate: [riderMarkerLocation.longitude, riderMarkerLocation.latitude],
+                                zoomLevel: 15,
+                                animationDuration: 1000,
+                            });
+                        }}
+                    />
+                </Surface>
+            </View>
+
             {/* Bottom Sheet Info */}
             <View style={[styles.bottomSheet, { backgroundColor: theme.colors.surface, paddingBottom: 24 + insets.bottom }]}>
                 <View style={[styles.handleBar, { backgroundColor: theme.colors.outline }]} />
@@ -474,7 +740,7 @@ export default function TrackOrderScreen() {
                             <Text variant="titleLarge" style={{ fontWeight: 'bold', color: theme.colors.error }}>Delivery Cancelled</Text>
                         ) : (
                             <Text variant="titleLarge" style={{ fontWeight: 'bold', color: theme.colors.onSurface }}>
-                                {delivery?.status === 'ARRIVED' ? 'Rider Arrived' : 'Delivery In Progress'}
+                                {delivery?.status === 'ARRIVED' ? 'Rider Arrived' : (isPickedUp ? 'Delivery In Progress' : 'Heading to Pickup')}
                             </Text>
                         )}
 
@@ -512,6 +778,16 @@ export default function TrackOrderScreen() {
                             <Text style={{ color: 'white', fontWeight: 'bold' }}>
                                 {eta !== null ? `${eta} min` : 'Calculating...'}
                             </Text>
+                            <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 10 }}>
+                                {isPickedUp ? 'to you' : 'to pickup'}
+                            </Text>
+                            {distanceToTarget !== null && (
+                                <Text style={{ color: 'rgba(255,255,255,0.85)', fontSize: 11, marginTop: 2, fontWeight: '600' }}>
+                                    {distanceToTarget < 1
+                                        ? `${Math.round(distanceToTarget * 1000)}m away`
+                                        : `${distanceToTarget.toFixed(1)}km away`}
+                                </Text>
+                            )}
                         </Surface>
                     )}
                     {delivery?.status === 'COMPLETED' && (
@@ -702,6 +978,11 @@ const styles = StyleSheet.create({
         left: 20,
         zIndex: 10,
     },
+    recenterActions: {
+        position: 'absolute',
+        right: 20,
+        zIndex: 10,
+    },
     iconButtonSurface: {
         borderRadius: 25,
         backgroundColor: 'white',
@@ -709,6 +990,48 @@ const styles = StyleSheet.create({
     markerContainer: {
         alignItems: 'center',
         justifyContent: 'center',
+    },
+    riderMarkerOuter: {
+        width: 48,
+        height: 48,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    riderMarkerCircle: {
+        width: 48,
+        height: 48,
+        borderRadius: 24,
+        backgroundColor: '#fff',
+        borderWidth: 2.5,
+        borderColor: '#0f172a',
+        alignItems: 'center',
+        justifyContent: 'center',
+        overflow: 'hidden',
+        elevation: 6,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.3,
+        shadowRadius: 4,
+        zIndex: 2,
+    },
+    riderMarkerImage: {
+        width: 44,
+        height: 44,
+        borderRadius: 22,
+        resizeMode: 'cover',
+    },
+    riderDirectionCone: {
+        position: 'absolute',
+        top: -8,
+        width: 0,
+        height: 0,
+        borderLeftWidth: 6,
+        borderRightWidth: 6,
+        borderBottomWidth: 10,
+        borderLeftColor: 'transparent',
+        borderRightColor: 'transparent',
+        borderBottomColor: '#0f172a',
+        zIndex: 3,
     },
     bottomSheet: {
         position: 'absolute',
