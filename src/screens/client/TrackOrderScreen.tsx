@@ -143,6 +143,9 @@ export default function TrackOrderScreen() {
     const CONSECUTIVE_OFF_ROUTE_REQUIRED = 2; // React faster to off-route
     const OFF_ROUTE_THRESHOLD_KM = 0.05; // 50m
 
+    // Loop/Status Guard Ref
+    const stopTracking = useRef(false);
+
     // --- P2: ETA Smoothing & Stale Data ---
     const smoothedEtaRef = useRef<number | null>(null);
     const lastUpdateTimestamp = useRef<number>(Date.now());
@@ -167,6 +170,15 @@ export default function TrackOrderScreen() {
 
     const deliveryStatus = mapStatusToCancellationStatus(delivery?.status);
     const isTerminalState = ['COMPLETED', 'TAMPERED', 'CANCELLED'].includes(delivery?.status || '');
+
+    // Sync Ref and Clear Data on Terminal State
+    useEffect(() => {
+        stopTracking.current = isTerminalState;
+        if (isTerminalState) {
+            setRiderLiveLocation(null);
+            setBoxLiveLocation(null);
+        }
+    }, [isTerminalState]);
 
     const MAPBOX_TOKEN = process.env.EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN;
 
@@ -254,6 +266,7 @@ export default function TrackOrderScreen() {
         let unsubscribeRiderLocation = () => undefined;
         if (initialRiderId) {
             unsubscribeRiderLocation = subscribeToRiderLocation(initialRiderId, (location) => {
+                if (stopTracking.current) return;
                 if (!location) {
                     setRiderLiveLocation(null);
                     return;
@@ -295,6 +308,7 @@ export default function TrackOrderScreen() {
         });
 
         const unsubscribeBox = subscribeToBoxLocation(delivery.box_id, (location) => {
+            if (stopTracking.current) return;
             if (location) {
                 lastUpdateTimestamp.current = Date.now(); // P2: stale data tracking
                 setBoxLiveLocation({
@@ -317,6 +331,7 @@ export default function TrackOrderScreen() {
         }
 
         return subscribeToRiderLocation(delivery.rider_id, (location) => {
+            if (stopTracking.current) return;
             if (!location) {
                 setRiderLiveLocation(null);
                 return;

@@ -422,6 +422,7 @@ export async function requestCustomerCancellation(
   const database = getFirebaseDatabase();
   const currentTime = Date.now();
 
+  // Build state, then strip undefined keys — Firebase RTDB rejects `undefined`.
   const cancellationState: CustomerCancellationState = {
     cancelled: true,
     cancelledAt: currentTime,
@@ -435,11 +436,16 @@ export async function requestCustomerCancellation(
     riderId: assignedRiderId,
   };
 
+  // Remove keys whose value is undefined (Firebase RTDB does not accept undefined)
+  const cleanState = Object.fromEntries(
+    Object.entries(cancellationState).filter(([, v]) => v !== undefined)
+  );
+
   try {
     // 1. Write customer cancellation state
     const cancellationRef = ref(database, `customer_cancellations/${request.deliveryId}`);
     await set(cancellationRef, {
-      ...cancellationState,
+      ...cleanState,
       cancelledAt: serverTimestamp(),
     });
 

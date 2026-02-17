@@ -18,6 +18,13 @@ export interface QueuedLocation {
     speed: number;
     heading: number;
     boxId: string;
+    /** Optional network status captured at enqueue time */
+    networkStatus?: {
+        connection: 'WiFi' | 'Cellular' | 'None';
+        cellular_generation: '2g' | '3g' | '4g' | '5g' | null;
+        is_connected: boolean;
+        is_internet_reachable: boolean;
+    };
 }
 
 class OfflineQueueService {
@@ -78,6 +85,30 @@ class OfflineQueueService {
         const netState = await NetInfo.fetch();
         const isConnected = netState.isConnected && netState.isInternetReachable;
 
+        // Capture network status at the time of the location update
+        let networkStatus: QueuedLocation['networkStatus'];
+        try {
+            let connection: 'WiFi' | 'Cellular' | 'None' = 'None';
+            let cellularGeneration: '2g' | '3g' | '4g' | '5g' | null = null;
+
+            if (netState.type === 'wifi') {
+                connection = 'WiFi';
+            } else if (netState.type === 'cellular') {
+                connection = 'Cellular';
+                cellularGeneration = netState.details?.cellularGeneration ?? null;
+            }
+
+            networkStatus = {
+                connection,
+                cellular_generation: cellularGeneration,
+                is_connected: isConnected ?? false,
+                is_internet_reachable: netState.isInternetReachable ?? false,
+            };
+        } catch {
+            // If NetInfo fails, proceed without network metadata
+            networkStatus = undefined;
+        }
+
         const locationData: QueuedLocation = {
             boxId,
             latitude,
@@ -85,6 +116,7 @@ class OfflineQueueService {
             speed,
             heading,
             timestamp: Date.now(), // Capture *actual* time of location
+            networkStatus,
         };
 
         if (isConnected) {
@@ -156,6 +188,17 @@ class OfflineQueueService {
                     verified_at: serverTimestamp(), // Sync timestamp
                     source: 'phone_buffered'
                 };
+
+                // Include phone network status from the buffered data
+                if (item.networkStatus) {
+                    updates[`/hardware/${item.boxId}/phone_status`] = {
+                        ...item.networkStatus,
+                        source: 'phone_buffered',
+                        timestamp: item.timestamp,
+                        gps_accuracy: null,
+                        gps_altitude: null,
+                    };
+                }
             });
 
             // If we have multiple updates for the same path, the last one in the object wins
@@ -194,6 +237,17 @@ class OfflineQueueService {
             verified_at: serverTimestamp(),
             source: 'phone_background' // Distinguish from buffered
         };
+
+        // Include phone network status from the location update
+        if (data.networkStatus) {
+            updates[`/hardware/${data.boxId}/phone_status`] = {
+                ...data.networkStatus,
+                source: 'phone_background',
+                timestamp: data.timestamp,
+                gps_accuracy: null,
+                gps_altitude: null,
+            };
+        }
 
         await update(ref(db), updates);
     }

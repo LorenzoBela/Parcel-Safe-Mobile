@@ -16,6 +16,104 @@ import { Platform, AppState, AppStateStatus } from 'react-native';
 import { getFirebaseDatabase, ref, set, serverTimestamp, onValue, off } from './firebaseClient';
 import { offlineQueueService } from './offlineQueueService';
 
+// NetInfo — conditionally imported to prevent startup crashes
+let NetInfo: any = null;
+try {
+    NetInfo = require('@react-native-community/netinfo').default;
+} catch (error) {
+    if (__DEV__) console.log('[EC-15] NetInfo not available for phone status');
+}
+
+// ==================== Phone Network Status ====================
+
+export interface PhoneNetworkStatus {
+    /** Connection type reported by the phone */
+    connection: 'WiFi' | 'Cellular' | 'None';
+    /** Cellular generation (null when on WiFi or unavailable) */
+    cellular_generation: '2g' | '3g' | '4g' | '5g' | null;
+    /** Whether the phone has an active internet connection */
+    is_connected: boolean;
+    /** Whether internet is reachable (DNS resolution works) */
+    is_internet_reachable: boolean;
+    /** GPS accuracy in meters from expo-location */
+    gps_accuracy: number | null;
+    /** GPS altitude in meters from expo-location */
+    gps_altitude: number | null;
+    /** Which phone source produced this update */
+    source: 'phone_background' | 'phone_foreground';
+    /** Timestamp of this status snapshot */
+    timestamp: number;
+}
+
+/** Rate-limit: minimum interval between phone status writes (ms) */
+const PHONE_STATUS_WRITE_INTERVAL_MS = 30_000; // 30 seconds
+let lastPhoneStatusWriteTime = 0;
+
+/**
+ * Collect current phone network status from NetInfo + location data.
+ * Returns null if NetInfo is unavailable.
+ */
+async function collectPhoneNetworkStatus(
+    locationCoords: { accuracy: number | null; altitude: number | null },
+    source: 'phone_background' | 'phone_foreground'
+): Promise<PhoneNetworkStatus | null> {
+    if (!NetInfo) return null;
+
+    try {
+        const netState = await NetInfo.fetch();
+
+        let connection: PhoneNetworkStatus['connection'] = 'None';
+        let cellularGeneration: PhoneNetworkStatus['cellular_generation'] = null;
+
+        if (netState.type === 'wifi') {
+            connection = 'WiFi';
+        } else if (netState.type === 'cellular') {
+            connection = 'Cellular';
+            cellularGeneration = netState.details?.cellularGeneration ?? null;
+        }
+
+        return {
+            connection,
+            cellular_generation: cellularGeneration,
+            is_connected: netState.isConnected ?? false,
+            is_internet_reachable: netState.isInternetReachable ?? false,
+            gps_accuracy: locationCoords.accuracy,
+            gps_altitude: locationCoords.altitude,
+            source,
+            timestamp: Date.now(),
+        };
+    } catch (e) {
+        if (__DEV__) console.warn('[EC-15] Failed to collect phone network status:', e);
+        return null;
+    }
+}
+
+/**
+ * Write phone network status to Firebase if rate-limit allows.
+ * Writes to `/hardware/{boxId}/phone_status` so the admin dashboard
+ * can display phone diagnostics alongside box hardware data.
+ */
+async function writePhoneStatusIfDue(
+    boxId: string,
+    status: PhoneNetworkStatus | null
+): Promise<void> {
+    if (!status) return;
+
+    const now = Date.now();
+    if (now - lastPhoneStatusWriteTime < PHONE_STATUS_WRITE_INTERVAL_MS) return;
+
+    try {
+        const db = getFirebaseDatabase();
+        const phoneStatusRef = ref(db, `hardware/${boxId}/phone_status`);
+        await set(phoneStatusRef, status);
+        lastPhoneStatusWriteTime = now;
+
+        if (__DEV__) console.log('[EC-15] Phone status written:', status.connection, status.cellular_generation);
+    } catch (e) {
+        console.error('[EC-15] Failed to write phone status:', e);
+    }
+}
+
 // ==================== Configuration ====================
 
 export const CONFIG = {
@@ -115,6 +213,13 @@ TaskManager.defineTask(CONFIG.TASK_NAME, async ({ data, error }) => {
                 source: 'phone_background',
                 accuracy: location.coords.accuracy,
             });
+
+            // Write phone network status (rate-limited)
+            const phoneStatus = await collectPhoneNetworkStatus(
+                { accuracy: location.coords.accuracy, altitude: location.coords.altitude },
+                'phone_background'
+            );
+            await writePhoneStatusIfDue(currentBoxId, phoneStatus);
         } catch (e) {
             console.error('[EC-15] Failed to write background location:', e);
         }
@@ -352,6 +457,13 @@ class BackgroundLocationManager {
                 lastLocationTimestamp: Date.now(),
                 totalUpdatesCount: this.state.totalUpdatesCount + 1,
             });
+
+            // Write phone network status on foreground updates (rate-limited)
+            const phoneStatus = await collectPhoneNetworkStatus(
+                { accuracy: location.coords.accuracy, altitude: location.coords.altitude },
+                'phone_foreground'
+            );
+            await writePhoneStatusIfDue(currentBoxId, phoneStatus);
         } catch (error) {
             console.error('[EC-15] Force update failed:', error);
         }
