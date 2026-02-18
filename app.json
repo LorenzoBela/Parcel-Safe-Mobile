@@ -70,6 +70,7 @@
         }
       ],
       "./scripts/withAndroidManifestHelpers.js",
+      "./scripts/withAndroidKotlin.js",
       "expo-font",
       "expo-updates",
       [
