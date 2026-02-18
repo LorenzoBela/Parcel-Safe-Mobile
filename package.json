@@ -68,7 +68,7 @@
     "axios": "^1.13.4",
     "dayjs": "^1.11.19",
     "expo": "~54.0.25",
-    "expo-build-properties": "~0.13.2",
+    "expo-build-properties": "~1.0.10",
     "expo-camera": "~17.0.10",
     "expo-clipboard": "~8.0.8",
     "expo-dev-client": "^6.0.20",
