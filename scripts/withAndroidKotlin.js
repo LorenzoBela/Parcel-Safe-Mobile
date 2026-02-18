@@ -8,14 +8,14 @@ module.exports = function withAndroidKotlin(config) {
             // 1. Force the classpath version if it's not already set to 2.0.21
             contents = contents.replace(
                 /classpath\('org.jetbrains.kotlin:kotlin-gradle-plugin'\)/g,
-                `classpath('org.jetbrains.kotlin:kotlin-gradle-plugin:2.0.21')`
+                `classpath('org.jetbrains.kotlin:kotlin-gradle-plugin:2.1.20')`
             );
 
             // 2. Inject ext variables RELIABLY.
-            if (!contents.includes('ext.kotlinVersion = "2.0.21"')) {
+            if (!contents.includes('ext.kotlinVersion = "2.1.20"')) {
                 contents = contents.replace(
                     /buildscript\s*\{/,
-                    `buildscript {\n    ext.kotlinVersion = "2.0.21"\n    ext.kspVersion = "2.0.21-1.0.28"`
+                    `buildscript {\n    ext.kotlinVersion = "2.1.20"\n    ext.kspVersion = "2.1.20-1.0.31"`
                 );
             }
 
@@ -24,8 +24,8 @@ module.exports = function withAndroidKotlin(config) {
                 const resolutionStrategyBlock = `
     configurations.all {
         resolutionStrategy {
-            force 'org.jetbrains.kotlin:kotlin-stdlib:2.0.21'
-            force 'org.jetbrains.kotlin:kotlin-reflect:2.0.21'
+            force 'org.jetbrains.kotlin:kotlin-stdlib:2.1.20'
+            force 'org.jetbrains.kotlin:kotlin-reflect:2.1.20'
         }
     }
 `;
