@@ -448,6 +448,8 @@ export {
     subscribeToDisplay, // Fix missing export
     clearRebootFlag,
     subscribeToLockHealth, // EC-96
+    subscribeToPower, // EC-90
+    subscribeToResourceConflict, // EC-91
 };
 
 export type {
@@ -460,4 +462,6 @@ export type {
     SolenoidStatusType,
     CameraStatusType,
     LockHealthState, // EC-96
+    PowerState, // EC-90
+    ResourceConflictState, // EC-91
 };

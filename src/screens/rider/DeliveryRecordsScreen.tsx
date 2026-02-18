@@ -6,6 +6,12 @@ import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { supabase } from '../../services/supabaseClient';
 import { triggerDeliverySync } from '../../services/deliverySyncService';
 import useAuthStore from '../../store/authStore';
+import dayjs from 'dayjs';
+import utc from 'dayjs/plugin/utc';
+import timezone from 'dayjs/plugin/timezone';
+
+dayjs.extend(utc);
+dayjs.extend(timezone);
 
 /** Map Supabase DeliveryStatus to display-friendly labels */
 const mapStatus = (raw: string): string => {
@@ -65,6 +71,10 @@ export default function DeliveryRecordsScreen() {
                     const shortTrk = rawTrk.length > 20 ? '...' + rawTrk.slice(-12) : rawTrk;
 
                     const dateObj = d.created_at ? new Date(d.created_at) : null;
+                    if (d.created_at) {
+                        const testDayjs = dayjs(d.created_at).tz('Asia/Manila').format('h:mm A');
+                        console.log(`[DeliveryRecords] ID: ${d.id}, Raw: ${d.created_at}, DayJS: ${testDayjs}`);
+                    }
 
                     return {
                         id: d.id,
@@ -72,28 +82,28 @@ export default function DeliveryRecordsScreen() {
                         shortTrk: shortTrk,
                         status: mapStatus(d.status),
                         rawStatus: d.status,
-                        // Fix Timezone: Force Asia/Manila
-                        date: dateObj
-                            ? dateObj.toLocaleDateString('en-US', {
-                                timeZone: 'Asia/Manila',
-                                year: 'numeric',
-                                month: 'short',
-                                day: 'numeric',
-                            })
-                            : 'N/A',
-                        time: dateObj
-                            ? dateObj.toLocaleTimeString('en-US', {
-                                timeZone: 'Asia/Manila',
-                                hour: '2-digit',
-                                minute: '2-digit',
-                            })
-                            : '',
+                        // Fix Timezone: Manually add 8 hours to the raw timestamp (which Supabase sends as UTC-like string)
+                        date: dateObj ? dayjs(d.created_at).add(8, 'hour').format('MMM D, YYYY') : 'N/A',
+                        time: dateObj ? dayjs(d.created_at).add(8, 'hour').format('h:mm A') : '',
                         // Map Customer Name
-                        customerName: d.profiles?.full_name || 'Unknown Customer',
+                        customer: d.profiles?.full_name || 'Unknown Customer',
+                        customerName: d.profiles?.full_name || 'Unknown Customer', // Keep for backward compat if needed locally
                         earnings: d.estimated_fare != null ? `₱${Number(d.estimated_fare).toFixed(2)}` : '—',
                         // Separate Addresses
                         pickup: d.pickup_address || 'N/A',
                         dropoff: d.dropoff_address || 'N/A',
+                        pickupAddress: d.pickup_address || 'N/A', // Keep for safety if used elsewhere
+                        dropoffAddress: d.dropoff_address || 'N/A',
+
+                        // Coordinates for Map
+                        pickup_lat: d.pickup_lat,
+                        pickup_lng: d.pickup_lng,
+                        dropoff_lat: d.dropoff_lat,
+                        dropoff_lng: d.dropoff_lng,
+
+                        // Pass image if available (proof of delivery)
+                        image: d.proof_of_delivery_url || d.image_url || null,
+                        distance: d.distance_text || (d.distance ? `${d.distance.toFixed(1)} km` : 'N/A'),
                     };
                 });
                 setHistoryData(mapped);

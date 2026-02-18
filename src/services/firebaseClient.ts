@@ -87,6 +87,11 @@ export interface BoxState {
     delivery_id?: string;
     otp_code?: string;
     last_heartbeat?: number;
+    item_count?: number; // EC-80
+    connection?: string; // Telemetry
+    rssi?: number;       // Telemetry
+    temp?: number;       // Telemetry
+    csq?: number;        // Telemetry
 }
 
 /** Fields the firmware writes to hardware/{boxId} via REST */

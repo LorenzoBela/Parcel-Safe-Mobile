@@ -19,6 +19,8 @@ import {
     subscribeToHinge,
     subscribeToDisplay,
     subscribeToLockHealth, // EC-96
+    subscribeToPower, // EC-90
+    subscribeToResourceConflict, // EC-91
     clearRebootFlag,
     SolenoidState,
     CameraState,
@@ -27,6 +29,8 @@ import {
     HingeState,
     DisplayState,
     LockHealthState, // EC-96
+    PowerState, // EC-90
+    ResourceConflictState, // EC-91
     HardwareHealth,
     HardwareAlert,
     OverallHealthStatus,
@@ -76,6 +80,8 @@ export function useHardwareStatus(
     const [hingeState, setHingeState] = useState<HingeState | null>(null);
     const [displayState, setDisplayState] = useState<DisplayState | null>(null);
     const [lockHealthState, setLockHealthState] = useState<LockHealthState | null>(null);
+    const [powerState, setPowerState] = useState<PowerState | null>(null);
+    const [resourceConflict, setResourceConflict] = useState<ResourceConflictState | null>(null);
     const [isLoading, setIsLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [dismissedAlerts, setDismissedAlerts] = useState<Set<string>>(new Set());
@@ -136,6 +142,14 @@ export function useHardwareStatus(
                 // checkLoaded(); // Optional if we consider it critical
             });
 
+            const unsubPower = subscribeToPower(boxId, (state) => {
+                setPowerState(state);
+            });
+
+            const unsubResource = subscribeToResourceConflict(boxId, (state) => {
+                setResourceConflict(state);
+            });
+
             return () => {
                 unsubSolenoid();
                 unsubCamera();
@@ -144,6 +158,8 @@ export function useHardwareStatus(
                 unsubHinge();
                 unsubDisplay();
                 unsubLockHealth();
+                unsubPower();
+                unsubResource();
             };
         } catch (err) {
             setError(err instanceof Error ? err.message : 'Failed to subscribe to hardware status');
@@ -160,8 +176,8 @@ export function useHardwareStatus(
         hinge: hingeState,
         display: displayState,
         lockHealth: lockHealthState, // EC-96
-        power: null, // TODO: Add power state
-        resourceConflict: null, // TODO: Add resource state
+        power: powerState, // EC-90
+        resourceConflict: resourceConflict, // EC-91
         overallStatus: getOverallHealthStatus({
             solenoid: solenoidState,
             camera: cameraState,
@@ -170,8 +186,8 @@ export function useHardwareStatus(
             hinge: hingeState,
             display: displayState,
             lockHealth: lockHealthState, // EC-96
-            power: null,
-            resourceConflict: null,
+            power: powerState,
+            resourceConflict: resourceConflict,
         }),
         alerts: [],
     };

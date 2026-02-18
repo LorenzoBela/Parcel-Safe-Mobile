@@ -6,6 +6,7 @@ import { useNavigation } from '@react-navigation/native';
 import CancellationModal from '../../components/modals/CancellationModal';
 import { requestCancellation, CancellationReason } from '../../services/cancellationService';
 import useAuthStore from '../../store/authStore';
+import { supabase } from '../../services/supabaseClient';
 import dayjs from 'dayjs';
 import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/datetimepicker';
 
@@ -17,7 +18,7 @@ export default function AssignedDeliveriesScreen() {
     const insets = useSafeAreaInsets();
     const [searchQuery, setSearchQuery] = useState('');
 
-    const [filter, setFilter] = useState('All'); // All, Pending, Completed
+    const [filter, setFilter] = useState('All'); // All, Active, Completed, Cancelled
     const [dateFilter, setDateFilter] = useState('All'); // All, Today, Tomorrow, Week, Custom
     const [showFilters, setShowFilters] = useState(false); // Collapsible filter state
 
@@ -35,19 +36,66 @@ export default function AssignedDeliveriesScreen() {
     const [selectedDelivery, setSelectedDelivery] = useState<any>(null);
     const [cancelLoading, setCancelLoading] = useState(false);
 
-    // Enhanced Mock Data with Coordinates
-    // Mock Data removed — waiting for backend integration
+    // Data State
     const [deliveries, setDeliveries] = useState<any[]>([]);
+
+    // Auth
+    const authedUserId = useAuthStore((state: any) => state.user?.userId) as string | undefined;
 
     const onChangeSearch = query => setSearchQuery(query);
 
-    const onRefresh = () => {
+    const fetchDeliveries = async () => {
+        if (!authedUserId) return;
         setRefreshing(true);
-        // Simulate fetch
-        setTimeout(() => setRefreshing(false), 1500);
+        try {
+            const { data, error } = await supabase
+                .from('deliveries')
+                .select('*, customer:profiles!deliveries_customer_id_fkey(full_name, phone_number)')
+                .eq('rider_id', authedUserId)
+                .order('created_at', { ascending: false });
+
+            if (error) {
+                console.error('Error fetching deliveries:', error);
+                Alert.alert('Error', 'Failed to fetch deliveries');
+            } else {
+                const mapped = data.map((d: any) => ({
+                    id: d.id,
+                    trk: d.tracking_number,
+                    status: d.status,
+                    customer: d.customer?.full_name || 'Unknown',
+                    phone: d.customer?.phone_number || 'N/A',
+                    address: d.dropoff_address, // Main address to show
+                    pickupAddress: d.pickup_address,
+                    lat: d.dropoff_lat,
+                    lng: d.dropoff_lng,
+                    date: d.created_at, // Use created_at as base date
+                    time: dayjs(d.created_at).format('h:mm A'),
+                    distance: d.distance ? `${d.distance.toFixed(1)} km` : '--',
+                    fare: d.estimated_fare,
+                    earnings: d.estimated_fare ? `₱${d.estimated_fare}` : '--',
+                }));
+                setDeliveries(mapped);
+            }
+        } catch (err) {
+            console.error('Unexpected error fetching deliveries:', err);
+        } finally {
+            setRefreshing(false);
+        }
+    };
+
+    React.useEffect(() => {
+        fetchDeliveries();
+    }, [authedUserId]);
+
+    const onRefresh = () => {
+        fetchDeliveries();
     };
 
     const openGoogleMaps = (lat, lng, address) => {
+        if (!lat || !lng) {
+            Alert.alert('Error', 'Location coordinates missing for this delivery.');
+            return;
+        }
         const url = Platform.select({
             ios: `maps:0,0?q=${address}@${lat},${lng}`,
             android: `geo:0,0?q=${lat},${lng}(${address})`
@@ -65,8 +113,6 @@ export default function AssignedDeliveriesScreen() {
         });
     };
 
-    const authedUserId = useAuthStore((state: any) => state.user?.userId) as string | undefined;
-
     const handleCancellationSubmit = async (reason: CancellationReason, details: string) => {
         if (!selectedDelivery) return;
 
@@ -74,18 +120,19 @@ export default function AssignedDeliveriesScreen() {
         try {
             // In a real app, use the actual delivery ID and box ID
             const result = await requestCancellation({
-                deliveryId: selectedDelivery.trk,
-                boxId: 'BOX_001',
+                deliveryId: selectedDelivery.id,
+                boxId: 'BOX_001', // Ideally fetch from delivery or pairing state
                 reason,
                 reasonDetails: details,
                 riderId: authedUserId ?? 'RIDER_001',
-                riderName: 'Juan Dela Cruz',
+                riderName: 'Juan Dela Cruz', // Ideally fetch from profile
             });
 
             if (result.success) {
                 setShowCancelModal(false);
                 setSelectedDelivery(null);
                 Alert.alert('Success', 'Delivery cancelled successfully.');
+                fetchDeliveries(); // Refresh list
             } else {
                 Alert.alert('Error', result.error || 'Cancellation failed');
             }
@@ -122,17 +169,31 @@ export default function AssignedDeliveriesScreen() {
 
     const getStatusColor = (status) => {
         switch (status) {
-            case 'Pending': return '#FF9800';
-            case 'In Transit': return '#2196F3';
-            case 'Completed': return '#4CAF50';
-            default: return '#757575';
+            case 'ASSIGNED': return '#FF9800'; // Orange
+            case 'PENDING': return '#FFC107'; // Amber
+            case 'IN_TRANSIT': return '#2196F3'; // Blue
+            case 'ARRIVED': return '#03A9F4'; // Light Blue
+            case 'COMPLETED': return '#4CAF50'; // Green
+            case 'CANCELLED': return '#F44336'; // Red
+            case 'TAMPERED': return '#9C27B0'; // Purple
+            default: return '#757575'; // Grey
         }
     };
 
     const filteredDeliveries = deliveries.filter(item => {
         const matchesSearch = item.trk.toLowerCase().includes(searchQuery.toLowerCase()) ||
             item.customer.toLowerCase().includes(searchQuery.toLowerCase());
-        const matchesStatus = filter === 'All' || item.status === filter || (filter === 'Pending' && item.status === 'In Transit');
+
+        let matchesStatus = true;
+        if (filter === 'All') {
+            matchesStatus = true;
+        } else if (filter === 'Active') {
+            matchesStatus = ['ASSIGNED', 'PENDING', 'IN_TRANSIT', 'ARRIVED', 'TAMPERED'].includes(item.status);
+        } else if (filter === 'Completed') {
+            matchesStatus = item.status === 'COMPLETED';
+        } else if (filter === 'Cancelled') {
+            matchesStatus = item.status === 'CANCELLED';
+        }
 
         let matchesDate = true;
         const itemDate = dayjs(item.date);
@@ -159,7 +220,9 @@ export default function AssignedDeliveriesScreen() {
                 <View style={styles.cardHeader}>
                     <View style={styles.trkContainer}>
                         <MaterialCommunityIcons name="barcode-scan" size={20} color={theme.colors.primary} />
-                        <Text variant="titleMedium" style={[styles.trkText, { color: theme.colors.onSurface }]}>{item.trk}</Text>
+                        <Text variant="titleMedium" style={[styles.trkText, { color: theme.colors.onSurface }]}>
+                            {item.trk.length > 12 ? '...' + item.trk.slice(-8) : item.trk}
+                        </Text>
                     </View>
                     <Chip
                         style={{ backgroundColor: getStatusColor(item.status) + '20' }}
@@ -181,8 +244,17 @@ export default function AssignedDeliveriesScreen() {
                     </View>
                 </View>
 
+                {/* Pickup Address */}
+                <View style={[styles.addressContainer, { backgroundColor: '#E8F5E9' }]}>
+                    <MaterialCommunityIcons name="map-marker-up" size={18} color="#4CAF50" style={{ marginTop: 2 }} />
+                    <Text variant="bodyMedium" style={[styles.addressText, { color: theme.colors.onSurface }]}>
+                        {item.pickupAddress || 'N/A'}
+                    </Text>
+                </View>
+
+                {/* Dropoff Address */}
                 <View style={[styles.addressContainer, { backgroundColor: theme.colors.elevation.level2 }]}>
-                    <MaterialCommunityIcons name="map-marker" size={18} color={theme.colors.onSurfaceVariant} style={{ marginTop: 2 }} />
+                    <MaterialCommunityIcons name="map-marker-down" size={18} color="#F44336" style={{ marginTop: 2 }} />
                     <Text variant="bodyMedium" style={[styles.addressText, { color: theme.colors.onSurface }]}>{item.address}</Text>
                 </View>
 
@@ -209,7 +281,7 @@ export default function AssignedDeliveriesScreen() {
                 >
                     Call
                 </Button>
-                {(item.status === 'Pending' || item.status === 'In Transit') && (
+                {['ASSIGNED', 'PENDING', 'IN_TRANSIT'].includes(item.status) && (
                     <Button
                         mode="contained"
                         onPress={() => {
@@ -225,16 +297,16 @@ export default function AssignedDeliveriesScreen() {
                 <Button
                     mode="contained"
                     onPress={() => {
-                        if (item.status === 'Completed') {
+                        if (item.status === 'COMPLETED' || item.status === 'CANCELLED') {
                             navigation.navigate('DeliveryDetail', { delivery: item });
                         } else {
                             openGoogleMaps(item.lat, item.lng, item.address);
                         }
                     }}
-                    style={{ flex: 1, backgroundColor: item.status === 'Completed' ? '#4CAF50' : theme.colors.primary }}
-                    icon={item.status === 'Completed' ? 'history' : 'google-maps'}
+                    style={{ flex: 1, backgroundColor: (item.status === 'COMPLETED' || item.status === 'CANCELLED') ? '#757575' : theme.colors.primary }}
+                    icon={(item.status === 'COMPLETED' || item.status === 'CANCELLED') ? 'history' : 'google-maps'}
                 >
-                    {item.status === 'Completed' ? 'History' : (item.status === 'In Transit' ? 'Resume' : 'Start')}
+                    {(item.status === 'COMPLETED' || item.status === 'CANCELLED') ? 'History' : (item.status === 'IN_TRANSIT' ? 'Resume' : 'Start')}
                 </Button>
             </Card.Actions>
         </Card>
@@ -307,7 +379,7 @@ export default function AssignedDeliveriesScreen() {
                     <View style={styles.filterSection}>
                         <Text variant="labelMedium" style={{ marginBottom: 8, color: theme.colors.onSurfaceVariant }}>Status</Text>
                         <View style={styles.filterRow}>
-                            {['All', 'Pending', 'Completed'].map((status) => (
+                            {['All', 'Active', 'Completed', 'Cancelled'].map((status) => (
                                 <Chip
                                     key={status}
                                     selected={filter === status}
@@ -380,7 +452,7 @@ export default function AssignedDeliveriesScreen() {
                 )}
             </View>
 
-            {/* List Content */}
+            {/* Validated List Content */}
             {viewMode === 'list' ? (
                 <FlatList
                     data={filteredDeliveries}

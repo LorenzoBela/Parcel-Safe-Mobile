@@ -15,7 +15,7 @@ import * as Location from 'expo-location';
 import MapboxGL, { isMapboxNativeAvailable, MapFallback } from '../../components/map/MapboxWrapper';
 import LottieView from 'lottie-react-native';
 import { useLocationRedundancy, getStatusMessage, getStatusColor } from '../../hooks/useLocationRedundancy';
-import { subscribeToBattery, BatteryState, subscribeToTamper, TamperState, subscribeToLocation, LocationData, subscribeToKeypad, KeypadState, subscribeToHinge, HingeState } from '../../services/firebaseClient';
+import { subscribeToBattery, BatteryState, subscribeToTamper, TamperState, subscribeToLocation, LocationData, subscribeToKeypad, KeypadState, subscribeToHinge, HingeState, subscribeToBoxState, BoxState, updateBoxState } from '../../services/firebaseClient';
 import { offlineCache, PendingSync } from '../../services/offlineCache';
 import { isSpeedAnomaly, isClockSyncRequired, canAddToPhotoQueue, isGpsStale, SAFETY_CONSTANTS } from '../../services/SafetyLogic';
 import RecallService from '../../services/recallService';
@@ -88,7 +88,8 @@ export default function RiderDashboard() {
     const [refreshing, setRefreshing] = useState(false);
     const [riderLocation, setRiderLocation] = useState<Location.LocationObject | null>(null);
     const [distance, setDistance] = useState<string>('Calculating...');
-    const [isLocked, setIsLocked] = useState(true);
+    const [boxState, setBoxState] = useState<BoxState | null>(null);
+    const isLocked = boxState?.status === 'LOCKED';
     const animationRef = useRef<LottieView>(null);
 
     const MAPBOX_TOKEN = process.env.EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN;
@@ -329,6 +330,11 @@ export default function RiderDashboard() {
             startMonitoring(boxIdForMonitoring);
         }
 
+        // EC-Update: Subscribe to box state for lock status
+        const unsubscribeBox = boxIdForMonitoring ? subscribeToBoxState(boxIdForMonitoring, (state) => {
+            setBoxState(state);
+        }) : () => { };
+
         // EC-03: Subscribe to battery state
         const unsubscribeBattery = boxIdForMonitoring ? subscribeToBattery(boxIdForMonitoring, (state) => {
             setBatteryState(state);
@@ -428,6 +434,7 @@ export default function RiderDashboard() {
 
         return () => {
             deactivateTracking();
+            unsubscribeBox();
             unsubscribeBattery();
             unsubscribeTamper();
             unsubscribeNetInfo?.();
@@ -956,6 +963,8 @@ export default function RiderDashboard() {
     };
 
     const toggleLock = () => {
+        if (!boxIdForMonitoring) return;
+
         Alert.alert(
             isLocked ? "Unlock Box?" : "Lock Box?",
             isLocked ? "Are you sure you want to unlock the box?" : "Ensure the box is closed before locking.",
@@ -963,9 +972,8 @@ export default function RiderDashboard() {
                 { text: "Cancel", style: "cancel" },
                 {
                     text: isLocked ? "Unlock" : "Lock", onPress: () => {
-                        setIsLocked(!isLocked);
-                        const action = !isLocked ? "LOCKED" : "UNLOCKED";
-                        // Logs removed as per request
+                        const action = isLocked ? "UNLOCKING" : "LOCKED";
+                        updateBoxState(boxIdForMonitoring, { status: action });
                     }
                 }
             ]
@@ -979,8 +987,8 @@ export default function RiderDashboard() {
 
     const boxStatus = {
         battery: batteryState?.percentage ? batteryState.percentage / 100 : 0,
-        connection: 'Connected',
-        signal: 'Strong',
+        connection: boxState?.connection || 'Offline',
+        signal: boxState?.rssi ? `${boxState.rssi} dBm` : 'No Signal',
     };
 
     // Fetch live weather when rider location is available
@@ -992,8 +1000,10 @@ export default function RiderDashboard() {
     }, [riderLocation]);
 
     // EC-03: Get battery icon based on level
+    // EC-03: Get battery icon based on level
     const getBatteryIcon = () => {
-        const pct = batteryState?.percentage ?? 85;
+        if (!batteryState) return 'battery-unknown';
+        const pct = batteryState.percentage;
         if (pct > 80) return 'battery';
         if (pct > 60) return 'battery-70';
         if (pct > 40) return 'battery-50';
@@ -1002,7 +1012,8 @@ export default function RiderDashboard() {
     };
 
     const getBatteryColor = () => {
-        const pct = batteryState?.percentage ?? 85;
+        if (!batteryState) return '#9E9E9E';
+        const pct = batteryState.percentage;
         if (pct > 20) return '#2196F3';
         if (pct > 10) return '#FF9800';
         return '#F44336';
@@ -1577,7 +1588,7 @@ export default function RiderDashboard() {
                                     style={styles.progressBar}
                                 />
                                 <Text variant="labelSmall" style={{ marginLeft: 8, fontWeight: 'bold', color: isPaired ? getBatteryColor() : '#9E9E9E' }}>
-                                    {isPaired ? `${batteryState?.percentage ?? 85}%` : '--%'}
+                                    {isPaired ? (batteryState ? `${batteryState.percentage}%` : 'Syncing...') : '--%'}
                                 </Text>
                             </View>
                         </View>

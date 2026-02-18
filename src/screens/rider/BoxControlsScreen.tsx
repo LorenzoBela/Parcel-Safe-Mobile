@@ -49,13 +49,13 @@ export default function BoxControlsScreen() {
     const route = useRoute<any>();
     const theme = useTheme();
     const animationRef = useRef<LottieView>(null);
-    const [isLocked, setIsLocked] = useState(true);
     const [rebooting, setRebooting] = useState(false);
     const [logs, setLogs] = useState<{ time: string; message: string; type: string }[]>([]);
     const [pairingState, setPairingState] = useState<BoxPairingState | null>(null);
     const authedUserId = useAuthStore((state: any) => state.user?.userId) as string | undefined;
     const riderId = authedUserId;
     const [cachedBoxId, setCachedBoxId] = useState<string | null>(null);
+    const [boxState, setBoxState] = useState<BoxState | null>(null);
 
     // EC-03: Battery Monitoring State
     const [batteryState, setBatteryState] = useState<BatteryState | null>(null);
@@ -89,22 +89,24 @@ export default function BoxControlsScreen() {
     const [lockHealth, setLockHealth] = useState<LockHealthState | null>(null);
 
     // Telemetry State (now enhanced with real data)
-    const [telemetry, setTelemetry] = useState({
-        voltage: '12.4V',
-        temp: '28°C',
-        signal: '-85 dBm',
-        sync: 'Just now'
-    });
+    const telemetry = {
+        voltage: batteryState ? `${batteryState.voltage.toFixed(1)}V` : '-- V',
+        temp: boxState?.temp ? `${boxState.temp}°C` : '--°C',
+        signal: boxState?.rssi ? `${boxState.rssi} dBm` : '-- dBm',
+        sync: boxState?.last_heartbeat ? dayjs(boxState.last_heartbeat).format('h:mm A') : '--'
+    };
 
     const isPaired = isPairingActive(pairingState);
     const pairedBoxId = pairingState?.box_id;
     const boxId = route?.params?.boxId ?? pairedBoxId ?? cachedBoxId ?? DEMO_BOX_ID;
     const routeDeliveryId = route?.params?.deliveryId as string | undefined;
 
-    const [boxState, setBoxState] = useState<BoxState | null>(null);
     // Last-resort fallback for dev screens when box has no active delivery.
     const activeDeliveryId = routeDeliveryId || boxState?.delivery_id || 'DEL_001';
     const activeOtpCode = boxState?.otp_code || '';
+
+    // Derive lock state from real data
+    const isLocked = boxState?.status === 'LOCKED';
 
     // Initialize Logs and Subscriptions
     useEffect(() => {
@@ -117,12 +119,7 @@ export default function BoxControlsScreen() {
         // EC-03: Subscribe to battery state
         const unsubscribeBattery = subscribeToBattery(boxId, (state) => {
             setBatteryState(state);
-            if (state) {
-                setTelemetry(prev => ({
-                    ...prev,
-                    voltage: `${(state.voltage || 12.4).toFixed(1)}V`
-                }));
-            }
+            setBatteryState(state);
         });
 
         // EC-18: Subscribe to tamper state
@@ -163,7 +160,7 @@ export default function BoxControlsScreen() {
             if (state?.active && !state.processed) {
                 const msg = getOverrideNotificationMessage(state);
                 addLog(`ADMIN OVERRIDE: ${msg}`, "warning");
-                setIsLocked(false); // Reflect unlocked state
+                // setIsLocked(false); // Managed by boxState now
             }
         });
 
@@ -180,7 +177,7 @@ export default function BoxControlsScreen() {
             setFaceAuthStatus(status || 'IDLE');
 
             if (status === 'AUTHENTICATED') {
-                setIsLocked(false);
+                // setIsLocked(false); // Managed by boxState
                 addLog("Face ID Verified - Box Unlocked", "success");
             } else if (status === 'TIMEOUT_REMOVE_HELMET') {
                 Alert.alert("Face Scan Failed", "Please remove helmet and try again.");
@@ -293,9 +290,13 @@ export default function BoxControlsScreen() {
             return;
         }
 
-        const action = !isLocked ? "LOCKED" : "UNLOCKED";
-        setIsLocked(!isLocked);
-        addLog(`Manual Override: Box ${action}`, action === 'LOCKED' ? 'success' : 'warning');
+        const action = isLocked ? "UNLOCKING" : "LOCKED";
+
+        // EC-FIX: Send command to Firebase instead of local toggle
+        import('../../services/firebaseClient').then(({ updateBoxState }) => {
+            updateBoxState(boxId, { status: action });
+            addLog(`Command Sent: ${action}`, "info");
+        });
     };
 
     const handleEmergencyOpen = () => {
@@ -308,7 +309,9 @@ export default function BoxControlsScreen() {
                     text: "FORCE OPEN",
                     style: "destructive",
                     onPress: () => {
-                        setIsLocked(false);
+                        import('../../services/firebaseClient').then(({ updateBoxState }) => {
+                            updateBoxState(boxId, { status: 'UNLOCKING' }); // Or specific emergency state if available
+                        });
                         addLog("EMERGENCY OPEN TRIGGERED", "error");
                         addLog("Incident Report #9921 created", "info");
                     }
