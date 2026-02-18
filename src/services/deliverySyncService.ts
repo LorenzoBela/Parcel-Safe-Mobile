@@ -4,6 +4,11 @@
  * Triggers the Vercel-hosted sync endpoint to push Firebase deliveries
  * into Supabase. Called on app startup and screen focus to ensure
  * Supabase always has the latest data.
+ * 
+ * IMPROVEMENTS:
+ * - Exponential backoff retries (1s, 2s, 4s)
+ * - Robust error handling for 500/503
+ * - Timeout enforcement
  */
 
 const SYNC_ENDPOINT = `${process.env.EXPO_PUBLIC_TRACKING_WEB_BASE_URL || 'https://parcel-safe.vercel.app'}/api/sync-deliveries`;
@@ -23,8 +28,13 @@ export interface SyncResult {
 }
 
 /**
+ * Wait for a specified duration (ms)
+ */
+const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+/**
  * Trigger a Firebase-to-Supabase sync via the Vercel API endpoint.
- * Throttled to avoid excessive calls.
+ * Throttled to avoid excessive calls. Uses exponential backoff for reliability.
  *
  * @param force - bypass the throttle
  * @returns sync result or null if throttled/skipped
@@ -37,6 +47,7 @@ export async function triggerDeliverySync(force = false): Promise<SyncResult | n
     }
 
     if (syncInProgress) {
+        console.log('[DeliverySync] Sync already in progress, skipping.');
         return null;
     }
 
@@ -44,33 +55,59 @@ export async function triggerDeliverySync(force = false): Promise<SyncResult | n
     lastSyncTime = now;
     console.log('[DeliverySync] Triggering sync at:', SYNC_ENDPOINT);
 
+    const MAX_RETRIES = 3;
+    let attempt = 0;
+
     try {
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 15_000);
+        while (attempt < MAX_RETRIES) {
+            try {
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 15_000); // 15s timeout
 
-        const response = await fetch(SYNC_ENDPOINT, {
-            method: 'GET',
-            signal: controller.signal,
-        });
+                const response = await fetch(SYNC_ENDPOINT, {
+                    method: 'GET',
+                    signal: controller.signal,
+                });
 
-        clearTimeout(timeout);
+                clearTimeout(timeoutId);
 
-        if (!response.ok) {
-            console.warn('[DeliverySync] Endpoint returned:', response.status);
-            return null;
+                if (response.ok) {
+                    const result: SyncResult = await response.json();
+                    console.log(`[DeliverySync] Success: ${result.message}`);
+                    return result;
+                }
+
+                // If 5xx error, throw to trigger retry
+                if (response.status >= 500) {
+                    throw new Error(`Server Error ${response.status}`);
+                }
+
+                // If 4xx error, don't retry, just log and exit
+                console.warn('[DeliverySync] Client Error:', response.status);
+                return null;
+
+            } catch (err: any) {
+                attempt++;
+                const isTimeout = err.name === 'AbortError';
+                const errorMessage = isTimeout ? 'Request Timed Out' : err.message;
+
+                console.warn(`[DeliverySync] Attempt ${attempt} failed: ${errorMessage}`);
+
+                if (attempt >= MAX_RETRIES) {
+                    console.error('[DeliverySync] Max retries reached. Sync failed.');
+                    lastSyncTime = 0; // Reset throttle so we can try again sooner next time manually
+                    return null; // Give up
+                }
+
+                // Exponential backoff: 1s, 2s, 4s...
+                const backoffTime = Math.pow(2, attempt - 1) * 1000;
+                console.log(`[DeliverySync] Retrying in ${backoffTime}ms...`);
+                await delay(backoffTime);
+            }
         }
-
-        const result: SyncResult = await response.json();
-        console.log('[DeliverySync] Sync complete:', result.message);
-        return result;
-    } catch (err: any) {
-        if (err.name === 'AbortError') {
-            console.warn('[DeliverySync] Sync request timed out');
-        } else {
-            console.warn('[DeliverySync] Sync failed:', err.message);
-        }
-        return null;
     } finally {
         syncInProgress = false;
     }
+
+    return null;
 }

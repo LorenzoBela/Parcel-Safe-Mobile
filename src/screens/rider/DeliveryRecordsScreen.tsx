@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { View, StyleSheet, FlatList, TouchableOpacity, RefreshControl, ActivityIndicator } from 'react-native';
-import { Text, Card, Button, Chip, Searchbar, Surface, useTheme, IconButton, Avatar } from 'react-native-paper';
+import { Text, Card, Chip, Searchbar, Surface, useTheme, IconButton } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { supabase } from '../../services/supabaseClient';
@@ -48,9 +48,10 @@ export default function DeliveryRecordsScreen() {
         setErrorMsg(null);
 
         try {
+            // Updated query to fetch customer profile
             const { data, error } = await supabase
                 .from('deliveries')
-                .select('*')
+                .select('*, profiles:customer_id(full_name)')
                 .eq('rider_id', riderId)
                 .order('created_at', { ascending: false });
 
@@ -58,28 +59,43 @@ export default function DeliveryRecordsScreen() {
                 console.error('[DeliveryRecords] Supabase error:', error.message);
                 setErrorMsg('Failed to load delivery records.');
             } else {
-                const mapped = (data || []).map((d: any) => ({
-                    id: d.id,
-                    trk: d.tracking_number || d.id,
-                    status: mapStatus(d.status),
-                    rawStatus: d.status,
-                    date: d.created_at
-                        ? new Date(d.created_at).toLocaleDateString('en-US', {
-                              year: 'numeric',
-                              month: 'short',
-                              day: 'numeric',
-                          })
-                        : 'N/A',
-                    time: d.created_at
-                        ? new Date(d.created_at).toLocaleTimeString('en-US', {
-                              hour: '2-digit',
-                              minute: '2-digit',
-                          })
-                        : '',
-                    customer: d.customer_id || 'Unknown',
-                    earnings: d.estimated_fare != null ? `₱${Number(d.estimated_fare).toFixed(2)}` : '—',
-                    address: d.dropoff_address || d.pickup_address || 'N/A',
-                }));
+                const mapped = (data || []).map((d: any) => {
+                    const rawTrk = d.tracking_number || d.id;
+                    // Truncate if too long (e.g., > 12 chars), show last 8
+                    const shortTrk = rawTrk.length > 20 ? '...' + rawTrk.slice(-12) : rawTrk;
+
+                    const dateObj = d.created_at ? new Date(d.created_at) : null;
+
+                    return {
+                        id: d.id,
+                        trk: rawTrk,
+                        shortTrk: shortTrk,
+                        status: mapStatus(d.status),
+                        rawStatus: d.status,
+                        // Fix Timezone: Force Asia/Manila
+                        date: dateObj
+                            ? dateObj.toLocaleDateString('en-US', {
+                                timeZone: 'Asia/Manila',
+                                year: 'numeric',
+                                month: 'short',
+                                day: 'numeric',
+                            })
+                            : 'N/A',
+                        time: dateObj
+                            ? dateObj.toLocaleTimeString('en-US', {
+                                timeZone: 'Asia/Manila',
+                                hour: '2-digit',
+                                minute: '2-digit',
+                            })
+                            : '',
+                        // Map Customer Name
+                        customerName: d.profiles?.full_name || 'Unknown Customer',
+                        earnings: d.estimated_fare != null ? `₱${Number(d.estimated_fare).toFixed(2)}` : '—',
+                        // Separate Addresses
+                        pickup: d.pickup_address || 'N/A',
+                        dropoff: d.dropoff_address || 'N/A',
+                    };
+                });
                 setHistoryData(mapped);
             }
         } catch (err) {
@@ -119,7 +135,7 @@ export default function DeliveryRecordsScreen() {
 
     const filteredData = historyData.filter(item => {
         const matchesSearch = item.trk.toLowerCase().includes(searchQuery.toLowerCase()) ||
-            item.customer.toLowerCase().includes(searchQuery.toLowerCase());
+            item.customerName.toLowerCase().includes(searchQuery.toLowerCase());
 
         let matchesFilter = true;
 
@@ -154,14 +170,20 @@ export default function DeliveryRecordsScreen() {
         <Card style={[styles.card, { backgroundColor: theme.colors.surface }]} mode="elevated" onPress={() => navigation.navigate('DeliveryDetail', { delivery: item })}>
             <Card.Content>
                 <View style={styles.cardHeader}>
-                    <View>
-                        <Text variant="titleMedium" style={{ fontWeight: 'bold' }}>{item.trk}</Text>
-                        <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>{item.date} • {item.time}</Text>
+                    <View style={{ flex: 1, marginRight: 8 }}>
+                        <Text variant="titleMedium" style={{ fontWeight: 'bold' }} numberOfLines={1}>
+                            {item.shortTrk}
+                        </Text>
+                        <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
+                            {item.date} • {item.time}
+                        </Text>
                     </View>
-                    <View style={{ alignItems: 'flex-end' }}>
-                        <Text variant="titleMedium" style={{ fontWeight: 'bold', color: theme.colors.primary }}>{item.earnings}</Text>
+                    <View style={{ alignItems: 'flex-end', minWidth: 80 }}>
+                        <Text variant="titleMedium" style={{ fontWeight: 'bold', color: theme.colors.primary }}>
+                            {item.earnings}
+                        </Text>
                         <Chip
-                            style={{ backgroundColor: getStatusColor(item.status) + '20', height: 24 }}
+                            style={{ backgroundColor: getStatusColor(item.status) + '20', height: 24, paddingVertical: 0 }}
                             textStyle={{ color: getStatusColor(item.status), fontWeight: 'bold', fontSize: 10, lineHeight: 10 }}
                             compact
                         >
@@ -172,18 +194,34 @@ export default function DeliveryRecordsScreen() {
 
                 <View style={[styles.divider, { backgroundColor: theme.colors.outlineVariant }]} />
 
+                {/* Customer Info */}
                 <View style={styles.row}>
                     <View style={styles.iconBox}>
                         <MaterialCommunityIcons name="account" size={16} color={theme.colors.onSurfaceVariant} />
                     </View>
-                    <Text variant="bodyMedium" style={[styles.rowText, { color: theme.colors.onSurface }]}>{item.customer}</Text>
+                    <Text variant="bodyMedium" style={[styles.rowText, { color: theme.colors.onSurface, fontWeight: '600' }]}>
+                        {item.customerName}
+                    </Text>
                 </View>
 
-                <View style={styles.row}>
-                    <View style={styles.iconBox}>
-                        <MaterialCommunityIcons name="map-marker" size={16} color={theme.colors.onSurfaceVariant} />
+                {/* Pickup Address */}
+                <View style={[styles.row, { alignItems: 'flex-start' }]}>
+                    <View style={[styles.iconBox, { marginTop: 2 }]}>
+                        <MaterialCommunityIcons name="map-marker-up" size={16} color="#4CAF50" />
                     </View>
-                    <Text variant="bodyMedium" numberOfLines={1} style={[styles.rowText, { color: theme.colors.onSurface }]}>{item.address}</Text>
+                    <Text variant="bodySmall" numberOfLines={2} style={[styles.rowText, { color: theme.colors.onSurface }]}>
+                        {item.pickup}
+                    </Text>
+                </View>
+
+                {/* Dropoff Address */}
+                <View style={[styles.row, { alignItems: 'flex-start' }]}>
+                    <View style={[styles.iconBox, { marginTop: 2 }]}>
+                        <MaterialCommunityIcons name="map-marker-down" size={16} color="#F44336" />
+                    </View>
+                    <Text variant="bodySmall" numberOfLines={2} style={[styles.rowText, { color: theme.colors.onSurface }]}>
+                        {item.dropoff}
+                    </Text>
                 </View>
 
             </Card.Content>
@@ -193,21 +231,32 @@ export default function DeliveryRecordsScreen() {
     const renderGridItem = ({ item }: { item: any }) => (
         <Card style={[styles.gridCard, { backgroundColor: theme.colors.surface }]} mode="elevated" onPress={() => navigation.navigate('DeliveryDetail', { delivery: item })}>
             <Card.Content style={{ padding: 12 }}>
-                <Text variant="labelLarge" style={{ fontWeight: 'bold', fontSize: 12 }} numberOfLines={1}>{item.trk}</Text>
-                <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant, fontSize: 10, marginBottom: 8 }}>{item.date}</Text>
+                <Text variant="labelLarge" style={{ fontWeight: 'bold', fontSize: 12 }} numberOfLines={1}>
+                    {item.shortTrk}
+                </Text>
+                <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant, fontSize: 10, marginBottom: 8 }}>
+                    {item.date}
+                </Text>
 
-                <Text variant="titleMedium" style={{ fontWeight: 'bold', color: theme.colors.primary, marginBottom: 4 }}>{item.earnings}</Text>
+                <Text variant="titleMedium" style={{ fontWeight: 'bold', color: theme.colors.primary, marginBottom: 4 }}>
+                    {item.earnings}
+                </Text>
 
                 <View style={[styles.divider, { backgroundColor: theme.colors.outlineVariant }]} />
 
-                <Text numberOfLines={1} style={{ fontSize: 12, color: theme.colors.onSurface, fontWeight: 'bold' }}>{item.customer}</Text>
-                <Chip
-                    style={{ backgroundColor: getStatusColor(item.status) + '20', height: 20, marginTop: 4, alignSelf: 'flex-start' }}
-                    textStyle={{ color: getStatusColor(item.status), fontWeight: 'bold', fontSize: 9, lineHeight: 10 }}
-                    compact
-                >
-                    {item.status}
-                </Chip>
+                <Text numberOfLines={1} style={{ fontSize: 12, color: theme.colors.onSurface, fontWeight: 'bold' }}>
+                    {item.customerName}
+                </Text>
+
+                <View style={{ marginTop: 8 }}>
+                    <Chip
+                        style={{ backgroundColor: getStatusColor(item.status) + '20', height: 20, alignSelf: 'flex-start' }}
+                        textStyle={{ color: getStatusColor(item.status), fontWeight: 'bold', fontSize: 9, lineHeight: 10 }}
+                        compact
+                    >
+                        {item.status}
+                    </Chip>
+                </View>
             </Card.Content>
         </Card>
     );
@@ -232,7 +281,7 @@ export default function DeliveryRecordsScreen() {
                     </Surface>
                     <Surface style={[styles.statCard, { backgroundColor: theme.colors.surface }]} elevation={2}>
                         <Text variant="labelMedium" style={{ color: theme.colors.onSurfaceVariant }}>Total Earnings</Text>
-                        <Text variant="headlineMedium" style={{ fontWeight: 'bold', color: '#4CAF50' }}>₱{totalEarnings.toFixed(2)}</Text>
+                        <Text variant="headlineMedium" style={{ fontWeight: 'bold', color: '#4CAF50' }}>Total: ₱{totalEarnings.toFixed(2)}</Text>
                     </Surface>
                 </View>
             </View>
@@ -382,7 +431,7 @@ const styles = StyleSheet.create({
     row: {
         flexDirection: 'row',
         alignItems: 'center',
-        marginBottom: 8,
+        marginBottom: 6,
     },
     iconBox: {
         width: 24,

@@ -1,8 +1,8 @@
 /**
  * IncomingOrderModal Component
- * 
+ *
  * Displays incoming order details to riders with Accept/Reject options.
- * Auto-dismisses after the request expires.
+ * Handles multiple stacked requests with navigation.
  */
 
 import React, { useEffect, useState, useRef } from 'react';
@@ -10,42 +10,39 @@ import { View, StyleSheet, Animated, Vibration, Modal as RNModal } from 'react-n
 import { Text, Button, Surface, useTheme, IconButton, Divider } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { RiderOrderRequest } from '../services/riderMatchingService';
-import { getFirebaseDatabase } from '../services/firebaseClient';
-import { ref, onValue, off } from 'firebase/database';
 
 interface IncomingOrderModalProps {
     visible: boolean;
-    request: RiderOrderRequest | null;
-    requestId: string;
-    riderId?: string;
-    onAccept: () => void;
-    onReject: () => void;
-    onExpire: () => void;
-    onTaken?: () => void;
+    requests: Array<{ requestId: string; data: RiderOrderRequest }>;
+    onAccept: (request: { requestId: string; data: RiderOrderRequest }) => void;
+    onReject: (requestId: string) => void;
 }
 
 export default function IncomingOrderModal({
     visible,
-    request,
-    requestId,
-    riderId,
+    requests,
     onAccept,
     onReject,
-    onExpire,
-    onTaken,
 }: IncomingOrderModalProps) {
     const theme = useTheme();
+    const [currentIndex, setCurrentIndex] = useState(0);
     const [timeLeft, setTimeLeft] = useState(30);
     const slideAnim = useRef(new Animated.Value(-300)).current;
     const pulseAnim = useRef(new Animated.Value(1)).current;
 
+    const currentRequestWrapper = requests[currentIndex];
+    const currentRequest = currentRequestWrapper?.data;
+
+    // Reset index if out of bounds (e.g. when a request is removed)
+    useEffect(() => {
+        if (currentIndex >= requests.length && requests.length > 0) {
+            setCurrentIndex(Math.max(0, requests.length - 1));
+        }
+    }, [requests.length, currentIndex]);
+
     // Handle visibility animation
     useEffect(() => {
-        if (visible && request) {
-            // Calculate initial time left only when the request ID changes or visibility changes
-            const remaining = Math.max(0, Math.floor((request.expiresAt - Date.now()) / 1000));
-            setTimeLeft(remaining);
-
+        if (visible && requests.length > 0) {
             // Slide in animation
             Animated.spring(slideAnim, {
                 toValue: 0,
@@ -80,48 +77,42 @@ export default function IncomingOrderModal({
                 useNativeDriver: true,
             }).start();
         }
-    }, [visible, request?.bookingId]); // Only re-run if visibility or booking ID changes
+    }, [visible, requests.length > 0]);
 
-    // Countdown timer
+    // Countdown timer for current request
     useEffect(() => {
-        if (!visible || !request) return;
+        if (!visible || !currentRequest) return;
 
-        const timer = setInterval(() => {
-            setTimeLeft((prev) => {
-                if (prev <= 1) {
-                    clearInterval(timer);
-                    onExpire();
-                    return 0;
-                }
-                return prev - 1;
-            });
-        }, 1000);
+        // Calculate initial time
+        const updateTimer = () => {
+            const remaining = Math.max(0, Math.floor((currentRequest.expiresAt - Date.now()) / 1000));
+            setTimeLeft(remaining);
+            if (remaining <= 0) {
+                // Optionally handle expiry here if needed, but parent usually handles this via simple poll or cleanup
+            }
+        };
+
+        updateTimer();
+        const timer = setInterval(updateTimer, 1000);
 
         return () => clearInterval(timer);
-    }, [visible, request?.bookingId, onExpire]); // Depend on bookingId, not the whole request object
+    }, [visible, currentRequest?.bookingId, currentRequest?.expiresAt]);
 
-    // Real-time listener: auto-dismiss when another rider accepts (status → TAKEN)
-    useEffect(() => {
-        if (!visible || !riderId || !requestId) return;
-
-        const db = getFirebaseDatabase();
-        const requestRef = ref(db, `/rider_requests/${riderId}/${requestId}`);
-
-        const unsubscribe = onValue(requestRef, (snapshot) => {
-            if (!snapshot.exists()) return;
-            const data = snapshot.val();
-            if (data.status === 'TAKEN') {
-                // Another rider accepted — auto-dismiss this modal
-                onTaken?.();
-            }
-        });
-
-        return () => off(requestRef);
-    }, [visible, riderId, requestId, onTaken]);
-
-    if (!request) return null;
+    if (!currentRequestWrapper || !currentRequest) return null;
 
     const formatCurrency = (amount: number) => `₱${amount.toFixed(2)}`;
+
+    const handleNext = () => {
+        if (currentIndex < requests.length - 1) {
+            setCurrentIndex(currentIndex + 1);
+        }
+    };
+
+    const handlePrev = () => {
+        if (currentIndex > 0) {
+            setCurrentIndex(currentIndex - 1);
+        }
+    };
 
     return (
         <Animated.View
@@ -145,19 +136,38 @@ export default function IncomingOrderModal({
                             />
                             <View style={styles.headerText}>
                                 <Text variant="titleMedium" style={styles.title}>
-                                    New Order Request
+                                    New Order Request ({currentIndex + 1}/{requests.length})
                                 </Text>
                                 <Text variant="bodySmall" style={styles.timer}>
                                     {timeLeft}s remaining
                                 </Text>
                             </View>
                         </View>
-                        <IconButton
+
+                        {/* Navigation Buttons for Multiple Requests */}
+                        {requests.length > 1 && (
+                            <View style={styles.navigation}>
+                                <IconButton
+                                    icon="chevron-left"
+                                    size={24}
+                                    onPress={handlePrev}
+                                    disabled={currentIndex === 0}
+                                />
+                                <IconButton
+                                    icon="chevron-right"
+                                    size={24}
+                                    onPress={handleNext}
+                                    disabled={currentIndex === requests.length - 1}
+                                />
+                            </View>
+                        )}
+
+                        {/* <IconButton
                             icon="close"
                             size={20}
-                            onPress={onReject}
+                            onPress={() => onReject(currentRequestWrapper.requestId)}
                             style={styles.closeButton}
-                        />
+                        /> */}
                     </View>
 
                     {/* Timer Progress Bar */}
@@ -185,7 +195,7 @@ export default function IncomingOrderModal({
                             <View style={styles.locationInfo}>
                                 <Text variant="labelSmall" style={styles.locationLabel}>PICKUP</Text>
                                 <Text variant="bodyMedium" numberOfLines={2} style={styles.address}>
-                                    {request.pickupAddress}
+                                    {currentRequest.pickupAddress}
                                 </Text>
                             </View>
                         </View>
@@ -203,7 +213,7 @@ export default function IncomingOrderModal({
                             <View style={styles.locationInfo}>
                                 <Text variant="labelSmall" style={styles.locationLabel}>DROPOFF</Text>
                                 <Text variant="bodyMedium" numberOfLines={2} style={styles.address}>
-                                    {request.dropoffAddress}
+                                    {currentRequest.dropoffAddress}
                                 </Text>
                             </View>
                         </View>
@@ -216,13 +226,13 @@ export default function IncomingOrderModal({
                         <View style={styles.infoItem}>
                             <MaterialCommunityIcons name="map-marker-distance" size={20} color="#666" />
                             <Text variant="bodyMedium" style={styles.infoText}>
-                                {request.distanceToPickupKm.toFixed(1)} km away
+                                {currentRequest.distanceToPickupKm.toFixed(1)} km away
                             </Text>
                         </View>
                         <View style={styles.fareContainer}>
                             <Text variant="labelSmall" style={styles.fareLabel}>ESTIMATED FARE</Text>
                             <Text variant="headlineSmall" style={[styles.fare, { color: theme.colors.primary }]}>
-                                {formatCurrency(request.estimatedFare)}
+                                {formatCurrency(currentRequest.estimatedFare)}
                             </Text>
                         </View>
                     </View>
@@ -231,7 +241,7 @@ export default function IncomingOrderModal({
                     <View style={styles.actions}>
                         <Button
                             mode="outlined"
-                            onPress={onReject}
+                            onPress={() => onReject(currentRequestWrapper.requestId)}
                             style={[styles.button, styles.rejectButton]}
                             textColor="#F44336"
                             icon="close"
@@ -240,7 +250,7 @@ export default function IncomingOrderModal({
                         </Button>
                         <Button
                             mode="contained"
-                            onPress={onAccept}
+                            onPress={() => onAccept(currentRequestWrapper)}
                             style={[styles.button, styles.acceptButton]}
                             buttonColor="#4CAF50"
                             icon="check"
@@ -279,6 +289,7 @@ const styles = StyleSheet.create({
     headerLeft: {
         flexDirection: 'row',
         alignItems: 'center',
+        flex: 1,
     },
     headerText: {
         marginLeft: 12,
@@ -290,6 +301,9 @@ const styles = StyleSheet.create({
         color: '#F44336',
         fontWeight: '600',
     },
+    navigation: {
+        flexDirection: 'row',
+    },
     closeButton: {
         margin: -8,
     },
@@ -299,6 +313,7 @@ const styles = StyleSheet.create({
         marginHorizontal: 16,
         borderRadius: 2,
         overflow: 'hidden',
+        marginTop: 4,
     },
     timerProgress: {
         height: '100%',

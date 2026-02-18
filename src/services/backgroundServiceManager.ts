@@ -11,7 +11,7 @@
  * - Battery optimization handling
  */
 
-import { Platform, AppState, AppStateStatus, Linking } from 'react-native';
+import { Platform, AppState, AppStateStatus, Linking, Alert } from 'react-native';
 import * as Notifications from 'expo-notifications';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
@@ -714,28 +714,39 @@ export async function requestDisableBatteryOptimization(): Promise<void> {
     if (Platform.OS !== 'android') return;
 
     try {
-        await AsyncStorage.setItem('has_requested_battery_opt', 'true');
+        const hasRequested = await AsyncStorage.getItem('has_requested_battery_opt');
+        if (hasRequested) return; // Don't ask again if already requested
 
-        const pkg = 'com.parcel.safe'; // Replace with package name from app.json if different
+        // Show explanation dialog first
+        Alert.alert(
+            "Enable Background Running",
+            "This app requires background location access to track deliveries even when the screen is off.\n\nPlease select 'Allow' or 'Unrestricted' in the next screen.",
+            [
+                { text: "Cancel", style: "cancel" },
+                {
+                    text: "Open Settings",
+                    onPress: async () => {
+                        await AsyncStorage.setItem('has_requested_battery_opt', 'true');
 
-        // This intent opens the specific app setting in battery optimization
-        // ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS requires permission in manifest
-        // ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS is safer but less direct
+                        try {
+                            const pkg = 'com.parcel.safe'; // Matches app.json
+                            // Attempt 1: Direct dialog (best UX)
+                            // This requires the specific intent format often missed by RN Linking
+                            // We try sending the intent with the package URI structure if possible, 
+                            // but standard Linking often fails at data URIs.
+                            // If this fails, we fall back to App Settings.
 
-        // Try the direct intent first (requires <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS"/>)
-        // If that fails or is not allowed by Play Store policy for this app type, fallback to settings
-
-        const intent = 'android.settings.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS';
-        try {
-            await Linking.sendIntent(intent, [{ key: 'package', value: `package:${pkg}` }]);
-        } catch (e) {
-            // Fallback to general settings
-            await Linking.sendIntent('android.settings.IGNORE_BATTERY_OPTIMIZATION_SETTINGS');
-        }
-
-        if (__DEV__) console.log('[BackgroundService] Opened battery settings');
+                            // Attempt to open App Settings directly -> Battery
+                            // This is the most reliable path across Android versions for React Native
+                            await Linking.openSettings();
+                        } catch (error) {
+                            if (__DEV__) console.error('[BackgroundService] Settings error:', error);
+                        }
+                    }
+                }
+            ]
+        );
     } catch (error) {
-        if (__DEV__) console.error('[BackgroundService] Settings error:', error);
-        await Linking.openSettings();
+        if (__DEV__) console.error('[BackgroundService] Error in battery optimization request:', error);
     }
 }

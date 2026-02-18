@@ -4,6 +4,13 @@
     "slug": "ParcelSafeApp",
     "scheme": "parcelsafe",
     "version": "1.0.0",
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/f311506b-aeb6-4cf8-9847-9edf898eac0d",
+      "fallbackToCacheTimeout": 0
+    },
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -64,6 +71,7 @@
       ],
       "./scripts/withAndroidManifestHelpers.js",
       "expo-font",
+      "expo-updates",
       [
         "expo-build-properties",
         {

@@ -164,8 +164,23 @@ export default function RiderDashboard() {
     const [recallState, setRecallState] = useState<{ isRecalled: boolean; returnOtp: string | null }>({ isRecalled: false, returnOtp: null });
 
     // Incoming Order State (for rider matching)
-    const [incomingRequest, setIncomingRequest] = useState<{ requestId: string; data: RiderOrderRequest } | null>(null);
+    const [incomingRequests, setIncomingRequests] = useState<Array<{ requestId: string; data: RiderOrderRequest }>>([]);
+
     const [showOrderModal, setShowOrderModal] = useState(false);
+    // EC-NEW: Trip Preview Modal State
+    const [showTripPreview, setShowTripPreview] = useState(false);
+    const [acceptedTripDetails, setAcceptedTripDetails] = useState<{
+        pickupAddress: string;
+        dropoffAddress: string;
+        estimatedFare: number;
+        distance: string;
+        duration: string;
+        pickupLat: number;
+        pickupLng: number;
+        dropoffLat: number;
+        dropoffLng: number;
+        bookingId: string;
+    } | null>(null);
     const authedUserId = useAuthStore((state: any) => state.user?.userId) as string | undefined;
     const authedUser = useAuthStore((state: any) => state.user) as any;
     const riderId = authedUserId;
@@ -476,35 +491,41 @@ export default function RiderDashboard() {
                     riderId,
                     locToUse.coords.latitude,
                     locToUse.coords.longitude,
-                    true,
+                    !hasActiveDelivery, // Only available if NO active delivery
                     pushToken || undefined
                 );
             }
         };
         updateLocation();
 
-        // Subscribe to incoming order requests
-        console.log('[RiderDashboard] Subscribing to rider requests for:', riderId);
-        const unsubscribeRequests = subscribeToRiderRequests(riderId, (requests) => {
-            console.log('[RiderDashboard] Received rider requests update. Count:', requests.length);
-            if (requests.length > 0) {
-                // Show the first pending request
-                const latestRequest = requests[0];
-                setIncomingRequest(latestRequest);
-                setShowOrderModal(true);
+        // Subscribe to incoming order requests ONLY if no active delivery
+        let unsubscribeRequests = () => { };
+        if (!hasActiveDelivery) {
+            console.log('[RiderDashboard] Subscribing to rider requests for:', riderId);
+            unsubscribeRequests = subscribeToRiderRequests(riderId, (requests) => {
+                console.log('[RiderDashboard] Received rider requests update. Count:', requests.length);
+                setIncomingRequests(requests);
 
-                // Show local notification
-                showIncomingOrderNotification(
-                    latestRequest.data.pickupAddress,
-                    latestRequest.data.dropoffAddress,
-                    latestRequest.data.estimatedFare,
-                    latestRequest.data.bookingId
-                );
-            } else {
-                setIncomingRequest(null);
-                setShowOrderModal(false);
-            }
-        });
+                if (requests.length > 0) {
+                    setShowOrderModal(true);
+
+                    // Notify for the latest (first) request
+                    const latestRequest = requests[0];
+                    showIncomingOrderNotification(
+                        latestRequest.data.pickupAddress,
+                        latestRequest.data.dropoffAddress,
+                        latestRequest.data.estimatedFare,
+                        latestRequest.data.bookingId
+                    );
+                } else {
+                    setShowOrderModal(false);
+                }
+            });
+        } else {
+            // If active delivery exists, ensure modal is closed and requests cleared
+            setShowOrderModal(false);
+            setIncomingRequests([]);
+        }
 
         // Listen for notifications while app is in foreground
         const notificationListener = addNotificationReceivedListener((notification) => {
@@ -519,7 +540,7 @@ export default function RiderDashboard() {
             notificationListener.remove();
             removeRiderFromOnline(riderId);
         };
-    }, [isOnline, riderLocation, riderId, pushToken]);
+    }, [isOnline, riderLocation, riderId, pushToken, hasActiveDelivery]);
 
     useEffect(() => {
         if (!isOnline || !riderId) {
@@ -541,11 +562,11 @@ export default function RiderDashboard() {
                 riderId,
                 loc.latitude,
                 loc.longitude,
-                true,
+                !hasActiveDelivery, // Only available if NO active delivery
                 pushToken || undefined
             );
         }
-    }, [isOnline, lastLocation, riderLocation, riderId, pushToken]);
+    }, [isOnline, lastLocation, riderLocation, riderId, pushToken, hasActiveDelivery]);
 
     // EC-78: Subscribe to Reassignment Updates
     useEffect(() => {
@@ -640,8 +661,8 @@ export default function RiderDashboard() {
     };
 
     // Handle accepting an order
-    const handleAcceptOrder = useCallback(async () => {
-        if (!incomingRequest || !riderId) return;
+    const handleAcceptOrder = useCallback(async (requestItem: { requestId: string; data: RiderOrderRequest }) => {
+        if (!riderId || !requestItem) return;
 
         // GUARDRAIL: Rider must have a paired box
         if (!isPaired || !boxIdForMonitoring) {
@@ -655,8 +676,8 @@ export default function RiderDashboard() {
 
         const success = await acceptOrder(
             riderId,
-            incomingRequest.data.bookingId,
-            incomingRequest.requestId,
+            requestItem.data.bookingId,
+            requestItem.requestId,
             {
                 riderName,
                 riderPhone,
@@ -666,68 +687,43 @@ export default function RiderDashboard() {
 
         if (success) {
             setShowOrderModal(false);
+            setIncomingRequests([]); // Clear requests optimistically
+            setHasActiveDelivery(true); // Stop listening for new requests immediately
 
             // Prepare trip details for preview
             const tripDetails = {
-                pickupAddress: incomingRequest.data.pickupAddress,
-                dropoffAddress: incomingRequest.data.dropoffAddress,
-                estimatedFare: incomingRequest.data.estimatedFare,
-                distance: `${incomingRequest.data.distance?.toFixed(1) || '--'} km`,
-                duration: `${incomingRequest.data.duration?.toFixed(0) || '--'} min`,
-                pickupLat: incomingRequest.data.pickupLat,
-                pickupLng: incomingRequest.data.pickupLng,
-                dropoffLat: incomingRequest.data.dropoffLat,
-                dropoffLng: incomingRequest.data.dropoffLng,
-                bookingId: incomingRequest.data.bookingId, // Store ID for start
+                pickupAddress: requestItem.data.pickupAddress,
+                dropoffAddress: requestItem.data.dropoffAddress,
+                estimatedFare: requestItem.data.estimatedFare,
+                distance: `${requestItem.data.distance?.toFixed(1) || '--'} km`,
+                duration: `${requestItem.data.duration?.toFixed(0) || '--'} min`,
+                pickupLat: requestItem.data.pickupLat,
+                pickupLng: requestItem.data.pickupLng,
+                dropoffLat: requestItem.data.dropoffLat,
+                dropoffLng: requestItem.data.dropoffLng,
+                bookingId: requestItem.data.bookingId, // Store ID for start
             };
 
             setAcceptedTripDetails(tripDetails);
-            setIncomingRequest(null);
             setShowTripPreview(true);
         } else {
             // Booking was already accepted by another rider (race condition handled)
-            setShowOrderModal(false);
-            setIncomingRequest(null);
             Alert.alert(
                 'Order Unavailable',
-                'This delivery was already accepted by another rider. You will be notified of new orders.',
+                'This delivery was already accepted by another rider.',
                 [{ text: 'OK' }]
             );
         }
-    }, [incomingRequest, riderId, riderName, riderPhone, boxIdForMonitoring, isPaired, navigation]);
+    }, [riderId, riderName, riderPhone, boxIdForMonitoring, isPaired, navigation]);
 
     // Handle rejecting an order
-    const handleRejectOrder = useCallback(async () => {
-        if (!incomingRequest) return;
-
-        await rejectOrder(riderId, incomingRequest.requestId);
-        setShowOrderModal(false);
-        setIncomingRequest(null);
-    }, [incomingRequest, riderId]);
-
-    // Handle order request expiring
-    const handleOrderExpire = useCallback(() => {
-        if (incomingRequest) {
-            rejectOrder(riderId, incomingRequest.requestId);
-        }
-        setShowOrderModal(false);
-        setIncomingRequest(null);
-    }, [incomingRequest, riderId]);
-
-    // Handle order taken by another rider (auto-dismiss via real-time listener)
-    const handleOrderTaken = useCallback(() => {
-        setShowOrderModal(false);
-        setIncomingRequest(null);
-        Alert.alert(
-            'Order Unavailable',
-            'This delivery was already accepted by another rider. You will be notified of new orders.',
-            [{ text: 'OK' }]
-        );
-    }, []);
+    const handleRejectOrder = useCallback(async (requestId: string) => {
+        await rejectOrder(riderId, requestId);
+        // Subscription will automatically update the list
+    }, [riderId]);
 
     // Trip Preview State
-    const [showTripPreview, setShowTripPreview] = useState(false);
-    const [acceptedTripDetails, setAcceptedTripDetails] = useState<any>(null);
+
 
     // EC-32: Handle Cancellation Submit
     const handleCancellationSubmit = async (reason: CancellationReason, details: string) => {
@@ -1026,13 +1022,21 @@ export default function RiderDashboard() {
             {/* Incoming Order Modal - overlays entire screen */}
             <IncomingOrderModal
                 visible={showOrderModal}
-                request={incomingRequest?.data || null}
-                requestId={incomingRequest?.requestId || ''}
-                riderId={riderId}
+                requests={incomingRequests}
                 onAccept={handleAcceptOrder}
                 onReject={handleRejectOrder}
-                onExpire={handleOrderExpire}
-                onTaken={handleOrderTaken}
+
+            />
+
+            {/* Trip Preview Modal - shown after accepting an order */}
+            <TripPreviewModal
+                visible={showTripPreview}
+                onDismiss={() => setShowTripPreview(false)}
+                onStartTrip={() => {
+                    setShowTripPreview(false);
+                    // Navigation or state update happens automatically via activeDelivery effect
+                }}
+                tripDetails={acceptedTripDetails}
             />
 
             <CancellationModal
