@@ -36,6 +36,7 @@ import {
     createAddressUpdateRequest,
     validateAddressUpdateRequest,
     submitAddressUpdate,
+    calculateDistanceMeters,
     GeofenceConfig,
     CONFIG as GeoConfig,
 } from '../../services/addressUpdateService';
@@ -280,7 +281,7 @@ export default function ArrivalScreen() {
         return unsubscribe;
     }, [params.deliveryId]);
 
-    const isPickupConfirmed = ['PICKED_UP', 'IN_TRANSIT', 'COMPLETED'].includes(deliveryStatus);
+    const isPickupConfirmed = ['IN_TRANSIT', 'COMPLETED'].includes(deliveryStatus);
 
     // 1. Track PHONE Location (The "Golden Rule")
     useEffect(() => {
@@ -384,14 +385,30 @@ export default function ArrivalScreen() {
             return;
         }
 
+        // EC-XX: Refined Auto-Pickup Logic (100m Buffer)
+        // Check distance from pickup point to prevent premature trigger
+        const distanceFromPickup = calculateDistanceMeters(
+            currentPosition.lat,
+            currentPosition.lng,
+            geofence.centerLat,
+            geofence.centerLng
+        );
+
+        // Only trigger if rider is significantly away (> 100m)
+        if (distanceFromPickup < 100) {
+            return;
+        }
+
         setAutoPickupFallbackApplied(true);
 
         const applyAutoPickupFallback = async () => {
             const now = Date.now();
-            const pickedUpOk = await updateDeliveryStatus(params.deliveryId, 'PICKED_UP', {
+            const pickedUpOk = await updateDeliveryStatus(params.deliveryId, 'IN_TRANSIT', {
                 picked_up_at: now,
                 pickup_confirmed_fallback: true,
                 pickup_fallback_reason: 'AUTO_GEOFENCE_EXIT',
+                in_transit_at: now, // Same timestamp as we are skipping straight to transit
+                in_transit_reason: 'AUTO_GEOFENCE_EXIT',
             });
 
             if (!pickedUpOk) {
@@ -399,10 +416,7 @@ export default function ArrivalScreen() {
                 return;
             }
 
-            await updateDeliveryStatus(params.deliveryId, 'IN_TRANSIT', {
-                in_transit_at: now,
-                in_transit_reason: 'AUTO_GEOFENCE_EXIT',
-            });
+            // Removed redundant update call as IN_TRANSIT is set above
 
             setDeliveryStatus('IN_TRANSIT');
             Alert.alert(
@@ -419,6 +433,8 @@ export default function ArrivalScreen() {
         isInsideGeoFence,
         isPickupConfirmed,
         params.deliveryId,
+        currentPosition,
+        geofence,
     ]);
 
     const ensurePickupConfirmed = useCallback(async () => {
@@ -426,9 +442,10 @@ export default function ArrivalScreen() {
             return true;
         }
 
-        const success = await updateDeliveryStatus(params.deliveryId, 'PICKED_UP', {
+        const success = await updateDeliveryStatus(params.deliveryId, 'IN_TRANSIT', {
             picked_up_at: Date.now(),
             pickup_confirmed_fallback: true,
+            in_transit_at: Date.now(),
         });
 
         if (!success) {
@@ -436,7 +453,7 @@ export default function ArrivalScreen() {
             return false;
         }
 
-        setDeliveryStatus('PICKED_UP');
+        setDeliveryStatus('IN_TRANSIT');
         return true;
     }, [isPickupConfirmed, params.deliveryId]);
 
@@ -446,8 +463,9 @@ export default function ArrivalScreen() {
             return;
         }
 
-        const success = await updateDeliveryStatus(params.deliveryId, 'PICKED_UP', {
+        const success = await updateDeliveryStatus(params.deliveryId, 'IN_TRANSIT', {
             picked_up_at: Date.now(),
+            in_transit_at: Date.now(), // Set both since we are merging states
         });
 
         if (!success) {
@@ -455,7 +473,7 @@ export default function ArrivalScreen() {
             return;
         }
 
-        setDeliveryStatus('PICKED_UP');
+        setDeliveryStatus('IN_TRANSIT');
         Alert.alert('Pickup Confirmed', 'Package marked as picked up. Continue to handover flow.');
     };
 
@@ -830,17 +848,29 @@ export default function ArrivalScreen() {
     );
 
     const handleNavigate = () => {
-        if (!params.targetAddress) return;
+        // Check for valid coordinates (not null/undefined and not 0,0)
+        const hasCoords = params?.targetLat && params?.targetLng && (params.targetLat !== 0 || params.targetLng !== 0);
 
-        const scheme = Platform.select({ ios: 'maps:0,0?q=', android: 'geo:0,0?q=' });
-        const label = params.targetAddress;
-        const url = Platform.select({
-            ios: `${scheme}${label}`,
-            android: `${scheme}0,0?q=${label}`
-        });
+        if (hasCoords) {
+            const latLng = `${params!.targetLat},${params!.targetLng}`;
+            const label = params?.targetAddress || 'Destination';
 
-        if (url) {
-            Linking.openURL(url);
+            // EC-FIX: Use precise coordinates in prefix AND query
+            const url = Platform.select({
+                ios: `maps:?ll=${latLng}&q=${label}`,
+                android: `geo:${latLng}?q=${latLng}(${label})`
+            });
+            if (url) Linking.openURL(url);
+        } else {
+            // Fallback if coordinates missing
+            if (params?.targetAddress) {
+                const scheme = Platform.select({ ios: 'maps:0,0?q=', android: 'geo:0,0?q=' });
+                const url = Platform.select({
+                    ios: `${scheme}${params.targetAddress}`,
+                    android: `${scheme}${params.targetAddress}`
+                });
+                if (url) Linking.openURL(url);
+            }
         }
     };
 

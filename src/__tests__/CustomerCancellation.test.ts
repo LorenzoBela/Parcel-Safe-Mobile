@@ -11,7 +11,6 @@
 enum DeliveryStatus {
     PENDING = 'PENDING',
     ASSIGNED = 'ASSIGNED',
-    PICKED_UP = 'PICKED_UP',
     IN_TRANSIT = 'IN_TRANSIT',
     ARRIVED = 'ARRIVED',
     DELIVERED = 'DELIVERED',
@@ -43,7 +42,6 @@ function canCustomerCancel(status: DeliveryStatus): { canCancel: boolean; reason
         case DeliveryStatus.ASSIGNED:
             return { canCancel: true };
 
-        case DeliveryStatus.PICKED_UP:
         case DeliveryStatus.IN_TRANSIT:
             return {
                 canCancel: false,
@@ -124,11 +122,7 @@ describe('Customer Cancellation', () => {
             expect(result.reason).toBeUndefined();
         });
 
-        it('should NOT allow cancellation when PICKED_UP', () => {
-            const result = canCustomerCancel(DeliveryStatus.PICKED_UP);
-            expect(result.canCancel).toBe(false);
-            expect(result.reason).toBe('Cannot cancel after package has been picked up');
-        });
+        // Removed test for PICKED_UP as it's no longer a valid status
 
         it('should NOT allow cancellation when IN_TRANSIT', () => {
             const result = canCustomerCancel(DeliveryStatus.IN_TRANSIT);
@@ -299,7 +293,6 @@ describe('Customer Cancellation', () => {
         it('should only allow cancellation for PENDING and ASSIGNED', () => {
             const cancellableStatuses = [DeliveryStatus.PENDING, DeliveryStatus.ASSIGNED];
             const nonCancellableStatuses = [
-                DeliveryStatus.PICKED_UP,
                 DeliveryStatus.IN_TRANSIT,
                 DeliveryStatus.ARRIVED,
                 DeliveryStatus.DELIVERED,
@@ -323,7 +316,6 @@ describe('Customer Cancellation', () => {
             expect(canCustomerCancel(DeliveryStatus.ASSIGNED).canCancel).toBe(true);
 
             // After pickup - cannot cancel
-            expect(canCustomerCancel(DeliveryStatus.PICKED_UP).canCancel).toBe(false);
             expect(canCustomerCancel(DeliveryStatus.IN_TRANSIT).canCancel).toBe(false);
             expect(canCustomerCancel(DeliveryStatus.ARRIVED).canCancel).toBe(false);
             expect(canCustomerCancel(DeliveryStatus.DELIVERED).canCancel).toBe(false);

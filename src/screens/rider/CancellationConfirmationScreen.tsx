@@ -7,6 +7,7 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { View, StyleSheet, ScrollView, TouchableOpacity, BackHandler } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Text, Surface, Button, Card, Avatar, useTheme, IconButton, Divider } from 'react-native-paper';
 import { useNavigation, useRoute, useFocusEffect } from '@react-navigation/native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -33,6 +34,7 @@ export default function CancellationConfirmationScreen() {
     const navigation = useNavigation<any>();
     const route = useRoute();
     const theme = useTheme();
+    const insets = useSafeAreaInsets();
     const params = route.params as RouteParams;
 
     const [remainingHours, setRemainingHours] = useState(24);
@@ -255,7 +257,7 @@ export default function CancellationConfirmationScreen() {
             </ScrollView>
 
             {/* Bottom Actions */}
-            <Surface style={[styles.bottomActions, { backgroundColor: theme.colors.surface }]} elevation={4}>
+            <Surface style={[styles.bottomActions, { backgroundColor: theme.colors.surface, paddingBottom: Math.max(insets.bottom, 16) + 16 }]} elevation={4}>
                 <Button
                     mode="outlined"
                     onPress={handleDone}
@@ -374,7 +376,6 @@ const styles = StyleSheet.create({
         right: 0,
         flexDirection: 'row',
         padding: 16,
-        paddingBottom: 24,
         borderTopLeftRadius: 20,
         borderTopRightRadius: 20,
     },

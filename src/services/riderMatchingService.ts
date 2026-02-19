@@ -37,6 +37,7 @@ export interface RiderLocation {
 /**
  * Booking request structure
  */
+
 export interface BookingRequest {
     bookingId: string;
     customerId: string;
@@ -49,6 +50,9 @@ export interface BookingRequest {
     estimatedFare: number;
     createdAt: number;
     shareToken?: string;
+    distance?: number; // EC-Fix: Added for rider preview (km)
+    duration?: number; // EC-Fix: Added for rider preview (min)
+    customerName?: string; // EC-Fix: Added for rider preview
 }
 
 export interface DeliveryRecord {
@@ -134,6 +138,7 @@ export interface RiderOrderRequest {
     customerId: string;
     distance?: number;
     duration?: number;
+    customerName?: string;
 }
 
 /**
@@ -205,18 +210,28 @@ export async function findNearbyRiders(
         }
 
         const ridersData = snapshot.val();
+
+        console.log(`[Booking] Found ${Object.keys(ridersData).length} total riders in /online_riders`);
         const nearbyRiders: RiderLocation[] = [];
 
         for (const [riderId, data] of Object.entries(ridersData)) {
             const riderData = data as any;
 
+            // Debug Log for every rider
+            console.log(`[Booking] Checking Rider ${riderId}: Available=${riderData.is_available}, Lat=${riderData.lat}, Lng=${riderData.lng}, LastUpdated=${riderData.last_updated}`);
+
             // Skip unavailable riders
             if (!riderData.is_available) {
+                console.log(`[Booking] Skipping Rider ${riderId} - Not Available`);
                 continue;
             }
 
             // Check if within radius
-            if (isWithinRadius(riderData.lat, riderData.lng, pickupLat, pickupLng, radiusKm)) {
+            const isInside = isWithinRadius(riderData.lat, riderData.lng, pickupLat, pickupLng, radiusKm);
+
+            console.log(`[Booking] Rider ${riderId} isInside=${isInside}`);
+
+            if (isInside) {
                 nearbyRiders.push({
                     riderId,
                     lat: riderData.lat,
@@ -228,13 +243,7 @@ export async function findNearbyRiders(
             }
         }
 
-        // Sort by distance (closest first)
-        nearbyRiders.sort((a, b) => {
-            const distA = calculateHaversineDistance(a.lat, a.lng, pickupLat, pickupLng);
-            const distB = calculateHaversineDistance(b.lat, b.lng, pickupLat, pickupLng);
-            return distA - distB;
-        });
-
+        console.log(`[Booking] findNearbyRiders returning ${nearbyRiders.length} riders`);
         return nearbyRiders;
     } catch (error) {
         console.error('Error finding nearby riders:', error);
@@ -262,6 +271,7 @@ export async function createPendingBooking(request: BookingRequest): Promise<boo
             accepted_by: null,
             created_at: request.createdAt,
             share_token: shareToken,
+            customer_name: request.customerName, // EC-Fix: Store for good measure, though mostly passed via request
         });
         console.log(`[Booking] Created pending booking in Firebase: ${request.bookingId}`);
 
@@ -346,6 +356,9 @@ export async function sendOrderRequestToRider(
             expires_at: request.expiresAt,
             customer_id: request.customerId,
             status: 'PENDING',
+            distance: request.distance, // EC-Fix: Added
+            duration: request.duration, // EC-Fix: Added
+            customer_name: request.customerName, // EC-Fix: Added
         });
 
         return true;
@@ -389,6 +402,9 @@ export async function notifyNearbyRiders(
             estimatedFare: booking.estimatedFare,
             expiresAt: Date.now() + REQUEST_EXPIRY_MS,
             customerId: booking.customerId,
+            distance: booking.distance, // EC-Fix: Propagate distance from booking
+            duration: booking.duration, // EC-Fix: Propagate duration from booking
+            customerName: booking.customerName, // EC-Fix: Propagate customer name
         };
 
         const success = await sendOrderRequestToRider(rider.riderId, orderRequest);
@@ -446,6 +462,12 @@ export async function acceptOrder(
         // GUARDRAIL: Box ID is required for delivery security
         if (!metadata?.boxId) {
             console.warn('[RiderMatching] Attempted to accept order without paired boxId');
+            return false;
+        }
+
+        // GUARDRAIL: Rider Phone is required
+        if (!metadata?.riderPhone) {
+            console.warn('[RiderMatching] Attempted to accept order without riderPhone');
             return false;
         }
 
@@ -916,6 +938,9 @@ export function subscribeToRiderRequests(
                         estimatedFare: requestData.estimated_fare,
                         expiresAt: requestData.expires_at,
                         customerId: requestData.customer_id,
+                        distance: requestData.distance,
+                        duration: requestData.duration,
+                        customerName: requestData.customer_name,
                     },
                 });
             }
@@ -925,7 +950,7 @@ export function subscribeToRiderRequests(
     });
 
     // Return unsubscribe function
-    return () => off(requestsRef);
+    return unsubscribe;
 }
 
 /**
@@ -953,7 +978,7 @@ export async function updateRiderStatus(
         }
 
         const riderRef = ref(db, `/online_riders/${riderId}`);
-        await set(riderRef, updateData);
+        await update(riderRef, updateData);
 
         // EC-ENHANCE: Ensure rider is removed if they disconnect unexpectedly (Deadman Switch)
         // This prevents "Zombie Riders" who are offline but still receiving orders

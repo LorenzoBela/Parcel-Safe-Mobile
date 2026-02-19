@@ -28,6 +28,22 @@ try {
 }
 import IncomingOrderModal from '../../components/IncomingOrderModal';
 import TripPreviewModal from '../../components/modals/TripPreviewModal';
+
+// Helper to fix double-shifted times
+const formatTimeWithHeuristic = (timeStr: string) => {
+    if (!timeStr || timeStr === '--:--') return '--:--';
+    const d = dayjs(timeStr);
+    if (!d.isValid()) return timeStr;
+
+    let phTime = d.tz(PH_TIMEZONE);
+    const now = dayjs().tz(PH_TIMEZONE);
+
+    // If time is > 2 hours in future, it's a double shift error. Subtract 8 hours.
+    if (phTime.diff(now, 'hour') > 2) {
+        phTime = phTime.subtract(8, 'hour');
+    }
+    return phTime.format('h:mm A');
+};
 import {
     subscribeToRiderRequests,
     acceptOrder,
@@ -45,6 +61,7 @@ import {
 import CancellationModal from '../../components/modals/CancellationModal';
 import { requestCancellation, CancellationReason } from '../../services/cancellationService';
 import ReassignmentAlertModal from '../../components/ReassignmentAlertModal';
+import PhoneEntryModal from '../../components/modals/PhoneEntryModal';
 import {
     subscribeToReassignment,
     ReassignmentState,
@@ -73,6 +90,8 @@ import { subscribeToPower, PowerState, isSolenoidBlockedByVoltage } from '../../
 import useAuthStore from '../../store/authStore';
 import { fetchWeather, weatherBackgroundImages, WeatherData } from '../../services/weatherService';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { getAuth } from 'firebase/auth'; // EC-Fix: Fallback auth
+import { supabase } from '../../services/supabaseClient'; // EC-Fix: Session restoration
 
 const PAIRED_BOX_CACHE_KEY_PREFIX = 'parcelSafe:lastPairedBoxId:';
 
@@ -87,6 +106,7 @@ export default function RiderDashboard() {
     const [locationName, setLocationName] = useState('Locating...');
     const [refreshing, setRefreshing] = useState(false);
     const [riderLocation, setRiderLocation] = useState<Location.LocationObject | null>(null);
+    const [isRestoringSession, setIsRestoringSession] = useState(false); // EC-Fix: Session restoration state
     const [distance, setDistance] = useState<string>('Calculating...');
     const [boxState, setBoxState] = useState<BoxState | null>(null);
     const isLocked = boxState?.status === 'LOCKED';
@@ -127,6 +147,11 @@ export default function RiderDashboard() {
 
     // EC-10: Photo Queue Status
     const [photoQueueCount, setPhotoQueueCount] = useState(0);
+
+    // EC-Update: Phone Verification State
+    const [showPhoneModal, setShowPhoneModal] = useState(false);
+    const [pendingRequestItem, setPendingRequestItem] = useState<{ requestId: string; data: RiderOrderRequest } | null>(null);
+
     const [photoQueueFull, setPhotoQueueFull] = useState(false);
 
     // GPS Redundancy Hook - monitors box connectivity and handles failover
@@ -141,9 +166,82 @@ export default function RiderDashboard() {
         lastLocation // EC-Redundancy: Use this for reliable updates
     } = useLocationRedundancy();
 
-    // EC-FIX: Sync riderLocation state with redundancy service updates
+    // EC-FIX: Local phone location state for fallback
+    const [localPhoneLocation, setLocalPhoneLocation] = useState<Location.LocationObject | null>(null);
+
+    // EC-FIX: Continuous Phone GPS Watchdog (Foreground)
+    // This ensures we always have the REAL phone location available, even if the
+    // redundancy service (Box/Background) is failing or reporting "none".
     useEffect(() => {
-        if (lastLocation) {
+        let subscription: Location.LocationSubscription | null = null;
+
+        const startWatching = async () => {
+            try {
+                const { status } = await Location.getForegroundPermissionsAsync();
+                if (status === 'granted') {
+                    subscription = await Location.watchPositionAsync(
+                        {
+                            accuracy: Location.Accuracy.High,
+                            timeInterval: 2000,
+                            distanceInterval: 10,
+                        },
+                        (location) => {
+                            setLocalPhoneLocation(location);
+
+                            // Debug logging to help identify why "QC" is showing
+                            if (__DEV__) {
+                                console.log('[RiderDashboard] Phone Location Update:', {
+                                    lat: location.coords.latitude,
+                                    lng: location.coords.longitude,
+                                    source: gpsSource
+                                });
+                            }
+                        }
+                    );
+                }
+            } catch (err) {
+                console.warn('[RiderDashboard] WatchPosition failed:', err);
+            }
+        };
+
+        startWatching();
+
+        return () => {
+            if (subscription) {
+                subscription.remove();
+            }
+        };
+    }, []);
+
+    // EC-FIX: Sync riderLocation state with redundancy service updates OR fallback to local phone
+    // EC-FIX: Decouple Rider Location from Box Location
+    useEffect(() => {
+        // Priority 1: Local Phone GPS (Foreground) - This represents the Rider.
+        if (localPhoneLocation) {
+            setRiderLocation(localPhoneLocation);
+            return;
+        }
+
+        // Priority 2: Background Service Phone Location (if available and no local)
+        if (gpsSource === 'phone' && lastLocation) {
+            setRiderLocation({
+                coords: {
+                    latitude: lastLocation.latitude,
+                    longitude: lastLocation.longitude,
+                    altitude: null,
+                    accuracy: null,
+                    altitudeAccuracy: null,
+                    heading: lastLocation.heading || 0,
+                    speed: lastLocation.speed || 0,
+                },
+                timestamp: lastLocation.timestamp,
+            });
+            return;
+        }
+
+        // Priority 3: Box Location (Fallback only if we have NO phone data)
+        // We only use this if we are completely blind on the phone side.
+        if (gpsSource === 'box' && lastLocation) {
             setRiderLocation({
                 coords: {
                     latitude: lastLocation.latitude,
@@ -157,7 +255,7 @@ export default function RiderDashboard() {
                 timestamp: lastLocation.timestamp,
             });
         }
-    }, [lastLocation]);
+    }, [localPhoneLocation, lastLocation, gpsSource]);
 
 
 
@@ -224,6 +322,47 @@ export default function RiderDashboard() {
             .catch(() => setCachedBoxId(null));
     }, [riderId]);
 
+    // EC-Fix: Auto-restore session if authStore is empty but Firebase Auth is active
+    // This prevents "Rider ID Required" errors after reloading the app
+    useEffect(() => {
+        const restoreSession = async () => {
+            if (!riderId && !isRestoringSession) {
+                const auth = getAuth();
+                const firebaseUser = auth.currentUser;
+
+                if (firebaseUser) {
+                    console.log('[RiderDashboard] Session missing but Firebase auth exists. Restoring...');
+                    setIsRestoringSession(true);
+                    try {
+                        // Fetch profile from Supabase
+                        const { data: profile, error } = await supabase
+                            .from('profiles')
+                            .select('*')
+                            .eq('id', firebaseUser.uid)
+                            .single();
+
+                        if (profile) {
+                            (useAuthStore.getState() as any).login({
+                                userId: profile.id,
+                                email: firebaseUser.email,
+                                role: profile.role,
+                                fullName: profile.full_name,
+                                phone: profile.phone_number,
+                            });
+                            console.log('[RiderDashboard] Session restored via hydration.');
+                        }
+                    } catch (err) {
+                        console.error('[RiderDashboard] Failed to restore session:', err);
+                    } finally {
+                        setIsRestoringSession(false);
+                    }
+                }
+            }
+        };
+
+        restoreSession();
+    }, [riderId]);
+
     const [activeDelivery, setActiveDelivery] = useState<any>(null);
 
     // EC-FIX: Automatically manage tracking lifecycle based on active delivery
@@ -243,8 +382,9 @@ export default function RiderDashboard() {
                 }
             }
         } else {
-            // No active delivery, stop tracking
-            deactivateTracking();
+            // No active delivery
+            // We do NOT deactivate tracking here anymore, because we want to stay visible
+            // while waiting for orders (if online).
         }
     }, [activeDelivery?.id, activeDelivery?.status, activeDelivery?.assigned_box_id]);
 
@@ -254,11 +394,11 @@ export default function RiderDashboard() {
         boxId: activeDelivery.assigned_box_id || activeDelivery.box_id, // Ensure boxId is passed
         address: activeDelivery.dropoff_address,
         customer: activeDelivery.recipient_name || activeDelivery.customer?.full_name || 'Customer',
-        time: activeDelivery.accepted_at || activeDelivery.created_at || '--:--',
+        time: activeDelivery.accepted_at ? formatTimeWithHeuristic(activeDelivery.accepted_at) : (activeDelivery.created_at ? formatTimeWithHeuristic(activeDelivery.created_at) : '--:--'),
         phone: activeDelivery.recipient_phone || activeDelivery.customer?.phone_number || 'No Phone',
         pickupAddress: activeDelivery.pickup_address,
-        pickupTime: activeDelivery.created_at ? dayjs.utc(activeDelivery.created_at).tz(PH_TIMEZONE).format('h:mm A') : '--:--',
-        dropoffTime: activeDelivery.accepted_at ? dayjs.utc(activeDelivery.accepted_at).tz(PH_TIMEZONE).format('h:mm A') : (activeDelivery.created_at ? dayjs.utc(activeDelivery.created_at).tz(PH_TIMEZONE).format('h:mm A') : '--:--'),
+        pickupTime: activeDelivery.created_at, // RAW ISO for JobDetail
+        dropoffTime: activeDelivery.accepted_at || activeDelivery.created_at, // RAW ISO for JobDetail
         fare: activeDelivery.estimated_fare ? `₱${activeDelivery.estimated_fare}` : '--',
         distance: distance, // Updated by Mapbox
         estimatedTime: duration, // Updated by Mapbox
@@ -324,10 +464,20 @@ export default function RiderDashboard() {
         return () => clearInterval(interval);
     }, [riderId]);
 
-    // Auto-start monitoring when component mounts
+    // Auto-start monitoring when component mounts or online status changes
     useEffect(() => {
         if (boxIdForMonitoring) {
             startMonitoring(boxIdForMonitoring);
+        }
+
+        // EC-FIX: Ensure tracking is ACTIVE if we are online (even without delivery)
+        // This ensures the rider is discoverable by the matching service.
+        if (isOnline && boxIdForMonitoring) {
+            console.log('[RiderDashboard] Rider is online with paired box - Activating Tracking');
+            activateTracking();
+        } else if (!isOnline) {
+            console.log('[RiderDashboard] Rider is offline - Deactivating Tracking');
+            deactivateTracking();
         }
 
         // EC-Update: Subscribe to box state for lock status
@@ -458,22 +608,21 @@ export default function RiderDashboard() {
         return () => clearInterval(interval);
     }, []);
 
-    // Subscribe to incoming order requests when rider is online
+    // Subscribe to incoming order requests (and setup notifications)
     useEffect(() => {
-        console.log('[RiderDashboard] Online status effect triggered. isOnline:', isOnline, 'riderId:', riderId);
+        console.log('[RiderDashboard] Order Listener Effect. isOnline:', isOnline, 'riderId:', riderId, 'active:', hasActiveDelivery);
 
-        if (!riderId) {
-            return;
-        }
+        if (!riderId) return;
 
+        // 1. Handle "Offline" state explicitly
         if (!isOnline) {
             console.log('[RiderDashboard] Rider is offline. Removing from online_riders.');
-            // Remove from online riders when going offline
             removeRiderFromOnline(riderId);
+            // Don't subscribe to anything if offline
             return;
         }
 
-        // Setup push notifications
+        // 2. Setup push notifications (idempotent-ish)
         const initNotifications = async () => {
             await setupNotificationChannels();
             const token = await registerForPushNotifications();
@@ -483,30 +632,9 @@ export default function RiderDashboard() {
         };
         initNotifications();
 
-        // Update rider status as online with current location
-        // EC-FIX: Use lastLocation from redundancy hook if available, otherwise fallback to riderLocation
-        const updateLocation = async () => {
-            const locToUse = lastLocation ? {
-                coords: {
-                    latitude: lastLocation.latitude,
-                    longitude: lastLocation.longitude
-                }
-            } : riderLocation;
-
-            if (locToUse) {
-                await updateRiderStatus(
-                    riderId,
-                    locToUse.coords.latitude,
-                    locToUse.coords.longitude,
-                    !hasActiveDelivery, // Only available if NO active delivery
-                    pushToken || undefined
-                );
-            }
-        };
-        updateLocation();
-
-        // Subscribe to incoming order requests ONLY if no active delivery
         let unsubscribeRequests = () => { };
+
+        // 3. Subscribe to orders ONLY if no active delivery
         if (!hasActiveDelivery) {
             console.log('[RiderDashboard] Subscribing to rider requests for:', riderId);
             unsubscribeRequests = subscribeToRiderRequests(riderId, (requests) => {
@@ -515,8 +643,6 @@ export default function RiderDashboard() {
 
                 if (requests.length > 0) {
                     setShowOrderModal(true);
-
-                    // Notify for the latest (first) request
                     const latestRequest = requests[0];
                     showIncomingOrderNotification(
                         latestRequest.data.pickupAddress,
@@ -529,36 +655,43 @@ export default function RiderDashboard() {
                 }
             });
         } else {
-            // If active delivery exists, ensure modal is closed and requests cleared
+            // Ensure modal is closed if we have a delivery
             setShowOrderModal(false);
             setIncomingRequests([]);
         }
 
-        // Listen for notifications while app is in foreground
+        // 4. Notification Listener
         const notificationListener = addNotificationReceivedListener((notification) => {
             const data = notification.request.content.data;
             if (data?.type === 'INCOMING_ORDER') {
-                // Notification handled by Firebase subscription above
+                // handled via firebase subscription
             }
         });
 
+        // Cleanup
         return () => {
             unsubscribeRequests();
             notificationListener.remove();
-            removeRiderFromOnline(riderId);
+            // NOTE: We do NOT removeRiderFromOnline here. 
+            // We only remove if isOnline becomes false (handled at start of effect)
+            // or if unmounting (handled by onDisconnect in service typically, or we could add a sturdy cleanup).
         };
-    }, [isOnline, riderLocation, riderId, pushToken, hasActiveDelivery]);
+    }, [isOnline, riderId, hasActiveDelivery]);
 
     useEffect(() => {
         if (!isOnline || !riderId) {
             return;
         }
 
-        // EC-FIX: Prefer lastLocation from redundancy service (Unified Location)
-        // This ensures we push updates even if the UI map hasn't re-rendered
-        const loc = lastLocation ? {
-            latitude: lastLocation.latitude,
-            longitude: lastLocation.longitude
+        // EC-FIX: Intelligent Location Source Selection
+        // Only prefer "redundant" location if it comes from the BOX and the box is ONLINE.
+        // If the box is offline, or the source is 'phone', we prefer our own fresh riderLocation
+        // to avoid stale loopbacks from Firebase.
+        const shouldUseRedundancy = lastLocation && (lastLocation.source === 'box' || isBoxOnline);
+
+        const loc = shouldUseRedundancy ? {
+            latitude: lastLocation!.latitude,
+            longitude: lastLocation!.longitude
         } : (riderLocation ? {
             latitude: riderLocation.coords.latitude,
             longitude: riderLocation.coords.longitude
@@ -668,7 +801,7 @@ export default function RiderDashboard() {
     };
 
     // Handle accepting an order
-    const handleAcceptOrder = useCallback(async (requestItem: { requestId: string; data: RiderOrderRequest }) => {
+    const handleAcceptOrder = useCallback(async (requestItem: { requestId: string; data: RiderOrderRequest }, phoneOverride?: string) => {
         if (!riderId || !requestItem) return;
 
         // GUARDRAIL: Rider must have a paired box
@@ -681,13 +814,23 @@ export default function RiderDashboard() {
             return;
         }
 
+        // GUARDRAIL: Rider must have a mobile number
+        const phoneToUse = phoneOverride || riderPhone;
+
+        if (!phoneToUse || phoneToUse.trim() === '') {
+            // Store request and show modal to enter number
+            setPendingRequestItem(requestItem);
+            setShowPhoneModal(true);
+            return;
+        }
+
         const success = await acceptOrder(
             riderId,
             requestItem.data.bookingId,
             requestItem.requestId,
             {
                 riderName,
-                riderPhone,
+                riderPhone: phoneToUse,
                 boxId: boxIdForMonitoring,
             }
         );
@@ -709,6 +852,7 @@ export default function RiderDashboard() {
                 dropoffLat: requestItem.data.dropoffLat,
                 dropoffLng: requestItem.data.dropoffLng,
                 bookingId: requestItem.data.bookingId, // Store ID for start
+                customerName: requestItem.data.customerName || 'Customer', // EC-Fix: Added
             };
 
             setAcceptedTripDetails(tripDetails);
@@ -745,7 +889,7 @@ export default function RiderDashboard() {
                 boxId: boxIdForMonitoring,
                 reason,
                 reasonDetails: details,
-                riderId: riderId || '',
+                riderId: riderId || getAuth().currentUser?.uid || '', // EC-Fix: Fallback to Firebase Auth
                 riderName: riderName || 'Rider',
             });
 
@@ -790,6 +934,9 @@ export default function RiderDashboard() {
     // Track last route fetch location to prevent spamming API
     const lastRouteFetchLocation = useRef<{ latitude: number, longitude: number } | null>(null);
 
+    // Track last ETA update to prevent DB spam
+    const lastEtaUpdateRef = useRef<number>(0);
+
     // Fetch route from Mapbox Directions API
     const fetchRoute = useCallback(async () => {
         // EC-FIX: Use lastLocation (live) if available, otherwise riderLocation (initial)
@@ -807,6 +954,7 @@ export default function RiderDashboard() {
         }
 
         // Throttle: Only fetch if moved > 20 meters from last fetch
+        let shouldFetch = true;
         if (lastRouteFetchLocation.current) {
             const dist = calculateDistance(
                 currentLoc.latitude,
@@ -817,9 +965,11 @@ export default function RiderDashboard() {
             // calculateDistance returns string "X.XX km" - parse it
             const distKm = parseFloat(dist);
             if (distKm < 0.02) { // 20 meters
-                return;
+                shouldFetch = false;
             }
         }
+
+        if (!shouldFetch) return;
 
         try {
             const url = `https://api.mapbox.com/directions/v5/mapbox/driving/${currentLoc.longitude},${currentLoc.latitude};${destination.longitude},${destination.latitude}?geometries=geojson&access_token=${MAPBOX_TOKEN}`;
@@ -839,12 +989,34 @@ export default function RiderDashboard() {
                 // Update duration
                 const durationMins = Math.round(route.duration / 60);
                 setDuration(`${durationMins} min`);
+
+                // EC-FIX: Update estimated_dropoff_time in DB
+                // Only if we have an active delivery and it's been > 60s since last update
+                if (activeDelivery?.id && activeDelivery.status === 'IN_TRANSIT') {
+                    const now = Date.now();
+                    if (now - lastEtaUpdateRef.current > 60000) { // 1 minute throttle
+                        const etaTimestamp = dayjs().add(route.duration, 'second').toISOString();
+
+                        // Fire and forget update
+                        supabase
+                            .from('deliveries')
+                            .update({ estimated_dropoff_time: etaTimestamp })
+                            .eq('id', activeDelivery.id)
+                            .then(({ error }) => {
+                                if (error) console.log('[RiderDashboard] Failed to update ETA:', error);
+                                else {
+                                    console.log('[RiderDashboard] Updated ETA:', etaTimestamp);
+                                    lastEtaUpdateRef.current = now;
+                                }
+                            });
+                    }
+                }
             }
         } catch (error) {
             console.error('Route calculation error:', error);
             // do not clear geometry on error, keep stale route
         }
-    }, [riderLocation, lastLocation, MAPBOX_TOKEN, destination]);
+    }, [riderLocation, lastLocation, MAPBOX_TOKEN, destination, activeDelivery?.id, activeDelivery?.status]);
 
     // Calculate route when location changes
     useEffect(() => {
@@ -946,19 +1118,41 @@ export default function RiderDashboard() {
         setRefreshing(false);
     }, [fetchLocation]);
 
-    const handleNavigate = () => {
+    const handleNavigate = (target: 'PICKUP' | 'DROPOFF' = 'DROPOFF') => {
         if (!nextDelivery) return;
 
-        const scheme = Platform.select({ ios: 'maps:0,0?q=', android: 'geo:0,0?q=' });
-        const latLng = `${nextDelivery.dropoffLat},${nextDelivery.dropoffLng}`;
-        const label = nextDelivery.address;
-        const url = Platform.select({
-            ios: `${scheme}${label}@${latLng}`,
-            android: `${scheme}${latLng}(${label})`
-        });
+        let lat, lng, label;
 
-        if (url) {
-            Linking.openURL(url);
+        if (target === 'PICKUP') {
+            lat = nextDelivery.pickupLat;
+            lng = nextDelivery.pickupLng;
+            label = nextDelivery.pickupAddress || 'Pickup';
+        } else {
+            lat = nextDelivery.dropoffLat;
+            lng = nextDelivery.dropoffLng;
+            label = nextDelivery.address || 'Dropoff';
+        }
+
+        // Check for valid coordinates (not null/undefined and not 0,0)
+        const hasCoords = lat && lng && (lat !== 0 || lng !== 0);
+
+        if (hasCoords) {
+            const latLng = `${lat},${lng}`;
+            const url = Platform.select({
+                ios: `maps:?ll=${latLng}&q=${label}`,
+                android: `geo:${latLng}?q=${latLng}(${label})`
+            });
+            if (url) Linking.openURL(url);
+        } else {
+            // Fallback to address query if coordinates are missing/zero
+            if (label) {
+                const scheme = Platform.select({ ios: 'maps:0,0?q=', android: 'geo:0,0?q=' });
+                const url = Platform.select({
+                    ios: `${scheme}${label}`,
+                    android: `${scheme}${label}`
+                });
+                if (url) Linking.openURL(url);
+            }
         }
     };
 
@@ -1282,8 +1476,10 @@ export default function RiderDashboard() {
                         </View>
                         <View style={styles.gpsStatusInfo}>
                             <Text variant="titleSmall" style={{ fontWeight: 'bold' }}>GPS Tracking</Text>
-                            <Text variant="bodySmall" style={{ color: hasActiveDelivery ? getStatusColor(gpsSource, isBoxOnline) : '#9E9E9E' }}>
-                                {hasActiveDelivery ? getStatusMessage(gpsSource, isBoxOnline) : 'No Active Delivery'}
+                            <Text variant="bodySmall" style={{ color: hasActiveDelivery ? (localPhoneLocation && gpsSource === 'none' ? '#FFC107' : getStatusColor(gpsSource, isBoxOnline)) : '#9E9E9E' }}>
+                                {hasActiveDelivery ?
+                                    (localPhoneLocation && gpsSource === 'none' ? 'Using Phone (Local Fallback)' : getStatusMessage(gpsSource, isBoxOnline))
+                                    : 'No Active Delivery'}
                             </Text>
                         </View>
                         {phoneGpsActive && hasActiveDelivery && (
@@ -1464,27 +1660,59 @@ export default function RiderDashboard() {
 
                             <View style={styles.divider} />
 
-                            <View style={[styles.addressContainer, { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }]}>
-                                <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center' }}>
-                                    <MaterialCommunityIcons name="map-marker" size={20} color={theme.colors.primary} style={{ marginTop: 2, marginRight: 4 }} />
-                                    <Text variant="bodyMedium" style={[styles.address, { flex: 1, marginBottom: 0 }]}>{nextDelivery.address}</Text>
+                            {/* Pickup Section */}
+                            <View style={{ marginBottom: 16 }}>
+                                <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
+                                    <View style={[styles.badge, { backgroundColor: '#E3F2FD', width: 24, height: 24, borderRadius: 12, marginRight: 8 }]}>
+                                        <MaterialCommunityIcons name="package-variant" size={14} color="#2196F3" />
+                                    </View>
+                                    <Text variant="labelSmall" style={{ color: theme.colors.primary, fontWeight: 'bold' }}>PICKUP</Text>
                                 </View>
-                                <IconButton
-                                    icon="navigation"
-                                    mode="contained"
-                                    containerColor={theme.colors.primaryContainer}
-                                    iconColor={theme.colors.primary}
-                                    size={24}
-                                    onPress={handleNavigate}
-                                    style={{ margin: 0, marginLeft: 8 }}
-                                />
+                                <View style={[styles.addressContainer, { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }]}>
+                                    <Text variant="bodyMedium" style={[styles.address, { flex: 1, marginBottom: 0, marginLeft: 0 }]}>
+                                        {nextDelivery.pickupAddress || 'Pickup Address'}
+                                    </Text>
+                                    <IconButton
+                                        icon="navigation"
+                                        mode="contained"
+                                        containerColor={theme.colors.primaryContainer}
+                                        iconColor={theme.colors.primary}
+                                        size={20}
+                                        onPress={() => handleNavigate('PICKUP')}
+                                        style={{ margin: 0, marginLeft: 8 }}
+                                    />
+                                </View>
+                            </View>
+
+                            {/* Dropoff Section */}
+                            <View style={{ marginBottom: 8 }}>
+                                <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
+                                    <View style={[styles.badge, { backgroundColor: '#FFEBEE', width: 24, height: 24, borderRadius: 12, marginRight: 8 }]}>
+                                        <MaterialCommunityIcons name="map-marker" size={14} color="#F44336" />
+                                    </View>
+                                    <Text variant="labelSmall" style={{ color: theme.colors.error, fontWeight: 'bold' }}>DROPOFF</Text>
+                                </View>
+                                <View style={[styles.addressContainer, { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }]}>
+                                    <Text variant="bodyMedium" style={[styles.address, { flex: 1, marginBottom: 0, marginLeft: 0 }]}>
+                                        {nextDelivery.address}
+                                    </Text>
+                                    <IconButton
+                                        icon="navigation"
+                                        mode="contained"
+                                        containerColor={theme.colors.errorContainer}
+                                        iconColor={theme.colors.error}
+                                        size={20}
+                                        onPress={() => handleNavigate('DROPOFF')}
+                                        style={{ margin: 0, marginLeft: 8 }}
+                                    />
+                                </View>
                             </View>
 
 
                             <View style={styles.jobMeta}>
                                 <View style={styles.metaItem}>
                                     <MaterialCommunityIcons name="clock-outline" size={16} color="#666" />
-                                    <Text style={styles.metaText}>ETA: {nextDelivery.time}</Text>
+                                    <Text style={styles.metaText}>ETA: {nextDelivery.estimatedTime || '-- min'}</Text>
                                 </View>
                             </View>
                         </Card.Content>
@@ -1635,7 +1863,35 @@ export default function RiderDashboard() {
 
 
             </ScrollView >
-        </View >
+            {/* Phone Entry Modal */}
+            <PhoneEntryModal
+                visible={showPhoneModal}
+                onDismiss={() => {
+                    setShowPhoneModal(false);
+                    setPendingRequestItem(null);
+                }}
+                onSave={async (newPhone) => {
+                    console.log('[RiderDashboard] Phone saved:', newPhone);
+
+                    // Persist to auth store so riderPhone stays current across renders
+                    const updateUser = (useAuthStore.getState() as any).updateUser;
+                    if (updateUser) updateUser({ phone: newPhone });
+
+                    setShowPhoneModal(false);
+
+                    // Retry accepting the pending order with the new phone
+                    if (pendingRequestItem) {
+                        /* 
+                           Override the closure's stale phone number by passing the new one directly.
+                           The handleAcceptOrder logic has been updated to accept this override.
+                        */
+                        await handleAcceptOrder(pendingRequestItem, newPhone);
+                        setPendingRequestItem(null);
+                    }
+                }}
+                riderId={riderId || ''}
+            />
+        </View>
     );
 }
 
@@ -1989,53 +2245,59 @@ const styles = StyleSheet.create({
     spoofWarning: {
         flexDirection: 'row',
         alignItems: 'center',
-        backgroundColor: '#FEF3C7',
+        padding: 16,
         marginHorizontal: 16,
-        marginTop: 8,
-        padding: 12,
-        borderRadius: 10,
-        borderLeftWidth: 4,
-        borderLeftColor: '#D97706',
+        marginBottom: 16,
+        borderRadius: 12,
+        backgroundColor: '#FBE9E7',
+        borderWidth: 1,
+        borderColor: '#FFCCBC'
     },
     spoofTitle: {
-        color: '#92400E',
+        color: '#D84315',
         fontWeight: 'bold',
-        fontSize: 13,
+        fontSize: 14,
     },
     spoofText: {
-        color: '#B45309',
+        color: '#D84315',
         fontSize: 12,
     },
-    // EC-46: Clock Skew Warning Styles
     clockWarning: {
         flexDirection: 'row',
         alignItems: 'center',
-        backgroundColor: '#DBEAFE',
+        padding: 12,
         marginHorizontal: 16,
-        marginTop: 8,
-        padding: 10,
+        marginBottom: 16,
         borderRadius: 8,
-        gap: 8,
+        backgroundColor: '#E3F2FD',
+        borderWidth: 1,
+        borderColor: '#BBDEFB'
     },
     clockText: {
         flex: 1,
-        color: '#1E40AF',
+        color: '#1565C0',
         fontSize: 12,
+        marginLeft: 8,
     },
-    // EC-10: Photo Queue Warning Styles
     queueWarning: {
         flexDirection: 'row',
         alignItems: 'center',
-        backgroundColor: '#FEF3C7',
+        padding: 12,
         marginHorizontal: 16,
-        marginTop: 8,
-        padding: 10,
+        marginBottom: 8,
         borderRadius: 8,
-        gap: 8,
+        backgroundColor: '#FFF3E0',
+        borderWidth: 1,
+        borderColor: '#FFE0B2'
     },
     queueText: {
-        flex: 1,
-        color: '#B45309',
+        color: '#EF6C00',
         fontSize: 12,
+        marginLeft: 8,
+        fontWeight: '600',
     },
+    badge: {
+        justifyContent: 'center',
+        alignItems: 'center',
+    }
 });

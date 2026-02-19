@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import circle from '@turf/circle';
 import { View, StyleSheet, ScrollView, Image, Dimensions } from 'react-native';
 import { Text, Card, Button, useTheme, Chip, Surface, IconButton } from 'react-native-paper';
 import { useNavigation, useRoute } from '@react-navigation/native';
@@ -129,6 +130,15 @@ export default function DeliveryDetailScreen() {
         }
     };
 
+    const formatStatus = (status: string) => {
+        if (!status) return 'N/A';
+        // Handle "IN_TRANSIT" -> "In Transit"
+        return status
+            .replace(/_/g, ' ')
+            .toLowerCase()
+            .replace(/\b\w/g, (c) => c.toUpperCase());
+    };
+
     useEffect(() => {
         if (MAPBOX_TOKEN) {
             MapboxGL.setAccessToken(MAPBOX_TOKEN);
@@ -166,6 +176,32 @@ export default function DeliveryDetailScreen() {
         fetchRoute();
     }, [MAPBOX_TOKEN, pickupLat, pickupLng, dropoffLat, dropoffLng]);
 
+    // Generate 50m radius circles for geofence visual
+    // Note: radius is in kilometers for turf/circle, so 50m = 0.05km
+    const pickupGeofenceCircle = useMemo(() => {
+        const lat = Number(pickupLat);
+        const lng = Number(pickupLng);
+        console.log('[DeliveryDetail] Pickup Geofence Config:', { lat, lng, valid: !isNaN(lat) && !isNaN(lng) });
+        if (isNaN(lat) || isNaN(lng)) return null;
+        return circle([lng, lat], 0.05, { steps: 64, units: 'kilometers' });
+    }, [pickupLat, pickupLng]);
+
+    const dropoffGeofenceCircle = useMemo(() => {
+        const lat = Number(dropoffLat);
+        const lng = Number(dropoffLng);
+        console.log('[DeliveryDetail] Dropoff Geofence Config:', { lat, lng, valid: !isNaN(lat) && !isNaN(lng) });
+        if (isNaN(lat) || isNaN(lng)) return null;
+        return circle([lng, lat], 0.05, { steps: 64, units: 'kilometers' });
+    }, [dropoffLat, dropoffLng]);
+
+    useEffect(() => {
+        console.log('[DeliveryDetail] Geofence Objects:', {
+            hasPickup: !!pickupGeofenceCircle,
+            hasDropoff: !!dropoffGeofenceCircle
+        });
+        console.log('[DeliveryDetail] Delivery Data Fare:', deliveryData.estimated_fare);
+    }, [pickupGeofenceCircle, dropoffGeofenceCircle, deliveryData]);
+
     return (
         <View style={styles.container}>
             <View style={styles.header}>
@@ -197,7 +233,7 @@ export default function DeliveryDetailScreen() {
                             >
                                 <MapboxGL.Camera
                                     ref={cameraRef}
-                                    zoomLevel={13}
+                                    zoomLevel={15}
                                     centerCoordinate={[(pickupLng + dropoffLng) / 2, (pickupLat + dropoffLat) / 2]}
                                     animationMode={'flyTo'}
                                     animationDuration={2000}
@@ -270,6 +306,45 @@ export default function DeliveryDetailScreen() {
 
                             </MapboxGL.MapView>
 
+                            {/* Geo-fence Visuals */}
+                            {/* Pickup Geo-fence (Blue) */}
+                            {pickupGeofenceCircle && (
+                                <MapboxGL.ShapeSource id="pickup-fence-source" shape={pickupGeofenceCircle}>
+                                    <MapboxGL.FillLayer
+                                        id="pickup-fence-fill"
+                                        style={{
+                                            fillColor: 'rgba(33, 150, 243, 0.4)', // Increased opacity
+                                        }}
+                                    />
+                                    <MapboxGL.LineLayer
+                                        id="pickup-fence-outline"
+                                        style={{
+                                            lineColor: 'rgba(33, 150, 243, 1)', // Solid border
+                                            lineWidth: 2,
+                                        }}
+                                    />
+                                </MapboxGL.ShapeSource>
+                            )}
+
+                            {/* Dropoff Geo-fence (Green) */}
+                            {dropoffGeofenceCircle && (
+                                <MapboxGL.ShapeSource id="dropoff-fence-source" shape={dropoffGeofenceCircle}>
+                                    <MapboxGL.FillLayer
+                                        id="dropoff-fence-fill"
+                                        style={{
+                                            fillColor: 'rgba(76, 175, 80, 0.4)',
+                                        }}
+                                    />
+                                    <MapboxGL.LineLayer
+                                        id="dropoff-fence-outline"
+                                        style={{
+                                            lineColor: 'rgba(76, 175, 80, 1)',
+                                            lineWidth: 2,
+                                        }}
+                                    />
+                                </MapboxGL.ShapeSource>
+                            )}
+
                             {/* Recenter Button */}
                             <Surface style={styles.recenterButton} elevation={4}>
                                 <IconButton
@@ -277,11 +352,32 @@ export default function DeliveryDetailScreen() {
                                     size={24}
                                     onPress={() => {
                                         if (cameraRef.current) {
-                                            cameraRef.current.setCamera({
-                                                centerCoordinate: [(pickupLng + dropoffLng) / 2, (pickupLat + dropoffLat) / 2],
-                                                zoomLevel: 14,
-                                                animationDuration: 1000,
-                                            });
+                                            const pLat = Number(pickupLat);
+                                            const pLng = Number(pickupLng);
+                                            const dLat = Number(dropoffLat);
+                                            const dLng = Number(dropoffLng);
+
+                                            if (!isNaN(pLat) && !isNaN(pLng) && !isNaN(dLat) && !isNaN(dLng)) {
+                                                const maxLat = Math.max(pLat, dLat);
+                                                const minLat = Math.min(pLat, dLat);
+                                                const maxLng = Math.max(pLng, dLng);
+                                                const minLng = Math.min(pLng, dLng);
+
+                                                // Fit bounds: NE, SW, padding, duration
+                                                cameraRef.current.fitBounds(
+                                                    [maxLng, maxLat], // NorthEast
+                                                    [minLng, minLat], // SouthWest
+                                                    [50, 50, 50, 50], // Padding [top, right, bottom, left]
+                                                    1000 // Animation duration
+                                                );
+                                            } else {
+                                                // Fallback if coords invalid
+                                                cameraRef.current.setCamera({
+                                                    centerCoordinate: [(pLng + dLng) / 2, (pLat + dLat) / 2],
+                                                    zoomLevel: 15,
+                                                    animationDuration: 1000,
+                                                });
+                                            }
                                         }
                                     }}
                                 />
@@ -308,7 +404,7 @@ export default function DeliveryDetailScreen() {
                             textStyle={{ color: 'white', fontWeight: 'bold' }}
                             style={{ backgroundColor: getStatusColor(deliveryData.status) }}
                         >
-                            {deliveryData.status.toUpperCase()}
+                            {formatStatus(deliveryData.status)}
                         </Chip>
                     </View>
                     <View style={styles.divider} />
@@ -320,6 +416,12 @@ export default function DeliveryDetailScreen() {
                         <View>
                             <Text variant="labelSmall" style={{ color: '#888' }}>Distance</Text>
                             <Text variant="bodyMedium" style={{ fontWeight: '500' }}>{deliveryData.distance || deliveryData.distance_text || 'N/A'}</Text>
+                        </View>
+                        <View>
+                            <Text variant="labelSmall" style={{ color: '#888' }}>Fare</Text>
+                            <Text variant="bodyMedium" style={{ fontWeight: '500', color: theme.colors.primary }}>
+                                {deliveryData.estimated_fare ? `₱${Number(deliveryData.estimated_fare).toFixed(2)}` : (deliveryData.price && deliveryData.price !== '—' ? deliveryData.price : 'N/A')}
+                            </Text>
                         </View>
                     </View>
                 </Surface>

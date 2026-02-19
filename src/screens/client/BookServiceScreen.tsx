@@ -33,8 +33,9 @@ export default function BookServiceScreen() {
     const navigation = useNavigation<any>();
     const theme = useTheme();
     const insets = useSafeAreaInsets();
-    // EC-Update: Get userId for persistence check
+    // EC-Update: Get userId and name for persistence check and booking
     const userId = useAuthStore((state: any) => state.user?.userId);
+    const userFullName = useAuthStore((state: any) => state.user?.fullName || state.user?.name);
     const MAPBOX_TOKEN = process.env.EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN;
 
     const [pickupText, setPickupText] = useState('');
@@ -554,6 +555,9 @@ export default function BookServiceScreen() {
             dropoffLat: dropoffCoords?.latitude,
             dropoffLng: dropoffCoords?.longitude,
             estimatedCost: routeData?.cost,
+            distance: routeData?.distance, // EC-Fix: Added
+            duration: routeData?.duration, // EC-Fix: Added
+            customerName: userFullName, // EC-Fix: Pass customer name for rider preview
         });
     };
 

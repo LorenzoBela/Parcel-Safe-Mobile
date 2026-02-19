@@ -5,8 +5,13 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import MapboxGL from '../../components/map/MapboxWrapper';
 import dayjs from 'dayjs';
+import utc from 'dayjs/plugin/utc';
+import timezone from 'dayjs/plugin/timezone';
 
-const { width } = Dimensions.get('window');
+dayjs.extend(utc);
+dayjs.extend(timezone);
+
+const PH_TIMEZONE = 'Asia/Manila';
 
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -17,7 +22,6 @@ export default function JobDetailScreen() {
     const insets = useSafeAreaInsets();
     const MAPBOX_TOKEN = process.env.EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN;
 
-    // Get job data from params (or use mock data)
     // Get job data from params
     const jobData = route.params?.job;
 
@@ -74,6 +78,21 @@ export default function JobDetailScreen() {
             customerPhone: jobData.phone,
         });
     };
+    // Helper to ensure time is in PH format
+    const getFormattedTime = (timeStr: string) => {
+        if (!timeStr || timeStr === '--:--') return '--:--';
+
+        // If it matches HH:mm A format, return as is (avoid double shift for legacy data)
+        if (timeStr.match(/^\d{1,2}:\d{2} [AP]M$/)) return timeStr;
+
+        // Parse as UTC (server default) and manually add 8 hours for PH Time
+        // This avoids issues where the timezone plugin might fail to load 'Asia/Manila' data
+        const d = dayjs.utc(timeStr).add(8, 'hour');
+
+        if (!d.isValid()) return timeStr;
+
+        return d.format('h:mm A');
+    };
 
     return (
         <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
@@ -104,13 +123,29 @@ export default function JobDetailScreen() {
                         zoomEnabled={true}
                     >
                         <MapboxGL.Camera
-                            zoomLevel={12}
-                            centerCoordinate={[
-                                (jobData.pickupLng + jobData.dropoffLng) / 2,
-                                (jobData.pickupLat + jobData.dropoffLat) / 2
-                            ]}
+                            defaultSettings={{
+                                centerCoordinate: [
+                                    (jobData.pickupLng + jobData.dropoffLng) / 2,
+                                    (jobData.pickupLat + jobData.dropoffLat) / 2
+                                ],
+                                zoomLevel: 12
+                            }}
+                            bounds={{
+                                ne: [
+                                    Math.max(jobData.pickupLng, jobData.dropoffLng),
+                                    Math.max(jobData.pickupLat, jobData.dropoffLat)
+                                ],
+                                sw: [
+                                    Math.min(jobData.pickupLng, jobData.dropoffLng),
+                                    Math.min(jobData.pickupLat, jobData.dropoffLat)
+                                ],
+                                paddingBottom: 50,
+                                paddingLeft: 50,
+                                paddingRight: 50,
+                                paddingTop: 50
+                            }}
                             animationMode="flyTo"
-                            animationDuration={1000}
+                            animationDuration={2000}
                         />
 
                         {/* Pickup Marker */}
@@ -211,7 +246,7 @@ export default function JobDetailScreen() {
 
                             <View style={styles.detailRow}>
                                 <MaterialCommunityIcons name="clock" size={18} color={theme.colors.onSurfaceVariant} />
-                                <Text variant="bodyMedium" style={{ flex: 1, marginLeft: 8 }}>{jobData.pickupTime}</Text>
+                                <Text variant="bodyMedium" style={{ flex: 1, marginLeft: 8 }}>{getFormattedTime(jobData.pickupTime)}</Text>
                             </View>
                         </Card.Content>
                     </Card>
@@ -243,7 +278,7 @@ export default function JobDetailScreen() {
 
                             <View style={styles.detailRow}>
                                 <MaterialCommunityIcons name="clock" size={18} color={theme.colors.onSurfaceVariant} />
-                                <Text variant="bodyMedium" style={{ flex: 1, marginLeft: 8 }}>{jobData.dropoffTime}</Text>
+                                <Text variant="bodyMedium" style={{ flex: 1, marginLeft: 8 }}>{getFormattedTime(jobData.dropoffTime)}</Text>
                             </View>
                         </Card.Content>
                     </Card>
@@ -251,7 +286,7 @@ export default function JobDetailScreen() {
             </ScrollView>
 
             {/* Bottom Actions */}
-            <Surface style={[styles.bottomActions, { backgroundColor: theme.colors.surface }]} elevation={4}>
+            <Surface style={[styles.bottomActions, { backgroundColor: theme.colors.surface, paddingBottom: Math.max(insets.bottom, 16) }]} elevation={4}>
                 <Button
                     mode="outlined"
                     onPress={() => navigation.goBack()}

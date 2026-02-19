@@ -30,7 +30,6 @@ export type DeliveryStatus =
     | 'SEARCHING'
     | 'ACCEPTED'
     | 'ASSIGNED'
-    | 'PICKED_UP'
     | 'IN_TRANSIT'
     | 'ARRIVED'
     | 'COMPLETED'

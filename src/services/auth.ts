@@ -51,6 +51,7 @@ export type AuthSessionResult = GoogleSignInResult & {
   userId: string;
   role: AuthRole;
   fullName?: string;
+  phone?: string;
 };
 
 const mapRole = (role?: string | null): AuthRole => {
@@ -158,7 +159,7 @@ export const signInWithGoogleAndSyncProfile = async (): Promise<AuthSessionResul
 
       const { data: existingProfile, error: profileError } = await supabase
         .from('profiles')
-        .select('role, full_name')
+        .select('role, full_name, phone_number')
         .eq('id', userId)
         .maybeSingle();
 
@@ -179,7 +180,7 @@ export const signInWithGoogleAndSyncProfile = async (): Promise<AuthSessionResul
             avatar_url: photoFromGoogle,
             updated_at: new Date().toISOString(),
           })
-          .select('role, full_name')
+          .select('role, full_name, phone_number')
           .single();
 
         if (createError) {
@@ -204,6 +205,7 @@ export const signInWithGoogleAndSyncProfile = async (): Promise<AuthSessionResul
         userId,
         role: mapRole(profile?.role),
         fullName: profile?.full_name || fullNameFromGoogle,
+        phone: profile?.phone_number || undefined,
       };
     } catch (error: any) {
       lastError = error;

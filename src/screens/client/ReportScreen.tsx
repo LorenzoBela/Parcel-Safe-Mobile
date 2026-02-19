@@ -5,7 +5,29 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { supabase } from '../../services/supabaseClient';
-import dayjs from 'dayjs';
+/** Format a UTC ISO timestamp to PH-local display using the device clock.
+ *  The device is in Asia/Manila, so native Date handles the conversion. */
+const formatDate = (iso: string) => {
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return 'N/A';
+    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+        + ', '
+        + d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+};
+
+const formatStatus = (status: string): string => {
+    switch (status) {
+        case 'PENDING': return 'Pending';
+        case 'ASSIGNED': return 'Assigned';
+        case 'IN_TRANSIT': return 'In Transit';
+        case 'PICKED_UP': return 'Picked Up';
+        case 'ARRIVED': return 'Arrived';
+        case 'COMPLETED': return 'Delivered';
+        case 'CANCELLED': return 'Cancelled';
+        case 'TAMPERED': return 'Tampered';
+        default: return status.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+    }
+};
 
 const ISSUE_CATEGORIES = [
     'Late Delivery',
@@ -143,8 +165,8 @@ export default function ReportScreen() {
                                 <Card.Content style={styles.orderCardContent}>
                                     <View style={{ flex: 1 }}>
                                         <Text variant="titleSmall" style={{ fontWeight: 'bold' }}>{order.tracking_number || 'Order #' + order.id.slice(0, 8)}</Text>
-                                        <Text variant="bodySmall" numberOfLines={1}>{order.package_description || 'No description'} • {dayjs(order.created_at).format('MMM D, h:mm A')}</Text>
-                                        <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>{order.status}</Text>
+                                        <Text variant="bodySmall" numberOfLines={1}>{order.package_description || 'No description'} • {formatDate(order.created_at)}</Text>
+                                        <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>{formatStatus(order.status)}</Text>
                                     </View>
                                     {selectedOrder === order.id && (
                                         <MaterialCommunityIcons name="check-circle" size={24} color={theme.colors.primary} />

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { View, StyleSheet, Dimensions, TouchableOpacity, Alert, Share, Image, Animated, Easing } from 'react-native';
+import { View, StyleSheet, Dimensions, TouchableOpacity, Alert, Share, Image, Animated, Easing, Linking } from 'react-native';
 import MapboxGL, { isMapboxNativeAvailable, MapFallback } from '../../components/map/MapboxWrapper';
 import { Text, Card, Avatar, Button, IconButton, Surface, useTheme } from 'react-native-paper';
 import { useNavigation, useRoute } from '@react-navigation/native';
@@ -57,7 +57,7 @@ function mapStatusToCancellationStatus(status: string | undefined): DeliveryStat
         case 'ASSIGNED':
             return DeliveryStatus.ASSIGNED;
         case 'PICKED_UP':
-            return DeliveryStatus.PICKED_UP;
+            return DeliveryStatus.IN_TRANSIT;
         case 'IN_TRANSIT':
             return DeliveryStatus.IN_TRANSIT;
         case 'ARRIVED':
@@ -851,18 +851,30 @@ export default function TrackOrderScreen() {
                         <IconButton
                             mode="contained"
                             icon="phone"
-                            containerColor={theme.dark ? '#1A237E' : '#E3F2FD'} // Darker blue for dark mode
+                            containerColor={theme.dark ? '#1A237E' : '#E3F2FD'}
                             iconColor="#2196F3"
                             size={24}
-                            onPress={() => console.log('Call')}
+                            onPress={() => {
+                                if (!riderDetails.phone) {
+                                    Alert.alert('Unavailable', 'Rider phone number is not available yet.');
+                                    return;
+                                }
+                                Linking.openURL(`tel:${riderDetails.phone}`);
+                            }}
                         />
                         <IconButton
                             mode="contained"
                             icon="message-text"
-                            containerColor={theme.dark ? '#1B5E20' : '#E8F5E9'} // Darker green for dark mode
+                            containerColor={theme.dark ? '#1B5E20' : '#E8F5E9'}
                             iconColor="#4CAF50"
                             size={24}
-                            onPress={() => console.log('Message')}
+                            onPress={() => {
+                                if (!riderDetails.phone) {
+                                    Alert.alert('Unavailable', 'Rider phone number is not available yet.');
+                                    return;
+                                }
+                                Linking.openURL(`sms:${riderDetails.phone}`);
+                            }}
                         />
                     </View>
                 </View>

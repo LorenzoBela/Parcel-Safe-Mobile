@@ -297,7 +297,6 @@ export async function markPackageRetrieved(
 export enum DeliveryStatus {
   PENDING = 'PENDING',       // Order placed, no rider assigned
   ASSIGNED = 'ASSIGNED',     // Rider assigned, hasn't picked up
-  PICKED_UP = 'PICKED_UP',   // Package in box, in transit
   IN_TRANSIT = 'IN_TRANSIT', // Rider en route to destination
   ARRIVED = 'ARRIVED',       // Rider at destination
   DELIVERED = 'DELIVERED',   // Handover complete
@@ -353,7 +352,6 @@ export function canCustomerCancel(status: DeliveryStatus): { canCancel: boolean;
     case DeliveryStatus.ASSIGNED:
       return { canCancel: true };
 
-    case DeliveryStatus.PICKED_UP:
     case DeliveryStatus.IN_TRANSIT:
       return {
         canCancel: false,

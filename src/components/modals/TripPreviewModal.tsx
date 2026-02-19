@@ -1,6 +1,6 @@
 import React from 'react';
 import { View, StyleSheet, Modal, Linking, Alert, Platform } from 'react-native';
-import { Text, Button, Surface, useTheme, Divider, IconButton } from 'react-native-paper';
+import { Text, Button, Surface, useTheme, Divider, IconButton, Avatar } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 
 interface TripPreviewModalProps {
@@ -17,6 +17,7 @@ interface TripPreviewModalProps {
         pickupLng: number;
         dropoffLat: number;
         dropoffLng: number;
+        customerName?: string; // EC-Fix: Added
     } | null;
 }
 
@@ -67,6 +68,24 @@ export default function TripPreviewModal({ visible, onDismiss, onStartTrip, trip
                         <Text variant="titleMedium" style={styles.title}>New Request Accepted!</Text>
                         <IconButton icon="close" size={24} onPress={onDismiss} />
                     </View>
+
+                    <Divider style={styles.divider} />
+
+                    {/* Customer Name */}
+                    {tripDetails.customerName && (
+                        <View style={styles.customerContainer}>
+                            <Avatar.Text
+                                size={40}
+                                label={tripDetails.customerName.charAt(0).toUpperCase()}
+                                style={{ backgroundColor: theme.colors.primaryContainer }}
+                                color={theme.colors.onPrimaryContainer}
+                            />
+                            <View style={{ marginLeft: 12 }}>
+                                <Text variant="titleMedium" style={{ fontWeight: 'bold' }}>{tripDetails.customerName}</Text>
+                                <Text variant="bodySmall" style={{ color: theme.colors.outline }}>Customer</Text>
+                            </View>
+                        </View>
+                    )}
 
                     <Divider style={styles.divider} />
 
@@ -165,6 +184,15 @@ const styles = StyleSheet.create({
     },
     detailsContainer: {
         marginBottom: 20,
+    },
+    customerContainer: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingVertical: 10,
+        backgroundColor: '#f9f9f9',
+        borderRadius: 12,
+        paddingHorizontal: 12,
+        marginBottom: 16
     },
     row: {
         flexDirection: 'row',

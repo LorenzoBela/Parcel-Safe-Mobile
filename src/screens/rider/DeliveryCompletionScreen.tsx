@@ -74,7 +74,7 @@ export default function DeliveryCompletionScreen() {
         // If not picked up, target is pickup.
         // If picked up but not arrived/completed, target is dropoff.
         // Logic depends on 'isPickedUp' derived state
-        if (!['PICKED_UP', 'IN_TRANSIT', 'ARRIVED', 'COMPLETED'].includes(status)) {
+        if (!['IN_TRANSIT', 'ARRIVED', 'COMPLETED'].includes(status)) {
             targetLat = delivery.pickup_lat;
             targetLng = delivery.pickup_lng;
         } else {
@@ -94,7 +94,7 @@ export default function DeliveryCompletionScreen() {
     }, [currentLocation, delivery, status]);
 
     const isPickedUp = useMemo(
-        () => ['PICKED_UP', 'IN_TRANSIT', 'COMPLETED'].includes(status),
+        () => ['IN_TRANSIT', 'COMPLETED'].includes(status),
         [status]
     );
     const isArrived = useMemo(() => ['ARRIVED', 'COMPLETED'].includes(status), [status]);
@@ -113,15 +113,17 @@ export default function DeliveryCompletionScreen() {
         if (!requireDeliveryId()) return;
         setIsSaving(true);
         try {
-            const ok = await updateDeliveryStatus(deliveryId!, 'PICKED_UP', {
+            // Set to IN_TRANSIT directly (merging PICKED_UP state)
+            const ok = await updateDeliveryStatus(deliveryId!, 'IN_TRANSIT', {
                 picked_up_at: Date.now(),
                 pickup_confirmed_fallback: true,
+                in_transit_at: Date.now(),
             });
             if (!ok) {
                 Alert.alert('Failed', 'Could not update pickup status.');
                 return;
             }
-            setStatus('PICKED_UP');
+            setStatus('IN_TRANSIT');
         } finally {
             setIsSaving(false);
         }
@@ -131,9 +133,10 @@ export default function DeliveryCompletionScreen() {
         if (!requireDeliveryId()) return;
 
         if (!isPickedUp) {
-            const fallbackDone = await updateDeliveryStatus(deliveryId!, 'PICKED_UP', {
+            const fallbackDone = await updateDeliveryStatus(deliveryId!, 'IN_TRANSIT', {
                 picked_up_at: Date.now(),
                 pickup_confirmed_fallback: true,
+                in_transit_at: Date.now(),
             });
             if (!fallbackDone) {
                 Alert.alert('Failed', 'Could not auto-fix pickup step.');
@@ -162,9 +165,10 @@ export default function DeliveryCompletionScreen() {
         setIsSaving(true);
         try {
             if (!isPickedUp) {
-                const pickupOk = await updateDeliveryStatus(deliveryId!, 'PICKED_UP', {
+                const pickupOk = await updateDeliveryStatus(deliveryId!, 'IN_TRANSIT', {
                     picked_up_at: Date.now(),
                     pickup_confirmed_fallback: true,
+                    in_transit_at: Date.now(),
                 });
                 if (!pickupOk) {
                     Alert.alert('Failed', 'Could not auto-fix pickup step.');

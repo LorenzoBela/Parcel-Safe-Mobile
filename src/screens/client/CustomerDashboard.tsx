@@ -106,6 +106,14 @@ export default function CustomerDashboard() {
         fetchLocation();
     }, [fetchLocation]);
 
+    // Fetch weather when location is available
+    useEffect(() => {
+        if (!deviceCoords) return;
+        fetchWeather(deviceCoords.lat, deviceCoords.lng).then((data) => {
+            if (data) setWeather(data);
+        });
+    }, [deviceCoords]);
+
     const fetchActiveDelivery = useCallback(async () => {
         console.log('Fetching active delivery...');
         if (!authedUser?.userId) return;
@@ -130,7 +138,9 @@ export default function CustomerDashboard() {
                 setActiveDelivery({
                     id: data.id,
                     status: data.status,
-                    eta: data.estimated_dropoff_time ? dayjs(data.estimated_dropoff_time).format('h:mm A') : 'Calculating...',
+                    // ETA logic: if estimated_dropoff_time exists, show formatted time (e.g. "5:30 PM").
+                    // If not, show "Calculating..."
+                    eta: data.estimated_dropoff_time ? dayjs(data.estimated_dropoff_time).format('h:mm A') : null,
                     rider: data.rider?.full_name || 'Finding a rider...',
                     location: data.status === 'PENDING' ? (data.pickup_address || 'Pickup Point') : (data.dropoff_address || 'Dropoff Point')
                 });
@@ -201,6 +211,21 @@ export default function CustomerDashboard() {
             case 'Tampered': return { icon: 'alert-circle', color: theme.colors.error, bg: theme.colors.errorContainer };
             case 'Cancelled': return { icon: 'close', color: theme.colors.onSurfaceVariant, bg: theme.colors.surfaceVariant };
             default: return { icon: 'information', color: theme.colors.secondary, bg: theme.colors.secondaryContainer };
+        }
+    };
+
+    // Helper to format status string (e.g., "IN_TRANSIT" -> "In Transit")
+    const formatStatus = (status: string) => {
+        if (!status) return '';
+        switch (status) {
+            case 'PENDING': return 'Pending';
+            case 'ASSIGNED': return 'Rider Assigned';
+            case 'PICKED_UP': return 'Picked Up';
+            case 'IN_TRANSIT': return 'In Transit';
+            case 'ARRIVED': return 'Arrived';
+            case 'COMPLETED': return 'Delivered';
+            case 'CANCELLED': return 'Cancelled';
+            default: return status.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
         }
     };
 
@@ -312,17 +337,24 @@ export default function CustomerDashboard() {
                         <View style={styles.deliveryHeader}>
                             <View style={styles.deliveryIdContainer}>
                                 <MaterialCommunityIcons name="package-variant" size={20} color={theme.colors.onPrimaryContainer} />
-                                <Text variant="titleSmall" style={{ marginLeft: 8, color: theme.colors.onPrimaryContainer }}>{activeDelivery.id}</Text>
+                                {/* Truncate ID to 8 chars and uppercase for better UI */}
+                                <Text variant="titleSmall" style={{ marginLeft: 8, color: theme.colors.onPrimaryContainer }}>
+                                    {activeDelivery.id.substring(0, 8).toUpperCase()}
+                                </Text>
                             </View>
                             <View style={[styles.statusBadge, { backgroundColor: theme.colors.primary }]}>
-                                <Text style={[styles.statusText, { color: theme.colors.onPrimary }]}>{activeDelivery.status}</Text>
+                                <Text style={[styles.statusText, { color: theme.colors.onPrimary }]}>
+                                    {formatStatus(activeDelivery.status)}
+                                </Text>
                             </View>
                         </View>
 
                         <Card.Content style={styles.deliveryContent}>
                             <View style={styles.deliveryRow}>
                                 <MaterialCommunityIcons name="clock-outline" size={20} color={theme.colors.onSurfaceVariant} />
-                                <Text variant="bodyMedium" style={[styles.deliveryDetail, { color: theme.colors.onSurface }]}>Arriving in {activeDelivery.eta}</Text>
+                                <Text variant="bodyMedium" style={[styles.deliveryDetail, { color: theme.colors.onSurface }]}>
+                                    {activeDelivery.eta ? `Arriving by ${activeDelivery.eta}` : 'Calculating ETA...'}
+                                </Text>
                             </View>
                             <View style={styles.deliveryRow}>
                                 <MaterialCommunityIcons name="map-marker-outline" size={20} color={theme.colors.onSurfaceVariant} />
