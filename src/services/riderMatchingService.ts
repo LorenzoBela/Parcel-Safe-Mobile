@@ -706,6 +706,23 @@ export async function cancelBooking(bookingId: string): Promise<boolean> {
             cancelled_at: Date.now(),
         });
 
+        // Sync to Supabase
+        if (supabase) {
+            const { error } = await supabase
+                .from('deliveries')
+                .update({
+                    status: 'CANCELLED',
+                    updated_at: new Date().toISOString()
+                })
+                .eq('id', bookingId);
+
+            if (error) {
+                console.error('[Booking] Failed to cancel in Supabase:', error);
+            } else {
+                console.log('[Booking] Cancelled booking in Supabase:', bookingId);
+            }
+        }
+
         return true;
     } catch (error) {
         console.error('Error cancelling booking:', error);
@@ -1066,7 +1083,7 @@ export async function checkActiveBookings(userId: string): Promise<any | null> {
                     const createdAt = b.created_at;
                     const now = Date.now();
                     if (b.status === 'ACCEPTED' || (now - createdAt < 10 * 60 * 1000)) {
-                        return {
+                        const candidate = {
                             bookingId: key,
                             customerId: b.customer_id,
                             pickupAddress: b.pickup_address,
@@ -1080,10 +1097,28 @@ export async function checkActiveBookings(userId: string): Promise<any | null> {
                             riderId: b.accepted_by || null,
                             status: b.status === 'SEARCHING' ? 'PENDING' : b.status,
                         };
+
+                        // EC-FIX: Double check with Supabase to ensure it's not a "Zombie" booking
+                        // that was cancelled but failed to update Firebase.
+                        if (supabase) {
+                            const { data: sbData } = await supabase
+                                .from('deliveries')
+                                .select('status')
+                                .eq('id', key)
+                                .maybeSingle();
+
+                            if (sbData && (sbData.status === 'CANCELLED' || sbData.status === 'COMPLETED')) {
+                                console.log('[checkActiveBookings] Ignoring zombie booking:', key);
+                                continue;
+                            }
+                        }
+
+                        return candidate;
                     }
                 }
             }
         }
+
 
         // 2. Check for Active Deliveries (in Supabase/PostgreSQL)
         // These are bookings that have been created or accepted by a rider
@@ -1098,6 +1133,32 @@ export async function checkActiveBookings(userId: string): Promise<any | null> {
 
             if (!error && data && data.length > 0) {
                 const delivery = data[0];
+
+                // EC-FIX: Auto-heal "PENDING" zombies
+                // If status is PENDING in Supabase, valid bookings MUST exist in Firebase pending_bookings and NOT be cancelled.
+                if (delivery.status === 'PENDING') {
+                    try {
+                        const db = getFirebaseDatabase();
+                        const pendingSnapshot = await get(ref(db, `pending_bookings/${delivery.id}`));
+
+                        if (!pendingSnapshot.exists() || pendingSnapshot.val().status === 'CANCELLED') {
+                            console.log('[checkActiveBookings] Found zombie PENDING booking in Supabase. Auto-correcting...', delivery.id);
+
+                            // Auto-heal: data is inconsistent, so we fix the source of truth to match reality (it's gone)
+                            await supabase.from('deliveries').update({
+                                status: 'CANCELLED',
+                                updated_at: new Date().toISOString()
+                            }).eq('id', delivery.id);
+
+                            // Skip this one, it's not active
+                            return null;
+                        }
+                    } catch (e) {
+                        console.error('[checkActiveBookings] Error verifying pending booking:', e);
+                        // Fallback: If we can't verify, we might assume it's valid to be safe, or just return it.
+                    }
+                }
+
                 return {
                     bookingId: delivery.id,
                     riderId: delivery.rider_id,

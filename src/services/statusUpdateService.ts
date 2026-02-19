@@ -10,6 +10,8 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { ref, update, serverTimestamp } from 'firebase/database';
 import { getFirebaseDatabase } from './firebaseClient';
+import { supabase } from './supabaseClient';
+
 
 // Storage keys
 const STORAGE_KEYS = {
@@ -182,6 +184,30 @@ class StatusUpdateService {
                         status_retry_box_id: entry.boxId,
                     });
 
+                    // Sync to Supabase (Source of Truth)
+                    if (supabase) {
+                        try {
+                            const { error: sbError } = await supabase
+                                .from('deliveries')
+                                .update({
+                                    status: entry.status,
+                                    updated_at: new Date().toISOString(),
+                                })
+                                .eq('id', entry.deliveryId);
+
+                            if (sbError) {
+                                console.error('[EC35] Supabase sync failed during retry:', sbError.message);
+                                // Note: We don't fail the entry if Supabase fails but Firebase succeeded,
+                                // because the hardware relies on Firebase. The next retry might fix it 
+                                // if we logic it that way, but for now we prioritize Firebase success.
+                            } else {
+                                console.log('[EC35] Supabase synced during retry:', entry.deliveryId);
+                            }
+                        } catch (sbException) {
+                            console.error('[EC35] Supabase sync exception:', sbException);
+                        }
+                    }
+
                     entry.synced = true;
                     results.success++;
                     console.log('[EC35] Status synced:', entry.deliveryId);
@@ -235,6 +261,22 @@ class StatusUpdateService {
                 manual_override: true,
                 status_retry_box_id: boxId,
             });
+
+            // Sync to Supabase
+            if (supabase) {
+                try {
+                    await supabase
+                        .from('deliveries')
+                        .update({
+                            status: 'COMPLETED',
+                            updated_at: new Date().toISOString()
+                        })
+                        .eq('id', deliveryId);
+                    console.log('[EC35] Manually marked complete in Supabase:', deliveryId);
+                } catch (e) {
+                    console.error('[EC35] Failed to sync manual completion to Supabase:', e);
+                }
+            }
 
             // Remove from queue
             const queue = await this.getQueue();

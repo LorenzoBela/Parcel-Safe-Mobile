@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { View, StyleSheet, Animated, Easing, Alert } from 'react-native';
+import { View, StyleSheet, Animated, Easing, Alert, BackHandler } from 'react-native';
 import { Text, Button, Surface, useTheme, ProgressBar } from 'react-native-paper';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -223,6 +223,20 @@ export default function SearchingRiderScreen() {
             unsubscribeStatus();
         };
     }, [searchFailed, authedUserId, estimatedCost, estimatedFare, shareToken, retryTrigger]);
+
+    // EC-Fix: Intercept back button to ensure proper cancellation
+    useEffect(() => {
+        const backAction = () => {
+            if (!searchFailed) {
+                handleCancel();
+                return true; // Prevent default behavior (which would leave the booking active)
+            }
+            return false; // Allow default back if search failed/cancelled
+        };
+
+        const backHandler = BackHandler.addEventListener('hardwareBackPress', backAction);
+        return () => backHandler.remove();
+    }, [searchFailed]);
 
     const handleCancel = () => {
         Alert.alert(

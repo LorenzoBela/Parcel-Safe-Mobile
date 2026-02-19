@@ -64,8 +64,8 @@ export default function DeliveryDetailScreen() {
                 const { data, error } = await supabase
                     .from('deliveries')
                     .select('*, profiles:customer_id(full_name)')
-                    .eq('id', delivery.id)
-                    .single();
+                    .or(`id.eq.${delivery.id},tracking_number.eq.${delivery.id}`)
+                    .maybeSingle();
 
                 if (error) throw error;
 

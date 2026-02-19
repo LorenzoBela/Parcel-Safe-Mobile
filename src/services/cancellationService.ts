@@ -11,7 +11,8 @@
  */
 
 import { getFirebaseDatabase } from './firebaseClient';
-import { ref, set, serverTimestamp, onValue, off } from 'firebase/database';
+import { ref, set, update, serverTimestamp, onValue, off } from 'firebase/database';
+import { supabase } from './supabaseClient';
 
 // ==================== Constants ====================
 export const RETURN_OTP_VALIDITY_MS = 86400000; // 24 hours
@@ -200,6 +201,31 @@ export async function requestCancellation(
       created_at: serverTimestamp(),
       sent: false,
     });
+
+    // 4. Update delivery status to CANCELLED (Firebase)
+    // IMPORTANT: This ensures the rider is no longer "Active" on this delivery technically, 
+    // although they still need to process the return.
+    // The UI should handle "Return Pending" via checking `cancellations/` or local state if possible,
+    // but for data consistency, the delivery is Cancelled.
+    const deliveryRef = ref(database, `deliveries/${request.deliveryId}/status`);
+    await set(deliveryRef, 'CANCELLED');
+
+    // 5. Sync to Supabase
+    if (supabase) {
+      const { error } = await supabase
+        .from('deliveries')
+        .update({
+          status: 'CANCELLED',
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', request.deliveryId);
+
+      if (error) {
+        console.error('[EC-32] Failed to sync cancellation to Supabase:', error);
+      } else {
+        console.log('[EC-32] Synced cancellation to Supabase:', request.deliveryId);
+      }
+    }
 
     return {
       success: true,
@@ -452,6 +478,34 @@ export async function requestCustomerCancellation(
     // 2. Update delivery status
     const deliveryRef = ref(database, `deliveries/${request.deliveryId}/status`);
     await set(deliveryRef, DeliveryStatus.CANCELLED);
+
+    // 2.1 Update pending_bookings status if it exists (for rider matching)
+    const pendingRef = ref(database, `pending_bookings/${request.deliveryId}`);
+    try {
+      await update(pendingRef, {
+        status: 'CANCELLED',
+        cancelled_at: serverTimestamp(),
+      });
+    } catch (e) {
+      console.log('[Cancellation] Pending booking not found or update failed (non-critical):', e);
+    }
+
+    // 2.2 Sync to Supabase
+    if (supabase) {
+      const { error } = await supabase
+        .from('deliveries')
+        .update({
+          status: 'CANCELLED',
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', request.deliveryId);
+
+      if (error) {
+        console.error('[Cancellation] Failed to sync to Supabase:', error);
+      } else {
+        console.log('[Cancellation] Synced cancellation to Supabase:', request.deliveryId);
+      }
+    }
 
     // 3. Notify rider if one was assigned
     if (assignedRiderId) {
