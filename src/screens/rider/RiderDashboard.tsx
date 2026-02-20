@@ -18,6 +18,7 @@ import LottieView from 'lottie-react-native';
 import { useLocationRedundancy, getStatusMessage, getStatusColor } from '../../hooks/useLocationRedundancy';
 import { subscribeToBattery, BatteryState, subscribeToTamper, TamperState, subscribeToLocation, LocationData, subscribeToKeypad, KeypadState, subscribeToHinge, HingeState, subscribeToBoxState, BoxState, updateBoxState } from '../../services/firebaseClient';
 import { offlineCache, PendingSync } from '../../services/offlineCache';
+import { NetworkStatusBanner } from '../../components';
 import { isSpeedAnomaly, isClockSyncRequired, canAddToPhotoQueue, isGpsStale, SAFETY_CONSTANTS } from '../../services/SafetyLogic';
 import RecallService from '../../services/recallService';
 // NetInfo - conditionally imported to prevent startup crashes
@@ -1495,24 +1496,7 @@ export default function RiderDashboard() {
                     </Surface>
                 )}
                 {/* EC-01/EC-06: Offline Mode Banner */}
-                {isOffline && (
-                    <Surface style={styles.offlineBanner} elevation={3}>
-                        <MaterialCommunityIcons name="wifi-off" size={24} color="white" />
-                        <View style={{ flex: 1, marginLeft: 12 }}>
-                            <Text style={styles.offlineTitle}>OFFLINE MODE</Text>
-                            <Text style={styles.offlineText}>
-                                {pendingSyncs > 0
-                                    ? `${pendingSyncs} action${pendingSyncs > 1 ? 's' : ''} pending sync`
-                                    : 'Working with cached data'}
-                            </Text>
-                        </View>
-                        {pendingSyncs > 0 && (
-                            <View style={styles.syncBadge}>
-                                <Text style={styles.syncBadgeText}>{pendingSyncs}</Text>
-                            </View>
-                        )}
-                    </Surface>
-                )}
+                <NetworkStatusBanner pendingSyncs={pendingSyncs} />
 
                 {/* EC-08: GPS Spoofing Warning */}
                 {gpsSpoofWarning && (
@@ -2299,38 +2283,7 @@ const styles = StyleSheet.create({
         color: 'rgba(255,255,255,0.9)',
         fontSize: 14,
     },
-    // EC-01/EC-06: Offline Mode Styles
-    offlineBanner: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        backgroundColor: '#475569',
-        marginHorizontal: 16,
-        marginTop: 8,
-        padding: 14,
-        borderRadius: 12,
-    },
-    offlineTitle: {
-        color: 'white',
-        fontWeight: 'bold',
-        fontSize: 14,
-    },
-    offlineText: {
-        color: 'rgba(255,255,255,0.8)',
-        fontSize: 12,
-    },
-    syncBadge: {
-        backgroundColor: '#EF4444',
-        width: 24,
-        height: 24,
-        borderRadius: 12,
-        justifyContent: 'center',
-        alignItems: 'center',
-    },
-    syncBadgeText: {
-        color: 'white',
-        fontSize: 12,
-        fontWeight: 'bold',
-    },
+
     // EC-08: GPS Spoofing Warning Styles
     spoofWarning: {
         flexDirection: 'row',

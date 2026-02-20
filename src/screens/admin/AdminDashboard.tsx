@@ -12,6 +12,7 @@ import useAuthStore from '../../store/authStore';
 import { BoxPairingState, isPairingActive, subscribeToRiderPairing } from '../../services/boxPairingService';
 import * as Location from 'expo-location';
 import { fetchWeather, WeatherData } from '../../services/weatherService';
+import { NetworkStatusBanner } from '../../components';
 
 function formatRemainingMs(ms: number): string {
     if (!Number.isFinite(ms) || ms <= 0) return '0m';
@@ -243,6 +244,9 @@ export default function AdminDashboard() {
                     <Text variant="headlineMedium" style={styles.headerTitle}>Admin Overview</Text>
                     <IconButton icon="refresh" size={24} onPress={() => console.log('Refresh')} />
                 </View>
+
+                {/* Network connectivity status */}
+                <NetworkStatusBanner />
 
                 <Surface style={styles.pairingBanner} elevation={1}>
                     <View style={{ flex: 1 }}>

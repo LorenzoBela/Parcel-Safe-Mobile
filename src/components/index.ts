@@ -5,7 +5,7 @@
  */
 
 // Hardware Status Components (EC-21, EC-22, EC-23, EC-25)
-export { 
+export {
     HardwareAlertBanner,
     HardwareAlertList,
 } from './HardwareAlertBanner';
@@ -19,6 +19,9 @@ export {
 // Customer Hardware Components (EC-86)
 export { default as CustomerHardwareBanner } from './CustomerHardwareBanner';
 export { default as CustomerBleUnlockModal } from './CustomerBleUnlockModal';
+
+// Network Status
+export { default as NetworkStatusBanner } from './NetworkStatusBanner';
 
 // Location Components
 export { default as LocationPicker } from './LocationPicker';

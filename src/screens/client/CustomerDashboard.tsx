@@ -7,7 +7,7 @@ import dayjs from 'dayjs';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAppTheme } from '../../context/ThemeContext'; // Import custom hook if needed, or just useTheme from paper
 import * as Location from 'expo-location';
-import { CustomerHardwareBanner } from '../../components';
+import { CustomerHardwareBanner, NetworkStatusBanner } from '../../components';
 import { subscribeToDisplay } from '../../services/firebaseClient';
 import {
     subscribeToCancellation,
@@ -301,6 +301,9 @@ export default function CustomerDashboard() {
                         <Avatar.Text size={50} label={displayName.charAt(0).toUpperCase()} />
                     )}
                 </View>
+
+                {/* Network connectivity status */}
+                <NetworkStatusBanner />
 
                 {/* EC-86: Display failure notification */}
                 <CustomerHardwareBanner displayStatus={displayStatus} />

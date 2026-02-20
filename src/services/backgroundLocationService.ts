@@ -116,44 +116,18 @@ async function writePhoneStatusIfDue(
 
 // ==================== Configuration ====================
 
-/** Tracking phase determines GPS accuracy vs battery trade-off (Uber/Lalamove pattern) */
+/** Tracking phase type — kept for API compatibility but no longer varies behavior */
 export type TrackingPhase = 'IDLE' | 'TRANSIT' | 'ARRIVAL';
-
-const PHASE_CONFIG: Record<TrackingPhase, {
-    accuracy: Location.Accuracy;
-    timeInterval: number;
-    distanceFilter: number;
-    label: string;
-}> = {
-    IDLE: {
-        accuracy: Location.Accuracy.Balanced,
-        timeInterval: 30000,       // 30s — battery saver
-        distanceFilter: 50,        // 50m
-        label: 'Idle — low power',
-    },
-    TRANSIT: {
-        accuracy: Location.Accuracy.Balanced,
-        timeInterval: 5000,        // 5s — standard delivery tracking
-        distanceFilter: 10,        // 10m
-        label: 'In transit',
-    },
-    ARRIVAL: {
-        accuracy: Location.Accuracy.High,
-        timeInterval: 2000,        // 2s — geofence precision
-        distanceFilter: 3,         // 3m
-        label: 'Near destination',
-    },
-};
 
 export const CONFIG = {
     /** Background location task name */
     TASK_NAME: 'background-location-task',
 
-    /** Location update interval (ms) — overridden by phase config */
-    LOCATION_INTERVAL_MS: 5000,
+    /** Location update interval (ms) — aggressive for max accuracy */
+    LOCATION_INTERVAL_MS: 3000, // 3 seconds
 
-    /** Minimum distance before update (meters) — overridden by phase config */
-    DISTANCE_FILTER_M: 10,
+    /** Minimum distance before update (meters) */
+    DISTANCE_FILTER_M: 5, // 5 meters
 
     /** Foreground service notification title */
     NOTIFICATION_TITLE: 'Parcel-Safe Active Delivery',
@@ -161,14 +135,14 @@ export const CONFIG = {
     /** Foreground service notification body */
     NOTIFICATION_BODY: 'Tracking your location for delivery',
 
-    /** Maximum accuracy for power saving (expo-location accuracy level) */
-    ACCURACY: Location.Accuracy.Balanced,
+    /** Maximum accuracy — best the device can offer */
+    ACCURACY: Location.Accuracy.BestForNavigation,
 
-    /** Defer updates until significant movement */
-    DEFERRED_UPDATES_DISTANCE_M: 50,
+    /** Deferred updates disabled — we want real-time */
+    DEFERRED_UPDATES_DISTANCE_M: 0,
 
-    /** Defer updates time interval (ms) */
-    DEFERRED_UPDATES_INTERVAL_MS: 30000,
+    /** Deferred updates disabled */
+    DEFERRED_UPDATES_INTERVAL_MS: 0,
 
     /** Health check interval (ms) */
     HEALTH_CHECK_INTERVAL_MS: 60000,
@@ -544,43 +518,16 @@ class BackgroundLocationManager {
         return this.state.status === 'RUNNING';
     }
 
-    // ==================== Feature 2: Phase-Aware GPS ====================
+    // ==================== Phase API (no-op — max accuracy always) ====================
 
     /**
-     * Change the GPS tracking phase. Adjusts accuracy and frequency.
-     * IDLE: 30s/50m (battery saver) — waiting for orders
-     * TRANSIT: 5s/10m (standard) — riding to pickup/dropoff
-     * ARRIVAL: 2s/3m (high precision) — near destination, geofence check
+     * Set tracking phase. Currently a no-op — GPS always runs at
+     * BestForNavigation / 3s / 5m for maximum accuracy regardless of phase.
+     * Kept for API compatibility with callers.
      */
     async setPhase(phase: TrackingPhase): Promise<void> {
-        if (this.currentPhase === phase) return;
-        const prevPhase = this.currentPhase;
         this.currentPhase = phase;
-
-        // Restart location updates with new config if currently running
-        if (this.state.status === 'RUNNING' && currentBoxId) {
-            const config = PHASE_CONFIG[phase];
-            try {
-                await Location.startLocationUpdatesAsync(CONFIG.TASK_NAME, {
-                    accuracy: config.accuracy,
-                    timeInterval: config.timeInterval,
-                    distanceInterval: config.distanceFilter,
-                    deferredUpdatesInterval: CONFIG.DEFERRED_UPDATES_INTERVAL_MS,
-                    deferredUpdatesDistance: CONFIG.DEFERRED_UPDATES_DISTANCE_M,
-                    foregroundService: {
-                        notificationTitle: CONFIG.NOTIFICATION_TITLE,
-                        notificationBody: config.label,
-                        notificationColor: '#0066FF',
-                    },
-                    activityType: Location.ActivityType.AutomotiveNavigation,
-                    showsBackgroundLocationIndicator: true,
-                    pausesUpdatesAutomatically: false,
-                });
-                console.log(`[EC-15] Phase changed: ${prevPhase} → ${phase} (interval=${config.timeInterval}ms, dist=${config.distanceFilter}m)`);
-            } catch (error) {
-                console.error(`[EC-15] Failed to change phase to ${phase}:`, error);
-            }
-        }
+        // No-op: GPS config is always max accuracy. No restart needed.
     }
 
     /** Get the current tracking phase */
