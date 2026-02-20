@@ -1716,26 +1716,30 @@ export default function RiderDashboard() {
                             </View>
                         </Card.Content>
 
-                        <Card.Actions style={styles.jobActions}>
-                            <Button
-                                mode="outlined"
-                                style={{ flex: 1, marginRight: 8 }}
-                                onPress={() => navigation.navigate('JobDetail', { job: nextDelivery })}
-                                textColor={theme.colors.primary}
-                            >
-                                Details
-                            </Button>
+                        <Card.Content style={styles.jobActions}>
+                            <View style={{ flexDirection: 'row', gap: 12, marginBottom: 12 }}>
+                                <Button
+                                    mode="outlined"
+                                    style={{ flex: 1, borderColor: theme.colors.primary }}
+                                    onPress={() => navigation.navigate('JobDetail', { job: nextDelivery })}
+                                    textColor={theme.colors.primary}
+                                >
+                                    Details
+                                </Button>
+                                <Button
+                                    mode="contained"
+                                    onPress={() => setShowCancelModal(true)}
+                                    buttonColor={theme.colors.error}
+                                    style={{ flex: 1 }}
+                                >
+                                    Cancel
+                                </Button>
+                            </View>
                             <Button
                                 mode="contained"
-                                onPress={() => setShowCancelModal(true)}
-                                buttonColor={theme.colors.error}
-                                style={{ marginRight: 8 }}
-                            >
-                                Cancel
-                            </Button>
-                            <Button
-                                mode="contained"
-                                style={{ flex: 1 }}
+                                style={{ width: '100%', borderRadius: 8 }}
+                                contentStyle={{ height: 56 }}
+                                labelStyle={{ fontSize: 18, fontWeight: 'bold' }}
                                 onPress={() => {
                                     const isPickup = !['PICKED_UP', 'IN_TRANSIT', 'ARRIVED', 'COMPLETED'].includes(activeDelivery.status);
                                     navigation.navigate('Arrival', {
@@ -1749,10 +1753,11 @@ export default function RiderDashboard() {
                                     });
                                 }}
                                 buttonColor={theme.colors.primary}
+                                icon="navigation"
                             >
                                 {['PICKED_UP', 'IN_TRANSIT', 'ARRIVED'].includes(activeDelivery.status) ? 'Resume Trip' : 'Start Trip'}
                             </Button>
-                        </Card.Actions>
+                        </Card.Content>
                     </Card>
                 ) : (
                     <Card style={[styles.jobCard, { backgroundColor: theme.colors.surfaceVariant }]} mode="elevated">

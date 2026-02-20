@@ -455,6 +455,18 @@ export default function DeliveryDetailScreen() {
                     </Card.Content>
                 </Card>
 
+                {/* Pickup Photo */}
+                <Text variant="titleMedium" style={styles.sectionTitle}>Pickup Photo</Text>
+                {
+                    deliveryData.pickupImage || deliveryData.pickup_photo_url ? (
+                        <Card style={styles.imageCard} mode="elevated">
+                            <Image source={{ uri: deliveryData.pickupImage || deliveryData.pickup_photo_url }} style={styles.proofImage} resizeMode="cover" />
+                        </Card>
+                    ) : (
+                        <Text style={{ color: '#888', fontStyle: 'italic', marginBottom: 20 }}>No pickup photo available.</Text>
+                    )
+                }
+
                 {/* Proof of Delivery */}
                 <Text variant="titleMedium" style={styles.sectionTitle}>Proof of Delivery</Text>
                 {

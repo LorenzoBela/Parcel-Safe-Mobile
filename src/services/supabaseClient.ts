@@ -140,6 +140,7 @@ export interface Delivery {
     share_token: string;
     status: 'PENDING' | 'IN_TRANSIT' | 'ARRIVED' | 'COMPLETED' | 'TAMPERED';
     proof_photo_url?: string;
+    pickup_photo_url?: string;
     manual_completion_reason?: string;
     manual_completion_at?: string;
     created_at: string;

@@ -5,16 +5,11 @@ import { useNavigation, useRoute } from '@react-navigation/native';
 import SwipeConfirmButton from '../../components/SwipeConfirmButton';
 import { subscribeToDelivery, updateDeliveryStatus, calculateHaversineDistance, markRiderAvailable, DeliveryRecord } from '../../services/riderMatchingService';
 import useAuthStore from '../../store/authStore';
-import { uploadDeliveryProofPhoto } from '../../services/proofPhotoService';
+import { uploadDeliveryProofPhoto, uploadPickupPhoto } from '../../services/proofPhotoService';
 import { subscribeToLocation, LocationData } from '../../services/firebaseClient';
 
-// Optional expo-image-picker import (may not be available in all environments)
-let ImagePicker: any = null;
-try {
-    ImagePicker = require('expo-image-picker');
-} catch (e) {
-    // ignore
-}
+// Standard import
+import * as ImagePicker from 'expo-image-picker';
 
 interface CompletionRouteParams {
     deliveryId?: string;
@@ -36,6 +31,8 @@ export default function DeliveryCompletionScreen() {
     const [isSaving, setIsSaving] = useState(false);
     const [proofPhotoUri, setProofPhotoUri] = useState<string | null>(null);
     const [proofPhotoUrl, setProofPhotoUrl] = useState<string | null>(null);
+    const [pickupPhotoUri, setPickupPhotoUri] = useState<string | null>(null);
+    const [pickupPhotoUrl, setPickupPhotoUrl] = useState<string | null>(null);
     const [currentLocation, setCurrentLocation] = useState<LocationData | null>(null);
     const [distanceToTarget, setDistanceToTarget] = useState<number | null>(null);
     const [isInsideGeofence, setIsInsideGeofence] = useState(false);
@@ -109,15 +106,52 @@ export default function DeliveryCompletionScreen() {
         return false;
     };
 
+    const handleCapturePickupPhoto = async () => {
+        try {
+            const result = await ImagePicker.launchCameraAsync({
+                mediaTypes: ImagePicker.MediaTypeOptions.Images,
+                quality: 0.7,
+                allowsEditing: false,
+            });
+
+            if (!result.canceled && result.assets?.[0]?.uri) {
+                setPickupPhotoUri(result.assets[0].uri);
+                setPickupPhotoUrl(null);
+            }
+        } catch (e) {
+            Alert.alert('Camera Error', 'Unable to capture pickup photo right now.');
+        }
+    };
+
     const handleFallbackPickup = async () => {
         if (!requireDeliveryId()) return;
+
+        if (!pickupPhotoUri) {
+            Alert.alert('Photo Required', 'Please capture a pickup photo before confirming pickup.');
+            return;
+        }
+
         setIsSaving(true);
         try {
+            // Upload pickup photo first
+            const uploadResult = await uploadPickupPhoto({
+                deliveryId: deliveryId!,
+                boxId: boxId || 'UNKNOWN_BOX',
+                localUri: pickupPhotoUri,
+            });
+
+            if (!uploadResult.success) {
+                Alert.alert('Upload Failed', 'Pickup photo upload failed. Please retry.');
+                return;
+            }
+            setPickupPhotoUrl(uploadResult.url || null);
+
             // Set to IN_TRANSIT directly (merging PICKED_UP state)
             const ok = await updateDeliveryStatus(deliveryId!, 'IN_TRANSIT', {
                 picked_up_at: Date.now(),
                 pickup_confirmed_fallback: true,
                 in_transit_at: Date.now(),
+                pickup_photo_url: uploadResult.url,
             });
             if (!ok) {
                 Alert.alert('Failed', 'Could not update pickup status.');
@@ -235,14 +269,9 @@ export default function DeliveryCompletionScreen() {
     };
 
     const handleCaptureProofPhoto = async () => {
-        if (!ImagePicker) {
-            Alert.alert('Camera Unavailable', 'expo-image-picker is not available in this build.');
-            return;
-        }
-
         try {
             const result = await ImagePicker.launchCameraAsync({
-                mediaTypes: ImagePicker.MediaTypeOptions?.Images || 'Images',
+                mediaTypes: ImagePicker.MediaTypeOptions.Images,
                 quality: 0.7,
                 allowsEditing: false,
             });
@@ -266,8 +295,29 @@ export default function DeliveryCompletionScreen() {
                 <Card.Content>
                     <Text style={styles.cardTitle}>1) Pickup Confirmation</Text>
                     <Text style={styles.cardText}>
-                        {isPickedUp ? 'Package pickup is already recorded.' : 'Swipe to mark package as picked up.'}
+                        {isPickedUp ? 'Package pickup is already recorded.' : 'Take a photo and swipe to confirm pickup.'}
                     </Text>
+                    {!isPickedUp && (
+                        <View style={{ marginTop: 12 }}>
+                            <Button
+                                mode="outlined"
+                                icon="camera"
+                                onPress={handleCapturePickupPhoto}
+                                disabled={isSaving}
+                            >
+                                {pickupPhotoUri ? 'Retake pickup photo' : 'Capture pickup photo (required)'}
+                            </Button>
+                            {pickupPhotoUri ? (
+                                <Text style={{ marginTop: 6, color: '#16a34a' }}>
+                                    ✅ Pickup photo ready{pickupPhotoUrl ? ' (uploaded)' : ''}.
+                                </Text>
+                            ) : (
+                                <Text style={{ marginTop: 6, color: '#6b7280' }}>
+                                    A pickup photo is required to proceed.
+                                </Text>
+                            )}
+                        </View>
+                    )}
                     {!isPickedUp && !isInsideGeofence && (
                         <Text style={{ color: '#ef4444', fontWeight: 'bold', marginTop: 4 }}>
                             ⚠️ Outside Geofence ({distanceToTarget}m). Move closer.
@@ -278,7 +328,7 @@ export default function DeliveryCompletionScreen() {
                             <SwipeConfirmButton
                                 label="Swipe to confirm pickup"
                                 onConfirm={handleFallbackPickup}
-                                disabled={isSaving || !isInsideGeofence}
+                                disabled={isSaving || !isInsideGeofence || !pickupPhotoUri}
                             />
                         </View>
                     )}

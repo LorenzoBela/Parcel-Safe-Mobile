@@ -3,7 +3,7 @@
     "name": "Parcel Safe",
     "slug": "ParcelSafeApp",
     "scheme": "parcelsafe",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "runtimeVersion": {
       "policy": "appVersion"
     },
@@ -37,7 +37,10 @@
         "REQUEST_IGNORE_BATTERY_OPTIMIZATIONS",
         "POST_NOTIFICATIONS",
         "RECEIVE_BOOT_COMPLETED",
-        "VIBRATE"
+        "VIBRATE",
+        "CAMERA",
+        "READ_EXTERNAL_STORAGE",
+        "WRITE_EXTERNAL_STORAGE"
       ],
       "googleServicesFile": "./google-services.json"
     },
@@ -84,7 +87,14 @@
           }
         }
       ],
-      "@react-native-community/datetimepicker"
+      "@react-native-community/datetimepicker",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Allow Parcel Safe to access your photos to attach proof of delivery.",
+          "cameraPermission": "Allow Parcel Safe to access your camera to take proof of delivery photos."
+        }
+      ]
     ],
     "extra": {
       "eas": {

@@ -103,6 +103,7 @@ export default function DeliveryRecordsScreen() {
 
                         // Pass image if available (proof of delivery)
                         image: d.proof_of_delivery_url || d.image_url || null,
+                        pickupImage: d.pickup_photo_url || null, // EC-56: Added pickup photo
                         distance: d.distance_text || (d.distance ? `${d.distance.toFixed(1)} km` : 'N/A'),
                     };
                 });

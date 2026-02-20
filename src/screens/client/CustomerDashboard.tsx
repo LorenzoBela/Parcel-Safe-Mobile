@@ -366,38 +366,40 @@ export default function CustomerDashboard() {
                             </View>
                         </Card.Content>
 
-                        <Card.Actions style={styles.deliveryActions}>
+                        <Card.Content style={styles.deliveryActions}>
                             <Button
                                 mode="contained"
                                 onPress={() => navigation.navigate('TrackOrder', { bookingId: activeDelivery.id })}
                                 icon="map"
-                                style={{ flex: 1, marginRight: 4 }}
-                                contentStyle={{ paddingHorizontal: 0 }}
-                                labelStyle={{ fontSize: 13 }}
+                                style={{ width: '100%', borderRadius: 8, marginBottom: 12 }}
+                                contentStyle={{ height: 56 }}
+                                labelStyle={{ fontSize: 18, fontWeight: 'bold' }}
                             >
-                                Track
+                                Track Order
                             </Button>
-                            <Button
-                                mode="contained-tonal"
-                                onPress={() => navigation.navigate('OTP', { boxId: activeDelivery.id })}
-                                icon="lock-open"
-                                style={{ flex: 1, marginRight: 4 }}
-                                contentStyle={{ paddingHorizontal: 0 }}
-                                labelStyle={{ fontSize: 13 }}
-                            >
-                                Unlock
-                            </Button>
-                            <Button
-                                mode="outlined"
-                                onPress={handleShare}
-                                icon="share-variant"
-                                style={{ flex: 1, borderColor: theme.colors.primary }}
-                                contentStyle={{ paddingHorizontal: 0 }}
-                                labelStyle={{ fontSize: 13 }}
-                            >
-                                Share
-                            </Button>
-                        </Card.Actions>
+                            <View style={{ flexDirection: 'row', gap: 12 }}>
+                                <Button
+                                    mode="contained-tonal"
+                                    onPress={() => navigation.navigate('OTP', { boxId: activeDelivery.id })}
+                                    icon="lock-open"
+                                    style={{ flex: 1, borderRadius: 8 }}
+                                    contentStyle={{ height: 48 }}
+                                    labelStyle={{ fontSize: 14, fontWeight: 'bold' }}
+                                >
+                                    Unlock
+                                </Button>
+                                <Button
+                                    mode="outlined"
+                                    onPress={handleShare}
+                                    icon="share-variant"
+                                    style={{ flex: 1, borderRadius: 8, borderColor: theme.colors.primary }}
+                                    contentStyle={{ height: 48 }}
+                                    labelStyle={{ fontSize: 14, fontWeight: 'bold' }}
+                                >
+                                    Share
+                                </Button>
+                            </View>
+                        </Card.Content>
                     </Card>
                 ) : (
                     <Card style={[styles.deliveryCard, { backgroundColor: theme.colors.surfaceVariant }]} mode="elevated">

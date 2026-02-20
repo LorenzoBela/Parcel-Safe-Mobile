@@ -614,31 +614,28 @@ function Ensure-CMakeLibCppShared {
     if (-not (Test-Path $Path)) { return }
     $raw = Get-Content -Path $Path -Raw
 
-    # Ensure linker flags
     # Sanitize accidental backticks from previous runs
     $raw = $raw -replace '`cmake_minimum_required', 'cmake_minimum_required'
     $raw = $raw -replace '`n', "`n"
 
-    if ($raw -notmatch 'CMAKE_SHARED_LINKER_FLAGS') {
-        $insert = "string(APPEND CMAKE_SHARED_LINKER_FLAGS `" -lc++_shared`")`nstring(APPEND CMAKE_EXE_LINKER_FLAGS `" -lc++_shared`")`n"
-        $raw = [regex]::Replace($raw, '(cmake_minimum_required\([^\)]*\)\s*)', { $args[0].Groups[1].Value + $insert })
-    }
-
-    # Ensure find_library + fallback
+    # 1. Ensure find_library for log (standard) and c++_shared (NDK 27 fix)
     if ($raw -notmatch 'find_library\(CPP_SHARED_LIB c\+\+_shared\)') {
-        $raw = $raw -replace '(find_library\([^\n]*log[^\n]*\)\s*)', "`$1find_library(CPP_SHARED_LIB c++_shared)`n`nif(NOT CPP_SHARED_LIB)`n  set(CPP_SHARED_LIB c++_shared)`nendif()`n"
-        if ($raw -notmatch 'find_library\(CPP_SHARED_LIB c\+\+_shared\)') {
-            $raw = "find_library(CPP_SHARED_LIB c++_shared)`n`nif(NOT CPP_SHARED_LIB)`n  set(CPP_SHARED_LIB c++_shared)`nendif()`n`n" + $raw
+        # If we see LOG_LIB, insert our check after it
+        if ($raw -match 'find_library\([^\n]*log[^\n]*\)') {
+             $raw = $raw -replace '(find_library\([^\n]*log[^\n]*\)\s*)', "`$1`nfind_library(CPP_SHARED_LIB c++_shared)`n`nif(NOT CPP_SHARED_LIB)`n  set(CPP_SHARED_LIB c++_shared)`nendif()`n"
+        } else {
+             # Fallback: insert at top after cmake_minimum_required
+             $raw = [regex]::Replace($raw, '(cmake_minimum_required\([^\)]*\)\s*)', { $args[0].Groups[1].Value + "`nfind_library(CPP_SHARED_LIB c++_shared)`n`nif(NOT CPP_SHARED_LIB)`n  set(CPP_SHARED_LIB c++_shared)`nendif()`n" })
         }
-    } elseif ($raw -notmatch 'if\(NOT CPP_SHARED_LIB\)') {
-        $raw = $raw -replace '(find_library\(CPP_SHARED_LIB c\+\+_shared\)\s*)', "`$1`nif(NOT CPP_SHARED_LIB)`n  set(CPP_SHARED_LIB c++_shared)`nendif()`n"
     }
 
-    # Ensure target_link_options
-    if ($raw -notmatch 'target_link_options\(') {
-        $raw += "`n`ntarget_link_options(${TargetName} PRIVATE `"-lc++_shared`")`n"
-    } elseif ($raw -notmatch 'lc\+\+_shared') {
-        $raw += "`n`ntarget_link_options(${TargetName} PRIVATE `"-lc++_shared`")`n"
+    # 2. Ensure target_link_libraries includes c++_shared
+    # match explicit usage of CPP_SHARED_LIB or c++_shared inside a target_link_libraries call
+    $definesLink = $raw -match "target_link_libraries\s*\(\s*[^\)]*${TargetName}[^\)]*(\$\{CPP_SHARED_LIB\}|c\+\+_shared)"
+    
+    if (-not $definesLink) {
+        # Simply append a new target_link_libraries call at the end to be safe and robust
+        $raw += "`n`ntarget_link_libraries(${TargetName} `$`{CPP_SHARED_LIB})`n"
     }
 
     Set-Content -Path $Path -Value $raw
@@ -804,8 +801,7 @@ function Test-RequiredPatches {
     $patchDir = Join-Path $ProjectRoot "patches"
     $required = @(
         "expo-barcode-scanner+14.0.1.patch",
-        "react-native+0.81.5.patch",
-        "react-native-reanimated+4.2.1.patch"
+        "react-native+0.81.5.patch"
     )
     if (-not (Test-Path $patchDir)) {
         Write-Host "[WARN] patches directory not found: $patchDir" -ForegroundColor DarkYellow
@@ -841,7 +837,14 @@ if (Test-Path $expoCameraPatch) {
 
 # Always reinstall in build directory to ensure correct versions
 Write-Host "  Installing dependencies..." -ForegroundColor Gray
-$nodeModulesExists = Test-Path (Join-Path $PROJECT_ROOT "node_modules")
+
+# Force clean node_modules to avoid ghost patch files or corrupted cache
+$nodeModulesPath = Join-Path $PROJECT_ROOT "node_modules"
+if (Test-Path $nodeModulesPath) {
+    Write-Host "  Removing existing node_modules to ensure clean install..." -ForegroundColor DarkGray
+    Remove-Item -Path $nodeModulesPath -Recurse -Force -ErrorAction SilentlyContinue
+}
+$nodeModulesExists = $false
 
 # Remove stale package-lock.json to ensure npm installs versions from updated package.json
 # (robocopy excludes *.lock files, so the build dir may have a stale lock from a previous run)

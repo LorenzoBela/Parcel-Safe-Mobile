@@ -752,6 +752,9 @@ export interface DeliveryProofState {
     proof_photo_url?: string;
     proof_photo_object_path?: string;
     proof_photo_uploaded_at?: number;
+    pickup_photo_url?: string;
+    pickup_photo_storage_path?: string;
+    pickup_photo_uploaded_at?: number;
 }
 
 /**

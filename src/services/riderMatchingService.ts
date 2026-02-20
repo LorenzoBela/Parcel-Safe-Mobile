@@ -75,6 +75,7 @@ export interface DeliveryRecord {
     accepted_at?: number;
     updated_at?: number;
     proof_photo_url?: string;
+    pickup_photo_url?: string;
     estimated_fare?: number;
 }
 
@@ -301,9 +302,9 @@ export async function createPendingBooking(request: BookingRequest): Promise<boo
                         dropoff_lat: request.dropoffLat,
                         dropoff_lng: request.dropoffLng,
                         dropoff_address: request.dropoffAddress,
-                        estimated_fare: request.estimatedFare,
-                        distance: request.distance, // Persist distance
-                        duration: request.duration, // Persist duration
+                        estimated_fare: Math.round(request.estimatedFare),
+                        distance: request.distance ? Math.round(request.distance) : null, // Persist distance (rounded)
+                        duration: request.duration ? Math.round(request.duration) : null, // Persist duration (rounded)
                         share_token: shareToken,
                         otp_code: otpCode,
                         status: 'PENDING',
@@ -608,9 +609,9 @@ export async function acceptOrder(
                     dropoff_lat: booking.dropoff_lat,
                     dropoff_lng: booking.dropoff_lng,
                     dropoff_address: booking.dropoff_address,
-                    distance: booking.distance, // Persist distance
-                    duration: booking.duration, // Persist duration
-                    estimated_fare: booking.estimated_fare, // Ensure fare is persisted
+                    distance: booking.distance ? Math.round(booking.distance) : null, // Persist distance (rounded)
+                    duration: booking.duration ? Math.round(booking.duration) : null, // Persist duration (rounded)
+                    estimated_fare: booking.estimated_fare ? Math.round(booking.estimated_fare) : 0, // Ensure fare is persisted (rounded)
                     share_token: shareToken,
                     otp_code: generateOTP(),
                     status: 'ASSIGNED',
@@ -827,6 +828,66 @@ export function subscribeToRiderLocation(
     return () => off(riderRef);
 }
 
+/**
+ * One-shot read of a rider's current location from Firebase.
+ * Used to fetch the real position BEFORE map initialization so the camera
+ * doesn't center on the pickup fallback.
+ */
+export async function getInitialRiderLocation(
+    riderId: string
+): Promise<RiderLiveLocation | null> {
+    try {
+        const db = getFirebaseDatabase();
+        const riderRef = ref(db, `/online_riders/${riderId}`);
+        const snapshot = await get(riderRef);
+
+        if (!snapshot.exists()) return null;
+
+        const data = snapshot.val() as any;
+        if (typeof data.lat !== 'number' || typeof data.lng !== 'number') return null;
+
+        return {
+            lat: data.lat,
+            lng: data.lng,
+            lastUpdated: data.last_updated || Date.now(),
+        };
+    } catch (error) {
+        console.warn('[RiderMatching] Failed to fetch initial rider location:', error);
+        return null;
+    }
+}
+
+/**
+ * One-shot read of a box's current location from Firebase.
+ * Used to fetch the real position BEFORE map initialization.
+ */
+export async function getInitialBoxLocation(
+    boxId: string
+): Promise<{ lat: number; lng: number; heading?: number; lastUpdated?: number } | null> {
+    try {
+        const db = getFirebaseDatabase();
+        const boxRef = ref(db, `locations/${boxId}`);
+        const snapshot = await get(boxRef);
+
+        if (!snapshot.exists()) return null;
+
+        const data = snapshot.val();
+        const lat = data.lat ?? data.latitude;
+        const lng = data.lng ?? data.longitude;
+        if (typeof lat !== 'number' || typeof lng !== 'number') return null;
+
+        return {
+            lat,
+            lng,
+            heading: data.heading,
+            lastUpdated: data.last_updated || data.timestamp || Date.now(),
+        };
+    } catch (error) {
+        console.warn('[RiderMatching] Failed to fetch initial box location:', error);
+        return null;
+    }
+}
+
 export async function updateDeliveryStatus(
     deliveryId: string,
     status: string,
@@ -855,6 +916,9 @@ export async function updateDeliveryStatus(
                 }
                 if (additionalFields?.proof_photo_url) {
                     supabaseUpdates.proof_photo_url = additionalFields.proof_photo_url;
+                }
+                if (additionalFields?.pickup_photo_url) {
+                    supabaseUpdates.pickup_photo_url = additionalFields.pickup_photo_url;
                 }
                 const { error: sbError } = await supabase
                     .from('deliveries')

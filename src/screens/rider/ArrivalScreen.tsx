@@ -4,13 +4,7 @@ import { Text, Button, Card, TextInput, Portal, Modal, IconButton } from 'react-
 import { useNavigation, useRoute } from '@react-navigation/native';
 import * as Location from 'expo-location';
 
-// Optional expo-image-picker import (may not be available in all environments)
-let ImagePicker: any = null;
-try {
-    ImagePicker = require('expo-image-picker');
-} catch (e) {
-    console.log('[ArrivalScreen] expo-image-picker not available');
-}
+import * as ImagePicker from 'expo-image-picker';
 
 // Services
 import {
@@ -81,6 +75,7 @@ import {
 import { subscribeToDelivery, updateDeliveryStatus } from '../../services/riderMatchingService';
 import useAuthStore from '../../store/authStore';
 import SwipeConfirmButton from '../../components/SwipeConfirmButton';
+import { uploadPickupPhoto } from '../../services/proofPhotoService';
 
 interface RouteParams {
     deliveryId: string;
@@ -134,6 +129,8 @@ export default function ArrivalScreen() {
     const [displayTime, setDisplayTime] = useState('5:00');
     const [arrivalPhotoUri, setArrivalPhotoUri] = useState<string | null>(null);
     const [isLoading, setIsLoading] = useState(false);
+    const [pickupPhotoUri, setPickupPhotoUri] = useState<string | null>(null);
+    const [pickupPhotoUrl, setPickupPhotoUrl] = useState<string | null>(null);
 
     // EC-12: Address Update State
     const [showAddressModal, setShowAddressModal] = useState(false);
@@ -401,14 +398,39 @@ export default function ArrivalScreen() {
 
         setAutoPickupFallbackApplied(true);
 
+        // Auto-pickup without a photo is blocked; alert rider to take photo first
+        if (!pickupPhotoUri) {
+            Alert.alert(
+                'Photo Required',
+                'Please capture a pickup photo before the system can auto-confirm pickup.',
+                [{ text: 'OK' }]
+            );
+            setAutoPickupFallbackApplied(false);
+            return;
+        }
+
         const applyAutoPickupFallback = async () => {
+            // Upload pickup photo first
+            const uploadResult = await uploadPickupPhoto({
+                deliveryId: params.deliveryId,
+                boxId: params.boxId,
+                localUri: pickupPhotoUri,
+            });
+
+            if (!uploadResult.success) {
+                setAutoPickupFallbackApplied(false);
+                return;
+            }
+            setPickupPhotoUrl(uploadResult.url || null);
+
             const now = Date.now();
             const pickedUpOk = await updateDeliveryStatus(params.deliveryId, 'IN_TRANSIT', {
                 picked_up_at: now,
                 pickup_confirmed_fallback: true,
                 pickup_fallback_reason: 'AUTO_GEOFENCE_EXIT',
-                in_transit_at: now, // Same timestamp as we are skipping straight to transit
+                in_transit_at: now,
                 in_transit_reason: 'AUTO_GEOFENCE_EXIT',
+                pickup_photo_url: uploadResult.url,
             });
 
             if (!pickedUpOk) {
@@ -442,10 +464,29 @@ export default function ArrivalScreen() {
             return true;
         }
 
+        if (!pickupPhotoUri) {
+            Alert.alert('Photo Required', 'Please capture a pickup photo before confirming pickup.');
+            return false;
+        }
+
+        // Upload pickup photo first
+        const uploadResult = await uploadPickupPhoto({
+            deliveryId: params.deliveryId,
+            boxId: params.boxId,
+            localUri: pickupPhotoUri,
+        });
+
+        if (!uploadResult.success) {
+            Alert.alert('Upload Failed', 'Pickup photo upload failed. Please retry.');
+            return false;
+        }
+        setPickupPhotoUrl(uploadResult.url || null);
+
         const success = await updateDeliveryStatus(params.deliveryId, 'IN_TRANSIT', {
             picked_up_at: Date.now(),
             pickup_confirmed_fallback: true,
             in_transit_at: Date.now(),
+            pickup_photo_url: uploadResult.url,
         });
 
         if (!success) {
@@ -455,7 +496,23 @@ export default function ArrivalScreen() {
 
         setDeliveryStatus('IN_TRANSIT');
         return true;
-    }, [isPickupConfirmed, params.deliveryId]);
+    }, [isPickupConfirmed, params.deliveryId, params.boxId, pickupPhotoUri]);
+
+    const handleCapturePickupPhoto = async () => {
+        try {
+            const result = await ImagePicker.launchCameraAsync({
+                mediaTypes: ImagePicker.MediaTypeOptions.Images,
+                quality: 0.7,
+                allowsEditing: false,
+            });
+            if (!result.canceled && result.assets?.[0]?.uri) {
+                setPickupPhotoUri(result.assets[0].uri);
+                setPickupPhotoUrl(null);
+            }
+        } catch (e) {
+            Alert.alert('Camera Error', 'Unable to capture pickup photo right now.');
+        }
+    };
 
     const handlePickupSwipe = async () => {
         if (!isInsideGeoFence) {
@@ -463,18 +520,42 @@ export default function ArrivalScreen() {
             return;
         }
 
-        const success = await updateDeliveryStatus(params.deliveryId, 'IN_TRANSIT', {
-            picked_up_at: Date.now(),
-            in_transit_at: Date.now(), // Set both since we are merging states
-        });
-
-        if (!success) {
-            Alert.alert('Action Failed', 'Unable to confirm pickup right now.');
+        if (!pickupPhotoUri) {
+            Alert.alert('Photo Required', 'Please capture a pickup photo before confirming pickup.');
             return;
         }
 
-        setDeliveryStatus('IN_TRANSIT');
-        Alert.alert('Pickup Confirmed', 'Package marked as picked up. Continue to handover flow.');
+        setIsLoading(true);
+        try {
+            // Upload pickup photo first
+            const uploadResult = await uploadPickupPhoto({
+                deliveryId: params.deliveryId,
+                boxId: params.boxId,
+                localUri: pickupPhotoUri,
+            });
+
+            if (!uploadResult.success) {
+                Alert.alert('Upload Failed', 'Pickup photo upload failed. Please retry.');
+                return;
+            }
+            setPickupPhotoUrl(uploadResult.url || null);
+
+            const success = await updateDeliveryStatus(params.deliveryId, 'IN_TRANSIT', {
+                picked_up_at: Date.now(),
+                in_transit_at: Date.now(),
+                pickup_photo_url: uploadResult.url,
+            });
+
+            if (!success) {
+                Alert.alert('Action Failed', 'Unable to confirm pickup right now.');
+                return;
+            }
+
+            setDeliveryStatus('IN_TRANSIT');
+            Alert.alert('Pickup Confirmed', 'Package marked as picked up. Continue to handover flow.');
+        } finally {
+            setIsLoading(false);
+        }
     };
 
     // EC-04: Lockout countdown timer
@@ -523,22 +604,20 @@ export default function ArrivalScreen() {
 
         let photoUri: string | null = null;
 
-        // Capture arrival photo if ImagePicker is available
-        if (ImagePicker) {
-            try {
-                const photoResult = await ImagePicker.launchCameraAsync({
-                    mediaTypes: ImagePicker.MediaTypeOptions?.Images || 'Images',
-                    quality: 0.6,
-                    allowsEditing: false,
-                });
+        // Capture arrival photo
+        try {
+            const photoResult = await ImagePicker.launchCameraAsync({
+                mediaTypes: ImagePicker.MediaTypeOptions.Images,
+                quality: 0.6,
+                allowsEditing: false,
+            });
 
-                if (!photoResult.canceled && photoResult.assets?.[0]) {
-                    photoUri = photoResult.assets[0].uri;
-                    setArrivalPhotoUri(photoUri);
-                }
-            } catch (e) {
-                console.log('[ArrivalScreen] Camera not available:', e);
+            if (!photoResult.canceled && photoResult.assets?.[0]) {
+                photoUri = photoResult.assets[0].uri;
+                setArrivalPhotoUri(photoUri);
             }
+        } catch (e) {
+            console.log('[ArrivalScreen] Camera error:', e);
         }
 
         // Start wait timer (with or without photo)
@@ -1060,11 +1139,30 @@ export default function ArrivalScreen() {
                 <Card style={styles.actionCard}>
                     <Card.Content>
                         <Text style={styles.actionTitle}>Step 1: Confirm Pickup</Text>
+                        <View style={{ marginTop: 12 }}>
+                            <Button
+                                mode="outlined"
+                                icon="camera"
+                                onPress={handleCapturePickupPhoto}
+                                disabled={isLoading}
+                            >
+                                {pickupPhotoUri ? 'Retake pickup photo' : 'Capture pickup photo (required)'}
+                            </Button>
+                            {pickupPhotoUri ? (
+                                <Text style={{ marginTop: 6, color: '#16a34a', textAlign: 'center' }}>
+                                    ✅ Pickup photo ready{pickupPhotoUrl ? ' (uploaded)' : ''}.
+                                </Text>
+                            ) : (
+                                <Text style={{ marginTop: 6, color: '#6b7280', textAlign: 'center' }}>
+                                    A pickup photo is required to proceed.
+                                </Text>
+                            )}
+                        </View>
                         <View style={{ marginTop: 16 }}>
                             <SwipeConfirmButton
                                 label="Swipe to Pick Up"
                                 onConfirm={handlePickupSwipe}
-                                disabled={!isInsideGeoFence}
+                                disabled={!isInsideGeoFence || !pickupPhotoUri || isLoading}
                             />
                         </View>
                         <Button
@@ -1073,6 +1171,7 @@ export default function ArrivalScreen() {
                             labelStyle={{ fontSize: 12, color: '#666' }}
                             style={{ marginTop: 8, alignSelf: 'center' }}
                             onPress={ensurePickupConfirmed}
+                            disabled={!pickupPhotoUri || isLoading}
                         >
                             Trouble? Use Fallback
                         </Button>

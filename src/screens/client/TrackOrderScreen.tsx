@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { View, StyleSheet, Dimensions, TouchableOpacity, Alert, Share, Image, Animated, Easing, Linking } from 'react-native';
+import { View, StyleSheet, Dimensions, TouchableOpacity, Alert, Share, Image, Animated, Easing, Linking, ActivityIndicator } from 'react-native';
 import MapboxGL, { isMapboxNativeAvailable, MapFallback } from '../../components/map/MapboxWrapper';
 import { Text, Card, Avatar, Button, IconButton, Surface, useTheme } from 'react-native-paper';
 import { useNavigation, useRoute } from '@react-navigation/native';
@@ -9,6 +9,8 @@ import {
     subscribeToDelivery,
     subscribeToRiderLocation,
     subscribeToBoxLocation,
+    getInitialRiderLocation,
+    getInitialBoxLocation,
     getRiderProfile,
     DeliveryRecord,
     RiderProfile,
@@ -131,6 +133,7 @@ export default function TrackOrderScreen() {
     const [riderProfile, setRiderProfile] = useState<RiderProfile | null>(null);
     const [eta, setEta] = useState<number | null>(null);
     const [distanceToTarget, setDistanceToTarget] = useState<number | null>(null); // km
+    const [isMapLoading, setIsMapLoading] = useState(true); // Loading screen until real location is fetched
 
     // EC-SMART-ROUTE: Refs for optimization (borrowed from Web)
     const consecutiveOffRouteCount = useRef(0);
@@ -245,6 +248,35 @@ export default function TrackOrderScreen() {
         // Best-effort flush of queued status updates (EC-35) when tracking UI opens.
         statusUpdateService.processQueue().catch(() => undefined);
     }, []);
+
+    // ONE-SHOT READ: Fetch rider/box real location before map renders
+    useEffect(() => {
+        let cancelled = false;
+        const fetchInitialLocations = async () => {
+            try {
+                const riderId = params.riderId;
+                // Try rider location first
+                if (riderId) {
+                    const riderLoc = await getInitialRiderLocation(riderId);
+                    if (!cancelled && riderLoc) {
+                        setRiderLiveLocation({
+                            lat: riderLoc.lat,
+                            lng: riderLoc.lng,
+                            lastUpdated: riderLoc.lastUpdated,
+                        });
+                        console.log('[TrackOrder] Pre-fetched rider location:', riderLoc.lat, riderLoc.lng);
+                    }
+                }
+            } catch (err) {
+                console.warn('[TrackOrder] Failed to pre-fetch locations:', err);
+            } finally {
+                if (!cancelled) setIsMapLoading(false);
+            }
+        };
+
+        fetchInitialLocations();
+        return () => { cancelled = true; };
+    }, [params.riderId]);
 
     useEffect(() => {
         if (!deliveryId) {
@@ -595,7 +627,16 @@ export default function TrackOrderScreen() {
 
     return (
         <View style={styles.container}>
-            {MAPBOX_TOKEN ? (
+            {/* Loading Overlay — shown until real location is fetched */}
+            {isMapLoading && (
+                <View style={styles.loadingOverlay}>
+                    <ActivityIndicator size="large" color="#10b981" />
+                    <Text style={styles.loadingTitle}>Locating Rider</Text>
+                    <Text style={styles.loadingSubtitle}>Fetching real-time GPS data…</Text>
+                </View>
+            )}
+
+            {MAPBOX_TOKEN && !isMapLoading ? (
                 <MapboxGL.MapView
                     style={styles.map}
                     styleURL={theme.dark ? MapboxGL.StyleURL.Dark : MapboxGL.StyleURL.Light}
@@ -709,13 +750,13 @@ export default function TrackOrderScreen() {
                         />
                     </MapboxGL.ShapeSource>
                 </MapboxGL.MapView>
-            ) : (
+            ) : !isMapLoading ? (
                 <View style={[styles.map, styles.mapFallback]}>
                     <Text style={{ color: theme.colors.onSurfaceVariant }}>
                         Map unavailable: set EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN in .env
                     </Text>
                 </View>
-            )}
+            ) : null}
 
             {/* Header Actions */}
             <View style={[styles.headerActions, { top: 20 + insets.top }]}>
@@ -879,6 +920,16 @@ export default function TrackOrderScreen() {
                         />
                     </View>
                 </View>
+
+                {/* Pickup Photo - Show if available and NOT pending */}
+                {delivery?.pickup_photo_url && delivery?.status !== 'PENDING' && (
+                    <View>
+                        <Card style={{ marginBottom: 12, borderRadius: 12 }} mode="elevated">
+                            <Card.Title title="Pickup Photo" titleVariant="titleSmall" />
+                            <Card.Cover source={{ uri: delivery.pickup_photo_url }} style={{ height: 180 }} />
+                        </Card>
+                    </View>
+                )}
 
                 {/* Completed state: show proof photo and go-home buttons */}
                 {delivery?.status === 'COMPLETED' && (
@@ -1133,5 +1184,24 @@ const styles = StyleSheet.create({
         marginTop: 12,
         borderRadius: 12,
         borderColor: '#EF4444',
+    },
+    loadingOverlay: {
+        ...StyleSheet.absoluteFillObject,
+        zIndex: 100,
+        backgroundColor: 'rgba(2, 6, 23, 0.92)',
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    loadingTitle: {
+        color: '#ffffff',
+        fontSize: 18,
+        fontWeight: '600',
+        marginTop: 16,
+        letterSpacing: 0.5,
+    },
+    loadingSubtitle: {
+        color: '#94a3b8',
+        fontSize: 13,
+        marginTop: 4,
     },
 });
