@@ -55,17 +55,22 @@ export async function triggerDeliverySync(force = false): Promise<SyncResult | n
     lastSyncTime = now;
     console.log('[DeliverySync] Triggering sync at:', SYNC_ENDPOINT);
 
-    const MAX_RETRIES = 3;
+    const MAX_RETRIES = 5; // Increased retries
     let attempt = 0;
 
     try {
         while (attempt < MAX_RETRIES) {
+            attempt++;
             try {
                 const controller = new AbortController();
-                const timeoutId = setTimeout(() => controller.abort(), 15_000); // 15s timeout
+                // Increase timeout to 30s to match Vercel Pro potential max before it cuts off
+                const timeoutId = setTimeout(() => controller.abort(), 30_000);
 
                 const response = await fetch(SYNC_ENDPOINT, {
                     method: 'GET',
+                    headers: {
+                        'Accept': 'application/json',
+                    },
                     signal: controller.signal,
                 });
 
@@ -77,19 +82,27 @@ export async function triggerDeliverySync(force = false): Promise<SyncResult | n
                     return result;
                 }
 
+                // Try to parse the error message from the server if it provided one
+                let serverErrorText = '';
+                try {
+                    const errorData = await response.json();
+                    serverErrorText = errorData.message || errorData.error || response.statusText;
+                } catch (e) {
+                    serverErrorText = await response.text().catch(() => response.statusText);
+                }
+
                 // If 5xx error, throw to trigger retry
                 if (response.status >= 500) {
-                    throw new Error(`Server Error ${response.status}`);
+                    throw new Error(`Server Error ${response.status}: ${serverErrorText}`);
                 }
 
                 // If 4xx error, don't retry, just log and exit
-                console.warn('[DeliverySync] Client Error:', response.status);
+                console.warn(`[DeliverySync] Client Error ${response.status}: ${serverErrorText}`);
                 return null;
 
             } catch (err: any) {
-                attempt++;
                 const isTimeout = err.name === 'AbortError';
-                const errorMessage = isTimeout ? 'Request Timed Out' : err.message;
+                const errorMessage = isTimeout ? 'Request Timed Out (30s)' : err.message;
 
                 console.warn(`[DeliverySync] Attempt ${attempt} failed: ${errorMessage}`);
 
@@ -99,8 +112,8 @@ export async function triggerDeliverySync(force = false): Promise<SyncResult | n
                     return null; // Give up
                 }
 
-                // Exponential backoff: 1s, 2s, 4s...
-                const backoffTime = Math.pow(2, attempt - 1) * 1000;
+                // Exponential backoff: 2s, 4s, 8s, 16s...
+                const backoffTime = Math.pow(2, attempt) * 1000;
                 console.log(`[DeliverySync] Retrying in ${backoffTime}ms...`);
                 await delay(backoffTime);
             }

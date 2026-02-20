@@ -12,7 +12,7 @@ interface AnimatedRiderMarkerProps {
     rotation?: number; // Heading in degrees (0 = North)
 }
 
-const RiderImage = require('../../../assets/Rider.png');
+const RiderImage = require('../../../assets/Rider.jpg');
 
 const AnimatedRiderMarker: React.FC<AnimatedRiderMarkerProps> = ({
     latitude,
@@ -123,17 +123,31 @@ const AnimatedRiderMarker: React.FC<AnimatedRiderMarkerProps> = ({
     }, [latitude, longitude, rotation]);
 
 
-    // Pulse Animation (Legacy from TrackOrderScreen)
-    // We can implement a simple breathing effect using CSS-like view animations or Reanimated later.
-    // For now, let's keep the marker crisp.
+    const annotationRef = useRef<any>(null);
 
     return (
         <MapboxGL.PointAnnotation
+            ref={annotationRef}
             id="rider-marker-animated"
             coordinate={renderCoord}
             anchor={{ x: 0.5, y: 0.5 }}
         >
             <View style={styles.riderMarkerOuter}>
+                {/* Image Container */}
+                <View style={[styles.riderMarkerCircle]}>
+                    <Image
+                        source={RiderImage}
+                        style={styles.riderMarkerImage}
+                        resizeMode="cover"
+                        fadeDuration={0}
+                        onLoad={() => {
+                            if (annotationRef.current) {
+                                annotationRef.current.refresh();
+                            }
+                        }}
+                    />
+                </View>
+
                 {/* Direction Cone - Rotates with Bearing */}
                 <View
                     style={[
@@ -141,21 +155,6 @@ const AnimatedRiderMarker: React.FC<AnimatedRiderMarkerProps> = ({
                         { transform: [{ rotate: `${renderRotation}deg` }] }
                     ]}
                 />
-
-                {/* Image Container - Stays Upright? Or rotates? 
-                    Usually the icon rotates if it's a top-down car. 
-                    If it's a pin, it stays upright. 
-                    Given the "Cone", the cone should rotate. 
-                    The Rider Image (if top down) should rotate.
-                    Let's rotate the whole container for now.
-                */}
-                <View style={[styles.riderMarkerCircle, { transform: [{ rotate: `${renderRotation}deg` }] }]}>
-                    <Image
-                        source={RiderImage}
-                        style={styles.riderMarkerImage}
-                        resizeMode="cover"
-                    />
-                </View>
             </View>
         </MapboxGL.PointAnnotation>
     );
@@ -163,19 +162,19 @@ const AnimatedRiderMarker: React.FC<AnimatedRiderMarkerProps> = ({
 
 const styles = StyleSheet.create({
     riderMarkerOuter: {
-        width: 60,
-        height: 60,
+        width: 56,
+        height: 56,
         justifyContent: 'center',
         alignItems: 'center',
     },
     riderMarkerCircle: {
-        width: 48,
-        height: 48,
-        borderRadius: 24,
+        width: 56,
+        height: 56,
+        borderRadius: 28,
         backgroundColor: 'white',
         justifyContent: 'center',
         alignItems: 'center',
-        borderWidth: 3,
+        borderWidth: 2,
         borderColor: '#0f172a', // Slate-900
         overflow: 'hidden',
         zIndex: 20,
@@ -183,24 +182,26 @@ const styles = StyleSheet.create({
         shadowColor: '#000',
         shadowOffset: { width: 0, height: 2 },
         shadowOpacity: 0.3,
-        shadowRadius: 3,
-        elevation: 5,
+        shadowRadius: 4,
+        elevation: 6,
     },
     riderMarkerImage: {
-        width: '100%',
-        height: '100%',
+        width: 52,
+        height: 52,
+        borderRadius: 26,
     },
     riderDirectionCone: {
         position: 'absolute',
-        top: -6, // Adjusted to peek out top
+        top: -12, // Match track order screen / web
+        left: 22, // 56/2 = 28. 28 - 6 (borderLeftWidth) = 22. This centers the 12px wide base
         width: 0,
         height: 0,
-        borderLeftWidth: 8,
+        borderLeftWidth: 6,
         borderLeftColor: 'transparent',
-        borderRightWidth: 8,
+        borderRightWidth: 6,
         borderRightColor: 'transparent',
-        borderBottomWidth: 12,
-        borderBottomColor: '#0f172a', // Slate-900
+        borderBottomWidth: 10,
+        borderBottomColor: 'rgba(15, 23, 42, 0.9)', // Slate-900/90 (Match Web)
         zIndex: 10,
     },
 });

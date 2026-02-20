@@ -76,7 +76,7 @@ function mapStatusToCancellationStatus(status: string | undefined): DeliveryStat
 
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-const RiderImage = require('../../../assets/Rider.png');
+const RiderImage = require('../../../assets/Rider.jpg');
 
 // Pulse animation component for rider marker
 function PulseRing() {
@@ -104,9 +104,9 @@ function PulseRing() {
         <Animated.View
             style={{
                 position: 'absolute',
-                width: 48,
-                height: 48,
-                borderRadius: 24,
+                width: 56,
+                height: 56,
+                borderRadius: 28,
                 backgroundColor: '#10b981',
                 opacity: pulseAnim,
                 transform: [{ scale: scaleAnim }],
@@ -134,6 +134,8 @@ export default function TrackOrderScreen() {
     const [eta, setEta] = useState<number | null>(null);
     const [distanceToTarget, setDistanceToTarget] = useState<number | null>(null); // km
     const [isMapLoading, setIsMapLoading] = useState(true); // Loading screen until real location is fetched
+    const [isRouteView, setIsRouteView] = useState(false);
+    const [isBottomSheetExpanded, setIsBottomSheetExpanded] = useState(true);
 
     // EC-SMART-ROUTE: Refs for optimization (borrowed from Web)
     const consecutiveOffRouteCount = useRef(0);
@@ -482,75 +484,87 @@ export default function TrackOrderScreen() {
         if (!riderLiveLocation || !routeCoordinates || routeCoordinates.length < 2) return;
 
         const checkRoute = async () => {
-            const { lat, lng } = riderLiveLocation;
+            try {
+                const { lat, lng } = riderLiveLocation;
 
-            // 1. Calculate Distance to current target (pickup or dropoff)
-            const distToDest = distanceTurf(
-                point([lng, lat]),
-                point([routeTarget.longitude, routeTarget.latitude]),
-                { units: 'kilometers' }
-            );
+                // 1. Calculate Distance to current target (pickup or dropoff)
+                const distToDest = distanceTurf(
+                    point([lng, lat]),
+                    point([routeTarget.longitude, routeTarget.latitude]),
+                    { units: 'kilometers' }
+                );
 
-            // Update distance to target for UI display
-            setDistanceToTarget(distToDest);
+                // Update distance to target for UI display
+                setDistanceToTarget(distToDest);
 
-            // 2. Check if Off-Route
-            const fullRouteLine = lineString(routeCoordinates);
-            const riderPoint = point([lng, lat]);
-            const snapped = nearestPointOnLine(fullRouteLine, riderPoint);
-            const distFromRoute = distanceTurf(riderPoint, snapped, { units: 'kilometers' });
+                // 2. Check if Off-Route
+                if (!routeCoordinates || routeCoordinates.length < 2) return;
 
-            if (distFromRoute > OFF_ROUTE_THRESHOLD_KM) {
-                // Rider is Off-Route
-                consecutiveOffRouteCount.current += 1;
+                const fullRouteLine = lineString(routeCoordinates);
+                const riderPoint = point([lng, lat]);
+                const snapped = nearestPointOnLine(fullRouteLine, riderPoint);
+                const distFromRoute = distanceTurf(riderPoint, snapped, { units: 'kilometers' });
 
-                if (
-                    !isRecalculating.current &&
-                    consecutiveOffRouteCount.current >= CONSECUTIVE_OFF_ROUTE_REQUIRED &&
-                    recalcCount.current < MAX_RECALCS &&
-                    distToDest > MIN_DIST_TO_RECALC_KM
-                ) {
-                    const now = Date.now();
-                    // Check Cooldown
-                    if (now - lastRecalcTimestamp.current > RECALC_COOLDOWN_MS) {
-                        console.log("Rider is off route (Mobile)! Recalculating...");
-                        isRecalculating.current = true;
-                        lastRecalcTimestamp.current = now;
-                        consecutiveOffRouteCount.current = 0;
+                if (distFromRoute > OFF_ROUTE_THRESHOLD_KM) {
+                    // Rider is Off-Route
+                    consecutiveOffRouteCount.current += 1;
 
-                        await fetchAndSetRoute(lat, lng, routeTarget.latitude, routeTarget.longitude);
-                        isRecalculating.current = false;
+                    if (
+                        !isRecalculating.current &&
+                        consecutiveOffRouteCount.current >= CONSECUTIVE_OFF_ROUTE_REQUIRED &&
+                        recalcCount.current < MAX_RECALCS &&
+                        distToDest > MIN_DIST_TO_RECALC_KM
+                    ) {
+                        const now = Date.now();
+                        // Check Cooldown
+                        if (now - lastRecalcTimestamp.current > RECALC_COOLDOWN_MS) {
+                            console.log("Rider is off route (Mobile)! Recalculating...");
+                            isRecalculating.current = true;
+                            lastRecalcTimestamp.current = now;
+                            consecutiveOffRouteCount.current = 0;
+
+                            await fetchAndSetRoute(lat, lng, routeTarget.latitude, routeTarget.longitude);
+                            isRecalculating.current = false;
+                        }
+                    }
+                } else {
+                    // On Route - Reset counter
+                    consecutiveOffRouteCount.current = 0;
+
+                    // Update ETA using dynamic slicing (Web logic)
+                    try {
+                        const startPoint = point(routeCoordinates[0]);
+                        const endPoint = point(routeCoordinates[routeCoordinates.length - 1]);
+                        const sliced = lineSlice(snapped, endPoint, fullRouteLine);
+                        const slicedDistanceKm = length(sliced, { units: 'kilometers' });
+
+                        // P1: Compute completed (traveled) segment
+                        try {
+                            const completedSlice = lineSlice(startPoint, snapped, fullRouteLine);
+                            const completedCoords = (completedSlice as any).geometry?.coordinates;
+                            if (completedCoords && completedCoords.length > 1) {
+                                setCompletedRouteCoords(completedCoords);
+                            }
+                        } catch { /* ignore slice errors for completed segment */ }
+
+                        // Calculate ETA based on route's average speed
+                        const distanceMeters = slicedDistanceKm * 1000;
+                        const estimatedSeconds = distanceMeters / routeAverageSpeed.current;
+                        setEta(smoothEta(Math.ceil(estimatedSeconds / 60)));
+                    } catch (err) {
+                        // Fallback to simple distance if slicing fails
+                        const estimatedSeconds = (distToDest * 1000) / routeAverageSpeed.current;
+                        setEta(smoothEta(Math.ceil(estimatedSeconds / 60)));
                     }
                 }
-            } else {
-                // On Route - Reset counter
-                consecutiveOffRouteCount.current = 0;
-
-                // Update ETA using dynamic slicing (Web logic)
-                try {
-                    const startPoint = point(routeCoordinates[0]);
-                    const endPoint = point(routeCoordinates[routeCoordinates.length - 1]);
-                    const sliced = lineSlice(snapped, endPoint, fullRouteLine);
-                    const slicedDistanceKm = length(sliced, { units: 'kilometers' });
-
-                    // P1: Compute completed (traveled) segment
-                    try {
-                        const completedSlice = lineSlice(startPoint, snapped, fullRouteLine);
-                        const completedCoords = (completedSlice as any).geometry?.coordinates;
-                        if (completedCoords && completedCoords.length > 1) {
-                            setCompletedRouteCoords(completedCoords);
-                        }
-                    } catch { /* ignore slice errors for completed segment */ }
-
-                    // Calculate ETA based on route's average speed
-                    const distanceMeters = slicedDistanceKm * 1000;
-                    const estimatedSeconds = distanceMeters / routeAverageSpeed.current;
-                    setEta(smoothEta(Math.ceil(estimatedSeconds / 60)));
-                } catch (err) {
-                    // Fallback to simple distance if slicing fails
-                    const estimatedSeconds = (distToDest * 1000) / routeAverageSpeed.current;
-                    setEta(smoothEta(Math.ceil(estimatedSeconds / 60)));
-                }
+            } catch (err) {
+                console.warn('Turf routing calculation error:', err);
+                // Fallback to direct distance if Turf crashes to avoid blank white screen
+                const distToDestFallback = Math.sqrt(
+                    Math.pow(riderLiveLocation.lat - routeTarget.latitude, 2) +
+                    Math.pow(riderLiveLocation.lng - routeTarget.longitude, 2)
+                ) * 111; // Approx km
+                setDistanceToTarget(distToDestFallback);
             }
         };
 
@@ -675,34 +689,24 @@ export default function TrackOrderScreen() {
                         </MapboxGL.ShapeSource>
                     )}
 
-                    {/* Box Marker */}
-                    <MapboxGL.PointAnnotation
-                        id="box-marker"
-                        coordinate={[boxLocation.longitude, boxLocation.latitude]}
-                        title="Your Parcel"
-                    >
-                        <View style={styles.markerContainer}>
-                            <Avatar.Icon size={40} icon="package-variant" style={{ backgroundColor: 'orange' }} />
-                        </View>
-                    </MapboxGL.PointAnnotation>
-
-                    {/* Rider Marker — only show when we have real location data */}
-                    {hasLiveLocation && (
+                    {/* Box Marker - Only show if not picked up yet */}
+                    {!isPickedUp && (
                         <MapboxGL.PointAnnotation
-                            id="rider-marker"
-                            coordinate={[riderMarkerLocation.longitude, riderMarkerLocation.latitude]}
-                            title="Rider"
+                            id="box-marker"
+                            coordinate={[pickupLocation.longitude, pickupLocation.latitude]}
+                            title="Pickup"
                         >
-                            <View style={styles.riderMarkerOuter}>
-                                <PulseRing />
-                                <View style={styles.riderMarkerCircle}>
-                                    <Image source={RiderImage} style={styles.riderMarkerImage} />
-                                </View>
-                                {/* Direction triangle */}
-                                <View style={styles.riderDirectionCone} />
+                            <View style={styles.markerContainer}>
+                                <Avatar.Icon size={40} icon="package-variant" style={{ backgroundColor: 'orange' }} />
                             </View>
                         </MapboxGL.PointAnnotation>
                     )}
+
+                    {/* Rider Marker — Always show, uses fallback before live data arrives */}
+                    <AnimatedRiderMarker
+                        latitude={riderMarkerLocation.latitude}
+                        longitude={riderMarkerLocation.longitude}
+                    />
 
                     {/* Destination Marker */}
                     <MapboxGL.PointAnnotation
@@ -769,15 +773,47 @@ export default function TrackOrderScreen() {
             <View style={[styles.recenterActions, { top: 20 + insets.top }]}>
                 <Surface style={[styles.iconButtonSurface, { backgroundColor: theme.colors.surface }]} elevation={2}>
                     <IconButton
-                        icon="crosshairs-gps"
+                        icon={isRouteView ? "crosshairs-gps" : "map-search-outline"}
                         size={24}
                         iconColor={theme.colors.primary}
                         onPress={() => {
-                            cameraRef.current?.setCamera({
-                                centerCoordinate: [riderMarkerLocation.longitude, riderMarkerLocation.latitude],
-                                zoomLevel: 15,
-                                animationDuration: 1000,
-                            });
+                            if (isRouteView) {
+                                setIsRouteView(false);
+                                cameraRef.current?.setCamera({
+                                    centerCoordinate: [riderMarkerLocation.longitude, riderMarkerLocation.latitude],
+                                    zoomLevel: 15,
+                                    animationDuration: 1000,
+                                });
+                            } else {
+                                setIsRouteView(true);
+                                if (routeCoordinates && routeCoordinates.length > 0) {
+                                    const lats = routeCoordinates.map(c => c[1]);
+                                    const lngs = routeCoordinates.map(c => c[0]);
+                                    const minLat = Math.min(...lats);
+                                    const maxLat = Math.max(...lats);
+                                    const minLng = Math.min(...lngs);
+                                    const maxLng = Math.max(...lngs);
+
+                                    cameraRef.current?.fitBounds(
+                                        [maxLng, maxLat],
+                                        [minLng, minLat],
+                                        50,
+                                        1000
+                                    );
+                                } else {
+                                    // Fallback if no route coords yet
+                                    const maxLng = Math.max(riderMarkerLocation.longitude, destination.longitude);
+                                    const maxLat = Math.max(riderMarkerLocation.latitude, destination.latitude);
+                                    const minLng = Math.min(riderMarkerLocation.longitude, destination.longitude);
+                                    const minLat = Math.min(riderMarkerLocation.latitude, destination.latitude);
+                                    cameraRef.current?.fitBounds(
+                                        [maxLng, maxLat],
+                                        [minLng, minLat],
+                                        50,
+                                        1000
+                                    );
+                                }
+                            }
                         }}
                     />
                 </Surface>
@@ -785,244 +821,258 @@ export default function TrackOrderScreen() {
 
             {/* Bottom Sheet Info */}
             <View style={[styles.bottomSheet, { backgroundColor: theme.colors.surface, paddingBottom: 24 + insets.bottom }]}>
-                <View style={[styles.handleBar, { backgroundColor: theme.colors.outline }]} />
+                <TouchableOpacity onPress={() => setIsBottomSheetExpanded(!isBottomSheetExpanded)} activeOpacity={0.7}>
+                    <View style={[styles.handleBar, { backgroundColor: theme.colors.outline }]} />
 
-                <View style={styles.statusHeader}>
-                    <View style={{ flex: 1 }}>
-                        {delivery?.status === 'COMPLETED' ? (
-                            <Text variant="titleLarge" style={{ fontWeight: 'bold', color: '#4CAF50' }}>Delivery Complete!</Text>
-                        ) : delivery?.status === 'TAMPERED' ? (
-                            <Text variant="titleLarge" style={{ fontWeight: 'bold', color: theme.colors.error }}>Security Alert</Text>
-                        ) : cancellation && delivery?.status === 'CANCELLED' ? (
-                            <Text variant="titleLarge" style={{ fontWeight: 'bold', color: theme.colors.error }}>Delivery Cancelled</Text>
-                        ) : (
-                            <Text variant="titleLarge" style={{ fontWeight: 'bold', color: theme.colors.onSurface }}>
-                                {delivery?.status === 'ARRIVED' ? 'Rider Arrived' : (isPickedUp ? 'Delivery In Progress' : 'Heading to Pickup')}
-                            </Text>
-                        )}
-
-                        {delivery?.status === 'COMPLETED' ? (
-                            <Text variant="bodyMedium" style={{ color: theme.colors.onSurfaceVariant }}>
-                                Your package has been delivered successfully.
-                            </Text>
-                        ) : delivery?.status === 'TAMPERED' ? (
-                            <Text variant="bodyMedium" style={{ color: theme.colors.error }}>
-                                Tampering was detected on the delivery box. Contact support immediately.
-                            </Text>
-                        ) : cancellation && delivery?.status === 'CANCELLED' ? (
-                            <Text variant="bodyMedium" style={{ color: theme.colors.onSurfaceVariant }}>
-                                Reason: {formatCancellationReason(cancellation.reason)}
-                            </Text>
-                        ) : (
-                            <Text variant="bodyMedium" style={{ color: theme.colors.onSurfaceVariant }}>
-                                {delivery?.status === 'PICKED_UP' ? 'Package picked up - rider is on the way'
-                                    : delivery?.status === 'IN_TRANSIT' ? 'Your package is in transit'
-                                        : delivery?.status === 'ARRIVED' ? 'Rider has arrived at your location'
-                                            : delivery?.status === 'ASSIGNED' ? 'Rider is heading to pickup'
-                                                : 'On the way to your location'}
-                            </Text>
-                        )}
-
-                        {/* EC-86: Display hint when keypad unavailable */}
-                        {displayStatus === 'FAILED' && !isTerminalState && (
-                            <Text variant="bodySmall" style={{ color: theme.colors.error, marginTop: 4 }}>
-                                Keypad display unavailable - use app to unlock
-                            </Text>
-                        )}
-                    </View>
-                    {!isTerminalState && !cancellation && (
-                        <Surface style={styles.etaBadge} elevation={0}>
-                            <Text style={{ color: 'white', fontWeight: 'bold' }}>
-                                {eta !== null ? `${eta} min` : 'Calculating...'}
-                            </Text>
-                            <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 10 }}>
-                                {isPickedUp ? 'to you' : 'to pickup'}
-                            </Text>
-                            {distanceToTarget !== null && (
-                                <Text style={{ color: 'rgba(255,255,255,0.85)', fontSize: 11, marginTop: 2, fontWeight: '600' }}>
-                                    {distanceToTarget < 1
-                                        ? `${Math.round(distanceToTarget * 1000)}m away`
-                                        : `${distanceToTarget.toFixed(1)}km away`}
+                    <View style={styles.statusHeader}>
+                        <View style={{ flex: 1 }}>
+                            {delivery?.status === 'COMPLETED' ? (
+                                <Text variant="titleLarge" style={{ fontWeight: 'bold', color: '#4CAF50' }}>Delivery Complete!</Text>
+                            ) : delivery?.status === 'TAMPERED' ? (
+                                <Text variant="titleLarge" style={{ fontWeight: 'bold', color: theme.colors.error }}>Security Alert</Text>
+                            ) : cancellation && delivery?.status === 'CANCELLED' ? (
+                                <Text variant="titleLarge" style={{ fontWeight: 'bold', color: theme.colors.error }}>Delivery Cancelled</Text>
+                            ) : (
+                                <Text variant="titleLarge" style={{ fontWeight: 'bold', color: theme.colors.onSurface }}>
+                                    {delivery?.status === 'ARRIVED' ? 'Rider Arrived' : (isPickedUp ? 'Delivery In Progress' : 'Heading to Pickup')}
                                 </Text>
                             )}
-                        </Surface>
-                    )}
-                    {delivery?.status === 'COMPLETED' && (
-                        <MaterialCommunityIcons name="check-circle" size={48} color="#4CAF50" />
-                    )}
-                    {delivery?.status === 'TAMPERED' && (
-                        <MaterialCommunityIcons name="alert-circle" size={48} color={theme.colors.error} />
-                    )}
-                </View>
 
-                {/* EC-32: Cancellation Details & Return OTP */}
-                {cancellation && delivery?.status === 'CANCELLED' && (
-                    <Surface style={[styles.cancellationCard, { backgroundColor: theme.colors.errorContainer }]} elevation={1}>
-                        <View style={styles.cancellationHeader}>
-                            <MaterialCommunityIcons name="alert-circle-outline" size={24} color={theme.colors.error} />
-                            <Text style={{ marginLeft: 8, color: theme.colors.onSurface, fontWeight: 'bold' }}>Return Authorization</Text>
-                        </View>
-                        <Text style={{ marginBottom: 12, color: theme.colors.onSurfaceVariant }}>
-                            Please provide this OTP to the rider to retrieve your package.
-                        </Text>
+                            <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4 }}>
+                                <MaterialCommunityIcons
+                                    name={isBottomSheetExpanded ? "chevron-down" : "chevron-up"}
+                                    size={16}
+                                    color={theme.colors.onSurfaceVariant}
+                                    style={{ marginRight: 6 }}
+                                />
+                                {delivery?.status === 'COMPLETED' ? (
+                                    <Text variant="bodyMedium" style={{ color: theme.colors.onSurfaceVariant }}>
+                                        Your package has been delivered successfully.
+                                    </Text>
+                                ) : delivery?.status === 'TAMPERED' ? (
+                                    <Text variant="bodyMedium" style={{ color: theme.colors.error }}>
+                                        Tampering was detected on the delivery box. Contact support immediately.
+                                    </Text>
+                                ) : cancellation && delivery?.status === 'CANCELLED' ? (
+                                    <Text variant="bodyMedium" style={{ color: theme.colors.onSurfaceVariant }}>
+                                        Reason: {formatCancellationReason(cancellation.reason)}
+                                    </Text>
+                                ) : (
+                                    <Text variant="bodyMedium" style={{ color: theme.colors.onSurfaceVariant }}>
+                                        {delivery?.status === 'PICKED_UP' ? 'Package picked up - rider is on the way'
+                                            : delivery?.status === 'IN_TRANSIT' ? 'Your package is in transit'
+                                                : delivery?.status === 'ARRIVED' ? 'Rider has arrived at your location'
+                                                    : delivery?.status === 'ASSIGNED' ? 'Rider is heading to pickup'
+                                                        : 'On the way to your location'}
+                                    </Text>
+                                )}
+                            </View>
 
-                        <TouchableOpacity onPress={copyReturnOtp} activeOpacity={0.7}>
-                            <Surface style={styles.otpContainer} elevation={2}>
-                                <Text variant="displaySmall" style={{ letterSpacing: 4, fontWeight: 'bold', color: theme.colors.primary }}>
-                                    {cancellation.returnOtp}
+                            {/* EC-86: Display hint when keypad unavailable */}
+                            {displayStatus === 'FAILED' && !isTerminalState && (
+                                <Text variant="bodySmall" style={{ color: theme.colors.error, marginTop: 4 }}>
+                                    Keypad display unavailable - use app to unlock
                                 </Text>
-                                <MaterialCommunityIcons name="content-copy" size={20} color={theme.colors.primary} style={{ position: 'absolute', right: 16 }} />
-                            </Surface>
-                        </TouchableOpacity>
-                    </Surface>
-                )}
-
-                <View style={[styles.divider, { backgroundColor: theme.colors.outlineVariant }]} />
-
-                <View style={styles.riderInfo}>
-                    <Avatar.Image size={50} source={{ uri: riderDetails.avatar }} />
-                    <View style={{ flex: 1, marginLeft: 16 }}>
-                        <Text variant="titleMedium" style={{ fontWeight: 'bold', color: theme.colors.onSurface }}>{riderDetails.name}</Text>
-                        <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>{riderDetails.vehicle}</Text>
-                        <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4 }}>
-                            <MaterialCommunityIcons name="star" size={16} color="#FFC107" />
-                            <Text variant="labelSmall" style={{ marginLeft: 4, color: theme.colors.onSurface }}>{riderDetails.rating}</Text>
+                            )}
                         </View>
-                    </View>
-                    <View style={styles.actionButtons}>
-                        <IconButton
-                            mode="contained"
-                            icon="phone"
-                            containerColor={theme.dark ? '#1A237E' : '#E3F2FD'}
-                            iconColor="#2196F3"
-                            size={24}
-                            onPress={() => {
-                                if (!riderDetails.phone) {
-                                    Alert.alert('Unavailable', 'Rider phone number is not available yet.');
-                                    return;
-                                }
-                                Linking.openURL(`tel:${riderDetails.phone}`);
-                            }}
-                        />
-                        <IconButton
-                            mode="contained"
-                            icon="message-text"
-                            containerColor={theme.dark ? '#1B5E20' : '#E8F5E9'}
-                            iconColor="#4CAF50"
-                            size={24}
-                            onPress={() => {
-                                if (!riderDetails.phone) {
-                                    Alert.alert('Unavailable', 'Rider phone number is not available yet.');
-                                    return;
-                                }
-                                Linking.openURL(`sms:${riderDetails.phone}`);
-                            }}
-                        />
-                    </View>
-                </View>
-
-                {/* Pickup Photo - Show if available and NOT pending */}
-                {delivery?.pickup_photo_url && delivery?.status !== 'PENDING' && (
-                    <View>
-                        <Card style={{ marginBottom: 12, borderRadius: 12 }} mode="elevated">
-                            <Card.Title title="Pickup Photo" titleVariant="titleSmall" />
-                            <Card.Cover source={{ uri: delivery.pickup_photo_url }} style={{ height: 180 }} />
-                        </Card>
-                    </View>
-                )}
-
-                {/* Completed state: show proof photo and go-home buttons */}
-                {delivery?.status === 'COMPLETED' && (
-                    <View>
-                        {delivery?.proof_photo_url && (
-                            <Card style={{ marginBottom: 12, borderRadius: 12 }} mode="elevated">
-                                <Card.Title title="Proof of Delivery" titleVariant="titleSmall" />
-                                <Card.Cover source={{ uri: delivery.proof_photo_url }} style={{ height: 180 }} />
-                            </Card>
+                        {!isTerminalState && !cancellation && (
+                            <Surface style={styles.etaBadge} elevation={0}>
+                                <Text style={{ color: 'white', fontWeight: 'bold' }}>
+                                    {eta !== null ? `${eta} min` : 'Calculating...'}
+                                </Text>
+                                <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 10 }}>
+                                    {isPickedUp ? 'to you' : 'to pickup'}
+                                </Text>
+                                {distanceToTarget !== null && (
+                                    <Text style={{ color: 'rgba(255,255,255,0.85)', fontSize: 11, marginTop: 2, fontWeight: '600' }}>
+                                        {distanceToTarget < 1
+                                            ? `${Math.round(distanceToTarget * 1000)}m away`
+                                            : `${distanceToTarget.toFixed(1)}km away`}
+                                    </Text>
+                                )}
+                            </Surface>
                         )}
-                        <Button
-                            mode="contained"
-                            style={styles.viewOtpBtn}
-                            icon="home"
-                            onPress={() => navigation.navigate('Home')}
-                        >
-                            Back to Home
-                        </Button>
-                        <Button
-                            mode="outlined"
-                            style={{ marginTop: 8, borderRadius: 12 }}
-                            icon="history"
-                            onPress={() => navigation.navigate('DeliveryLog')}
-                        >
-                            View Delivery History
-                        </Button>
+                        {delivery?.status === 'COMPLETED' && (
+                            <MaterialCommunityIcons name="check-circle" size={48} color="#4CAF50" />
+                        )}
+                        {delivery?.status === 'TAMPERED' && (
+                            <MaterialCommunityIcons name="alert-circle" size={48} color={theme.colors.error} />
+                        )}
                     </View>
-                )}
+                </TouchableOpacity>
 
-                {/* Tampered state: show support button */}
-                {delivery?.status === 'TAMPERED' && (
-                    <View>
-                        <Button
-                            mode="contained"
-                            style={styles.viewOtpBtn}
-                            icon="headset"
-                            buttonColor={theme.colors.error}
-                            onPress={() => Alert.alert('Support', 'Please contact support at support@parcel-safe.app or call +63 XXX XXX XXXX.')}
-                        >
-                            Contact Support
-                        </Button>
-                        <Button
-                            mode="outlined"
-                            style={{ marginTop: 8, borderRadius: 12 }}
-                            icon="home"
-                            onPress={() => navigation.navigate('Home')}
-                        >
-                            Back to Home
-                        </Button>
-                    </View>
-                )}
-
-                {/* Active delivery actions - only show when NOT in terminal state */}
-                {!isTerminalState && (
+                {isBottomSheetExpanded && (
                     <>
-                        <Button
-                            mode="outlined"
-                            style={styles.cancelBtn}
-                            icon="share-variant"
-                            onPress={handleShareTracking}
-                        >
-                            Share Tracking Link
-                        </Button>
+                        {/* EC-32: Cancellation Details & Return OTP */}
+                        {cancellation && delivery?.status === 'CANCELLED' && (
+                            <Surface style={[styles.cancellationCard, { backgroundColor: theme.colors.errorContainer }]} elevation={1}>
+                                <View style={styles.cancellationHeader}>
+                                    <MaterialCommunityIcons name="alert-circle-outline" size={24} color={theme.colors.error} />
+                                    <Text style={{ marginLeft: 8, color: theme.colors.onSurface, fontWeight: 'bold' }}>Return Authorization</Text>
+                                </View>
+                                <Text style={{ marginBottom: 12, color: theme.colors.onSurfaceVariant }}>
+                                    Please provide this OTP to the rider to retrieve your package.
+                                </Text>
 
-                        {!cancellation && (
-                            <Button
-                                mode="contained"
-                                style={styles.viewOtpBtn}
-                                icon="lock-open"
-                                onPress={() => {
-                                    const boxId = delivery?.box_id;
-                                    if (!boxId) {
-                                        return;
-                                    }
-                                    navigation.navigate('OTP', { boxId });
-                                }}
-                                disabled={!delivery?.box_id}
-                            >
-                                View Secure OTP
-                            </Button>
+                                <TouchableOpacity onPress={copyReturnOtp} activeOpacity={0.7}>
+                                    <Surface style={styles.otpContainer} elevation={2}>
+                                        <Text variant="displaySmall" style={{ letterSpacing: 4, fontWeight: 'bold', color: theme.colors.primary }}>
+                                            {cancellation.returnOtp}
+                                        </Text>
+                                        <MaterialCommunityIcons name="content-copy" size={20} color={theme.colors.primary} style={{ position: 'absolute', right: 16 }} />
+                                    </Surface>
+                                </TouchableOpacity>
+                            </Surface>
                         )}
 
-                        {/* Customer Cancel Button - Only show if cancellation is allowed */}
-                        {!cancellation && canCancelResult.canCancel && (
-                            <Button
-                                mode="outlined"
-                                style={styles.cancelBtn}
-                                icon="close-circle"
-                                textColor={theme.colors.error}
-                                onPress={() => setShowCancelModal(true)}
-                            >
-                                Cancel Order
-                            </Button>
+                        <View style={[styles.divider, { backgroundColor: theme.colors.outlineVariant }]} />
+
+                        <View style={styles.riderInfo}>
+                            <Avatar.Image size={50} source={{ uri: riderDetails.avatar }} />
+                            <View style={{ flex: 1, marginLeft: 16 }}>
+                                <Text variant="titleMedium" style={{ fontWeight: 'bold', color: theme.colors.onSurface }}>{riderDetails.name}</Text>
+                                <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>{riderDetails.vehicle}</Text>
+                                <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4 }}>
+                                    <MaterialCommunityIcons name="star" size={16} color="#FFC107" />
+                                    <Text variant="labelSmall" style={{ marginLeft: 4, color: theme.colors.onSurface }}>{riderDetails.rating}</Text>
+                                </View>
+                            </View>
+                            <View style={styles.actionButtons}>
+                                <IconButton
+                                    mode="contained"
+                                    icon="phone"
+                                    containerColor={theme.dark ? '#1A237E' : '#E3F2FD'}
+                                    iconColor="#2196F3"
+                                    size={24}
+                                    onPress={() => {
+                                        if (!riderDetails.phone) {
+                                            Alert.alert('Unavailable', 'Rider phone number is not available yet.');
+                                            return;
+                                        }
+                                        Linking.openURL(`tel:${riderDetails.phone}`);
+                                    }}
+                                />
+                                <IconButton
+                                    mode="contained"
+                                    icon="message-text"
+                                    containerColor={theme.dark ? '#1B5E20' : '#E8F5E9'}
+                                    iconColor="#4CAF50"
+                                    size={24}
+                                    onPress={() => {
+                                        if (!riderDetails.phone) {
+                                            Alert.alert('Unavailable', 'Rider phone number is not available yet.');
+                                            return;
+                                        }
+                                        Linking.openURL(`sms:${riderDetails.phone}`);
+                                    }}
+                                />
+                            </View>
+                        </View>
+
+                        {/* Pickup Photo - Show if available and NOT pending */}
+                        {delivery?.pickup_photo_url && delivery?.status !== 'PENDING' && (
+                            <View>
+                                <Card style={{ marginBottom: 12, borderRadius: 12 }} mode="elevated">
+                                    <Card.Title title="Pickup Photo" titleVariant="titleSmall" />
+                                    <Card.Cover source={{ uri: delivery.pickup_photo_url }} style={{ height: 180 }} />
+                                </Card>
+                            </View>
+                        )}
+
+                        {/* Completed state: show proof photo and go-home buttons */}
+                        {delivery?.status === 'COMPLETED' && (
+                            <View>
+                                {delivery?.proof_photo_url && (
+                                    <Card style={{ marginBottom: 12, borderRadius: 12 }} mode="elevated">
+                                        <Card.Title title="Proof of Delivery" titleVariant="titleSmall" />
+                                        <Card.Cover source={{ uri: delivery.proof_photo_url }} style={{ height: 180 }} />
+                                    </Card>
+                                )}
+                                <Button
+                                    mode="contained"
+                                    style={styles.viewOtpBtn}
+                                    icon="home"
+                                    onPress={() => navigation.navigate('Home')}
+                                >
+                                    Back to Home
+                                </Button>
+                                <Button
+                                    mode="outlined"
+                                    style={{ marginTop: 8, borderRadius: 12 }}
+                                    icon="history"
+                                    onPress={() => navigation.navigate('DeliveryLog')}
+                                >
+                                    View Delivery History
+                                </Button>
+                            </View>
+                        )}
+
+                        {/* Tampered state: show support button */}
+                        {delivery?.status === 'TAMPERED' && (
+                            <View>
+                                <Button
+                                    mode="contained"
+                                    style={styles.viewOtpBtn}
+                                    icon="headset"
+                                    buttonColor={theme.colors.error}
+                                    onPress={() => Alert.alert('Support', 'Please contact support at support@parcel-safe.app or call +63 XXX XXX XXXX.')}
+                                >
+                                    Contact Support
+                                </Button>
+                                <Button
+                                    mode="outlined"
+                                    style={{ marginTop: 8, borderRadius: 12 }}
+                                    icon="home"
+                                    onPress={() => navigation.navigate('Home')}
+                                >
+                                    Back to Home
+                                </Button>
+                            </View>
+                        )}
+
+                        {/* Active delivery actions - only show when NOT in terminal state */}
+                        {!isTerminalState && (
+                            <>
+                                <Button
+                                    mode="outlined"
+                                    style={styles.cancelBtn}
+                                    icon="share-variant"
+                                    onPress={handleShareTracking}
+                                >
+                                    Share Tracking Link
+                                </Button>
+
+                                {!cancellation && (
+                                    <Button
+                                        mode="contained"
+                                        style={styles.viewOtpBtn}
+                                        icon="lock-open"
+                                        onPress={() => {
+                                            const boxId = delivery?.box_id;
+                                            if (!boxId) {
+                                                return;
+                                            }
+                                            navigation.navigate('OTP', { boxId });
+                                        }}
+                                        disabled={!delivery?.box_id}
+                                    >
+                                        View Secure OTP
+                                    </Button>
+                                )}
+
+                                {/* Customer Cancel Button - Only show if cancellation is allowed */}
+                                {!cancellation && canCancelResult.canCancel && (
+                                    <Button
+                                        mode="outlined"
+                                        style={styles.cancelBtn}
+                                        icon="close-circle"
+                                        textColor={theme.colors.error}
+                                        onPress={() => setShowCancelModal(true)}
+                                    >
+                                        Cancel Order
+                                    </Button>
+                                )}
+                            </>
                         )}
                     </>
                 )}
@@ -1071,17 +1121,17 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
     },
     riderMarkerOuter: {
-        width: 48,
-        height: 48,
+        width: 56,
+        height: 56,
         alignItems: 'center',
         justifyContent: 'center',
     },
     riderMarkerCircle: {
-        width: 48,
-        height: 48,
-        borderRadius: 24,
+        width: 56,
+        height: 56,
+        borderRadius: 28,
         backgroundColor: '#fff',
-        borderWidth: 2.5,
+        borderWidth: 2,
         borderColor: '#0f172a',
         alignItems: 'center',
         justifyContent: 'center',
@@ -1094,14 +1144,13 @@ const styles = StyleSheet.create({
         zIndex: 2,
     },
     riderMarkerImage: {
-        width: 44,
-        height: 44,
-        borderRadius: 22,
+        width: '100%',
+        height: '100%',
         resizeMode: 'cover',
     },
     riderDirectionCone: {
         position: 'absolute',
-        top: -8,
+        top: -12,
         width: 0,
         height: 0,
         borderLeftWidth: 6,
@@ -1109,7 +1158,7 @@ const styles = StyleSheet.create({
         borderBottomWidth: 10,
         borderLeftColor: 'transparent',
         borderRightColor: 'transparent',
-        borderBottomColor: '#0f172a',
+        borderBottomColor: 'rgba(15, 23, 42, 0.9)',
         zIndex: 3,
     },
     bottomSheet: {

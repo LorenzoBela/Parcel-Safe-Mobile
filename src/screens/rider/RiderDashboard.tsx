@@ -434,16 +434,33 @@ export default function RiderDashboard() {
 
     // Derive destination directly from activeDelivery (NOT nextDelivery) to avoid
     // circular dependency: nextDelivery → destination → fetchRoute → distance/duration → nextDelivery
-    const destination = useMemo(() => activeDelivery ? {
-        latitude: activeDelivery.dropoff_lat,
-        longitude: activeDelivery.dropoff_lng,
-        title: "Delivery Destination",
-        description: activeDelivery.dropoff_address
-    } : {
-        latitude: 14.5831,
-        longitude: 120.9794,
-        title: "Delivery Destination",
-        description: "Rizal Park, Manila"
+    const destination = useMemo(() => {
+        if (!activeDelivery) {
+            return {
+                latitude: 14.5831,
+                longitude: 120.9794,
+                title: "Delivery Destination",
+                description: "Rizal Park, Manila"
+            };
+        }
+
+        const isPickup = !['PICKED_UP', 'IN_TRANSIT', 'ARRIVED', 'COMPLETED'].includes(activeDelivery.status);
+
+        if (isPickup) {
+            return {
+                latitude: activeDelivery.pickup_lat,
+                longitude: activeDelivery.pickup_lng,
+                title: "Pickup Location",
+                description: activeDelivery.pickup_address
+            };
+        } else {
+            return {
+                latitude: activeDelivery.dropoff_lat,
+                longitude: activeDelivery.dropoff_lng,
+                title: "Dropoff Destination",
+                description: activeDelivery.dropoff_address
+            };
+        }
     }, [activeDelivery]);
 
     // Check for active deliveries
@@ -1087,14 +1104,16 @@ export default function RiderDashboard() {
             if (lastKnown) {
                 setRiderLocation(lastKnown);
 
-                // Calculate initial distance with cached location
-                const dist = calculateDistance(
-                    lastKnown.coords.latitude,
-                    lastKnown.coords.longitude,
-                    destination.latitude,
-                    destination.longitude
-                );
-                setDistance(`${dist} km`);
+                // Only calculate initial straight-line distance if we don't have a route yet
+                if (!routeGeometry) {
+                    const dist = calculateDistance(
+                        lastKnown.coords.latitude,
+                        lastKnown.coords.longitude,
+                        destination.latitude,
+                        destination.longitude
+                    );
+                    setDistance(`${dist} km`);
+                }
             }
 
             // Then fetch fresh high-accuracy location
@@ -1563,7 +1582,7 @@ export default function RiderDashboard() {
                 {/* Next Delivery Card */}
                 <Text variant="titleMedium" style={styles.sectionTitle}>Current Job</Text>
                 {nextDelivery ? (
-                    <Card style={styles.jobCard} mode="elevated">
+                    <Card style={styles.jobCard} mode="elevated" onPress={() => navigation.navigate('JobDetail', { job: nextDelivery })}>
                         <View style={styles.mapContainer}>
                             {(lastLocation || riderLocation) && MAPBOX_TOKEN ? (
                                 <MapboxGL.MapView
@@ -1650,11 +1669,14 @@ export default function RiderDashboard() {
 
                         <Card.Content style={styles.jobContent}>
                             <View style={styles.jobHeader}>
-                                <View>
+                                <View style={{ flex: 1, marginRight: 8 }}>
                                     <Text variant="titleMedium" style={{ fontWeight: 'bold' }}>{nextDelivery.customer}</Text>
                                     <Text variant="bodySmall" style={{ color: '#666' }}>{nextDelivery.id}</Text>
                                 </View>
-                                <Chip icon="map-marker-distance" compact style={{ backgroundColor: '#E3F2FD' }}>{distance}</Chip>
+                                <View style={{ alignItems: 'flex-end' }}>
+                                    <Chip icon="map-marker-distance" compact style={{ backgroundColor: '#E3F2FD', marginBottom: 4 }}>{distance}</Chip>
+                                    <Chip compact style={{ backgroundColor: '#E8F5E9' }} textStyle={{ fontSize: 10, color: '#2E7D32', fontWeight: 'bold' }}>{activeDelivery.status.replace(/_/g, ' ')}</Chip>
+                                </View>
                             </View>
 
                             <View style={styles.divider} />
@@ -1717,27 +1739,9 @@ export default function RiderDashboard() {
                         </Card.Content>
 
                         <Card.Content style={styles.jobActions}>
-                            <View style={{ flexDirection: 'row', gap: 12, marginBottom: 12 }}>
-                                <Button
-                                    mode="outlined"
-                                    style={{ flex: 1, borderColor: theme.colors.primary }}
-                                    onPress={() => navigation.navigate('JobDetail', { job: nextDelivery })}
-                                    textColor={theme.colors.primary}
-                                >
-                                    Details
-                                </Button>
-                                <Button
-                                    mode="contained"
-                                    onPress={() => setShowCancelModal(true)}
-                                    buttonColor={theme.colors.error}
-                                    style={{ flex: 1 }}
-                                >
-                                    Cancel
-                                </Button>
-                            </View>
                             <Button
                                 mode="contained"
-                                style={{ width: '100%', borderRadius: 8 }}
+                                style={{ width: '100%', borderRadius: 8, marginBottom: 12 }}
                                 contentStyle={{ height: 56 }}
                                 labelStyle={{ fontSize: 18, fontWeight: 'bold' }}
                                 onPress={() => {
@@ -1756,6 +1760,25 @@ export default function RiderDashboard() {
                                 icon="navigation"
                             >
                                 {['PICKED_UP', 'IN_TRANSIT', 'ARRIVED'].includes(activeDelivery.status) ? 'Resume Trip' : 'Start Trip'}
+                            </Button>
+
+                            <Button
+                                mode="outlined"
+                                style={{ width: '100%', borderRadius: 8, borderColor: theme.colors.primary, marginBottom: 12 }}
+                                onPress={() => navigation.navigate('JobDetail', { job: nextDelivery })}
+                                textColor={theme.colors.primary}
+                                icon="file-document-outline"
+                            >
+                                View Job Details
+                            </Button>
+
+                            <Button
+                                mode="text"
+                                style={{ width: '100%', borderRadius: 8 }}
+                                onPress={() => setShowCancelModal(true)}
+                                textColor={theme.colors.error}
+                            >
+                                Cancel Delivery
                             </Button>
                         </Card.Content>
                     </Card>

@@ -68,13 +68,25 @@ export default function AssignedDeliveriesScreen() {
                     phone: d.customer?.phone_number || 'N/A',
                     address: d.dropoff_address, // Main address to show
                     pickupAddress: d.pickup_address,
-                    lat: d.dropoff_lat,
-                    lng: d.dropoff_lng,
+                    lat: d.dropoff_lat, // For legacy support
+                    lng: d.dropoff_lng, // For legacy support
+                    pickupLat: d.pickup_lat,
+                    pickupLng: d.pickup_lng,
+                    dropoffLat: d.dropoff_lat,
+                    dropoffLng: d.dropoff_lng,
                     date: d.created_at, // Use created_at as base date
                     time: dayjs(d.created_at).format('h:mm A'),
                     distance: d.distance ? `${d.distance.toFixed(1)} km` : '--',
-                    fare: d.estimated_fare,
+                    fare: d.estimated_fare ? `₱${d.estimated_fare}` : '--',
                     earnings: d.estimated_fare ? `₱${d.estimated_fare}` : '--',
+                    estimatedTime: d.duration ? `${Math.round(d.duration / 60)} min` : '-- min',
+                    boxId: d.assigned_box_id || d.box_id,
+                    pickupTime: d.created_at,
+                    dropoffTime: d.accepted_at || d.created_at,
+                    packageType: 'Standard',
+                    weight: 'N/A',
+                    priority: 'Standard',
+                    specialInstructions: d.package_description || '',
                 }));
                 setDeliveries(mapped);
             }
@@ -216,119 +228,161 @@ export default function AssignedDeliveriesScreen() {
         return matchesSearch && matchesStatus && matchesDate;
     });
 
-    const renderItem = ({ item }) => (
-        <Card style={styles.card} mode="elevated">
-            <Card.Content>
-                <View style={styles.cardHeader}>
-                    <View style={styles.trkContainer}>
-                        <MaterialCommunityIcons name="barcode-scan" size={20} color={theme.colors.primary} />
-                        <Text variant="titleMedium" style={[styles.trkText, { color: theme.colors.onSurface }]}>
-                            {item.trk.length > 12 ? '...' + item.trk.slice(-8) : item.trk}
-                        </Text>
-                    </View>
-                    <Chip
-                        style={{ backgroundColor: getStatusColor(item.status) + '20' }}
-                        textStyle={{ color: getStatusColor(item.status), fontWeight: 'bold', fontSize: 12 }}
-                        compact
-                    >
-                        {item.status}
-                    </Chip>
-                </View>
+    const renderItem = ({ item }) => {
+        const isPickup = !['PICKED_UP', 'IN_TRANSIT', 'ARRIVED', 'COMPLETED'].includes(item.status);
 
-                <View style={[styles.divider, { backgroundColor: theme.colors.outlineVariant }]} />
-
-                <View style={styles.customerRow}>
-                    <View style={styles.avatarContainer}>
-                        <Text style={styles.avatarText}>{item.customer.charAt(0)}</Text>
+        return (
+            <Card style={styles.card} mode="elevated" onPress={() => navigation.navigate('JobDetail', { job: { ...item, id: item.id } })}>
+                <Card.Content style={{ padding: 16 }}>
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16 }}>
+                        <View style={{ flex: 1, marginRight: 8 }}>
+                            <Text variant="titleMedium" style={{ fontWeight: 'bold' }}>{item.customer}</Text>
+                            <Text variant="bodySmall" style={{ color: '#666' }}>{item.trk}</Text>
+                        </View>
+                        <View style={{ alignItems: 'flex-end' }}>
+                            <Chip icon="map-marker-distance" compact style={{ backgroundColor: '#E3F2FD', marginBottom: 4 }}>{item.distance}</Chip>
+                            <Chip compact style={{ backgroundColor: '#E8F5E9' }} textStyle={{ fontSize: 10, color: '#2E7D32', fontWeight: 'bold' }}>{item.status.replace(/_/g, ' ')}</Chip>
+                        </View>
                     </View>
-                    <View style={{ flex: 1 }}>
-                        <Text variant="titleMedium" style={{ fontWeight: 'bold' }}>{item.customer}</Text>
-                    </View>
-                </View>
 
-                {/* Pickup Address */}
-                <View style={[styles.addressContainer, { backgroundColor: '#E8F5E9' }]}>
-                    <MaterialCommunityIcons name="map-marker-up" size={18} color="#4CAF50" style={{ marginTop: 2 }} />
-                    <Text variant="bodyMedium" style={[styles.addressText, { color: theme.colors.onSurface }]}>
-                        {item.pickupAddress || 'N/A'}
-                    </Text>
-                </View>
+                    <View style={styles.divider} />
 
-                {/* Dropoff Address */}
-                <View style={[styles.addressContainer, { backgroundColor: theme.colors.elevation.level2 }]}>
-                    <MaterialCommunityIcons name="map-marker-down" size={18} color="#F44336" style={{ marginTop: 2 }} />
-                    <Text variant="bodyMedium" style={[styles.addressText, { color: theme.colors.onSurface }]}>{item.address}</Text>
-                </View>
+                    {/* Pickup Section */}
+                    <View style={{ marginBottom: 16 }}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
+                            <View style={{ backgroundColor: '#E3F2FD', width: 24, height: 24, borderRadius: 12, marginRight: 8, justifyContent: 'center', alignItems: 'center' }}>
+                                <MaterialCommunityIcons name="package-variant" size={14} color="#2196F3" />
+                            </View>
+                            <Text variant="labelSmall" style={{ color: theme.colors.primary, fontWeight: 'bold' }}>PICKUP</Text>
+                        </View>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12, backgroundColor: '#F9F9F9', padding: 8, borderRadius: 8 }}>
+                            <Text variant="bodyMedium" style={{ color: '#444', marginLeft: 8, flex: 1 }}>
+                                {item.pickupAddress || 'Pickup Address'}
+                            </Text>
+                            <IconButton
+                                icon="navigation"
+                                mode="contained"
+                                containerColor={theme.colors.primaryContainer}
+                                iconColor={theme.colors.primary}
+                                size={20}
+                                onPress={() => openGoogleMaps(item.pickupLat, item.pickupLng, item.pickupAddress)}
+                                style={{ margin: 0, marginLeft: 8 }}
+                            />
+                        </View>
+                    </View>
 
-                <View style={styles.metaContainer}>
-                    <View style={styles.metaItem}>
-                        <MaterialCommunityIcons name="calendar-clock" size={16} color={theme.colors.onSurfaceVariant} />
-                        <Text style={[styles.metaText, { color: theme.colors.onSurfaceVariant }]}>
-                            {dayjs(item.date).format('MMM D')} • {item.time}
-                        </Text>
+                    {/* Dropoff Section */}
+                    <View style={{ marginBottom: 8 }}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
+                            <View style={{ backgroundColor: '#FFEBEE', width: 24, height: 24, borderRadius: 12, marginRight: 8, justifyContent: 'center', alignItems: 'center' }}>
+                                <MaterialCommunityIcons name="map-marker" size={14} color="#F44336" />
+                            </View>
+                            <Text variant="labelSmall" style={{ color: theme.colors.error, fontWeight: 'bold' }}>DROPOFF</Text>
+                        </View>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12, backgroundColor: '#F9F9F9', padding: 8, borderRadius: 8 }}>
+                            <Text variant="bodyMedium" style={{ color: '#444', marginLeft: 8, flex: 1 }}>
+                                {item.address}
+                            </Text>
+                            <IconButton
+                                icon="navigation"
+                                mode="contained"
+                                containerColor={theme.colors.errorContainer}
+                                iconColor={theme.colors.error}
+                                size={20}
+                                onPress={() => openGoogleMaps(item.dropoffLat, item.dropoffLng, item.address)}
+                                style={{ margin: 0, marginLeft: 8 }}
+                            />
+                        </View>
                     </View>
-                    <View style={styles.metaItem}>
-                        <MaterialCommunityIcons name="map-marker-distance" size={16} color={theme.colors.onSurfaceVariant} />
-                        <Text style={[styles.metaText, { color: theme.colors.onSurfaceVariant }]}>{item.distance}</Text>
-                    </View>
-                    <View style={styles.metaItem}>
-                        <MaterialCommunityIcons name="cash" size={16} color={theme.colors.onSurfaceVariant} />
-                        <Text style={[styles.metaText, { color: theme.colors.onSurfaceVariant }]}>{item.earnings}</Text>
-                    </View>
-                </View>
 
-            </Card.Content>
-            <Card.Actions style={styles.cardActions}>
-                <Button
-                    mode="outlined"
-                    onPress={() => console.log('Call')}
-                    icon="phone"
-                    style={{ flex: 1, marginRight: 8 }}
-                >
-                    Call
-                </Button>
-                {['ASSIGNED', 'PENDING', 'IN_TRANSIT'].includes(item.status) && (
-                    <Button
-                        mode="contained"
-                        onPress={() => {
-                            setSelectedDelivery(item);
-                            setShowCancelModal(true);
-                        }}
-                        buttonColor={theme.colors.error}
-                        style={{ marginRight: 8 }}
-                    >
-                        Cancel
-                    </Button>
-                )}
-                <Button
-                    mode="contained"
-                    onPress={() => {
-                        if (item.status === 'COMPLETED' || item.status === 'CANCELLED') {
-                            navigation.navigate('DeliveryDetail', { delivery: item });
-                        } else {
-                            openGoogleMaps(item.lat, item.lng, item.address);
-                        }
-                    }}
-                    style={{ flex: 1, backgroundColor: (item.status === 'COMPLETED' || item.status === 'CANCELLED') ? '#757575' : theme.colors.primary }}
-                    icon={(item.status === 'COMPLETED' || item.status === 'CANCELLED') ? 'history' : 'google-maps'}
-                >
-                    {(item.status === 'COMPLETED' || item.status === 'CANCELLED') ? 'History' : (item.status === 'IN_TRANSIT' ? 'Resume' : 'Start')}
-                </Button>
-            </Card.Actions>
-        </Card>
-    );
+                    <View style={{ flexDirection: 'row', marginTop: 4 }}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', marginRight: 16 }}>
+                            <MaterialCommunityIcons name="clock-outline" size={16} color="#666" />
+                            <Text style={{ marginLeft: 4, color: '#666', fontSize: 12, fontWeight: 'bold' }}>ETA: {item.time || '-- min'}</Text>
+                        </View>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', marginRight: 16 }}>
+                            <MaterialCommunityIcons name="cash" size={16} color="#666" />
+                            <Text style={{ marginLeft: 4, color: '#666', fontSize: 12, fontWeight: 'bold' }}>{item.earnings}</Text>
+                        </View>
+                    </View>
+                </Card.Content>
+
+                <Card.Actions style={[styles.cardActions, { flexDirection: 'column', paddingHorizontal: 16, paddingBottom: 16 }]}>
+                    {['ASSIGNED', 'PENDING', 'IN_TRANSIT', 'ARRIVED'].includes(item.status) && (
+                        <Button
+                            mode="contained"
+                            style={{ width: '100%', borderRadius: 8, marginBottom: 8 }}
+                            contentStyle={{ height: 48 }}
+                            labelStyle={{ fontSize: 16, fontWeight: 'bold' }}
+                            onPress={() => {
+                                navigation.navigate('Arrival', {
+                                    deliveryId: item.id,
+                                    boxId: item.boxId,
+                                    targetLat: isPickup ? item.pickupLat : item.dropoffLat,
+                                    targetLng: isPickup ? item.pickupLng : item.dropoffLng,
+                                    targetAddress: isPickup ? item.pickupAddress : item.address,
+                                    customerPhone: item.phone,
+                                    // @ts-ignore
+                                    riderName: useAuthStore.getState().user?.fullName || 'Rider'
+                                });
+                            }}
+                            buttonColor={theme.colors.primary}
+                            icon="navigation"
+                        >
+                            {['PICKED_UP', 'IN_TRANSIT', 'ARRIVED'].includes(item.status) ? 'Resume Trip' : 'Start Trip'}
+                        </Button>
+                    )}
+
+                    <View style={{ flexDirection: 'row', width: '100%', gap: 8 }}>
+                        <Button
+                            mode="outlined"
+                            onPress={() => console.log('Call')}
+                            icon="phone"
+                            style={{ flex: 1, borderColor: theme.colors.primary }}
+                            textColor={theme.colors.primary}
+                        >
+                            Call
+                        </Button>
+
+                        {['ASSIGNED', 'PENDING', 'IN_TRANSIT'].includes(item.status) && (
+                            <Button
+                                mode="contained"
+                                onPress={() => {
+                                    setSelectedDelivery(item);
+                                    setShowCancelModal(true);
+                                }}
+                                buttonColor={theme.colors.error}
+                                style={{ flex: 1 }}
+                            >
+                                Cancel
+                            </Button>
+                        )}
+                    </View>
+
+                    {(item.status === 'COMPLETED' || item.status === 'CANCELLED') && (
+                        <Button
+                            mode="outlined"
+                            onPress={() => navigation.navigate('DeliveryDetail', { delivery: item })}
+                            style={{ width: '100%', marginTop: 8 }}
+                            icon="history"
+                        >
+                            View History
+                        </Button>
+                    )}
+                </Card.Actions>
+            </Card>
+        );
+    };
 
     const renderGridItem = ({ item }) => (
         <Card style={styles.gridCard} mode="elevated" onPress={() => {
-            if (item.status === 'Completed') {
-                navigation.navigate('DeliveryDetail', { delivery: item });
-            } else {
-                openGoogleMaps(item.lat, item.lng, item.address);
-            }
+            navigation.navigate('JobDetail', { job: { ...item, id: item.id } });
         }}>
             <Card.Content style={{ padding: 12 }}>
                 <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 }}>
-                    <Badge size={16} style={{ backgroundColor: getStatusColor(item.status), alignSelf: 'flex-start' }}>{item.status}</Badge>
+                    <Badge size={16} style={{ backgroundColor: getStatusColor(item.status), alignSelf: 'flex-start', paddingHorizontal: 6 }}>
+                        {item.status.replace(/_/g, ' ')}
+                    </Badge>
                 </View>
 
                 <Text variant="titleSmall" style={{ fontWeight: 'bold' }} numberOfLines={1}>{item.customer}</Text>
