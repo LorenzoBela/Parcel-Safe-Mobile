@@ -1089,7 +1089,10 @@ export default function RiderDashboard() {
 
                 // Update duration
                 const durationMins = Math.round(route.duration / 60);
-                setDuration(`${durationMins} min`);
+
+                // Calculate Clock Time ETA
+                const etaTime = dayjs().add(durationMins, 'minute').format('h:mm A');
+                setDuration(`${durationMins} min (Arrives ~${etaTime})`);
 
                 // EC-FIX: Update estimated_dropoff_time in DB
                 // Only if we have an active delivery and it's been > 60s since last update

@@ -599,6 +599,16 @@ export default function TrackOrderScreen() {
         );
     }, [isPickedUp]); // Only fires when the pickup phase changes
 
+    // Auto-follow rider when not in Route View
+    useEffect(() => {
+        if (!isRouteView && riderMarkerLocation.latitude && riderMarkerLocation.longitude && !isMapLoading && !stopTracking.current) {
+            cameraRef.current?.setCamera({
+                centerCoordinate: [riderMarkerLocation.longitude, riderMarkerLocation.latitude],
+                animationDuration: 1000,
+            });
+        }
+    }, [riderMarkerLocation.latitude, riderMarkerLocation.longitude, isRouteView, isMapLoading]);
+
     const routeGeoJson = {
         type: 'Feature' as const,
         geometry: {
@@ -787,7 +797,6 @@ export default function TrackOrderScreen() {
                                 setIsRouteView(false);
                                 cameraRef.current?.setCamera({
                                     centerCoordinate: [riderMarkerLocation.longitude, riderMarkerLocation.latitude],
-                                    zoomLevel: 15,
                                     animationDuration: 1000,
                                 });
                             } else {
@@ -884,7 +893,7 @@ export default function TrackOrderScreen() {
                         {!isTerminalState && !cancellation && (
                             <Surface style={styles.etaBadge} elevation={0}>
                                 <Text style={{ color: 'white', fontWeight: 'bold' }}>
-                                    {eta !== null ? `${eta} min` : 'Calculating...'}
+                                    {eta !== null ? `${eta} min\n(Arrives ~${dayjs().add(eta, 'minute').format('h:mm A')})` : 'Calculating...'}
                                 </Text>
                                 <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 10 }}>
                                     {isPickedUp ? 'to you' : 'to pickup'}
