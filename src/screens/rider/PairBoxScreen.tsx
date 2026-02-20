@@ -24,6 +24,7 @@ const SESSION_OPTIONS = [4, 12, 24, 48];
 const PAIRED_BOX_CACHE_KEY_PREFIX = 'parcelSafe:lastPairedBoxId:';
 
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { parseUTCString } from '../../utils/date';
 
 export default function PairBoxScreen() {
     const theme = useTheme();
@@ -232,7 +233,7 @@ export default function PairBoxScreen() {
                         {pairingState.mode === 'SESSION' && pairingState.expires_at && (
                             <>
                                 <Text style={{ marginTop: 4, color: theme.colors.onSurfaceVariant }}>
-                                    Expires: {new Date(pairingState.expires_at).toLocaleString()}
+                                    Expires: {parseUTCString(pairingState.expires_at).toLocaleString('en-US', { timeZone: 'Asia/Manila' })}
                                 </Text>
                                 <View style={[
                                     styles.countdownRow,

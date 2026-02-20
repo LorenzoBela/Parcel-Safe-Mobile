@@ -118,7 +118,7 @@ function formatTimeAgo(timestamp?: number): string {
     const diffHrs = Math.floor(diffMin / 60);
     if (diffHrs < 24) return `${diffHrs}h ${diffMin % 60}m ago`;
     try {
-        return new Date(timestamp).toLocaleString();
+        return new Date(timestamp).toLocaleString('en-US', { timeZone: 'Asia/Manila' });
     } catch {
         return '—';
     }

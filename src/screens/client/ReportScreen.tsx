@@ -5,14 +5,16 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { supabase } from '../../services/supabaseClient';
+import { parseUTCString } from '../../utils/date';
+
 /** Format a UTC ISO timestamp to PH-local display using the device clock.
  *  The device is in Asia/Manila, so native Date handles the conversion. */
 const formatDate = (iso: string) => {
-    const d = new Date(iso);
+    const d = parseUTCString(iso);
     if (isNaN(d.getTime())) return 'N/A';
-    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+    return d.toLocaleDateString('en-US', { timeZone: 'Asia/Manila', month: 'short', day: 'numeric' })
         + ', '
-        + d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+        + d.toLocaleTimeString('en-US', { timeZone: 'Asia/Manila', hour: 'numeric', minute: '2-digit', hour12: true });
 };
 
 const formatStatus = (status: string): string => {

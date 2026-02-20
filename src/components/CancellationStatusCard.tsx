@@ -16,6 +16,7 @@ import {
     isReturnOtpValid,
 } from '../services/cancellationService';
 import ReturnOtpDisplay from './ReturnOtpDisplay';
+import { parseUTCString } from '../utils/date';
 
 interface CancellationStatusCardProps {
     cancellation: CancellationState;
@@ -96,7 +97,7 @@ export default function CancellationStatusCard({
                     <MaterialCommunityIcons name="clock-outline" size={18} color={theme.colors.onSurfaceVariant} />
                     <Text variant="bodySmall" style={{ marginLeft: 8, color: theme.colors.onSurfaceVariant }}>
                         Cancelled at: <Text style={{ fontWeight: 'bold', color: theme.colors.onSurface }}>
-                            {new Date(cancellation.cancelledAt).toLocaleTimeString()}
+                            {parseUTCString(cancellation.cancelledAt).toLocaleTimeString('en-US', { timeZone: 'Asia/Manila' })}
                         </Text>
                     </Text>
                 </View>

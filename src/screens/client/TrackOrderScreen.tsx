@@ -37,6 +37,12 @@ import length from '@turf/length';
 import distanceTurf from '@turf/distance';
 // MapboxGL is already imported from wrapper
 import AnimatedRiderMarker from '../../components/map/AnimatedRiderMarker';
+import dayjs from 'dayjs';
+import utc from 'dayjs/plugin/utc';
+import timezone from 'dayjs/plugin/timezone';
+
+dayjs.extend(utc);
+dayjs.extend(timezone);
 
 interface TrackRouteParams {
     bookingId: string;
@@ -975,6 +981,11 @@ export default function TrackOrderScreen() {
                                 <Card style={{ marginBottom: 12, borderRadius: 12 }} mode="elevated">
                                     <Card.Title title="Pickup Photo" titleVariant="titleSmall" />
                                     <Card.Cover source={{ uri: delivery.pickup_photo_url }} style={{ height: 180 }} />
+                                    {delivery.picked_up_at && (
+                                        <Text style={{ padding: 10, textAlign: 'center', color: '#666', fontSize: 12 }}>
+                                            Taken on {dayjs.utc(delivery.picked_up_at).tz('Asia/Manila').format('MMM D, YYYY h:mm A')}
+                                        </Text>
+                                    )}
                                 </Card>
                             </View>
                         )}
@@ -986,6 +997,11 @@ export default function TrackOrderScreen() {
                                     <Card style={{ marginBottom: 12, borderRadius: 12 }} mode="elevated">
                                         <Card.Title title="Proof of Delivery" titleVariant="titleSmall" />
                                         <Card.Cover source={{ uri: delivery.proof_photo_url }} style={{ height: 180 }} />
+                                        {delivery.delivered_at && (
+                                            <Text style={{ padding: 10, textAlign: 'center', color: '#666', fontSize: 12 }}>
+                                                Taken on {dayjs.utc(delivery.delivered_at).tz('Asia/Manila').format('MMM D, YYYY h:mm A')}
+                                            </Text>
+                                        )}
                                     </Card>
                                 )}
                                 <Button

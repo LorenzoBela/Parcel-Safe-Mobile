@@ -145,7 +145,10 @@ export async function uploadDeliveryProofPhoto(params: {
         if (supabase) {
             await supabase
                 .from('deliveries')
-                .update({ proof_photo_url: url })
+                .update({
+                    proof_photo_url: url,
+                    delivered_at: new Date().toISOString()
+                })
                 .or(`id.eq.${deliveryId},tracking_number.eq.${deliveryId}`);
         }
 
@@ -217,7 +220,10 @@ export async function uploadPickupPhoto(params: {
         if (supabase) {
             await supabase
                 .from('deliveries')
-                .update({ pickup_photo_url: url })
+                .update({
+                    pickup_photo_url: url,
+                    picked_up_at: new Date().toISOString()
+                })
                 .or(`id.eq.${deliveryId},tracking_number.eq.${deliveryId}`);
         }
 

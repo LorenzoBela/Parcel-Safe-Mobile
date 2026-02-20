@@ -76,6 +76,8 @@ export interface DeliveryRecord {
     updated_at?: number;
     proof_photo_url?: string;
     pickup_photo_url?: string;
+    picked_up_at?: string;
+    delivered_at?: string;
     estimated_fare?: number;
 }
 

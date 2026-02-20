@@ -461,6 +461,11 @@ export default function DeliveryDetailScreen() {
                     deliveryData.pickupImage || deliveryData.pickup_photo_url ? (
                         <Card style={styles.imageCard} mode="elevated">
                             <Image source={{ uri: deliveryData.pickupImage || deliveryData.pickup_photo_url }} style={styles.proofImage} resizeMode="cover" />
+                            {deliveryData.picked_up_at && (
+                                <Text style={{ padding: 10, textAlign: 'center', color: '#666', fontSize: 12 }}>
+                                    Taken on {dayjs.utc(deliveryData.picked_up_at).tz('Asia/Manila').format('MMM D, YYYY h:mm A')}
+                                </Text>
+                            )}
                         </Card>
                     ) : (
                         <Text style={{ color: '#888', fontStyle: 'italic', marginBottom: 20 }}>No pickup photo available.</Text>
@@ -473,6 +478,11 @@ export default function DeliveryDetailScreen() {
                     deliveryData.image ? (
                         <Card style={styles.imageCard} mode="elevated">
                             <Image source={{ uri: deliveryData.image }} style={styles.proofImage} resizeMode="cover" />
+                            {deliveryData.delivered_at && (
+                                <Text style={{ padding: 10, textAlign: 'center', color: '#666', fontSize: 12 }}>
+                                    Taken on {dayjs.utc(deliveryData.delivered_at).tz('Asia/Manila').format('MMM D, YYYY h:mm A')}
+                                </Text>
+                            )}
                         </Card>
                     ) : (
                         <Text style={{ color: '#888', fontStyle: 'italic', marginBottom: 20 }}>No proof of delivery image available.</Text>

@@ -9,6 +9,7 @@ import useAuthStore from '../../store/authStore';
 import dayjs from 'dayjs';
 import utc from 'dayjs/plugin/utc';
 import timezone from 'dayjs/plugin/timezone';
+import { parseUTCString } from '../../utils/date';
 
 dayjs.extend(utc);
 dayjs.extend(timezone);
@@ -70,7 +71,7 @@ export default function DeliveryRecordsScreen() {
                     // Truncate if too long (e.g., > 12 chars), show last 8
                     const shortTrk = rawTrk.length > 20 ? '...' + rawTrk.slice(-12) : rawTrk;
 
-                    const dateObj = d.created_at ? new Date(d.created_at) : null;
+                    const dateObj = d.created_at ? parseUTCString(d.created_at) : null;
                     if (d.created_at) {
                         const testDayjs = dayjs(d.created_at).tz('Asia/Manila').format('h:mm A');
                         console.log(`[DeliveryRecords] ID: ${d.id}, Raw: ${d.created_at}, DayJS: ${testDayjs}`);
@@ -151,18 +152,18 @@ export default function DeliveryRecordsScreen() {
         let matchesFilter = true;
 
         if (filter === 'Today') {
-            const itemDate = new Date(item.date);
+            const itemDate = parseUTCString(item.date);
             matchesFilter =
                 itemDate.getDate() === currentDate.getDate() &&
                 itemDate.getMonth() === currentDate.getMonth() &&
                 itemDate.getFullYear() === currentDate.getFullYear();
         } else if (filter === 'This Week') {
-            const itemDate = new Date(item.date);
+            const itemDate = parseUTCString(item.date);
             const diffTime = Math.abs(currentDate.getTime() - itemDate.getTime());
             const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
             matchesFilter = diffDays <= 7;
         } else if (filter === 'This Month') {
-            const itemDate = new Date(item.date);
+            const itemDate = parseUTCString(item.date);
             matchesFilter = itemDate.getMonth() === currentDate.getMonth() &&
                 itemDate.getFullYear() === currentDate.getFullYear();
         }

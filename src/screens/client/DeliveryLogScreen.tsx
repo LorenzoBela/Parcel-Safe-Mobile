@@ -5,6 +5,7 @@ import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { supabase } from '../../services/supabaseClient';
+import { parseUTCString } from '../../utils/date';
 import { triggerDeliverySync } from '../../services/deliverySyncService';
 import useAuthStore from '../../store/authStore';
 
@@ -86,7 +87,8 @@ export default function DeliveryLogScreen() {
                     status: mapStatus(d.status),
                     rawStatus: d.status,
                     date: d.created_at
-                        ? new Date(d.created_at).toLocaleDateString('en-US', {
+                        ? parseUTCString(d.created_at).toLocaleDateString('en-US', {
+                            timeZone: 'Asia/Manila',
                             year: 'numeric',
                             month: 'short',
                             day: 'numeric',

@@ -469,7 +469,7 @@ const foregroundServiceTask = async (taskDataArguments: any) => {
 
                 // Update notification
                 await BackgroundService.updateNotification({
-                    taskDesc: `Active - Last check: ${new Date(now).toLocaleTimeString()}`,
+                    taskDesc: `Active - Last check: ${new Date(now).toLocaleTimeString('en-US', { timeZone: 'Asia/Manila' })}`,
                 });
 
                 // Wait for next heartbeat
