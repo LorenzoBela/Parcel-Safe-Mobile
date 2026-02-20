@@ -116,14 +116,43 @@ async function writePhoneStatusIfDue(
 
 // ==================== Configuration ====================
 
+/** Tracking phase determines GPS accuracy vs battery trade-off (Uber/Lalamove pattern) */
+export type TrackingPhase = 'IDLE' | 'TRANSIT' | 'ARRIVAL';
+
+const PHASE_CONFIG: Record<TrackingPhase, {
+    accuracy: Location.Accuracy;
+    timeInterval: number;
+    distanceFilter: number;
+    label: string;
+}> = {
+    IDLE: {
+        accuracy: Location.Accuracy.Balanced,
+        timeInterval: 30000,       // 30s — battery saver
+        distanceFilter: 50,        // 50m
+        label: 'Idle — low power',
+    },
+    TRANSIT: {
+        accuracy: Location.Accuracy.Balanced,
+        timeInterval: 5000,        // 5s — standard delivery tracking
+        distanceFilter: 10,        // 10m
+        label: 'In transit',
+    },
+    ARRIVAL: {
+        accuracy: Location.Accuracy.High,
+        timeInterval: 2000,        // 2s — geofence precision
+        distanceFilter: 3,         // 3m
+        label: 'Near destination',
+    },
+};
+
 export const CONFIG = {
     /** Background location task name */
     TASK_NAME: 'background-location-task',
 
-    /** Location update interval (ms) */
-    LOCATION_INTERVAL_MS: 10000, // 10 seconds
+    /** Location update interval (ms) — overridden by phase config */
+    LOCATION_INTERVAL_MS: 5000,
 
-    /** Minimum distance before update (meters) */
+    /** Minimum distance before update (meters) — overridden by phase config */
     DISTANCE_FILTER_M: 10,
 
     /** Foreground service notification title */
@@ -146,6 +175,21 @@ export const CONFIG = {
 
     /** Maximum time without location update before alert (ms) */
     LOCATION_STALE_THRESHOLD_MS: 120000, // 2 minutes
+
+    /** GPS accuracy threshold — readings above this are rejected (meters) */
+    ACCURACY_REJECT_THRESHOLD_M: 100,
+
+    /** Speed below which rider is considered stationary (m/s) */
+    STATIONARY_SPEED_THRESHOLD: 0.5,
+
+    /** Time rider must be below speed threshold to activate drift filter (ms) */
+    STATIONARY_MIN_DURATION_MS: 30000,
+
+    /** Distance within which stationary jitter is suppressed (meters) */
+    STATIONARY_DRIFT_RADIUS_M: 15,
+
+    /** Time without a valid GPS fix before declaring signal lost (ms) */
+    SIGNAL_LOST_THRESHOLD_MS: 120000, // 2 minutes
 };
 
 // ==================== Types ====================
@@ -180,6 +224,44 @@ export type StateChangeCallback = (state: BackgroundLocationState) => void;
 // Store current box ID for the background task
 let currentBoxId: string | null = null;
 
+// ---- Feature 3: Accuracy Filter state ----
+let accuracyRejectCount = 0;
+
+// ---- Feature 4: Stationary Drift Prevention state ----
+let lastWrittenLocation: { lat: number; lng: number; timestamp: number } | null = null;
+let stationaryStartTime: number | null = null;
+
+/**
+ * Detect if the current update is GPS drift while stationary.
+ * Returns true if the update should be suppressed.
+ */
+function isStationaryDrift(location: Location.LocationObject): boolean {
+    const speed = location.coords.speed ?? 0;
+    const now = Date.now();
+
+    if (speed < CONFIG.STATIONARY_SPEED_THRESHOLD) {
+        if (!stationaryStartTime) stationaryStartTime = now;
+
+        const stationaryDuration = now - stationaryStartTime;
+        if (stationaryDuration > CONFIG.STATIONARY_MIN_DURATION_MS && lastWrittenLocation) {
+            // Haversine-lite: rough meter distance from last written point
+            const dlat = location.coords.latitude - lastWrittenLocation.lat;
+            const dlng = location.coords.longitude - lastWrittenLocation.lng;
+            const cosLat = Math.cos(location.coords.latitude * Math.PI / 180);
+            const dist = Math.sqrt(dlat * dlat + (dlng * cosLat) * (dlng * cosLat)) * 111320;
+            if (dist < CONFIG.STATIONARY_DRIFT_RADIUS_M) {
+                return true; // Suppress — it's jitter
+            }
+        }
+    } else {
+        stationaryStartTime = null; // Moving again, reset
+    }
+    return false;
+}
+
+// ---- Feature 7: Signal Loss Recovery state ----
+let lastValidFixTime = Date.now();
+
 // Define the background task
 TaskManager.defineTask(CONFIG.TASK_NAME, async ({ data, error }) => {
     if (error) {
@@ -196,6 +278,22 @@ TaskManager.defineTask(CONFIG.TASK_NAME, async ({ data, error }) => {
     if (locations && locations.length > 0) {
         const location = locations[locations.length - 1]; // Get most recent
 
+        // ---- Feature 3: Accuracy Filter ----
+        const accuracy = location.coords.accuracy ?? 999;
+        if (accuracy > CONFIG.ACCURACY_REJECT_THRESHOLD_M) {
+            accuracyRejectCount++;
+            if (__DEV__ || accuracyRejectCount % 5 === 0) {
+                console.log(`[EC-15] GPS rejected: accuracy ${accuracy.toFixed(0)}m > ${CONFIG.ACCURACY_REJECT_THRESHOLD_M}m (${accuracyRejectCount} total)`);
+            }
+            return; // Don't write noisy data to Firebase
+        }
+        accuracyRejectCount = 0; // Reset on good reading
+
+        // ---- Feature 4: Stationary Drift Prevention ----
+        if (isStationaryDrift(location)) {
+            return; // Suppress phantom movement while rider is waiting
+        }
+
         try {
             await offlineQueueService.enqueueLocationUpdate(
                 currentBoxId,
@@ -205,6 +303,16 @@ TaskManager.defineTask(CONFIG.TASK_NAME, async ({ data, error }) => {
                 location.coords.heading ?? 0
             );
 
+            // Track last written location for drift prevention
+            lastWrittenLocation = {
+                lat: location.coords.latitude,
+                lng: location.coords.longitude,
+                timestamp: Date.now(),
+            };
+
+            // Record valid fix time for signal loss detection
+            lastValidFixTime = Date.now();
+
             // Update last location timestamp in Firebase (heartbeat, bypass queue for status)
             const db = getFirebaseDatabase();
             const statusRef = ref(db, `boxes/${currentBoxId}/background_location_status`);
@@ -212,6 +320,7 @@ TaskManager.defineTask(CONFIG.TASK_NAME, async ({ data, error }) => {
                 lastUpdate: serverTimestamp(),
                 source: 'phone_background',
                 accuracy: location.coords.accuracy,
+                signal_lost: false,
             });
 
             // Write phone network status (rate-limited)
@@ -243,6 +352,7 @@ class BackgroundLocationManager {
     private healthCheckInterval: NodeJS.Timeout | null = null;
     private appStateSubscription: any = null;
     private unsubscribeBoxGps: (() => void) | null = null;
+    private currentPhase: TrackingPhase = 'TRANSIT';
 
     // ==================== Public API ====================
 
@@ -434,6 +544,78 @@ class BackgroundLocationManager {
         return this.state.status === 'RUNNING';
     }
 
+    // ==================== Feature 2: Phase-Aware GPS ====================
+
+    /**
+     * Change the GPS tracking phase. Adjusts accuracy and frequency.
+     * IDLE: 30s/50m (battery saver) — waiting for orders
+     * TRANSIT: 5s/10m (standard) — riding to pickup/dropoff
+     * ARRIVAL: 2s/3m (high precision) — near destination, geofence check
+     */
+    async setPhase(phase: TrackingPhase): Promise<void> {
+        if (this.currentPhase === phase) return;
+        const prevPhase = this.currentPhase;
+        this.currentPhase = phase;
+
+        // Restart location updates with new config if currently running
+        if (this.state.status === 'RUNNING' && currentBoxId) {
+            const config = PHASE_CONFIG[phase];
+            try {
+                await Location.startLocationUpdatesAsync(CONFIG.TASK_NAME, {
+                    accuracy: config.accuracy,
+                    timeInterval: config.timeInterval,
+                    distanceInterval: config.distanceFilter,
+                    deferredUpdatesInterval: CONFIG.DEFERRED_UPDATES_INTERVAL_MS,
+                    deferredUpdatesDistance: CONFIG.DEFERRED_UPDATES_DISTANCE_M,
+                    foregroundService: {
+                        notificationTitle: CONFIG.NOTIFICATION_TITLE,
+                        notificationBody: config.label,
+                        notificationColor: '#0066FF',
+                    },
+                    activityType: Location.ActivityType.AutomotiveNavigation,
+                    showsBackgroundLocationIndicator: true,
+                    pausesUpdatesAutomatically: false,
+                });
+                console.log(`[EC-15] Phase changed: ${prevPhase} → ${phase} (interval=${config.timeInterval}ms, dist=${config.distanceFilter}m)`);
+            } catch (error) {
+                console.error(`[EC-15] Failed to change phase to ${phase}:`, error);
+            }
+        }
+    }
+
+    /** Get the current tracking phase */
+    getPhase(): TrackingPhase {
+        return this.currentPhase;
+    }
+
+    // ==================== Feature 5: Heartbeat Watchdog ====================
+
+    /**
+     * Check if the background task is still running and auto-recover if killed.
+     * Call this from AppState 'active' handler when user reopens the app.
+     */
+    async checkAndRecover(boxId: string): Promise<void> {
+        try {
+            const isTaskRegistered = await TaskManager.isTaskRegisteredAsync(CONFIG.TASK_NAME);
+
+            if (!isTaskRegistered) {
+                console.warn('[EC-15] Background task was killed by OS! Restarting...');
+                await this.start(boxId);
+                return;
+            }
+
+            // Check if task is registered but not producing output (zombie state)
+            const timeSinceUpdate = Date.now() - (this.state.lastLocationTimestamp ?? 0);
+            if (timeSinceUpdate > 180000) { // 3 minutes — stale zombie
+                console.warn(`[EC-15] Background task stale (${Math.round(timeSinceUpdate / 1000)}s). Restarting...`);
+                await this.stop();
+                await this.start(boxId);
+            }
+        } catch (error) {
+            console.error('[EC-15] checkAndRecover failed:', error);
+        }
+    }
+
     /**
      * Force location update (when app comes to foreground)
      */
@@ -489,7 +671,25 @@ class BackgroundLocationManager {
                 }
             }
 
-            // Check if task is still running
+            // ---- Feature 7: Signal Loss Detection ----
+            const timeSinceValidFix = now - lastValidFixTime;
+            if (timeSinceValidFix > CONFIG.SIGNAL_LOST_THRESHOLD_MS && currentBoxId) {
+                try {
+                    const db = getFirebaseDatabase();
+                    const statusRef = ref(db, `boxes/${currentBoxId}/background_location_status`);
+                    await set(statusRef, {
+                        lastUpdate: serverTimestamp(),
+                        source: 'phone_background',
+                        signal_lost: true,
+                        last_valid_fix: lastValidFixTime,
+                        signal_lost_duration_ms: timeSinceValidFix,
+                    });
+                } catch (e) {
+                    console.error('[EC-15] Failed to write signal_lost status:', e);
+                }
+            }
+
+            // Check if task is still running (heartbeat watchdog)
             const isTaskRegistered = await TaskManager.isTaskRegisteredAsync(CONFIG.TASK_NAME);
             if (this.state.status === 'RUNNING' && !isTaskRegistered) {
                 console.warn('[EC-15] Task was killed, restarting...');
@@ -590,6 +790,8 @@ export const subscribeToBackgroundLocationState = (cb: StateChangeCallback) => b
 export const getBackgroundLocationState = () => backgroundLocationService.getState();
 export const isBackgroundLocationRunning = () => backgroundLocationService.isRunning();
 export const forceLocationUpdate = () => backgroundLocationService.forceUpdate();
+export const setTrackingPhase = (phase: TrackingPhase) => backgroundLocationService.setPhase(phase);
+export const checkAndRecoverBackgroundLocation = (boxId: string) => backgroundLocationService.checkAndRecover(boxId);
 
 // ==================== Helper Functions for Testing ====================
 

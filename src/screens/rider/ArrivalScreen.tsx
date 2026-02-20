@@ -40,6 +40,7 @@ import {
     stopBackgroundLocation,
     isBackgroundLocationRunning,
     subscribeToBackgroundLocationState,
+    setTrackingPhase,
     BackgroundLocationState,
 } from '../../services/backgroundLocationService';
 
@@ -177,6 +178,8 @@ export default function ArrivalScreen() {
         if (!isBackgroundLocationRunning()) {
             startBackgroundLocation(params.boxId);
         }
+        // EC-15: Switch to ARRIVAL phase for maximum GPS precision near destination
+        setTrackingPhase('ARRIVAL');
 
         // Subscribe to background location state
         const unsubscribeBgLocation = subscribeToBackgroundLocationState(setBgLocationState);

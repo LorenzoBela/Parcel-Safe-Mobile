@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { View, StyleSheet, ScrollView, Switch, ImageBackground, Alert, RefreshControl, TouchableOpacity, Dimensions, Linking, Platform } from 'react-native';
+import { View, StyleSheet, ScrollView, Switch, ImageBackground, Alert, RefreshControl, TouchableOpacity, Dimensions, Linking, Platform, AppState } from 'react-native';
 import { Text, Card, Button, Avatar, ProgressBar, MD3Colors, Surface, Chip, useTheme, IconButton } from 'react-native-paper';
 import { useNavigation } from '@react-navigation/native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -29,6 +29,14 @@ try {
 }
 import IncomingOrderModal from '../../components/IncomingOrderModal';
 import TripPreviewModal from '../../components/modals/TripPreviewModal';
+import {
+    startBackgroundLocation,
+    stopBackgroundLocation,
+    isBackgroundLocationRunning,
+    setTrackingPhase,
+    checkAndRecoverBackgroundLocation,
+} from '../../services/backgroundLocationService';
+import { checkOemProtection, markOemProtectionDone } from '../../services/oemProtection';
 
 // Helper to fix double-shifted times
 const formatTimeWithHeuristic = (timeStr: string) => {
@@ -399,6 +407,20 @@ export default function RiderDashboard() {
                 if (activeDelivery.status && activeDelivery.status !== 'COMPLETED' && activeDelivery.status !== 'CANCELLED') {
                     console.log('[RiderDashboard] Activating tracking');
                     activateTracking();
+
+                    // EC-15: Proactively start background location so GPS continues
+                    // even if the rider closes the app or switches to another app.
+                    if (!isBackgroundLocationRunning()) {
+                        console.log('[RiderDashboard] Starting background location proactively');
+                        startBackgroundLocation(boxId);
+                        setTrackingPhase('TRANSIT');
+                    }
+                }
+
+                // Stop background service when delivery ends
+                if (activeDelivery.status === 'COMPLETED' || activeDelivery.status === 'CANCELLED') {
+                    console.log('[RiderDashboard] Delivery ended, stopping background location');
+                    stopBackgroundLocation();
                 }
             }
         } else {
@@ -500,6 +522,47 @@ export default function RiderDashboard() {
         const interval = setInterval(checkActiveDeliveries, 30000);
         return () => clearInterval(interval);
     }, [riderId]);
+
+    // EC-15: Heartbeat Watchdog — auto-recover background location on app resume
+    useEffect(() => {
+        const handleAppStateChange = (nextState: import('react-native').AppStateStatus) => {
+            if (nextState === 'active' && activeDelivery) {
+                const boxId = activeDelivery.assigned_box_id || activeDelivery.box_id;
+                if (boxId) {
+                    checkAndRecoverBackgroundLocation(boxId);
+                }
+            }
+        };
+
+        const sub = AppState.addEventListener('change', handleAppStateChange);
+        return () => sub.remove();
+    }, [activeDelivery?.id]);
+
+    // EC-15: OEM Kill Protection — show one-time dialog for aggressive manufacturers
+    useEffect(() => {
+        if (!isOnline) return; // Only when rider first goes online
+
+        const showOemWarning = async () => {
+            try {
+                const { needsAction, info } = await checkOemProtection();
+                if (needsAction && info) {
+                    Alert.alert(
+                        `${info.name} Battery Optimization`,
+                        `Your ${info.name} device may kill background apps. To ensure reliable GPS tracking during deliveries:\n\n${info.instructions}`,
+                        [
+                            { text: 'Open Guide', onPress: () => Linking.openURL(info.url) },
+                            { text: 'Done', onPress: () => markOemProtectionDone() },
+                            { text: 'Remind Later', style: 'cancel' },
+                        ]
+                    );
+                }
+            } catch (e) {
+                console.error('[RiderDashboard] OEM check failed:', e);
+            }
+        };
+
+        showOemWarning();
+    }, [isOnline]);
 
     // Auto-start monitoring when component mounts or online status changes
     useEffect(() => {
