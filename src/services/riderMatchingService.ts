@@ -75,6 +75,7 @@ export interface DeliveryRecord {
     accepted_at?: number;
     updated_at?: number;
     proof_photo_url?: string;
+    estimated_fare?: number;
 }
 
 export interface RiderLiveLocation {
@@ -301,6 +302,8 @@ export async function createPendingBooking(request: BookingRequest): Promise<boo
                         dropoff_lng: request.dropoffLng,
                         dropoff_address: request.dropoffAddress,
                         estimated_fare: request.estimatedFare,
+                        distance: request.distance, // Persist distance
+                        duration: request.duration, // Persist duration
                         share_token: shareToken,
                         otp_code: otpCode,
                         status: 'PENDING',
@@ -550,6 +553,7 @@ export async function acceptOrder(
             created_at: booking.created_at || acceptedAt,
             accepted_at: acceptedAt,
             updated_at: acceptedAt,
+            estimated_fare: booking.estimated_fare,
         };
 
         await set(ref(db, `/deliveries/${bookingId}`), deliveryRecord);
@@ -604,6 +608,9 @@ export async function acceptOrder(
                     dropoff_lat: booking.dropoff_lat,
                     dropoff_lng: booking.dropoff_lng,
                     dropoff_address: booking.dropoff_address,
+                    distance: booking.distance, // Persist distance
+                    duration: booking.duration, // Persist duration
+                    estimated_fare: booking.estimated_fare, // Ensure fare is persisted
                     share_token: shareToken,
                     otp_code: generateOTP(),
                     status: 'ASSIGNED',

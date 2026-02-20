@@ -34,6 +34,7 @@ import nearestPointOnLine from '@turf/nearest-point-on-line';
 import length from '@turf/length';
 import distanceTurf from '@turf/distance';
 // MapboxGL is already imported from wrapper
+import AnimatedRiderMarker from '../../components/map/AnimatedRiderMarker';
 
 interface TrackRouteParams {
     bookingId: string;

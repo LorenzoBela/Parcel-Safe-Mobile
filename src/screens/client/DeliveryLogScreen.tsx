@@ -198,6 +198,24 @@ export default function DeliveryLogScreen() {
                         </View>
                     )}
 
+                    {viewMode === 'list' && (
+                        <View style={styles.addressContainer}>
+                            <View style={styles.addressRow}>
+                                <MaterialCommunityIcons name="map-marker-outline" size={14} color={theme.colors.primary} />
+                                <Text variant="bodySmall" style={styles.addressText} numberOfLines={1}>
+                                    {item.pickupAddress}
+                                </Text>
+                            </View>
+                            <View style={styles.addressDotLine} />
+                            <View style={styles.addressRow}>
+                                <MaterialCommunityIcons name="map-marker" size={14} color={theme.colors.error} />
+                                <Text variant="bodySmall" style={styles.addressText} numberOfLines={1}>
+                                    {item.dropoffAddress}
+                                </Text>
+                            </View>
+                        </View>
+                    )}
+
                     <View style={styles.divider} />
 
                     <View style={[styles.footer, viewMode === 'grid' && styles.footerGrid]}>
@@ -220,7 +238,7 @@ export default function DeliveryLogScreen() {
                                 viewMode === 'grid' && { marginTop: 4 }
                             ]}
                         >
-                            {item.price}
+                            {viewMode === 'list' ? `Fare: ${item.price}` : item.price}
                         </Text>
                     </View>
                 </View>
@@ -400,6 +418,26 @@ const styles = StyleSheet.create({
         fontSize: 12,
         fontWeight: 'bold',
         marginLeft: 4,
+    },
+    addressContainer: {
+        marginVertical: 8,
+    },
+    addressRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        marginBottom: 4,
+    },
+    addressText: {
+        color: '#555',
+        marginLeft: 8,
+        flex: 1,
+    },
+    addressDotLine: {
+        height: 10,
+        borderLeftWidth: 1,
+        borderLeftColor: '#ddd',
+        marginLeft: 7,
+        marginBottom: 4,
     },
     footer: {
         flexDirection: 'row',

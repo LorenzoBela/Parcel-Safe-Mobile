@@ -120,15 +120,15 @@ export const SafeMapView: React.FC<SafeMapViewProps> = ({
  * Create mock components for when Mapbox isn't available
  */
 const createMockComponent = (name: string) => {
-    const MockComponent: React.FC<any> = (props) => {
+    const MockComponent = React.forwardRef((props: any, ref) => {
         const { children, ...restProps } = props;
         if (isMapboxAvailable && MapboxGLModule && MapboxGLModule[name]) {
             const RealComponent = MapboxGLModule[name];
-            return <RealComponent {...restProps}>{children}</RealComponent>;
+            return <RealComponent {...restProps} ref={ref}>{children}</RealComponent>;
         }
         // Return null for non-visual components
         return null;
-    };
+    });
     MockComponent.displayName = `Safe${name}`;
     return MockComponent;
 };

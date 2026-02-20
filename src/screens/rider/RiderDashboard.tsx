@@ -13,6 +13,7 @@ dayjs.extend(timezone);
 const PH_TIMEZONE = 'Asia/Manila';
 import * as Location from 'expo-location';
 import MapboxGL, { isMapboxNativeAvailable, MapFallback } from '../../components/map/MapboxWrapper';
+import AnimatedRiderMarker from '../../components/map/AnimatedRiderMarker';
 import LottieView from 'lottie-react-native';
 import { useLocationRedundancy, getStatusMessage, getStatusColor } from '../../hooks/useLocationRedundancy';
 import { subscribeToBattery, BatteryState, subscribeToTamper, TamperState, subscribeToLocation, LocationData, subscribeToKeypad, KeypadState, subscribeToHinge, HingeState, subscribeToBoxState, BoxState, updateBoxState } from '../../services/firebaseClient';
@@ -32,8 +33,27 @@ import TripPreviewModal from '../../components/modals/TripPreviewModal';
 // Helper to fix double-shifted times
 const formatTimeWithHeuristic = (timeStr: string) => {
     if (!timeStr || timeStr === '--:--') return '--:--';
+
+    // Check for T-prefixed time strings (common Postgres time format issue or partial ISO)
+    if (timeStr.startsWith('T') && timeStr.includes(':')) {
+        // e.g. T04:18:38.479 -> 04:18:38 -> 4:18 AM
+        const cleanTime = timeStr.substring(1).split('.')[0];
+        // Create a dummy date with this time to format it
+        const dummyDate = dayjs(`2000-01-01T${cleanTime}`);
+        if (dummyDate.isValid()) {
+            // Add 8 hours if needed? If it's raw time, it might be UTC or local.
+            // Assuming it's already local if just time, or UTC. 
+            // Safest is to just show it formatted 12h.
+            return dummyDate.format('h:mm A');
+        }
+        return cleanTime;
+    }
+
     const d = dayjs(timeStr);
-    if (!d.isValid()) return timeStr;
+    if (!d.isValid()) {
+        console.warn('[RiderDashboard] Invalid date string:', timeStr);
+        return timeStr;
+    }
 
     let phTime = d.tz(PH_TIMEZONE);
     const now = dayjs().tz(PH_TIMEZONE);
@@ -1567,32 +1587,11 @@ export default function RiderDashboard() {
                                     />
 
                                     {/* Rider Location Marker */}
-                                    <MapboxGL.PointAnnotation
-                                        id="rider-location"
-                                        coordinate={[
-                                            lastLocation ? lastLocation.longitude : riderLocation!.coords.longitude,
-                                            lastLocation ? lastLocation.latitude : riderLocation!.coords.latitude
-                                        ]}
-                                        title="Your Location"
-                                    >
-                                        <View style={{
-                                            width: 30,
-                                            height: 30,
-                                            borderRadius: 15,
-                                            backgroundColor: '#2196F3',
-                                            justifyContent: 'center',
-                                            alignItems: 'center',
-                                            borderWidth: 3,
-                                            borderColor: 'white',
-                                            shadowColor: '#000',
-                                            shadowOffset: { width: 0, height: 2 },
-                                            shadowOpacity: 0.3,
-                                            shadowRadius: 3,
-                                            elevation: 5,
-                                        }}>
-                                            <MaterialCommunityIcons name="motorbike" size={16} color="white" />
-                                        </View>
-                                    </MapboxGL.PointAnnotation>
+                                    <AnimatedRiderMarker
+                                        latitude={lastLocation ? lastLocation.latitude : riderLocation!.coords.latitude}
+                                        longitude={lastLocation ? lastLocation.longitude : riderLocation!.coords.longitude}
+                                        rotation={riderLocation?.coords.heading || 0}
+                                    />
 
                                     {/* Destination Marker */}
                                     <MapboxGL.PointAnnotation

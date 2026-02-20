@@ -58,6 +58,8 @@ export default function AssignedDeliveriesScreen() {
                 console.error('Error fetching deliveries:', error);
                 Alert.alert('Error', 'Failed to fetch deliveries');
             } else {
+                console.log('Fetched deliveries data:', JSON.stringify(data, null, 2)); // DEBUG LOG
+
                 const mapped = data.map((d: any) => ({
                     id: d.id,
                     trk: d.tracking_number,
@@ -269,6 +271,10 @@ export default function AssignedDeliveriesScreen() {
                         <MaterialCommunityIcons name="map-marker-distance" size={16} color={theme.colors.onSurfaceVariant} />
                         <Text style={[styles.metaText, { color: theme.colors.onSurfaceVariant }]}>{item.distance}</Text>
                     </View>
+                    <View style={styles.metaItem}>
+                        <MaterialCommunityIcons name="cash" size={16} color={theme.colors.onSurfaceVariant} />
+                        <Text style={[styles.metaText, { color: theme.colors.onSurfaceVariant }]}>{item.earnings}</Text>
+                    </View>
                 </View>
 
             </Card.Content>
@@ -339,7 +345,7 @@ export default function AssignedDeliveriesScreen() {
                     <Text style={{ fontSize: 10, color: theme.colors.onSurfaceVariant }}>
                         {dayjs(item.date).format('MM/DD')} • {item.time}
                     </Text>
-                    <Text style={{ fontSize: 10, color: theme.colors.onSurfaceVariant }}>{item.distance}</Text>
+                    <Text style={{ fontSize: 10, color: theme.colors.onSurfaceVariant }}>{item.distance} • {item.earnings}</Text>
                 </View>
             </Card.Content>
         </Card>
@@ -453,37 +459,22 @@ export default function AssignedDeliveriesScreen() {
             </View>
 
             {/* Validated List Content */}
-            {viewMode === 'list' ? (
-                <FlatList
-                    data={filteredDeliveries}
-                    renderItem={renderItem}
-                    keyExtractor={item => item.id}
-                    contentContainerStyle={styles.listContent}
-                    refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
-                    ListEmptyComponent={
-                        <View style={styles.emptyState}>
-                            <MaterialCommunityIcons name="package-variant-closed" size={64} color={theme.colors.onSurfaceVariant} />
-                            <Text variant="bodyLarge" style={{ color: theme.colors.onSurfaceVariant, marginTop: 16 }}>No deliveries found</Text>
-                        </View>
-                    }
-                />
-            ) : (
-                <FlatList
-                    data={filteredDeliveries}
-                    renderItem={renderGridItem}
-                    keyExtractor={item => item.id}
-                    numColumns={2}
-                    columnWrapperStyle={{ justifyContent: 'space-between' }}
-                    contentContainerStyle={styles.listContent}
-                    refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
-                    ListEmptyComponent={
-                        <View style={styles.emptyState}>
-                            <MaterialCommunityIcons name="package-variant-closed" size={64} color={theme.colors.onSurfaceVariant} />
-                            <Text variant="bodyLarge" style={{ color: theme.colors.onSurfaceVariant, marginTop: 16 }}>No deliveries found</Text>
-                        </View>
-                    }
-                />
-            )}
+            <FlatList
+                key={viewMode}
+                data={filteredDeliveries}
+                renderItem={viewMode === 'list' ? renderItem : renderGridItem}
+                keyExtractor={item => item.id}
+                contentContainerStyle={styles.listContent}
+                refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+                numColumns={viewMode === 'list' ? 1 : 2}
+                columnWrapperStyle={viewMode === 'grid' ? { justifyContent: 'space-between' } : undefined}
+                ListEmptyComponent={
+                    <View style={styles.emptyState}>
+                        <MaterialCommunityIcons name="package-variant-closed" size={64} color={theme.colors.onSurfaceVariant} />
+                        <Text variant="bodyLarge" style={{ color: theme.colors.onSurfaceVariant, marginTop: 16 }}>No deliveries found</Text>
+                    </View>
+                }
+            />
 
             <CancellationModal
                 visible={showCancelModal}

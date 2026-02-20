@@ -79,17 +79,32 @@ export default function JobDetailScreen() {
         });
     };
     // Helper to ensure time is in PH format
+    // Helper to ensure time is in PH format
     const getFormattedTime = (timeStr: string) => {
         if (!timeStr || timeStr === '--:--') return '--:--';
+
+        console.log('[JobDetail] Parsing timeStr:', timeStr);
 
         // If it matches HH:mm A format, return as is (avoid double shift for legacy data)
         if (timeStr.match(/^\d{1,2}:\d{2} [AP]M$/)) return timeStr;
 
+        // Try parsing with DayJS
         // Parse as UTC (server default) and manually add 8 hours for PH Time
-        // This avoids issues where the timezone plugin might fail to load 'Asia/Manila' data
         const d = dayjs.utc(timeStr).add(8, 'hour');
 
-        if (!d.isValid()) return timeStr;
+        if (!d.isValid()) {
+            console.warn('[JobDetail] Invalid date string:', timeStr);
+            // Fallback: If it looks like T04:18:38.479, try to extract time
+            if (timeStr.includes('T')) {
+                const parts = timeStr.split('T');
+                if (parts.length > 1) {
+                    // Try to format just the time part if possible, or return it cleaned
+                    const subTime = parts[1].split('.')[0]; // 04:18:38
+                    return subTime;
+                }
+            }
+            return timeStr;
+        }
 
         return d.format('h:mm A');
     };

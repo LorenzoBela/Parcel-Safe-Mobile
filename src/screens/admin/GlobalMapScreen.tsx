@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState, useRef } from 'react';
 import { View, StyleSheet, Dimensions, ScrollView, TouchableOpacity } from 'react-native';
 import { Card, Text, IconButton, Chip } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -31,7 +31,16 @@ type BoxMarker = {
     dataBytes?: number;
 };
 
+// Animation Types
+type AnimationState = {
+    current: [number, number];
+    target: [number, number];
+    startTime: number;
+    start: [number, number];
+};
+
 const DEFAULT_CENTER: [number, number] = [121.0244, 14.5547]; // Manila
+const ANIMATION_DURATION = 1000;
 
 // ==================== Helpers ====================
 
@@ -115,16 +124,6 @@ function formatTimeAgo(timestamp?: number): string {
     }
 }
 
-function formatTimestamp(timestamp?: number): string {
-    if (!timestamp || !Number.isFinite(timestamp)) return '—';
-    if (timestamp < 1600000000000) return '—';
-    try {
-        return new Date(timestamp).toLocaleString();
-    } catch {
-        return '—';
-    }
-}
-
 // ==================== Component ====================
 
 export default function GlobalMapScreen() {
@@ -138,6 +137,11 @@ export default function GlobalMapScreen() {
 
     const [cameraCenter, setCameraCenter] = useState<[number, number]>(DEFAULT_CENTER);
     const [cameraZoom, setCameraZoom] = useState<number>(12);
+
+    // Optimizations
+    const shapeSourceRef = useRef<any>(null);
+    const animationStates = useRef<Map<string, AnimationState>>(new Map());
+    const animationFrameId = useRef<number | null>(null);
 
     useEffect(() => {
         if (MAPBOX_TOKEN) {
@@ -192,12 +196,121 @@ export default function GlobalMapScreen() {
 
     const tamperAlertCount = useMemo(() => activeBoxes.filter((b) => b.alert).length, [activeBoxes]);
 
+    // Initial center
     useEffect(() => {
         if (activeBoxes.length === 0) return;
-        if (cameraCenter[0] !== DEFAULT_CENTER[0] || cameraCenter[1] !== DEFAULT_CENTER[1]) return;
-        setCameraCenter([activeBoxes[0].lng, activeBoxes[0].lat]);
-        setCameraZoom(13);
+        if (cameraCenter[0] === DEFAULT_CENTER[0] && cameraCenter[1] === DEFAULT_CENTER[1]) {
+            setCameraCenter([activeBoxes[0].lng, activeBoxes[0].lat]);
+            setCameraZoom(13);
+        }
     }, [activeBoxes, cameraCenter]);
+
+    // Animation Loop
+    useEffect(() => {
+        const updateAnimationTargets = () => {
+            activeBoxes.forEach(box => {
+                const target: [number, number] = [box.lng, box.lat];
+                let state = animationStates.current.get(box.id);
+
+                if (!state) {
+                    // New marker
+                    animationStates.current.set(box.id, {
+                        current: target,
+                        target: target,
+                        start: target,
+                        startTime: Date.now()
+                    });
+                } else if (state.target[0] !== target[0] || state.target[1] !== target[1]) {
+                    // Update target
+                    // Teleport if too far (> 500m approx 0.005 deg)
+                    const dist = Math.abs(state.current[0] - target[0]) + Math.abs(state.current[1] - target[1]);
+                    if (dist > 0.005) {
+                        state.current = target;
+                        state.start = target;
+                        state.target = target;
+                        state.startTime = Date.now();
+                    } else {
+                        state.start = state.current;
+                        state.target = target;
+                        state.startTime = Date.now();
+                    }
+                }
+            });
+        };
+
+        updateAnimationTargets();
+
+        const tick = () => {
+            const now = Date.now();
+            const features = [];
+            const idsToRemove: string[] = [];
+
+            // 1. Interpolate
+            for (const [id, state] of animationStates.current.entries()) {
+                // Check if box still exists in activeBoxes (handle removal)
+                const box = activeBoxes.find(b => b.id === id);
+                if (!box) {
+                    idsToRemove.push(id);
+                    continue;
+                }
+
+                const elapsed = now - state.startTime;
+                const progress = Math.min(elapsed / ANIMATION_DURATION, 1);
+
+                // Ease out cubic
+                const t = 1 - Math.pow(1 - progress, 3);
+
+                const currentLng = state.start[0] + (state.target[0] - state.start[0]) * t;
+                const currentLat = state.start[1] + (state.target[1] - state.start[1]) * t;
+
+                state.current = [currentLng, currentLat];
+
+                // 2. Build Feature
+                features.push({
+                    type: 'Feature',
+                    id: id,
+                    properties: {
+                        id: id,
+                        status: box.status,
+                        alert: box.alert,
+                        color: getStatusColor(box.status, box.alert),
+                        selected: id === selectedBoxId
+                    },
+                    geometry: {
+                        type: 'Point',
+                        coordinates: state.current
+                    }
+                });
+            }
+
+            // Cleanup removed
+            idsToRemove.forEach(id => animationStates.current.delete(id));
+
+            // 3. Update ShapeSource
+            const collection = {
+                type: 'FeatureCollection',
+                features: features
+            };
+
+            if (shapeSourceRef.current) {
+                try {
+                    shapeSourceRef.current.setNativeProps({ shape: collection });
+                } catch (e) {
+                    // Fallback for older versions or if setNativeProps fails
+                    // shapeSourceRef.current.setState({ shape: collection }); 
+                    // Ignoring for now as setNativeProps is standard for perf
+                }
+            }
+
+            animationFrameId.current = requestAnimationFrame(tick);
+        };
+
+        tick();
+
+        return () => {
+            if (animationFrameId.current) cancelAnimationFrame(animationFrameId.current);
+        };
+    }, [activeBoxes, selectedBoxId]); // Re-run when list changes or selection changes (to update styling props)
 
     const selectedBox = useMemo(() => {
         if (!selectedBoxId) return null;
@@ -367,30 +480,35 @@ export default function GlobalMapScreen() {
                 >
                     <MapboxGL.Camera zoomLevel={cameraZoom} centerCoordinate={cameraCenter} />
 
-                    {activeBoxes.map((box) => {
-                        const isSelected = selectedBoxId === box.id;
-                        const color = getStatusColor(box.status, box.alert);
+                    {/* Performance Optimized ShapeSource + CircleLayer */}
+                    <MapboxGL.ShapeSource
+                        id="hardware-source"
+                        ref={shapeSourceRef}
+                        shape={{ type: 'FeatureCollection', features: [] }}
+                        onPress={(e) => {
+                            // Handle press on a feature
+                            const feature = e.features[0];
+                            if (feature && feature.properties?.id) {
+                                selectBox(feature.properties.id);
+                            }
+                        }}
+                    >
+                        <MapboxGL.CircleLayer
+                            id="hardware-circles"
+                            style={{
+                                circleColor: ['get', 'color'],
+                                circleRadius: [
+                                    'interpolate', ['linear'], ['zoom'],
+                                    10, 5,
+                                    15, ['case', ['get', 'selected'], 18, 12]
+                                ],
+                                circleStrokeWidth: 2,
+                                circleStrokeColor: '#ffffff',
+                                circlePitchAlignment: 'map'
+                            }}
+                        />
+                    </MapboxGL.ShapeSource>
 
-                        return (
-                            <MapboxGL.PointAnnotation
-                                key={box.id}
-                                id={`box-${box.id}`}
-                                coordinate={[box.lng, box.lat]}
-                                title={box.id}
-                                onSelected={() => selectBox(box.id)}
-                            >
-                                <View
-                                    style={[
-                                        styles.markerDot,
-                                        {
-                                            backgroundColor: color,
-                                            transform: [{ scale: isSelected ? 1.15 : 1 }],
-                                        },
-                                    ]}
-                                />
-                            </MapboxGL.PointAnnotation>
-                        );
-                    })}
                 </MapboxGL.MapView>
             ) : (
                 <View style={[styles.map, styles.mapFallback]}>
