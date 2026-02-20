@@ -16,6 +16,13 @@ import { Platform, AppState, AppStateStatus } from 'react-native';
 import { getFirebaseDatabase, ref, set, serverTimestamp, onValue, off } from './firebaseClient';
 import { offlineQueueService } from './offlineQueueService';
 
+let BackgroundService: any = null;
+try {
+    BackgroundService = require('react-native-background-actions').default;
+} catch (error) {
+    if (__DEV__) console.log('[EC-15] BackgroundService not available');
+}
+
 // NetInfo — conditionally imported to prevent startup crashes
 let NetInfo: any = null;
 try {
@@ -236,7 +243,71 @@ function isStationaryDrift(location: Location.LocationObject): boolean {
 // ---- Feature 7: Signal Loss Recovery state ----
 let lastValidFixTime = Date.now();
 
-// Define the background task
+// Define the foreground task for Location Updates (react-native-background-actions)
+const sleep = (time: number) => new Promise<void>((resolve) => setTimeout(() => resolve(), time));
+
+const foregroundLocationTask = async (taskDataArguments: any) => {
+    const { delay } = taskDataArguments;
+
+    // We run an infinite loop as long as the service is running
+    while (BackgroundService.isRunning()) {
+        try {
+            if (currentBoxId) {
+                const location = await Location.getCurrentPositionAsync({
+                    accuracy: CONFIG.ACCURACY,
+                });
+
+                // Run identical logic to TaskManager callback
+                const accuracy = location.coords.accuracy ?? 999;
+                if (accuracy > CONFIG.ACCURACY_REJECT_THRESHOLD_M) {
+                    accuracyRejectCount++;
+                    if (__DEV__ || accuracyRejectCount % 5 === 0) {
+                        console.log(`[EC-15] GPS rejected: accuracy ${accuracy.toFixed(0)}m > ${CONFIG.ACCURACY_REJECT_THRESHOLD_M}m (${accuracyRejectCount} total)`);
+                    }
+                } else if (!isStationaryDrift(location)) {
+                    accuracyRejectCount = 0; // Reset on good reading
+
+                    await offlineQueueService.enqueueLocationUpdate(
+                        currentBoxId,
+                        location.coords.latitude,
+                        location.coords.longitude,
+                        location.coords.speed ?? 0,
+                        location.coords.heading ?? 0
+                    );
+
+                    lastWrittenLocation = {
+                        lat: location.coords.latitude,
+                        lng: location.coords.longitude,
+                        timestamp: Date.now(),
+                    };
+                    lastValidFixTime = Date.now();
+
+                    const db = getFirebaseDatabase();
+                    const statusRef = ref(db, `boxes/${currentBoxId}/background_location_status`);
+                    await set(statusRef, {
+                        lastUpdate: serverTimestamp(),
+                        source: 'phone_background_fg',
+                        accuracy: location.coords.accuracy,
+                        signal_lost: false,
+                    });
+
+                    const phoneStatus = await collectPhoneNetworkStatus(
+                        { accuracy: location.coords.accuracy, altitude: location.coords.altitude },
+                        'phone_background'
+                    );
+                    await writePhoneStatusIfDue(currentBoxId, phoneStatus);
+                }
+            }
+        } catch (error) {
+            console.error('[EC-15] Foreground task iteration error:', error);
+        }
+
+        // Wait for the defined interval before polling again
+        await sleep(delay);
+    }
+};
+
+// Define the background task (expo-task-manager)
 TaskManager.defineTask(CONFIG.TASK_NAME, async ({ data, error }) => {
     if (error) {
         console.error('[EC-15] Background task error:', error);
@@ -417,7 +488,7 @@ class BackgroundLocationManager {
             const isTaskRegistered = await TaskManager.isTaskRegisteredAsync(CONFIG.TASK_NAME);
 
             if (!isTaskRegistered) {
-                // Start background location updates
+                // Start background location updates (Expo Task Manager)
                 await Location.startLocationUpdatesAsync(CONFIG.TASK_NAME, {
                     accuracy: CONFIG.ACCURACY,
                     timeInterval: CONFIG.LOCATION_INTERVAL_MS,
@@ -434,6 +505,35 @@ class BackgroundLocationManager {
                     showsBackgroundLocationIndicator: true,
                     pausesUpdatesAutomatically: false,
                 });
+            }
+
+            // Start indestructible Foreground Service (Android specific)
+            if (Platform.OS === 'android' && BackgroundService) {
+                if (!BackgroundService.isRunning()) {
+                    const options = {
+                        taskName: 'parcel_safe_location',
+                        taskTitle: CONFIG.NOTIFICATION_TITLE,
+                        taskDesc: CONFIG.NOTIFICATION_BODY,
+                        taskIcon: {
+                            name: 'ic_launcher',
+                            type: 'mipmap',
+                        },
+                        color: '#0066FF',
+                        linkingURI: 'parcelsafe://home', // Replace with your deep link
+                        parameters: {
+                            delay: CONFIG.LOCATION_INTERVAL_MS,
+                        },
+                        notification: {
+                            channelId: 'location-tracking-channel', // Custom channel name
+                            channelName: 'Live Delivery Tracking',
+                            channelDescription: 'Tracks rider location for customer view',
+                            android: {
+                                foregroundServiceTypes: ['location'], // CRITICAL FOR LOCATION TRACKING
+                            },
+                        },
+                    };
+                    await BackgroundService.start(foregroundLocationTask, options);
+                }
             }
 
             this.updateState({
@@ -469,6 +569,10 @@ class BackgroundLocationManager {
 
             if (isTaskRegistered) {
                 await Location.stopLocationUpdatesAsync(CONFIG.TASK_NAME);
+            }
+
+            if (Platform.OS === 'android' && BackgroundService && BackgroundService.isRunning()) {
+                await BackgroundService.stop();
             }
         } catch (error) {
             console.error('[EC-15] Error stopping location updates:', error);

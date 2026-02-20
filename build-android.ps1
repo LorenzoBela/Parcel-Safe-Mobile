@@ -1323,6 +1323,31 @@ function Invoke-BackgroundActionsManifestFix {
 
 Invoke-BackgroundActionsManifestFix -ProjectRoot $PROJECT_ROOT
 
+# Force inject the service into the MAIN app manifest just to be 100% absolutely sure
+function Invoke-AppManifestForegroundServiceFix {
+    param([string]$ProjectRoot)
+    $manifestPath = Join-Path $ProjectRoot "android\app\src\main\AndroidManifest.xml"
+    if (-not (Test-Path $manifestPath)) { return }
+
+    $raw = Get-Content -Path $manifestPath -Raw
+    $target = 'com.asterinet.react.bgactions.RNBackgroundActionsTask'
+
+    if ($raw -match [regex]::Escape($target)) {
+        Write-Host "[OK] App AndroidManifest background-actions service already present" -ForegroundColor DarkGreen
+        return
+    }
+
+    $serviceTag = '    <service android:name="com.asterinet.react.bgactions.RNBackgroundActionsTask" android:foregroundServiceType="location" />'
+    
+    # Replace the closing application tag with the service tag and the closing application tag
+    $raw = $raw -replace '</application>', "$serviceTag`n  </application>"
+    
+    Set-Content -Path $manifestPath -Value $raw
+    Write-Host "[OK] Force-injected RNBackgroundActionsTask into App AndroidManifest.xml" -ForegroundColor Green
+}
+
+Invoke-AppManifestForegroundServiceFix -ProjectRoot $PROJECT_ROOT
+
 # Step 6: Pre-build checks
 Write-Host "`nStep 6: Running pre-build checks..." -ForegroundColor Yellow
 
