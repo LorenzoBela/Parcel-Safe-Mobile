@@ -15,7 +15,8 @@ import * as TaskManager from 'expo-task-manager';
 import * as Battery from 'expo-battery';
 import * as IntentLauncher from 'expo-intent-launcher';
 import * as Application from 'expo-application';
-import { Platform, AppState, AppStateStatus, Alert } from 'react-native';
+import * as Notifications from 'expo-notifications';
+import { Platform, AppState, AppStateStatus, Alert, PermissionsAndroid } from 'react-native';
 import { getFirebaseDatabase, ref, set, serverTimestamp, onValue, off } from './firebaseClient';
 import { offlineQueueService } from './offlineQueueService';
 
@@ -431,6 +432,20 @@ class BackgroundLocationManager {
                 return false;
             }
 
+            // Android 13+ Notification Permission
+            if (Platform.OS === 'android' && Number(Platform.Version) >= 33) {
+                const granted = await PermissionsAndroid.request(
+                    PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS
+                );
+                if (granted !== PermissionsAndroid.RESULTS.GRANTED) {
+                    Alert.alert(
+                        'Notification Required',
+                        'Parcel-Safe requires notification permissions to securely track your location in the background. Without it, tracking may fail.',
+                        [{ text: 'OK' }]
+                    );
+                }
+            }
+
             this.updateState({ permissionStatus: 'GRANTED' });
             return true;
         } catch (error) {
@@ -560,6 +575,19 @@ class BackgroundLocationManager {
             // Start indestructible Foreground Service (Android specific)
             if (Platform.OS === 'android' && BackgroundService) {
                 if (!BackgroundService.isRunning()) {
+                    // Explicitly create the channel with PUBLIC lockscreen visibility for Android 10+
+                    try {
+                        await Notifications.setNotificationChannelAsync('location-tracking-channel', {
+                            name: 'Live Delivery Tracking',
+                            importance: Notifications.AndroidImportance.MAX,
+                            lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
+                            sound: null,
+                            enableVibrate: false,
+                        });
+                    } catch (e) {
+                        if (__DEV__) console.warn('[EC-15] Failed to set location notification channel:', e);
+                    }
+
                     const options = {
                         taskName: 'parcel_safe_location',
                         taskTitle: CONFIG.NOTIFICATION_TITLE,

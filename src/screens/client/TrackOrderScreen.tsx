@@ -141,6 +141,7 @@ export default function TrackOrderScreen() {
     const [distanceToTarget, setDistanceToTarget] = useState<number | null>(null); // km
     const [isMapLoading, setIsMapLoading] = useState(true); // Loading screen until real location is fetched
     const [isRouteView, setIsRouteView] = useState(false);
+    const [isNavigationMode, setIsNavigationMode] = useState(false);
     const [isBottomSheetExpanded, setIsBottomSheetExpanded] = useState(true);
 
     // EC-SMART-ROUTE: Refs for optimization (borrowed from Web)
@@ -605,9 +606,17 @@ export default function TrackOrderScreen() {
             cameraRef.current?.setCamera({
                 centerCoordinate: [riderMarkerLocation.longitude, riderMarkerLocation.latitude],
                 animationDuration: 1000,
+                ...(isNavigationMode ? {
+                    pitch: 60,
+                    zoomLevel: 19,
+                    heading: 0
+                } : {
+                    pitch: 0,
+                    zoomLevel: 16 // Fallback standard zoom
+                })
             });
         }
-    }, [riderMarkerLocation.latitude, riderMarkerLocation.longitude, isRouteView, isMapLoading]);
+    }, [riderMarkerLocation.latitude, riderMarkerLocation.longitude, isRouteView, isNavigationMode, isMapLoading]);
 
     const routeGeoJson = {
         type: 'Feature' as const,
@@ -785,8 +794,38 @@ export default function TrackOrderScreen() {
                 </Surface>
             </View>
 
-            {/* Recenter on Rider Button */}
-            <View style={[styles.recenterActions, { top: 20 + insets.top }]}>
+            {/* Recenter & Navigation on Rider Buttons */}
+            <View style={[styles.recenterActions, { top: 20 + insets.top, flexDirection: 'row', gap: 8 }]}>
+                {/* Navigation Mode Button */}
+                <Surface style={[styles.iconButtonSurface, { backgroundColor: theme.colors.surface }]} elevation={2}>
+                    <IconButton
+                        icon={isNavigationMode ? "compass-off-outline" : "compass-outline"}
+                        size={24}
+                        iconColor={isNavigationMode ? theme.colors.error : theme.colors.primary}
+                        onPress={() => {
+                            if (isNavigationMode) {
+                                setIsNavigationMode(false);
+                                cameraRef.current?.setCamera({
+                                    centerCoordinate: [riderMarkerLocation.longitude, riderMarkerLocation.latitude],
+                                    zoomLevel: 16,
+                                    pitch: 0,
+                                    heading: 0,
+                                    animationDuration: 1000,
+                                });
+                            } else {
+                                setIsNavigationMode(true);
+                                setIsRouteView(false); // Make them mutually exclusive
+                                cameraRef.current?.setCamera({
+                                    centerCoordinate: [riderMarkerLocation.longitude, riderMarkerLocation.latitude],
+                                    zoomLevel: 19,
+                                    pitch: 60,
+                                    animationDuration: 1000,
+                                });
+                            }
+                        }}
+                    />
+                </Surface>
+                {/* Recenter / Route View Button */}
                 <Surface style={[styles.iconButtonSurface, { backgroundColor: theme.colors.surface }]} elevation={2}>
                     <IconButton
                         icon={isRouteView ? "crosshairs-gps" : "map-search-outline"}
@@ -797,10 +836,14 @@ export default function TrackOrderScreen() {
                                 setIsRouteView(false);
                                 cameraRef.current?.setCamera({
                                     centerCoordinate: [riderMarkerLocation.longitude, riderMarkerLocation.latitude],
+                                    zoomLevel: 16,
+                                    pitch: 0,
+                                    heading: 0,
                                     animationDuration: 1000,
                                 });
                             } else {
                                 setIsRouteView(true);
+                                setIsNavigationMode(false); // Mutually exclusive
                                 if (routeCoordinates && routeCoordinates.length > 0) {
                                     const lats = routeCoordinates.map(c => c[1]);
                                     const lngs = routeCoordinates.map(c => c[0]);

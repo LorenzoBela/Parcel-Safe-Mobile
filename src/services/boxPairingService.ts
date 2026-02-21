@@ -1,6 +1,6 @@
 import { getFirebaseDatabase } from './firebaseClient';
 import { onValue, off, ref, set, serverTimestamp, get } from 'firebase/database';
-import { setSmartBoxAssignedUser } from './supabaseClient';
+import { setSmartBoxAssignedUser, supabase } from './supabaseClient';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { AppState, type NativeEventSubscription } from 'react-native';
 
@@ -319,28 +319,8 @@ export async function revokePairing(boxId: string, riderId: string): Promise<voi
     });
 }
 
-/**
- * Check if a pairing is currently active.
- *
- * When an expired pairing is detected the function will *lazily* mark it as
- * EXPIRED in Firebase (fire-and-forget) so the database stays consistent and
- * other consumers (web admin, sync routes) see the correct status.
- */
 export function isPairingActive(state: BoxPairingState | null): boolean {
-    if (!state || state.status !== 'ACTIVE') {
-        return false;
-    }
-
-    if (state.expires_at && state.expires_at <= Date.now()) {
-        // Fire-and-forget: mark the pairing as EXPIRED in Firebase so the DB
-        // status stays consistent across all consumers.
-        if (state.box_id && state.rider_id) {
-            void markPairingExpired(state.box_id, state.rider_id);
-        }
-        return false;
-    }
-
-    return true;
+    return !!state && state.status === 'ACTIVE';
 }
 
 // ========================== Auto-Expiration Helpers ==========================
@@ -432,6 +412,35 @@ export function startPairingExpirationMonitor(
                 const remaining = state.expires_at - now;
 
                 if (remaining <= 0) {
+                    // Check if rider is currently completing a delivery with THIS box
+                    let hasActiveDelivery = false;
+                    try {
+                        const { data, error } = await supabase
+                            .from('deliveries')
+                            .select('id')
+                            .eq('rider_id', riderId)
+                            .eq('box_id', state.box_id)
+                            .in('status', ['ASSIGNED', 'PICKED_UP', 'IN_TRANSIT', 'ARRIVED'])
+                            .limit(1);
+
+                        if (!error && data && data.length > 0) {
+                            hasActiveDelivery = true;
+                        }
+                    } catch (err) {
+                        console.warn('[Pairing] Could not verify active deliveries, assuming none.', err);
+                    }
+
+                    if (hasActiveDelivery) {
+                        // Defer expiration until delivery completes, warn UI playfully
+                        _expirationWarningCb?.({
+                            type: 'WARNING',
+                            boxId: state.box_id,
+                            riderId,
+                            remainingMs: 0,
+                        });
+                        return;
+                    }
+
                     // Session expired -- mark it.
                     await markPairingExpired(state.box_id, riderId);
                     _expirationWarningCb?.({
