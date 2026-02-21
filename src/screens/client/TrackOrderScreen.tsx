@@ -83,6 +83,7 @@ function mapStatusToCancellationStatus(status: string | undefined): DeliveryStat
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const RiderImage = require('../../../assets/Rider.jpg');
+const ArrowHeadImage = require('../../../assets/arrow_head.png');
 
 // Pulse animation component for rider marker
 function PulseRing() {
@@ -150,10 +151,11 @@ export default function TrackOrderScreen() {
     const lastRecalcTimestamp = useRef(0);
     const isRecalculating = useRef(false);
     const routeAverageSpeed = useRef<number>(25 / 3.6); // Default 25km/h in m/s
+    const fullOriginalRoute = useRef<number[][] | null>(null); // Stores the FULL original route for slicing
     const MAX_RECALCS = 20;
     const MIN_DIST_TO_RECALC_KM = 0.2; // 200m
-    const RECALC_COOLDOWN_MS = 8000; // 8s (faster rerouting)
-    const CONSECUTIVE_OFF_ROUTE_REQUIRED = 2; // React faster to off-route
+    const RECALC_COOLDOWN_MS = 5000; // 5s — faster rerouting (was 8s)
+    const CONSECUTIVE_OFF_ROUTE_REQUIRED = 1; // Immediate off-route reaction (was 2)
     const OFF_ROUTE_THRESHOLD_KM = 0.05; // 50m
 
     // Loop/Status Guard Ref
@@ -235,6 +237,29 @@ export default function TrackOrderScreen() {
         latitude: displayLocation?.lat ?? (isPickedUp ? boxLocation.latitude : fallbackLat),
         longitude: displayLocation?.lng ?? (isPickedUp ? boxLocation.longitude : fallbackLng),
     };
+
+    // Compute rider bearing (heading direction) from previous → current position
+    const prevRiderPos = useRef<{ lat: number; lng: number } | null>(null);
+    const riderBearing = useRef(0);
+
+    useEffect(() => {
+        if (!displayLocation?.lat || !displayLocation?.lng) return;
+        const prev = prevRiderPos.current;
+        if (prev) {
+            // Only compute bearing if rider actually moved (~10m+)
+            const dist = Math.sqrt(
+                Math.pow(displayLocation.lng - prev.lng, 2) +
+                Math.pow(displayLocation.lat - prev.lat, 2)
+            );
+            if (dist > 0.0001) { // ~11m threshold
+                riderBearing.current = bearing(
+                    point([prev.lng, prev.lat]),
+                    point([displayLocation.lng, displayLocation.lat])
+                );
+            }
+        }
+        prevRiderPos.current = { lat: displayLocation.lat, lng: displayLocation.lng };
+    }, [displayLocation?.lat, displayLocation?.lng]);
 
     const riderDetails = {
         name: riderProfile?.full_name || delivery?.rider_name || (delivery?.status === 'ACCEPTED' ? 'Rider Assigned' : 'Connecting...'),
@@ -459,7 +484,9 @@ export default function TrackOrderScreen() {
             const json = await response.json();
             if (json.routes && json.routes.length > 0) {
                 const route = json.routes[0].geometry.coordinates;
+                fullOriginalRoute.current = route; // Store full route for slicing
                 setRouteCoordinates(route);
+                setCompletedRouteCoords(null); // Clear traveled segment on new route
                 recalcCount.current += 1;
 
                 // Update ETA and Speed
@@ -469,7 +496,7 @@ export default function TrackOrderScreen() {
                 if (durationSeconds > 0) {
                     routeAverageSpeed.current = distanceMeters / durationSeconds;
                     setEta(smoothEta(Math.ceil(durationSeconds / 60)));
-                    setDistanceToTarget(distanceMeters / 1000); // Convert m → km
+                    setDistanceToTarget(distanceMeters / 1000); // Convert m → km (route distance)
                 }
             }
         } catch (error) {
@@ -488,32 +515,30 @@ export default function TrackOrderScreen() {
 
     // EC-SMART-ROUTE: Off-Route Detection & Recalculation
     useEffect(() => {
-        if (!riderLiveLocation || !routeCoordinates || routeCoordinates.length < 2) return;
+        // Use the full original route for slicing so we always operate on the complete path
+        const routeForSlicing = fullOriginalRoute.current;
+        if (!riderLiveLocation || !routeForSlicing || routeForSlicing.length < 2) return;
 
         const checkRoute = async () => {
             try {
                 const { lat, lng } = riderLiveLocation;
 
-                // 1. Calculate Distance to current target (pickup or dropoff)
+                // 1. Calculate straight-line distance to target (fallback only)
                 const distToDest = distanceTurf(
                     point([lng, lat]),
                     point([routeTarget.longitude, routeTarget.latitude]),
                     { units: 'kilometers' }
                 );
 
-                // Update distance to target for UI display
-                setDistanceToTarget(distToDest);
-
-                // 2. Check if Off-Route
-                if (!routeCoordinates || routeCoordinates.length < 2) return;
-
-                const fullRouteLine = lineString(routeCoordinates);
+                // 2. Check if Off-Route using the FULL original route
+                const fullRouteLine = lineString(routeForSlicing);
                 const riderPoint = point([lng, lat]);
                 const snapped = nearestPointOnLine(fullRouteLine, riderPoint);
                 const distFromRoute = distanceTurf(riderPoint, snapped, { units: 'kilometers' });
 
                 if (distFromRoute > OFF_ROUTE_THRESHOLD_KM) {
-                    // Rider is Off-Route
+                    // Rider is Off-Route — use straight-line as fallback distance
+                    setDistanceToTarget(distToDest);
                     consecutiveOffRouteCount.current += 1;
 
                     if (
@@ -538,14 +563,22 @@ export default function TrackOrderScreen() {
                     // On Route - Reset counter
                     consecutiveOffRouteCount.current = 0;
 
-                    // Update ETA using dynamic slicing (Web logic)
+                    // Dynamic route slicing: split into remaining + completed segments
                     try {
-                        const startPoint = point(routeCoordinates[0]);
-                        const endPoint = point(routeCoordinates[routeCoordinates.length - 1]);
-                        const sliced = lineSlice(snapped, endPoint, fullRouteLine);
-                        const slicedDistanceKm = length(sliced, { units: 'kilometers' });
+                        const startPoint = point(routeForSlicing[0]);
+                        const endPoint = point(routeForSlicing[routeForSlicing.length - 1]);
 
-                        // P1: Compute completed (traveled) segment
+                        // Remaining: snapped → end (this becomes the visible route)
+                        const remainingSlice = lineSlice(snapped, endPoint, fullRouteLine);
+                        const remainingCoords = (remainingSlice as any).geometry?.coordinates;
+                        const slicedDistanceKm = length(remainingSlice, { units: 'kilometers' });
+
+                        // Update route to show ONLY remaining segment (instant consumption)
+                        if (remainingCoords && remainingCoords.length > 1) {
+                            setRouteCoordinates(remainingCoords);
+                        }
+
+                        // Completed: start → snapped (dashed gray traveled segment)
                         try {
                             const completedSlice = lineSlice(startPoint, snapped, fullRouteLine);
                             const completedCoords = (completedSlice as any).geometry?.coordinates;
@@ -554,12 +587,16 @@ export default function TrackOrderScreen() {
                             }
                         } catch { /* ignore slice errors for completed segment */ }
 
+                        // Update distance to ROUTE distance (not straight-line) — matches web
+                        setDistanceToTarget(slicedDistanceKm);
+
                         // Calculate ETA based on route's average speed
                         const distanceMeters = slicedDistanceKm * 1000;
                         const estimatedSeconds = distanceMeters / routeAverageSpeed.current;
                         setEta(smoothEta(Math.ceil(estimatedSeconds / 60)));
                     } catch (err) {
-                        // Fallback to simple distance if slicing fails
+                        // Fallback to straight-line distance if slicing fails
+                        setDistanceToTarget(distToDest);
                         const estimatedSeconds = (distToDest * 1000) / routeAverageSpeed.current;
                         setEta(smoothEta(Math.ceil(estimatedSeconds / 60)));
                     }
@@ -694,7 +731,7 @@ export default function TrackOrderScreen() {
                             id="route-line"
                             style={{
                                 lineColor: theme.colors.primary,
-                                lineWidth: 4,
+                                lineWidth: 5,
                             }}
                         />
                     </MapboxGL.ShapeSource>
@@ -731,6 +768,7 @@ export default function TrackOrderScreen() {
                     <AnimatedRiderMarker
                         latitude={riderMarkerLocation.latitude}
                         longitude={riderMarkerLocation.longitude}
+                        rotation={riderBearing.current}
                     />
 
                     {/* Destination Marker */}

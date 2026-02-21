@@ -6,7 +6,7 @@
  * - Foreground service: Android notification keeps app alive
  * - Location background: iOS background location permission
  * - Failover: Box GPS continues independently
- * 
+ *
  * Uses Expo TaskManager and Location APIs for cross-platform support.
  */
 
@@ -19,13 +19,6 @@ import * as Notifications from 'expo-notifications';
 import { Platform, AppState, AppStateStatus, Alert, PermissionsAndroid } from 'react-native';
 import { getFirebaseDatabase, ref, set, serverTimestamp, onValue, off } from './firebaseClient';
 import { offlineQueueService } from './offlineQueueService';
-
-let BackgroundService: any = null;
-try {
-    BackgroundService = require('react-native-background-actions').default;
-} catch (error) {
-    if (__DEV__) console.log('[EC-15] BackgroundService not available');
-}
 
 // NetInfo — conditionally imported to prevent startup crashes
 let NetInfo: any = null;
@@ -132,13 +125,13 @@ export type TrackingPhase = 'IDLE' | 'TRANSIT' | 'ARRIVAL';
 
 export const CONFIG = {
     /** Background location task name */
-    TASK_NAME: 'background-location-task',
+    TASK_NAME: 'background-location-task-v2',
 
     /** Location update interval (ms) — aggressive for max accuracy */
     LOCATION_INTERVAL_MS: 3000, // 3 seconds
 
-    /** Minimum distance before update (meters) */
-    DISTANCE_FILTER_M: 5, // 5 meters
+    /** Minimum distance before update (meters) — set to 0 so updates fire on timeInterval alone, even when stationary */
+    DISTANCE_FILTER_M: 0,
 
     /** Foreground service notification title */
     NOTIFICATION_TITLE: 'Parcel-Safe Active Delivery',
@@ -246,70 +239,6 @@ function isStationaryDrift(location: Location.LocationObject): boolean {
 
 // ---- Feature 7: Signal Loss Recovery state ----
 let lastValidFixTime = Date.now();
-
-// Define the foreground task for Location Updates (react-native-background-actions)
-const sleep = (time: number) => new Promise<void>((resolve) => setTimeout(() => resolve(), time));
-
-const foregroundLocationTask = async (taskDataArguments: any) => {
-    const { delay } = taskDataArguments;
-
-    // We run an infinite loop as long as the service is running
-    while (BackgroundService.isRunning()) {
-        try {
-            if (currentBoxId) {
-                const location = await Location.getCurrentPositionAsync({
-                    accuracy: CONFIG.ACCURACY,
-                });
-
-                // Run identical logic to TaskManager callback
-                const accuracy = location.coords.accuracy ?? 999;
-                if (accuracy > CONFIG.ACCURACY_REJECT_THRESHOLD_M) {
-                    accuracyRejectCount++;
-                    if (__DEV__ || accuracyRejectCount % 5 === 0) {
-                        console.log(`[EC-15] GPS rejected: accuracy ${accuracy.toFixed(0)}m > ${CONFIG.ACCURACY_REJECT_THRESHOLD_M}m (${accuracyRejectCount} total)`);
-                    }
-                } else if (!isStationaryDrift(location)) {
-                    accuracyRejectCount = 0; // Reset on good reading
-
-                    await offlineQueueService.enqueueLocationUpdate(
-                        currentBoxId,
-                        location.coords.latitude,
-                        location.coords.longitude,
-                        location.coords.speed ?? 0,
-                        location.coords.heading ?? 0
-                    );
-
-                    lastWrittenLocation = {
-                        lat: location.coords.latitude,
-                        lng: location.coords.longitude,
-                        timestamp: Date.now(),
-                    };
-                    lastValidFixTime = Date.now();
-
-                    const db = getFirebaseDatabase();
-                    const statusRef = ref(db, `boxes/${currentBoxId}/background_location_status`);
-                    await set(statusRef, {
-                        lastUpdate: serverTimestamp(),
-                        source: 'phone_background_fg',
-                        accuracy: location.coords.accuracy,
-                        signal_lost: false,
-                    });
-
-                    const phoneStatus = await collectPhoneNetworkStatus(
-                        { accuracy: location.coords.accuracy, altitude: location.coords.altitude },
-                        'phone_background'
-                    );
-                    await writePhoneStatusIfDue(currentBoxId, phoneStatus);
-                }
-            }
-        } catch (error) {
-            console.error('[EC-15] Foreground task iteration error:', error);
-        }
-
-        // Wait for the defined interval before polling again
-        await sleep(delay);
-    }
-};
 
 // Define the background task (expo-task-manager)
 TaskManager.defineTask(CONFIG.TASK_NAME, async ({ data, error }) => {
@@ -553,6 +482,24 @@ class BackgroundLocationManager {
             const isTaskRegistered = await TaskManager.isTaskRegisteredAsync(CONFIG.TASK_NAME);
 
             if (!isTaskRegistered) {
+                // Explicitly create the channel with PUBLIC lockscreen visibility for Android 10+
+                if (Platform.OS === 'android') {
+                    try {
+                        // expo-location dynamically names its channel: "appId:taskName"
+                        // By creating it FIRST here with MAX importance, we prevent it from defaulting to LOW
+                        const expoLocationChannelId = `${Application.applicationId}:${CONFIG.TASK_NAME}`;
+                        await Notifications.setNotificationChannelAsync(expoLocationChannelId, {
+                            name: 'Live Delivery Tracking',
+                            importance: Notifications.AndroidImportance.MAX,
+                            lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
+                            sound: null,
+                            enableVibrate: false,
+                        });
+                    } catch (e) {
+                        if (__DEV__) console.warn('[EC-15] Failed to set location notification channel:', e);
+                    }
+                }
+
                 // Start background location updates (Expo Task Manager)
                 await Location.startLocationUpdatesAsync(CONFIG.TASK_NAME, {
                     accuracy: CONFIG.ACCURACY,
@@ -570,48 +517,6 @@ class BackgroundLocationManager {
                     showsBackgroundLocationIndicator: true,
                     pausesUpdatesAutomatically: false,
                 });
-            }
-
-            // Start indestructible Foreground Service (Android specific)
-            if (Platform.OS === 'android' && BackgroundService) {
-                if (!BackgroundService.isRunning()) {
-                    // Explicitly create the channel with PUBLIC lockscreen visibility for Android 10+
-                    try {
-                        await Notifications.setNotificationChannelAsync('location-tracking-channel', {
-                            name: 'Live Delivery Tracking',
-                            importance: Notifications.AndroidImportance.MAX,
-                            lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
-                            sound: null,
-                            enableVibrate: false,
-                        });
-                    } catch (e) {
-                        if (__DEV__) console.warn('[EC-15] Failed to set location notification channel:', e);
-                    }
-
-                    const options = {
-                        taskName: 'parcel_safe_location',
-                        taskTitle: CONFIG.NOTIFICATION_TITLE,
-                        taskDesc: CONFIG.NOTIFICATION_BODY,
-                        taskIcon: {
-                            name: 'ic_launcher',
-                            type: 'mipmap',
-                        },
-                        color: '#0066FF',
-                        linkingURI: 'parcelsafe://home', // Replace with your deep link
-                        parameters: {
-                            delay: CONFIG.LOCATION_INTERVAL_MS,
-                        },
-                        notification: {
-                            channelId: 'location-tracking-channel', // Custom channel name
-                            channelName: 'Live Delivery Tracking',
-                            channelDescription: 'Tracks rider location for customer view',
-                            android: {
-                                foregroundServiceTypes: ['location'], // CRITICAL FOR LOCATION TRACKING
-                            },
-                        },
-                    };
-                    await BackgroundService.start(foregroundLocationTask, options);
-                }
             }
 
             this.updateState({
@@ -647,10 +552,6 @@ class BackgroundLocationManager {
 
             if (isTaskRegistered) {
                 await Location.stopLocationUpdatesAsync(CONFIG.TASK_NAME);
-            }
-
-            if (Platform.OS === 'android' && BackgroundService && BackgroundService.isRunning()) {
-                await BackgroundService.stop();
             }
         } catch (error) {
             console.error('[EC-15] Error stopping location updates:', error);

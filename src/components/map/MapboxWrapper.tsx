@@ -142,6 +142,8 @@ const SafeCircleLayer = createMockComponent('CircleLayer');
 const SafeFillLayer = createMockComponent('FillLayer');
 const SafeMarkerView = createMockComponent('MarkerView');
 const SafeUserLocation = createMockComponent('UserLocation');
+const SafeSymbolLayer = createMockComponent('SymbolLayer');
+const SafeImages = createMockComponent('Images');
 
 /**
  * Safe wrapper for setAccessToken
@@ -216,6 +218,8 @@ const MapboxGL = {
     MarkerView: SafeMarkerView,
     UserLocation: SafeUserLocation,
     FillLayer: SafeFillLayer,
+    SymbolLayer: SafeSymbolLayer,
+    Images: SafeImages,
     setAccessToken,
     setTelemetryEnabled,
     StyleURL,

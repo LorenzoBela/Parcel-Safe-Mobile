@@ -132,7 +132,7 @@ const AnimatedRiderMarker: React.FC<AnimatedRiderMarkerProps> = ({
             coordinate={renderCoord}
             anchor={{ x: 0.5, y: 0.5 }}
         >
-            <View style={styles.riderMarkerOuter}>
+            <View style={[styles.riderMarkerOuter, { transform: [{ rotate: `${renderRotation}deg` }] }]}>
                 {/* Image Container */}
                 <View style={[styles.riderMarkerCircle]}>
                     <Image
@@ -148,13 +148,8 @@ const AnimatedRiderMarker: React.FC<AnimatedRiderMarkerProps> = ({
                     />
                 </View>
 
-                {/* Direction Cone - Rotates with Bearing */}
-                <View
-                    style={[
-                        styles.riderDirectionCone,
-                        { transform: [{ rotate: `${renderRotation}deg` }] }
-                    ]}
-                />
+                {/* Direction Cone - Fixed at top, orbits map by rotating container */}
+                <View style={styles.riderDirectionCone} />
             </View>
         </MapboxGL.PointAnnotation>
     );
