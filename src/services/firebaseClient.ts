@@ -1723,6 +1723,72 @@ export async function startFaceScan(boxId: string): Promise<void> {
     await set(cmdRef, true);
 }
 
+// ==================== EC-81: Theft Detection ====================
+
+export type TheftState = 'NORMAL' | 'SUSPICIOUS' | 'STOLEN' | 'LOCKDOWN' | 'RECOVERED';
+
+export interface LocationHistoryEntry {
+    lat: number;
+    lng: number;
+    timestamp: number;
+}
+
+export interface GeofenceConfig {
+    centerLat: number;
+    centerLng: number;
+    radiusKm: number;
+    configured: boolean;
+}
+
+export interface TheftStatus {
+    state: TheftState;
+    is_stolen: boolean;
+    reported_by: string;
+    reported_at: number;
+    last_known_location: {
+        lat: number;
+        lng: number;
+        heading: number;
+        speed: number;
+    };
+    location_history: LocationHistoryEntry[];
+    lockdown_active: boolean;
+    lockdown_at?: number;
+    recovery_photos: string[];
+    geofence_breach_at?: number;
+    notes?: string;
+}
+
+/**
+ * Subscribe to all stolen boxes (admin dashboard) - EC-81
+ */
+export function subscribeToStolenBoxes(
+    callback: (boxes: Record<string, TheftStatus> | null) => void
+): () => void {
+    const db = getFirebaseDatabase();
+    const boxesRef = ref(db, 'boxes');
+
+    const unsubscribe = onValue(boxesRef, (snapshot) => {
+        const allBoxes = snapshot.val();
+        if (!allBoxes) {
+            callback(null);
+            return;
+        }
+
+        const stolenBoxes: Record<string, TheftStatus> = {};
+        Object.keys(allBoxes).forEach(boxId => {
+            const theftStatus = allBoxes[boxId]?.theft_status;
+            if (theftStatus?.is_stolen) {
+                stolenBoxes[boxId] = theftStatus;
+            }
+        });
+
+        callback(Object.keys(stolenBoxes).length > 0 ? stolenBoxes : null);
+    });
+
+    return () => off(boxesRef);
+}
+
 export { ref, onValue, off, set, serverTimestamp };
 export type { Database, DatabaseReference };
 

@@ -226,6 +226,10 @@ export default function DeliveryLogScreen() {
                                 <MaterialCommunityIcons name="calendar" size={14} color="#888" />
                                 <Text variant="bodySmall" style={styles.detailText} numberOfLines={1}>{item.date}</Text>
                             </View>
+                            <View style={[styles.detailRow, { marginTop: 4 }]}>
+                                <MaterialCommunityIcons name="map-marker-distance" size={14} color="#888" />
+                                <Text variant="bodySmall" style={styles.detailText} numberOfLines={1}>{item.distance}</Text>
+                            </View>
                             {viewMode === 'list' && (
                                 <View style={[styles.detailRow, { marginTop: 4 }]}>
                                     <MaterialCommunityIcons name="motorbike" size={14} color="#888" />

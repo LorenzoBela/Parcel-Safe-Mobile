@@ -1,9 +1,12 @@
 import React, { useState, useCallback } from 'react';
 import { View, StyleSheet, ScrollView } from 'react-native';
-import { Text, List, Switch, Divider, useTheme, Avatar, Surface } from 'react-native-paper';
+import { Text, List, Switch, Divider, useTheme, Avatar, Surface, Button } from 'react-native-paper';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { useAppTheme } from '../../context/ThemeContext';
 import { supabase } from '../../services/supabaseClient';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { signOut, signInWithGoogleAndSyncProfile } from '../../services/auth';
+import useAuthStore from '../../store/authStore';
 
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -12,8 +15,12 @@ export default function SettingsScreen() {
     const { isDarkMode, toggleTheme } = useAppTheme();
     const navigation = useNavigation<any>();
     const insets = useSafeAreaInsets();
+    const login = useAuthStore((state: any) => state.login);
+    const logout = useAuthStore((state: any) => state.logout);
+    const role = useAuthStore((state: any) => state.role);
     const [notifications, setNotifications] = useState(true);
     const [profile, setProfile] = useState<any>(null);
+    const [isSwitching, setIsSwitching] = useState(false);
 
     const fetchProfile = async () => {
         const { data: { user } } = await supabase!.auth.getUser();
@@ -33,8 +40,47 @@ export default function SettingsScreen() {
         }, [])
     );
 
+    const handleLogout = async () => {
+        try {
+            await signOut();
+            logout();
+        } catch (error) {
+            console.error('Logout error:', error);
+        } finally {
+            navigation.replace('Login');
+        }
+    };
+
+    const handleSwitchAccount = async () => {
+        try {
+            setIsSwitching(true);
+            await signOut();
+            logout();
+
+            const result = await signInWithGoogleAndSyncProfile();
+            login(result);
+
+            if (result.role === 'customer') {
+                navigation.replace('CustomerApp');
+            } else {
+                navigation.replace('RoleSelection');
+            }
+        } catch (error: any) {
+            console.error('Switch account failed:', error);
+            navigation.replace('Login');
+        } finally {
+            setIsSwitching(false);
+        }
+    };
+
     return (
-        <ScrollView style={[styles.container, { backgroundColor: theme.colors.background, paddingTop: insets.top }]}>
+        <ScrollView
+            style={[styles.container, { backgroundColor: theme.colors.background }]}
+            contentContainerStyle={{
+                paddingTop: insets.top,
+                paddingBottom: insets.bottom + 40
+            }}
+        >
             {/* Profile Header */}
             <Surface style={[styles.profileHeader, { backgroundColor: theme.colors.surface }]} elevation={1}>
                 <Avatar.Image
@@ -107,8 +153,36 @@ export default function SettingsScreen() {
                 />
             </List.Section>
 
+            <View style={styles.logoutContainer}>
+                {(role === 'rider' || role === 'admin') && (
+                    <Button
+                        mode="contained-tonal"
+                        icon={() => <MaterialCommunityIcons name="view-dashboard" size={20} color={theme.colors.onSecondaryContainer} />}
+                        onPress={() => navigation.replace('RoleSelection')}
+                        style={styles.changeDashboardBtn}
+                        textColor={theme.colors.onSecondaryContainer}
+                    >
+                        Change Dashboard
+                    </Button>
+                )}
+                <Button
+                    mode="outlined"
+                    icon={() => <MaterialCommunityIcons name="google" size={20} color={theme.colors.onSurface} />}
+                    onPress={handleSwitchAccount}
+                    loading={isSwitching}
+                    disabled={isSwitching}
+                    style={styles.switchAccountBtn}
+                    textColor={theme.colors.onSurface}
+                >
+                    Switch Account
+                </Button>
+                <Button mode="contained" buttonColor={theme.colors.error} onPress={handleLogout}>
+                    Log Out
+                </Button>
+            </View>
+
             <View style={styles.versionContainer}>
-                <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>App Version 1.0.0</Text>
+                <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>App Version 1.0.1</Text>
             </View>
         </ScrollView>
     );
@@ -139,5 +213,16 @@ const styles = StyleSheet.create({
     versionContainer: {
         alignItems: 'center',
         padding: 24,
+    },
+    logoutContainer: {
+        marginTop: 20,
+        paddingHorizontal: 16,
+    },
+    changeDashboardBtn: {
+        marginBottom: 12,
+    },
+    switchAccountBtn: {
+        marginBottom: 12,
+        borderColor: '#ccc',
     }
 });

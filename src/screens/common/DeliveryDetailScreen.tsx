@@ -12,6 +12,25 @@ import timezone from 'dayjs/plugin/timezone';
 
 dayjs.extend(utc);
 dayjs.extend(timezone);
+import { parseUTCString } from '../../utils/date';
+
+const getDistanceFromLatLonInKm = (lat1: number, lon1: number, lat2: number, lon2: number) => {
+    var R = 6371; // Radius of the earth in km
+    var dLat = deg2rad(lat2 - lat1);  // deg2rad below
+    var dLon = deg2rad(lon2 - lon1);
+    var a =
+        Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+        Math.cos(deg2rad(lat1)) * Math.cos(deg2rad(lat2)) *
+        Math.sin(dLon / 2) * Math.sin(dLon / 2)
+        ;
+    var c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    var d = R * c; // Distance in km
+    return d;
+}
+
+const deg2rad = (deg: number) => {
+    return deg * (Math.PI / 180)
+}
 
 export default function DeliveryDetailScreen() {
     const navigation = useNavigation<any>();
@@ -41,16 +60,22 @@ export default function DeliveryDetailScreen() {
                 const dLat = parseFloat(delivery.dropoff_lat);
                 const dLng = parseFloat(delivery.dropoff_lng);
 
-                setDeliveryData({
-                    ...delivery,
-                    pickup_lat: !isNaN(pLat) ? pLat : delivery.pickup_lat,
-                    pickup_lng: !isNaN(pLng) ? pLng : delivery.pickup_lng,
-                    dropoff_lat: !isNaN(dLat) ? dLat : delivery.dropoff_lat,
-                    dropoff_lng: !isNaN(dLng) ? dLng : delivery.dropoff_lng,
+                let initialDistance = delivery.distance || delivery.distance_text || 'N/A';
+                if ((initialDistance === 'N/A' || !initialDistance) && !isNaN(pLat) && !isNaN(pLng) && !isNaN(dLat) && !isNaN(dLng)) {
+                    initialDistance = `${getDistanceFromLatLonInKm(pLat, pLng, dLat, dLng).toFixed(2)} km`;
+                }
+
+                setDeliveryData(prev => ({
+                    ...prev,
+                    pickup_lat: !isNaN(pLat) ? pLat : prev.pickup_lat,
+                    pickup_lng: !isNaN(pLng) ? pLng : prev.pickup_lng,
+                    dropoff_lat: !isNaN(dLat) ? dLat : prev.dropoff_lat,
+                    dropoff_lng: !isNaN(dLng) ? dLng : prev.dropoff_lng,
+                    distance: initialDistance,
                     // Fix Timezone: Force Asia/Manila
-                    date: delivery.created_at ? dayjs.utc(delivery.created_at).tz('Asia/Manila').format('MMM D, YYYY') : delivery.date,
-                    time: delivery.created_at ? dayjs.utc(delivery.created_at).tz('Asia/Manila').format('h:mm A') : delivery.time,
-                });
+                    date: prev.created_at ? dayjs.utc(parseUTCString(prev.created_at)).add(8, 'hour').format('MMM D, YYYY') : prev.date,
+                    time: prev.created_at ? dayjs.utc(parseUTCString(prev.created_at)).add(8, 'hour').format('h:mm A') : prev.time,
+                }));
             }
 
             if (delivery.pickup_lat && delivery.pickup_lng && delivery.dropoff_lat && delivery.dropoff_lng) {
@@ -72,8 +97,8 @@ export default function DeliveryDetailScreen() {
 
                 if (data) {
                     console.log('[DeliveryDetail] Fetched fresh data:', data);
-                    setDeliveryData({
-                        ...delivery, // Keep passed params
+                    setDeliveryData(prev => ({
+                        ...prev, // Keep passed params
                         ...data, // Override with fresh db data
                         customer: data.profiles?.full_name || 'Unknown',
                         pickupAddress: data.pickup_address,
@@ -83,7 +108,7 @@ export default function DeliveryDetailScreen() {
                         pickupLng: data.pickup_lng,
                         dropoffLat: data.dropoff_lat,
                         dropoffLng: data.dropoff_lng,
-                    });
+                    }));
                 }
             } catch (err) {
                 console.error('[DeliveryDetail] Failed to fetch details:', err);
@@ -101,6 +126,21 @@ export default function DeliveryDetailScreen() {
     const pickupLng = deliveryData.pickup_lng || deliveryData.pickupLng || 120.9794;
     const dropoffLat = deliveryData.dropoff_lat || deliveryData.dropoffLat || deliveryData.lat || 14.5995;
     const dropoffLng = deliveryData.dropoff_lng || deliveryData.dropoffLng || deliveryData.lng || 120.9842;
+
+    const displayDistance = useMemo(() => {
+        if (deliveryData.distance && deliveryData.distance !== 'N/A') return deliveryData.distance;
+        if (deliveryData.distance_text && deliveryData.distance_text !== 'N/A') return deliveryData.distance_text;
+
+        const pLat = parseFloat(pickupLat);
+        const pLng = parseFloat(pickupLng);
+        const dLat = parseFloat(dropoffLat);
+        const dLng = parseFloat(dropoffLng);
+
+        if (!isNaN(pLat) && !isNaN(pLng) && !isNaN(dLat) && !isNaN(dLng)) {
+            return `${getDistanceFromLatLonInKm(pLat, pLng, dLat, dLng).toFixed(2)} km`;
+        }
+        return 'N/A';
+    }, [deliveryData.distance, deliveryData.distance_text, pickupLat, pickupLng, dropoffLat, dropoffLng]);
 
     // Mock coordinates for the map (Manila area)
     const deliveryLocation = {
@@ -162,10 +202,15 @@ export default function DeliveryDetailScreen() {
                     setRouteGeometry(route.geometry);
 
                     // Extract distance if missing (convert meters to km)
-                    if ((!deliveryData.distance || deliveryData.distance === 'N/A') && !deliveryData.distance_text && route.distance) {
+                    if (route.distance !== undefined) {
                         const distKm = (route.distance / 1000).toFixed(1) + ' km';
-                        console.log('[DeliveryDetail] Calculated distance from route:', distKm);
-                        setDeliveryData(prev => ({ ...prev, distance: distKm }));
+                        setDeliveryData(prev => {
+                            if ((!prev.distance || prev.distance === 'N/A') && !prev.distance_text) {
+                                console.log('[DeliveryDetail] Calculated distance from route:', distKm);
+                                return { ...prev, distance: distKm };
+                            }
+                            return prev;
+                        });
                     }
                 }
             } catch (error) {
@@ -304,46 +349,46 @@ export default function DeliveryDetailScreen() {
                                     </MapboxGL.PointAnnotation>
                                 )}
 
+                                {/* Geo-fence Visuals */}
+                                {/* Pickup Geo-fence (Blue) */}
+                                {pickupGeofenceCircle && (
+                                    <MapboxGL.ShapeSource id="pickup-fence-source" shape={pickupGeofenceCircle}>
+                                        <MapboxGL.FillLayer
+                                            id="pickup-fence-fill"
+                                            style={{
+                                                fillColor: 'rgba(33, 150, 243, 0.4)', // Increased opacity
+                                            }}
+                                        />
+                                        <MapboxGL.LineLayer
+                                            id="pickup-fence-outline"
+                                            style={{
+                                                lineColor: 'rgba(33, 150, 243, 1)', // Solid border
+                                                lineWidth: 2,
+                                            }}
+                                        />
+                                    </MapboxGL.ShapeSource>
+                                )}
+
+                                {/* Dropoff Geo-fence (Green) */}
+                                {dropoffGeofenceCircle && (
+                                    <MapboxGL.ShapeSource id="dropoff-fence-source" shape={dropoffGeofenceCircle}>
+                                        <MapboxGL.FillLayer
+                                            id="dropoff-fence-fill"
+                                            style={{
+                                                fillColor: 'rgba(76, 175, 80, 0.4)',
+                                            }}
+                                        />
+                                        <MapboxGL.LineLayer
+                                            id="dropoff-fence-outline"
+                                            style={{
+                                                lineColor: 'rgba(76, 175, 80, 1)',
+                                                lineWidth: 2,
+                                            }}
+                                        />
+                                    </MapboxGL.ShapeSource>
+                                )}
+
                             </MapboxGL.MapView>
-
-                            {/* Geo-fence Visuals */}
-                            {/* Pickup Geo-fence (Blue) */}
-                            {pickupGeofenceCircle && (
-                                <MapboxGL.ShapeSource id="pickup-fence-source" shape={pickupGeofenceCircle}>
-                                    <MapboxGL.FillLayer
-                                        id="pickup-fence-fill"
-                                        style={{
-                                            fillColor: 'rgba(33, 150, 243, 0.4)', // Increased opacity
-                                        }}
-                                    />
-                                    <MapboxGL.LineLayer
-                                        id="pickup-fence-outline"
-                                        style={{
-                                            lineColor: 'rgba(33, 150, 243, 1)', // Solid border
-                                            lineWidth: 2,
-                                        }}
-                                    />
-                                </MapboxGL.ShapeSource>
-                            )}
-
-                            {/* Dropoff Geo-fence (Green) */}
-                            {dropoffGeofenceCircle && (
-                                <MapboxGL.ShapeSource id="dropoff-fence-source" shape={dropoffGeofenceCircle}>
-                                    <MapboxGL.FillLayer
-                                        id="dropoff-fence-fill"
-                                        style={{
-                                            fillColor: 'rgba(76, 175, 80, 0.4)',
-                                        }}
-                                    />
-                                    <MapboxGL.LineLayer
-                                        id="dropoff-fence-outline"
-                                        style={{
-                                            lineColor: 'rgba(76, 175, 80, 1)',
-                                            lineWidth: 2,
-                                        }}
-                                    />
-                                </MapboxGL.ShapeSource>
-                            )}
 
                             {/* Recenter Button */}
                             <Surface style={styles.recenterButton} elevation={4}>
@@ -415,7 +460,7 @@ export default function DeliveryDetailScreen() {
                         </View>
                         <View>
                             <Text variant="labelSmall" style={{ color: '#888' }}>Distance</Text>
-                            <Text variant="bodyMedium" style={{ fontWeight: '500' }}>{deliveryData.distance || deliveryData.distance_text || 'N/A'}</Text>
+                            <Text variant="bodyMedium" style={{ fontWeight: '500' }}>{displayDistance}</Text>
                         </View>
                         <View>
                             <Text variant="labelSmall" style={{ color: '#888' }}>Fare</Text>
@@ -463,7 +508,7 @@ export default function DeliveryDetailScreen() {
                             <Image source={{ uri: deliveryData.pickupImage || deliveryData.pickup_photo_url }} style={styles.proofImage} resizeMode="cover" />
                             {deliveryData.picked_up_at && (
                                 <Text style={{ padding: 10, textAlign: 'center', color: '#666', fontSize: 12 }}>
-                                    Taken on {dayjs.utc(deliveryData.picked_up_at).tz('Asia/Manila').format('MMM D, YYYY h:mm A')}
+                                    Taken on {dayjs.utc(parseUTCString(deliveryData.picked_up_at)).add(8, 'hour').format('MMM D, YYYY h:mm A')}
                                 </Text>
                             )}
                         </Card>
@@ -480,7 +525,7 @@ export default function DeliveryDetailScreen() {
                             <Image source={{ uri: deliveryData.image }} style={styles.proofImage} resizeMode="cover" />
                             {deliveryData.delivered_at && (
                                 <Text style={{ padding: 10, textAlign: 'center', color: '#666', fontSize: 12 }}>
-                                    Taken on {dayjs.utc(deliveryData.delivered_at).tz('Asia/Manila').format('MMM D, YYYY h:mm A')}
+                                    Taken on {dayjs.utc(parseUTCString(deliveryData.delivered_at)).add(8, 'hour').format('MMM D, YYYY h:mm A')}
                                 </Text>
                             )}
                         </Card>

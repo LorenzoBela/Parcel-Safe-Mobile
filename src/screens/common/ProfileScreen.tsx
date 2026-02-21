@@ -112,12 +112,6 @@ export default function ProfileScreen() {
                         onPress={() => navigation.navigate('SavedAddresses')}
                     />
                 </List.Section>
-
-                <View style={styles.logoutContainer}>
-                    <Button mode="contained" buttonColor={theme.colors.error} onPress={() => navigation.replace('Login')}>
-                        Log Out
-                    </Button>
-                </View>
             </View>
         </ScrollView>
     );
@@ -143,9 +137,5 @@ const styles = StyleSheet.create({
     },
     section: {
         padding: 16,
-    },
-    logoutContainer: {
-        marginTop: 20,
-        paddingHorizontal: 16,
     }
 });

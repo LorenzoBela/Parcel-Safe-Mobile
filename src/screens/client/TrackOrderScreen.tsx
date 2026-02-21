@@ -5,6 +5,7 @@ import { Text, Card, Avatar, Button, IconButton, Surface, useTheme } from 'react
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { subscribeToDisplay } from '../../services/firebaseClient';
+import { parseUTCString } from '../../utils/date';
 import {
     subscribeToDelivery,
     subscribeToRiderLocation,
@@ -1073,7 +1074,7 @@ export default function TrackOrderScreen() {
                                     <Card.Cover source={{ uri: delivery.pickup_photo_url }} style={{ height: 180 }} />
                                     {delivery.picked_up_at && (
                                         <Text style={{ padding: 10, textAlign: 'center', color: '#666', fontSize: 12 }}>
-                                            Taken on {dayjs.utc(delivery.picked_up_at).tz('Asia/Manila').format('MMM D, YYYY h:mm A')}
+                                            Taken on {dayjs.utc(parseUTCString(delivery.picked_up_at)).add(8, 'hour').format('MMM D, YYYY h:mm A')}
                                         </Text>
                                     )}
                                 </Card>
@@ -1089,7 +1090,7 @@ export default function TrackOrderScreen() {
                                         <Card.Cover source={{ uri: delivery.proof_photo_url }} style={{ height: 180 }} />
                                         {delivery.delivered_at && (
                                             <Text style={{ padding: 10, textAlign: 'center', color: '#666', fontSize: 12 }}>
-                                                Taken on {dayjs.utc(delivery.delivered_at).tz('Asia/Manila').format('MMM D, YYYY h:mm A')}
+                                                Taken on {dayjs.utc(parseUTCString(delivery.delivered_at)).add(8, 'hour').format('MMM D, YYYY h:mm A')}
                                             </Text>
                                         )}
                                     </Card>
