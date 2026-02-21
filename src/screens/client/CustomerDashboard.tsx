@@ -39,7 +39,7 @@ export default function CustomerDashboard() {
 
     // Dynamic data — populated from real sources when available
     const [activeDelivery, setActiveDelivery] = useState<{
-        id: string; status: string; eta: string; rider: string; location: string;
+        id: string; status: string; eta: string; rider: string; location: string; shareToken?: string;
     } | null>(null);
 
     const activeDeliveryId = activeDelivery?.id || null;
@@ -57,7 +57,9 @@ export default function CustomerDashboard() {
         setShareModalVisible(false);
         if (!activeDelivery) return;
         try {
-            const shareUrl = `https://parcel-safe.web.app/track/${activeDelivery.id}`;
+            const token = activeDelivery.shareToken || activeDelivery.id;
+            const baseUrl = process.env.EXPO_PUBLIC_TRACKING_WEB_BASE_URL || 'https://parcel-safe.vercel.app';
+            const shareUrl = `${baseUrl}/track/${token}`;
             await Share.share({
                 message: `Track your Parcel-Safe delivery here: ${shareUrl}`,
                 url: shareUrl, // iOS uses this
@@ -142,7 +144,8 @@ export default function CustomerDashboard() {
                     // If not, show "Calculating..."
                     eta: data.estimated_dropoff_time ? dayjs(data.estimated_dropoff_time).format('h:mm A') : null,
                     rider: data.rider?.full_name || 'Finding a rider...',
-                    location: data.status === 'PENDING' ? (data.pickup_address || 'Pickup Point') : (data.dropoff_address || 'Dropoff Point')
+                    location: data.status === 'PENDING' ? (data.pickup_address || 'Pickup Point') : (data.dropoff_address || 'Dropoff Point'),
+                    shareToken: data.share_token
                 });
             } else {
                 setActiveDelivery(null);

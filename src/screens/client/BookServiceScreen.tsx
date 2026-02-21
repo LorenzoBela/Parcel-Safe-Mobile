@@ -268,17 +268,16 @@ export default function BookServiceScreen() {
                 const latitude = pickupCoords ? pickupCoords.latitude : 14.5995;
                 const proximity = `${longitude},${latitude}`;
 
-                // Search Box API Suggest Endpoint
-                // Supports POIs, Brands, Addresses
-                const baseUrl = 'https://api.mapbox.com/search/searchbox/v1/suggest';
+                // Use Mapbox Geocoding API v5 for higher precision with exact house numbers and addresses
+                const baseUrl = `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(activeQuery.trim())}.json`;
                 const queryParams = [
-                    `q=${encodeURIComponent(activeQuery.trim())}`,
                     `access_token=${MAPBOX_TOKEN}`,
-                    `session_token=${sessionToken}`,
                     `limit=10`, // Increased to 10 for better variety
+                    `autocomplete=true`,
                     `language=en`,
                     `country=PH`,
-                    `types=poi,address,brand,place,locality,neighborhood,street`, // Added 'poi' for Grab-like feeling
+                    // We use address, poi, and place to ensure exact addresses are found while still supporting landmarks
+                    `types=address,poi,place,locality,neighborhood`,
                     `proximity=${proximity}`
                 ].join('&');
 
@@ -294,29 +293,18 @@ export default function BookServiceScreen() {
 
                 const data = await response.json();
 
-                const features: MapboxSuggestion[] = Array.isArray(data?.suggestions)
-                    ? data.suggestions.map((suggestion: any) => {
-                        // Search Box API returns 'name' and 'address'/'full_address'
-                        // We map this to our UI model
-                        const name = suggestion.name || 'Unknown';
-                        let address = suggestion.full_address || suggestion.place_formatted || '';
-
-                        // Fallback context logic if address is missing or same as name
-                        if ((!address || address === name) && suggestion.context) {
-                            const parts = [];
-                            if (suggestion.street?.name) parts.push(suggestion.street.name);
-                            if (suggestion.context.place?.name) parts.push(suggestion.context.place.name);
-                            if (suggestion.context.region?.name) parts.push(suggestion.context.region.name);
-                            address = parts.join(', ');
-                        }
+                const features: MapboxSuggestion[] = Array.isArray(data?.features)
+                    ? data.features.map((feature: any) => {
+                        // Geocoding API v5 returns everything we need directly
+                        const name = feature.text || 'Unknown';
+                        const address = feature.place_name || '';
 
                         return {
-                            id: suggestion.mapbox_id, // Important: Use mapbox_id for retrieval
+                            id: feature.id,
                             name: name,
                             address: address,
-                            // Note: Suggest API does NOT return coordinates. 
-                            // We must fetch them in handleSelectSuggestion using the ID.
-                            coordinates: undefined
+                            // Geocoding API v5 provides coordinates immediately in [longitude, latitude]
+                            coordinates: feature.center ? [feature.center[0], feature.center[1]] : undefined
                         };
                     })
                     : [];
@@ -403,29 +391,11 @@ export default function BookServiceScreen() {
         if (item.coordinates && item.coordinates.length >= 2) {
             coords = { longitude: item.coordinates[0], latitude: item.coordinates[1] };
         } else {
-            // Need to fetch details
-            try {
-                // Show some loading indicator? For now just await.
-                // Ideally we'd show a spinner on the item but we'll do optimistic transition
-
-                const url = `https://api.mapbox.com/search/searchbox/v1/retrieve/${item.id}?session_token=${sessionToken}&access_token=${MAPBOX_TOKEN}`;
-                const response = await fetch(url);
-                const data = await response.json();
-
-                if (data.features && data.features.length > 0) {
-                    const geometry = data.features[0].geometry;
-                    if (geometry && geometry.coordinates) {
-                        coords = {
-                            longitude: geometry.coordinates[0],
-                            latitude: geometry.coordinates[1]
-                        };
-                    }
-                }
-            } catch (e) {
-                console.error("Failed to retrieve place details", e);
-                Alert.alert("Error", "Could not fetch location details.");
-                return;
-            }
+            // With Geocoding API v5, coordinates should always be present.
+            // But just in case, we show an error.
+            console.error("No coordinates found in the selected Mapbox suggestion");
+            Alert.alert("Error", "Could not retrieve location details.");
+            return;
         }
 
         if (!coords) return;
