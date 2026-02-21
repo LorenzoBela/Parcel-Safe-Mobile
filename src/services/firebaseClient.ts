@@ -1789,6 +1789,61 @@ export function subscribeToStolenBoxes(
     return () => off(boxesRef);
 }
 
+/**
+ * Report a box as stolen or missing (Rider action)
+ * Updates theft status and triggers hardware lockdown
+ */
+export async function reportBoxStolen(
+    boxId: string,
+    reportedBy: string,
+    location: { lat: number; lng: number; heading?: number; speed?: number },
+    deliveryId?: string,
+    notes?: string
+): Promise<void> {
+    const db = getFirebaseDatabase();
+    const timestamp = Date.now();
+
+    // 1. Update boxes/{boxId}/theft_status
+    const theftStatusRef = ref(db, `boxes/${boxId}/theft_status`);
+    await set(theftStatusRef, {
+        state: 'STOLEN',
+        is_stolen: true,
+        reported_by: reportedBy,
+        reported_at: timestamp,
+        last_known_location: {
+            lat: location.lat,
+            lng: location.lng,
+            heading: location.heading || 0,
+            speed: location.speed || 0
+        },
+        location_history: [{
+            lat: location.lat,
+            lng: location.lng,
+            timestamp
+        }],
+        lockdown_active: true,
+        lockdown_at: timestamp,
+        notes: notes || 'Reported stolen by rider via app'
+    } as TheftStatus);
+
+    // 2. Trigger hardware lockdown (redundancy)
+    const hardwareTamperRef = ref(db, `hardware/${boxId}/tamper`);
+    await set(hardwareTamperRef, {
+        detected: true,
+        lockdown: true,
+        timestamp,
+        source: 'rider_reported'
+    });
+
+    // 3. Update hardware status to locked just in case
+    const hardwareStatusRef = ref(db, `hardware/${boxId}/status`);
+    await set(hardwareStatusRef, 'LOCKED');
+
+    // Also update server timestamp heartbeat
+    const heartbeatRef = ref(db, `hardware/${boxId}/last_heartbeat`);
+    await set(heartbeatRef, serverTimestamp());
+}
+
 export { ref, onValue, off, set, serverTimestamp };
 export type { Database, DatabaseReference };
 

@@ -24,6 +24,7 @@ import {
     FaceAuthStatus, // EC-97
     subscribeToLockHealth, // EC-96
     LockHealthState, // EC-96
+    reportBoxStolen,
 } from '../../services/firebaseClient';
 import { updateDeliveryStatus } from '../../services/riderMatchingService';
 import { subscribeToAdminOverride, AdminOverrideState, getOverrideNotificationMessage } from '../../services/adminOverrideService';
@@ -35,6 +36,7 @@ import {
 } from '../../services/boxPairingService';
 import useAuthStore from '../../store/authStore';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as Location from 'expo-location';
 
 const PAIRED_BOX_CACHE_KEY_PREFIX = 'parcelSafe:lastPairedBoxId:';
 
@@ -335,6 +337,59 @@ export default function BoxControlsScreen() {
                             setRebooting(false);
                             addLog("System Online. All systems nominal.", "success");
                         }, 3000);
+                    }
+                }
+            ]
+        );
+    };
+
+    const handleReportStolen = () => {
+        Alert.alert(
+            "Report Stolen/Missing",
+            "Are you sure you want to report this box as stolen or missing? This will trigger an immediate lockdown and alert administrators.",
+            [
+                { text: "Cancel", style: "cancel" },
+                {
+                    text: "REPORT STOLEN",
+                    style: "destructive",
+                    onPress: async () => {
+                        try {
+                            const { status } = await Location.requestForegroundPermissionsAsync();
+                            let currentLoc: { lat: number; lng: number; heading?: number; speed?: number } = { lat: 14.5995, lng: 120.9842 }; // Default Manila
+
+                            if (status === 'granted') {
+                                const location = await Location.getCurrentPositionAsync({
+                                    accuracy: Location.Accuracy.Balanced
+                                });
+                                currentLoc = {
+                                    lat: location.coords.latitude,
+                                    lng: location.coords.longitude,
+                                    heading: location.coords.heading || 0,
+                                    speed: location.coords.speed || 0
+                                };
+                            }
+
+                            await reportBoxStolen(
+                                boxId,
+                                riderId || 'unknown_rider',
+                                currentLoc,
+                                activeDeliveryId || undefined,
+                                `Reported via Rider App at ${new Date().toLocaleTimeString()}`
+                            );
+
+                            if (activeDeliveryId && activeDeliveryId !== 'DEL_001') {
+                                await updateDeliveryStatus(activeDeliveryId, 'TAMPERED', {
+                                    source: 'rider_reported',
+                                    tampered_at: Date.now()
+                                });
+                            }
+
+                            addLog("🚨 BOX REPORTED STOLEN. Lockdown initiated.", "error");
+
+                        } catch (error) {
+                            addLog("Failed to report stolen box", "error");
+                            Alert.alert("Error", "Could not send report. Please check connection.");
+                        }
                     }
                 }
             ]
@@ -728,6 +783,16 @@ export default function BoxControlsScreen() {
                             </Button>
                         </View>
                         <Text style={styles.hintText}>* Long press "Emergency" to force open</Text>
+
+                        <Button
+                            mode="contained"
+                            onPress={handleReportStolen}
+                            disabled={!isPaired}
+                            style={[styles.button, { marginTop: 16, backgroundColor: !isPaired ? '#E0E0E0' : '#B71C1C' }]}
+                            icon="shield-alert-outline"
+                        >
+                            Report Box Stolen/Missing
+                        </Button>
                     </Card.Content>
                 </Card>
 
