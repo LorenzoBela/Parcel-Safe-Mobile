@@ -12,7 +12,10 @@
 
 import * as Location from 'expo-location';
 import * as TaskManager from 'expo-task-manager';
-import { Platform, AppState, AppStateStatus } from 'react-native';
+import * as Battery from 'expo-battery';
+import * as IntentLauncher from 'expo-intent-launcher';
+import * as Application from 'expo-application';
+import { Platform, AppState, AppStateStatus, Alert } from 'react-native';
 import { getFirebaseDatabase, ref, set, serverTimestamp, onValue, off } from './firebaseClient';
 import { offlineQueueService } from './offlineQueueService';
 
@@ -459,6 +462,48 @@ class BackgroundLocationManager {
     }
 
     /**
+     * Feature: Defeat aggressive Chinese OEM task killers (Xiaomi, Huawei, Oppo)
+     * Prompts the user to ignore battery optimizations if they haven't already.
+     */
+    private async requestBatteryOptimizationExemption(): Promise<void> {
+        try {
+            const isOptimized = await Battery.isBatteryOptimizationEnabledAsync();
+            if (isOptimized) {
+                // We use a Promise to pause execution until the user responds to the alert
+                await new Promise<void>((resolve) => {
+                    Alert.alert(
+                        'Background Location Tracking',
+                        'To ensure your location is tracked even when your phone is locked, please disable Battery Optimization for Parcel-Safe.',
+                        [
+                            {
+                                text: 'Later',
+                                style: 'cancel',
+                                onPress: () => resolve(),
+                            },
+                            {
+                                text: 'Open Settings',
+                                onPress: async () => {
+                                    try {
+                                        await IntentLauncher.startActivityAsync(
+                                            IntentLauncher.ActivityAction.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                                            { data: `package:${Application.applicationId}` }
+                                        );
+                                    } catch (e) {
+                                        console.warn('[EC-15] Failed to open battery settings:', e);
+                                    }
+                                    resolve();
+                                },
+                            },
+                        ]
+                    );
+                });
+            }
+        } catch (error) {
+            if (__DEV__) console.warn('[EC-15] Battery optimization check failed:', error);
+        }
+    }
+
+    /**
      * Start background location tracking
      */
     async start(boxId: string): Promise<boolean> {
@@ -481,6 +526,11 @@ class BackgroundLocationManager {
                 });
                 return false;
             }
+        }
+
+        // NEW RULE: Defeat aggressive Chinese OEM task killers
+        if (Platform.OS === 'android') {
+            await this.requestBatteryOptimizationExemption();
         }
 
         try {
