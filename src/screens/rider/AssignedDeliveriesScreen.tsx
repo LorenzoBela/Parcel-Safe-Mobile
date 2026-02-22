@@ -74,6 +74,10 @@ export default function AssignedDeliveriesScreen() {
                     pickupLng: d.pickup_lng,
                     dropoffLat: d.dropoff_lat,
                     dropoffLng: d.dropoff_lng,
+                    snappedPickupLat: d.snapped_pickup_lat,
+                    snappedPickupLng: d.snapped_pickup_lng,
+                    snappedDropoffLat: d.snapped_dropoff_lat,
+                    snappedDropoffLng: d.snapped_dropoff_lng,
                     date: d.created_at, // Use created_at as base date
                     time: dayjs(d.created_at).format('h:mm A'),
                     distance: d.distance ? `${d.distance.toFixed(1)} km` : '--',
@@ -318,8 +322,8 @@ export default function AssignedDeliveriesScreen() {
                                 navigation.navigate('Arrival', {
                                     deliveryId: item.id,
                                     boxId: item.boxId,
-                                    targetLat: isPickup ? item.pickupLat : item.dropoffLat,
-                                    targetLng: isPickup ? item.pickupLng : item.dropoffLng,
+                                    targetLat: isPickup ? (item.snappedPickupLat ?? item.pickupLat) : (item.snappedDropoffLat ?? item.dropoffLat),
+                                    targetLng: isPickup ? (item.snappedPickupLng ?? item.pickupLng) : (item.snappedDropoffLng ?? item.dropoffLng),
                                     targetAddress: isPickup ? item.pickupAddress : item.address,
                                     customerPhone: item.phone,
                                     // @ts-ignore

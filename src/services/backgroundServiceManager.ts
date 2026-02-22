@@ -361,20 +361,17 @@ async function startForegroundService(): Promise<void> {
             }
         }
 
-        // CRITICAL: Verify location services are enabled on the device
-        // Without this, the foreground service with location type will fail
+        // Best-effort check: Verify location services are enabled on the device
+        // This dependency is OPTIONAL (not in package.json) — isolated try/catch
+        let isLocationEnabled = true; // Assume enabled by default
         try {
             const RNAndroidLocationEnabler = require('react-native-android-location-enabler');
-            const isLocationEnabled = await RNAndroidLocationEnabler.check();
-            if (!isLocationEnabled) {
-                if (__DEV__) console.warn('[BackgroundService] Location services disabled, service may not work optimally');
-                // Note: We don't block startup, but log warning. Location type is secondary to dataSync.
-                // The service can still run with dataSync type even if location is disabled.
-            }
-        } catch (e) {
-            // Library not available or check failed - continue anyway
-            // Location services check is a best-effort, not critical
-            if (__DEV__) console.log('[BackgroundService] Could not verify location services status');
+            isLocationEnabled = await RNAndroidLocationEnabler.check();
+        } catch (_e) {
+            // Module not installed or check failed — skip, assume location is on
+        }
+        if (!isLocationEnabled) {
+            if (__DEV__) console.warn('[BackgroundService] Location services disabled, service may not work optimally');
         }
 
         // Ensure notification channel exists before starting foreground service

@@ -53,6 +53,10 @@ export interface BookingRequest {
     distance?: number; // EC-Fix: Added for rider preview (km)
     duration?: number; // EC-Fix: Added for rider preview (min)
     customerName?: string; // EC-Fix: Added for rider preview
+    snappedPickupLat?: number;
+    snappedPickupLng?: number;
+    snappedDropoffLat?: number;
+    snappedDropoffLng?: number;
 }
 
 export interface DeliveryRecord {
@@ -72,6 +76,10 @@ export interface DeliveryRecord {
     share_token: string;
     status: string;
     created_at: number;
+    snapped_pickup_lat?: number;
+    snapped_pickup_lng?: number;
+    snapped_dropoff_lat?: number;
+    snapped_dropoff_lng?: number;
     accepted_at?: number;
     updated_at?: number;
     proof_photo_url?: string;
@@ -276,6 +284,10 @@ export async function createPendingBooking(request: BookingRequest): Promise<boo
             created_at: request.createdAt,
             share_token: shareToken,
             customer_name: request.customerName, // EC-Fix: Store for good measure, though mostly passed via request
+            snapped_pickup_lat: request.snappedPickupLat || null,
+            snapped_pickup_lng: request.snappedPickupLng || null,
+            snapped_dropoff_lat: request.snappedDropoffLat || null,
+            snapped_dropoff_lng: request.snappedDropoffLng || null,
         });
         console.log(`[Booking] Created pending booking in Firebase: ${request.bookingId}`);
 
@@ -312,6 +324,10 @@ export async function createPendingBooking(request: BookingRequest): Promise<boo
                         status: 'PENDING',
                         created_at: new Date(request.createdAt).toISOString(),
                         updated_at: new Date(request.createdAt).toISOString(),
+                        snapped_pickup_lat: request.snappedPickupLat || null,
+                        snapped_pickup_lng: request.snappedPickupLng || null,
+                        snapped_dropoff_lat: request.snappedDropoffLat || null,
+                        snapped_dropoff_lng: request.snappedDropoffLng || null,
                     }, { onConflict: 'id' });
 
                 if (error) {
@@ -557,6 +573,10 @@ export async function acceptOrder(
             accepted_at: acceptedAt,
             updated_at: acceptedAt,
             estimated_fare: booking.estimated_fare,
+            snapped_pickup_lat: booking.snapped_pickup_lat,
+            snapped_pickup_lng: booking.snapped_pickup_lng,
+            snapped_dropoff_lat: booking.snapped_dropoff_lat,
+            snapped_dropoff_lng: booking.snapped_dropoff_lng,
         };
 
         await set(ref(db, `/deliveries/${bookingId}`), deliveryRecord);
@@ -620,6 +640,10 @@ export async function acceptOrder(
                     accepted_at: new Date(acceptedAt).toISOString(),
                     updated_at: new Date(acceptedAt).toISOString(),
                     created_at: new Date(booking.created_at || acceptedAt).toISOString(),
+                    snapped_pickup_lat: booking.snapped_pickup_lat || null,
+                    snapped_pickup_lng: booking.snapped_pickup_lng || null,
+                    snapped_dropoff_lat: booking.snapped_dropoff_lat || null,
+                    snapped_dropoff_lng: booking.snapped_dropoff_lng || null,
                 };
 
                 if (safeBoxId) {

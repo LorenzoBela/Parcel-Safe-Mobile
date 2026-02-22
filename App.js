@@ -110,8 +110,6 @@ const AppContent = () => {
     const subscription = AppState.addEventListener('change', nextAppState => {
       if (appState.match(/inactive|background/) && nextAppState === 'active') {
         if (__DEV__) console.log('[App] App has come to the foreground!');
-        // Trigger offline queue processing when back online/foreground
-        offlineQueueService.processQueue();
       } else if (nextAppState.match(/inactive|background/)) {
         // if (__DEV__) console.log('[App] App has gone to the background');
       }

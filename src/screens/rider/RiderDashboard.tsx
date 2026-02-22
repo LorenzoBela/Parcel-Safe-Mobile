@@ -453,6 +453,10 @@ export default function RiderDashboard() {
         pickupLng: activeDelivery.pickup_lng,
         dropoffLat: activeDelivery.dropoff_lat,
         dropoffLng: activeDelivery.dropoff_lng,
+        snappedPickupLat: activeDelivery.snapped_pickup_lat,
+        snappedPickupLng: activeDelivery.snapped_pickup_lng,
+        snappedDropoffLat: activeDelivery.snapped_dropoff_lat,
+        snappedDropoffLng: activeDelivery.snapped_dropoff_lng,
     } : null, [activeDelivery, distance, duration]);
 
     // Derive destination directly from activeDelivery (NOT nextDelivery) to avoid
@@ -471,15 +475,15 @@ export default function RiderDashboard() {
 
         if (isPickup) {
             return {
-                latitude: activeDelivery.pickup_lat,
-                longitude: activeDelivery.pickup_lng,
+                latitude: activeDelivery.snapped_pickup_lat ?? activeDelivery.pickup_lat,
+                longitude: activeDelivery.snapped_pickup_lng ?? activeDelivery.pickup_lng,
                 title: "Pickup Location",
                 description: activeDelivery.pickup_address
             };
         } else {
             return {
-                latitude: activeDelivery.dropoff_lat,
-                longitude: activeDelivery.dropoff_lng,
+                latitude: activeDelivery.snapped_dropoff_lat ?? activeDelivery.dropoff_lat,
+                longitude: activeDelivery.snapped_dropoff_lng ?? activeDelivery.dropoff_lng,
                 title: "Dropoff Destination",
                 description: activeDelivery.dropoff_address
             };
@@ -1799,8 +1803,8 @@ export default function RiderDashboard() {
                                     navigation.navigate('Arrival', {
                                         deliveryId: nextDelivery.id,
                                         boxId: nextDelivery.boxId,
-                                        targetLat: isPickup ? nextDelivery.pickupLat : nextDelivery.dropoffLat,
-                                        targetLng: isPickup ? nextDelivery.pickupLng : nextDelivery.dropoffLng,
+                                        targetLat: isPickup ? (nextDelivery.snappedPickupLat ?? nextDelivery.pickupLat) : (nextDelivery.snappedDropoffLat ?? nextDelivery.dropoffLat),
+                                        targetLng: isPickup ? (nextDelivery.snappedPickupLng ?? nextDelivery.pickupLng) : (nextDelivery.snappedDropoffLng ?? nextDelivery.dropoffLng),
                                         targetAddress: isPickup ? nextDelivery.pickupAddress : nextDelivery.address,
                                         customerPhone: nextDelivery.phone,
                                         riderName: riderName

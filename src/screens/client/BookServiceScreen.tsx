@@ -61,6 +61,8 @@ export default function BookServiceScreen() {
         duration: number;
         cost: number;
         route: any;
+        snappedPickupCoords?: [number, number]; // [lng, lat] from Mapbox waypoints
+        snappedDropoffCoords?: [number, number];
     } | null>(null);
     const [loadingRoute, setLoadingRoute] = useState(false);
 
@@ -130,15 +132,14 @@ export default function BookServiceScreen() {
     const reverseGeocodeMapbox = async (lat: number, lng: number): Promise<string | null> => {
         if (!MAPBOX_TOKEN) return null;
         try {
-            // Added 'poi' and 'poi.landmark' to types to prioritize specific places over just streets
-            const url = `https://api.mapbox.com/geocoding/v5/mapbox.places/${lng},${lat}.json?access_token=${MAPBOX_TOKEN}&types=poi,poi.landmark,address,place&limit=1`;
+            // Using Mapbox Search Box API v6 for Reverse Geocoding (supports POIs better than v5)
+            const url = `https://api.mapbox.com/search/searchbox/v1/reverse?longitude=${lng}&latitude=${lat}&access_token=${MAPBOX_TOKEN}&limit=1`;
             const response = await fetch(url);
             const data = await response.json();
 
             if (data.features && data.features.length > 0) {
-                // Mapbox returns the most relevant feature first based on types
-                // We prefer the specific POI name (e.g. "Adamson University") over the address if available
-                return data.features[0].text;
+                // Search Box API returns properties.name and properties.place_formatted
+                return data.features[0].properties?.name || data.features[0].properties?.place_formatted || null;
             }
         } catch (error) {
             console.error("Mapbox Reverse Geocode Error", error);
@@ -268,16 +269,14 @@ export default function BookServiceScreen() {
                 const latitude = pickupCoords ? pickupCoords.latitude : 14.5995;
                 const proximity = `${longitude},${latitude}`;
 
-                // Use Mapbox Geocoding API v5 for higher precision with exact house numbers and addresses
-                const baseUrl = `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(activeQuery.trim())}.json`;
+                // Use Mapbox Search Box API v6 for higher precision and complete POI lists
+                const baseUrl = `https://api.mapbox.com/search/searchbox/v1/forward`;
                 const queryParams = [
+                    `q=${encodeURIComponent(activeQuery.trim())}`,
                     `access_token=${MAPBOX_TOKEN}`,
-                    `limit=10`, // Increased to 10 for better variety
-                    `autocomplete=true`,
+                    `limit=10`,
                     `language=en`,
                     `country=PH`,
-                    // We use address, poi, and place to ensure exact addresses are found while still supporting landmarks
-                    `types=address,poi,place,locality,neighborhood`,
                     `proximity=${proximity}`
                 ].join('&');
 
@@ -295,16 +294,17 @@ export default function BookServiceScreen() {
 
                 const features: MapboxSuggestion[] = Array.isArray(data?.features)
                     ? data.features.map((feature: any) => {
-                        // Geocoding API v5 returns everything we need directly
-                        const name = feature.text || 'Unknown';
-                        const address = feature.place_name || '';
+                        const props = feature.properties || {};
+                        // Search Box API returns everything we need in properties
+                        const name = props.name || 'Unknown';
+                        const address = props.full_address || props.place_formatted || '';
 
                         return {
-                            id: feature.id,
+                            id: props.mapbox_id || feature.id || Math.random().toString(),
                             name: name,
                             address: address,
-                            // Geocoding API v5 provides coordinates immediately in [longitude, latitude]
-                            coordinates: feature.center ? [feature.center[0], feature.center[1]] : undefined
+                            // Geocoding API v6 provides coordinates in geometry.coordinates
+                            coordinates: feature.geometry?.coordinates ? [feature.geometry.coordinates[0], feature.geometry.coordinates[1]] : undefined
                         };
                     })
                     : [];
@@ -330,6 +330,33 @@ export default function BookServiceScreen() {
 
     // Camera ref for manual updates
     const cameraRef = React.useRef<any>(null);
+
+    const handleRegionChange = async (e: any) => {
+        const isUserInteraction = e?.properties?.isUserInteraction || e?.isUserInteraction;
+        if (!isUserInteraction) return;
+
+        const coords = {
+            latitude: e.geometry.coordinates[1],
+            longitude: e.geometry.coordinates[0],
+        };
+
+        if (activeField === 'pickup') {
+            setPickupCoords(coords);
+            setPickupText("Locating...");
+        } else {
+            setDropoffCoords(coords);
+            setDropoffText("Locating...");
+        }
+
+        const poiName = await reverseGeocodeMapbox(coords.latitude, coords.longitude);
+        const addressText = poiName || `${coords.latitude.toFixed(4)}, ${coords.longitude.toFixed(4)}`;
+
+        if (activeField === 'pickup') {
+            setPickupText(addressText);
+        } else {
+            setDropoffText(addressText);
+        }
+    };
 
     const handleMapPress = async (e: any) => {
         const coords = {
@@ -466,6 +493,8 @@ export default function BookServiceScreen() {
                     duration: durationMin,
                     cost: Math.round(cost),
                     route: route.geometry,
+                    snappedPickupCoords: data.waypoints?.[0]?.location,
+                    snappedDropoffCoords: data.waypoints?.[1]?.location,
                 });
             }
         } catch (error) {
@@ -524,6 +553,10 @@ export default function BookServiceScreen() {
             pickupLng: pickupCoords?.longitude,
             dropoffLat: dropoffCoords?.latitude,
             dropoffLng: dropoffCoords?.longitude,
+            snappedPickupLat: routeData?.snappedPickupCoords?.[1],
+            snappedPickupLng: routeData?.snappedPickupCoords?.[0],
+            snappedDropoffLat: routeData?.snappedDropoffCoords?.[1],
+            snappedDropoffLng: routeData?.snappedDropoffCoords?.[0],
             estimatedCost: routeData?.cost,
             distance: routeData?.distance, // EC-Fix: Added
             duration: routeData?.duration, // EC-Fix: Added
@@ -588,6 +621,7 @@ export default function BookServiceScreen() {
                     style={StyleSheet.absoluteFillObject}
                     styleURL={theme.dark ? StyleURL.Dark : StyleURL.Street}
                     onPress={handleMapPress}
+                    onRegionDidChange={handleRegionChange}
                     logoEnabled={false}
                     attributionEnabled={false}
                     scaleBarEnabled={false}
@@ -603,7 +637,7 @@ export default function BookServiceScreen() {
                     />
                     <MapboxGL.UserLocation visible />
 
-                    {pickupCoords && (
+                    {pickupCoords && activeField !== 'pickup' && (
                         <MapboxGL.PointAnnotation
                             id="pickup-marker"
                             coordinate={[pickupCoords.longitude, pickupCoords.latitude]}
@@ -615,7 +649,7 @@ export default function BookServiceScreen() {
                         </MapboxGL.PointAnnotation>
                     )}
 
-                    {dropoffCoords && (
+                    {dropoffCoords && activeField !== 'dropoff' && (
                         <MapboxGL.PointAnnotation
                             id="dropoff-marker"
                             coordinate={[dropoffCoords.longitude, dropoffCoords.latitude]}
@@ -646,6 +680,17 @@ export default function BookServiceScreen() {
             ) : (
                 <View style={[StyleSheet.absoluteFillObject, styles.mapFallback]}>
                     <Text>Map unavailable</Text>
+                </View>
+            )}
+
+            {/* Center Fixed Marker */}
+            {MAPBOX_TOKEN && (
+                <View style={styles.fixedCenterMarker} pointerEvents="none">
+                    <MaterialCommunityIcons
+                        name="map-marker"
+                        size={40}
+                        color={activeField === 'pickup' ? "green" : "red"}
+                    />
                 </View>
             )}
 
@@ -683,7 +728,15 @@ export default function BookServiceScreen() {
                                 textColor={theme.colors.onSurface}
                                 underlineColor="transparent"
                                 activeUnderlineColor="transparent"
-                                onFocus={() => setActiveField('pickup')}
+                                onFocus={() => {
+                                    setActiveField('pickup');
+                                    if (pickupCoords) {
+                                        cameraRef.current?.setCamera({
+                                            centerCoordinate: [pickupCoords.longitude, pickupCoords.latitude],
+                                            animationDuration: 500,
+                                        });
+                                    }
+                                }}
                                 right={pickupText.length > 0 ? <TextInput.Icon icon="close-circle" size={16} onPress={() => setPickupText('')} /> : null}
                             />
                         </View>
@@ -707,7 +760,15 @@ export default function BookServiceScreen() {
                                 underlineColor="transparent"
                                 activeUnderlineColor="transparent"
                                 placeholderTextColor={theme.colors.onSurfaceVariant}
-                                onFocus={() => setActiveField('dropoff')}
+                                onFocus={() => {
+                                    setActiveField('dropoff');
+                                    if (dropoffCoords) {
+                                        cameraRef.current?.setCamera({
+                                            centerCoordinate: [dropoffCoords.longitude, dropoffCoords.latitude],
+                                            animationDuration: 500,
+                                        });
+                                    }
+                                }}
                                 right={dropoffText.length > 0 ? <TextInput.Icon icon="close-circle" size={16} onPress={() => setDropoffText('')} /> : null}
                             />
                         </View>
@@ -886,6 +947,16 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         justifyContent: 'center',
         backgroundColor: '#f1f1f1',
+    },
+    fixedCenterMarker: {
+        position: 'absolute',
+        top: '50%',
+        left: '50%',
+        marginLeft: -20,
+        marginTop: -20,
+        zIndex: 5,
+        alignItems: 'center',
+        justifyContent: 'center',
     },
     inputContainer: {
         position: 'absolute',

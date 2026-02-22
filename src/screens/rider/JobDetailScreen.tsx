@@ -72,8 +72,8 @@ export default function JobDetailScreen() {
         navigation.navigate('Arrival', {
             deliveryId: jobData.id,
             boxId: jobData.boxId || 'BOX_001', // Fallback if missing, but prefer dynamic
-            targetLat: jobData.dropoffLat,
-            targetLng: jobData.dropoffLng,
+            targetLat: jobData.snappedDropoffLat ?? jobData.dropoffLat,
+            targetLng: jobData.snappedDropoffLng ?? jobData.dropoffLng,
             targetAddress: jobData.address,
             customerPhone: jobData.phone,
         });

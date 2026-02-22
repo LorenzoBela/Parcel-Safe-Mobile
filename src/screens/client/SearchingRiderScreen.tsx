@@ -74,6 +74,10 @@ export default function SearchingRiderScreen() {
         distance, // EC-Fix: Added
         duration, // EC-Fix: Added
         customerName, // EC-Fix: Added
+        snappedPickupLat,
+        snappedPickupLng,
+        snappedDropoffLat,
+        snappedDropoffLng,
     } = route.params || {};
 
     useEffect(() => {
@@ -153,6 +157,10 @@ export default function SearchingRiderScreen() {
                 distance, // EC-Fix: Added
                 duration, // EC-Fix: Added
                 customerName: customerName || 'Valued Customer', // EC-Fix: Added with fallback
+                snappedPickupLat,
+                snappedPickupLng,
+                snappedDropoffLat,
+                snappedDropoffLng,
             };
 
             // Create the booking in Firebase ONLY if it's new

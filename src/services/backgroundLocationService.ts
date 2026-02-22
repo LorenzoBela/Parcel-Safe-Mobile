@@ -501,22 +501,31 @@ class BackgroundLocationManager {
                 }
 
                 // Start background location updates (Expo Task Manager)
-                await Location.startLocationUpdatesAsync(CONFIG.TASK_NAME, {
-                    accuracy: CONFIG.ACCURACY,
-                    timeInterval: CONFIG.LOCATION_INTERVAL_MS,
-                    distanceInterval: CONFIG.DISTANCE_FILTER_M,
-                    deferredUpdatesInterval: CONFIG.DEFERRED_UPDATES_INTERVAL_MS,
-                    deferredUpdatesDistance: CONFIG.DEFERRED_UPDATES_DISTANCE_M,
-                    foregroundService: {
-                        notificationTitle: CONFIG.NOTIFICATION_TITLE,
-                        notificationBody: CONFIG.NOTIFICATION_BODY,
-                        notificationColor: '#0066FF',
-                    },
-                    // iOS specific
-                    activityType: Location.ActivityType.AutomotiveNavigation,
-                    showsBackgroundLocationIndicator: true,
-                    pausesUpdatesAutomatically: false,
-                });
+                try {
+                    await Location.startLocationUpdatesAsync(CONFIG.TASK_NAME, {
+                        accuracy: CONFIG.ACCURACY,
+                        timeInterval: CONFIG.LOCATION_INTERVAL_MS,
+                        distanceInterval: CONFIG.DISTANCE_FILTER_M,
+                        deferredUpdatesInterval: CONFIG.DEFERRED_UPDATES_INTERVAL_MS,
+                        deferredUpdatesDistance: CONFIG.DEFERRED_UPDATES_DISTANCE_M,
+                        foregroundService: {
+                            notificationTitle: CONFIG.NOTIFICATION_TITLE,
+                            notificationBody: CONFIG.NOTIFICATION_BODY,
+                            notificationColor: '#0066FF',
+                        },
+                        // iOS specific
+                        activityType: Location.ActivityType.AutomotiveNavigation,
+                        showsBackgroundLocationIndicator: true,
+                        pausesUpdatesAutomatically: false,
+                    });
+                } catch (locationError) {
+                    if (__DEV__) console.error('[EC-15] Android 14 FGS start error:', locationError);
+                    this.updateState({
+                        status: 'ERROR',
+                        lastError: `Android 14 service blocked: ${locationError}`,
+                    });
+                    return false;
+                }
             }
 
             this.updateState({
