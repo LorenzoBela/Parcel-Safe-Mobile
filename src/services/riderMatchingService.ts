@@ -572,12 +572,13 @@ export async function acceptOrder(
             created_at: booking.created_at || acceptedAt,
             accepted_at: acceptedAt,
             updated_at: acceptedAt,
-            estimated_fare: booking.estimated_fare,
-            snapped_pickup_lat: booking.snapped_pickup_lat,
-            snapped_pickup_lng: booking.snapped_pickup_lng,
-            snapped_dropoff_lat: booking.snapped_dropoff_lat,
-            snapped_dropoff_lng: booking.snapped_dropoff_lng,
+            estimated_fare: booking.estimated_fare || 0,
         };
+
+        if (booking.snapped_pickup_lat) deliveryRecord.snapped_pickup_lat = booking.snapped_pickup_lat;
+        if (booking.snapped_pickup_lng) deliveryRecord.snapped_pickup_lng = booking.snapped_pickup_lng;
+        if (booking.snapped_dropoff_lat) deliveryRecord.snapped_dropoff_lat = booking.snapped_dropoff_lat;
+        if (booking.snapped_dropoff_lng) deliveryRecord.snapped_dropoff_lng = booking.snapped_dropoff_lng;
 
         await set(ref(db, `/deliveries/${bookingId}`), deliveryRecord);
 
@@ -640,11 +641,12 @@ export async function acceptOrder(
                     accepted_at: new Date(acceptedAt).toISOString(),
                     updated_at: new Date(acceptedAt).toISOString(),
                     created_at: new Date(booking.created_at || acceptedAt).toISOString(),
-                    snapped_pickup_lat: booking.snapped_pickup_lat || null,
-                    snapped_pickup_lng: booking.snapped_pickup_lng || null,
-                    snapped_dropoff_lat: booking.snapped_dropoff_lat || null,
-                    snapped_dropoff_lng: booking.snapped_dropoff_lng || null,
                 };
+
+                if (booking.snapped_pickup_lat) upsertData.snapped_pickup_lat = booking.snapped_pickup_lat;
+                if (booking.snapped_pickup_lng) upsertData.snapped_pickup_lng = booking.snapped_pickup_lng;
+                if (booking.snapped_dropoff_lat) upsertData.snapped_dropoff_lat = booking.snapped_dropoff_lat;
+                if (booking.snapped_dropoff_lng) upsertData.snapped_dropoff_lng = booking.snapped_dropoff_lng;
 
                 if (safeBoxId) {
                     upsertData.box_id = safeBoxId;

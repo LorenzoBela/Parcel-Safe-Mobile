@@ -914,9 +914,9 @@ if ($shouldClearCache) {
     Write-Host ""
     $metroArgs = "--clear"
 } else {
-    Write-Host "[OK] Cache intact - no clearing needed" -ForegroundColor Green
+    Write-Host "[OK] Cache intact - starting with --clear for fresh Metro bundler" -ForegroundColor Green
     Write-Host ""
-    $metroArgs = ""
+    $metroArgs = "--clear"
 }
 
 # ============================================
