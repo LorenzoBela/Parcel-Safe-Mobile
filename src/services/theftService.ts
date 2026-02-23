@@ -14,15 +14,12 @@
  * - Article 3.3: Caches theft data offline
  */
 
-import { initializeApp, getApps, FirebaseApp } from 'firebase/app';
 import {
-    getDatabase,
     ref,
     onValue,
     off,
     set,
     serverTimestamp,
-    Database,
 } from 'firebase/database';
 
 // ==================== Types ====================
@@ -105,27 +102,7 @@ export const THEFT_CONFIG = {
     PHOTO_BURST_DEFAULT_COUNT: 5,
 };
 
-// ==================== Firebase Initialization ====================
-
-const firebaseConfig = {
-    apiKey: process.env.EXPO_PUBLIC_FIREBASE_API_KEY,
-    authDomain: process.env.EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN,
-    databaseURL: process.env.EXPO_PUBLIC_FIREBASE_DATABASE_URL,
-    projectId: process.env.EXPO_PUBLIC_FIREBASE_PROJECT_ID,
-    storageBucket: process.env.EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET,
-    messagingSenderId: process.env.EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID,
-    appId: process.env.EXPO_PUBLIC_FIREBASE_APP_ID,
-};
-
-let database: Database;
-
-function getFirebaseDatabase(): Database {
-    if (!database) {
-        const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0];
-        database = getDatabase(app);
-    }
-    return database;
-}
+import { getFirebaseDatabase } from './firebaseClient';
 
 // ==================== Theft Status Functions ====================
 

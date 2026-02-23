@@ -45,6 +45,27 @@ const withAndroidManifestHelpers = (config) => {
             });
         }
 
+        // Add foregroundServiceType for RNBackgroundActionsTask (Android 14+ FGS requirement)
+        if (!app.service) {
+            app.service = [];
+        }
+
+        let bgActionService = app.service.find(s => s.$ && s.$['android:name'] === 'com.asterinet.react.bgactions.RNBackgroundActionsTask');
+        if (!bgActionService) {
+            bgActionService = {
+                $: {
+                    'android:name': 'com.asterinet.react.bgactions.RNBackgroundActionsTask'
+                }
+            };
+            app.service.push(bgActionService);
+        }
+
+        bgActionService.$['android:foregroundServiceType'] = 'location';
+        // Ensure it merges properly with the native module's manifest
+        if (!bgActionService.$['tools:node']) {
+            bgActionService.$['tools:node'] = 'merge';
+        }
+
         return config;
     });
 };

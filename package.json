@@ -60,6 +60,7 @@
     "@srivathsav03/react-native-ble-plx": "^4.0.0",
     "@supabase/supabase-js": "^2.90.1",
     "@turf/bearing": "^7.3.4",
+    "@turf/boolean-point-in-polygon": "^7.3.4",
     "@turf/circle": "^7.3.4",
     "@turf/distance": "^7.3.4",
     "@turf/helpers": "^7.3.4",

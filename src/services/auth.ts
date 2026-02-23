@@ -13,8 +13,8 @@ try {
   console.warn('Google Sign-In module not available in this runtime');
 }
 
-import { getAuth, GoogleAuthProvider, signInWithCredential, signOut as firebaseSignOut } from 'firebase/auth';
-import { initializeFirebase } from './firebaseClient';
+import { GoogleAuthProvider, signInWithCredential, signOut as firebaseSignOut } from 'firebase/auth';
+import { initializeFirebase, getFirebaseAuth } from './firebaseClient';
 
 const getSupabaseClient = async () => {
   const { supabase } = await import('./supabaseClient');
@@ -117,16 +117,23 @@ export const signInWithGoogleAndSyncProfile = async (): Promise<AuthSessionResul
 
   // Authenticate with Firebase using the Google ID Token
   try {
-    console.log('Authenticating with Firebase...');
+    console.log('[AuthFlow] Starting Firebase Auth. calling getFirebaseAuth()');
     // Ensure Firebase is initialized before using getAuth()
-    initializeFirebase();
-    const auth = getAuth();
+    const auth = getFirebaseAuth();
+
+    if (!auth) {
+      console.error('[AuthFlow] getFirebaseAuth() returned null/undefined!');
+    } else {
+      console.log('[AuthFlow] auth object retrieved. Keys:', Object.keys(auth).join(', '));
+    }
+
+    console.log('[AuthFlow] Creating Google credentials and signing in');
     const credential = GoogleAuthProvider.credential(googleResult.idToken);
     await signInWithCredential(auth, credential);
-    console.log('Firebase authentication successful!');
+    console.log('[AuthFlow] Firebase authentication successful!');
 
   } catch (firebaseError) {
-    console.error('Firebase authentication failed:', firebaseError);
+    console.error('[AuthFlow] Firebase authentication failed:', firebaseError);
     // Continue - we don't want to block Supabase login if Firebase fails, 
     // but the rider dashboard might show session expired.
   }
@@ -237,8 +244,7 @@ export const signOut = async () => {
   try {
     await GoogleSignin.signOut();
     // Ensure Firebase is initialized before using getAuth()
-    initializeFirebase();
-    const auth = getAuth();
+    const auth = getFirebaseAuth();
     await firebaseSignOut(auth);
   } catch (error) {
     console.error('Error signing out:', error);

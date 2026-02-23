@@ -6,6 +6,7 @@ import MapboxGL, { StyleURL } from '../../components/map/MapboxWrapper';
 import * as Location from 'expo-location';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { supabase } from '../../services/supabaseClient'; // Import Supabase
+import { snapToValidNode } from '../../utils/geofence';
 
 // Fallback initial region (Manila)
 const INITIAL_REGION = {
@@ -37,6 +38,7 @@ export default function BookServiceScreen() {
     const userId = useAuthStore((state: any) => state.user?.userId);
     const userFullName = useAuthStore((state: any) => state.user?.fullName || state.user?.name);
     const MAPBOX_TOKEN = process.env.EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN;
+    const GOOGLE_MAPS_TOKEN = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY;
 
     const [pickupText, setPickupText] = useState('');
     const [dropoffText, setDropoffText] = useState('');
@@ -128,21 +130,21 @@ export default function BookServiceScreen() {
     // End of EC-Update
 
 
-    // Helper to get nicer names (POIs) from Mapbox
-    const reverseGeocodeMapbox = async (lat: number, lng: number): Promise<string | null> => {
-        if (!MAPBOX_TOKEN) return null;
+    // Helper to reverse geocode using Google (much better exact address resolution)
+    const reverseGeocodeGoogle = async (lat: number, lng: number): Promise<string | null> => {
+        if (!GOOGLE_MAPS_TOKEN) return null;
         try {
-            // Using Mapbox Search Box API v6 for Reverse Geocoding (supports POIs better than v5)
-            const url = `https://api.mapbox.com/search/searchbox/v1/reverse?longitude=${lng}&latitude=${lat}&access_token=${MAPBOX_TOKEN}&limit=1`;
+            const url = `https://maps.googleapis.com/maps/api/geocode/json?latlng=${lat},${lng}&key=${GOOGLE_MAPS_TOKEN}&result_type=street_address|premise|subpremise|point_of_interest`;
             const response = await fetch(url);
             const data = await response.json();
 
-            if (data.features && data.features.length > 0) {
-                // Search Box API returns properties.name and properties.place_formatted
-                return data.features[0].properties?.name || data.features[0].properties?.place_formatted || null;
+            if (data.results && data.results.length > 0) {
+                // We prefer the first result which is usually the most specific
+                // We could also loop to prefer a POI or a specific length
+                return data.results[0].formatted_address;
             }
         } catch (error) {
-            console.error("Mapbox Reverse Geocode Error", error);
+            console.error("Google Reverse Geocode Error", error);
         }
         return null;
     };
@@ -159,8 +161,8 @@ export default function BookServiceScreen() {
             // Auto-set pickup to current location initially
             setPickupCoords(location.coords);
 
-            // Reverse geocode current location using Mapbox for better POI support
-            const poiName = await reverseGeocodeMapbox(location.coords.latitude, location.coords.longitude);
+            // Reverse geocode current location using Google for best address accuracy
+            const poiName = await reverseGeocodeGoogle(location.coords.latitude, location.coords.longitude);
             if (poiName) {
                 setPickupText(poiName);
             } else {
@@ -269,42 +271,52 @@ export default function BookServiceScreen() {
                 const latitude = pickupCoords ? pickupCoords.latitude : 14.5995;
                 const proximity = `${longitude},${latitude}`;
 
-                // Use Mapbox Search Box API v6 for higher precision and complete POI lists
-                const baseUrl = `https://api.mapbox.com/search/searchbox/v1/forward`;
-                const queryParams = [
-                    `q=${encodeURIComponent(activeQuery.trim())}`,
-                    `access_token=${MAPBOX_TOKEN}`,
-                    `limit=10`,
-                    `language=en`,
-                    `country=PH`,
-                    `proximity=${proximity}`
-                ].join('&');
+                // Use Google Places Autocomplete API (NEW)
+                const url = `https://places.googleapis.com/v1/places:autocomplete`;
 
-                const url = `${baseUrl}?${queryParams}`;
-
-                const response = await fetch(url, { signal: controller.signal });
+                const response = await fetch(url, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-Goog-Api-Key': GOOGLE_MAPS_TOKEN
+                    },
+                    body: JSON.stringify({
+                        input: activeQuery.trim(),
+                        includedRegionCodes: ["PH"],
+                        locationBias: {
+                            circle: {
+                                center: { latitude, longitude },
+                                radius: 50000.0
+                            }
+                        }
+                    }),
+                    signal: controller.signal
+                });
 
                 if (!response.ok) {
                     const errorData = await response.text();
-                    console.error('Mapbox Suggest error:', response.status, errorData);
+                    console.error('Google Autocomplete error:', response.status, errorData);
                     throw new Error(`Search failed: ${response.status}`);
                 }
 
                 const data = await response.json();
 
-                const features: MapboxSuggestion[] = Array.isArray(data?.features)
-                    ? data.features.map((feature: any) => {
-                        const props = feature.properties || {};
-                        // Search Box API returns everything we need in properties
-                        const name = props.name || 'Unknown';
-                        const address = props.full_address || props.place_formatted || '';
+                if (data.error) {
+                    console.error('Google Autocomplete API returned bad status:', data.error.message);
+                }
+
+                const features: MapboxSuggestion[] = Array.isArray(data?.suggestions)
+                    ? data.suggestions.filter((s: any) => s.placePrediction).map((s: any) => {
+                        const prediction = s.placePrediction;
+                        const name = prediction.structuredFormat?.mainText?.text || prediction.text?.text || 'Unknown';
+                        const address = prediction.structuredFormat?.secondaryText?.text || '';
 
                         return {
-                            id: props.mapbox_id || feature.id || Math.random().toString(),
+                            id: prediction.placeId, // We need placeId to get exact coordinates later
                             name: name,
                             address: address,
-                            // Geocoding API v6 provides coordinates in geometry.coordinates
-                            coordinates: feature.geometry?.coordinates ? [feature.geometry.coordinates[0], feature.geometry.coordinates[1]] : undefined
+                            // Google Autocomplete does NOT return raw coordinates by design
+                            coordinates: undefined
                         };
                     })
                     : [];
@@ -348,7 +360,24 @@ export default function BookServiceScreen() {
             setDropoffText("Locating...");
         }
 
-        const poiName = await reverseGeocodeMapbox(coords.latitude, coords.longitude);
+        const snapped = snapToValidNode(coords.latitude, coords.longitude);
+        if (snapped.snapped) {
+            coords.latitude = snapped.lat;
+            coords.longitude = snapped.lng;
+            if (activeField === 'pickup') {
+                setPickupCoords({ latitude: snapped.lat, longitude: snapped.lng });
+                if (snapped.reason) {
+                    Alert.alert('Restricted Zone', `${snapped.reason}\nMoved to: ${snapped.nodeName}`);
+                }
+            } else {
+                setDropoffCoords({ latitude: snapped.lat, longitude: snapped.lng });
+                if (snapped.reason) {
+                    Alert.alert('Restricted Zone', `${snapped.reason}\nMoved to: ${snapped.nodeName}`);
+                }
+            }
+        }
+
+        const poiName = await reverseGeocodeGoogle(coords.latitude, coords.longitude);
         const addressText = poiName || `${coords.latitude.toFixed(4)}, ${coords.longitude.toFixed(4)}`;
 
         if (activeField === 'pickup') {
@@ -376,9 +405,26 @@ export default function BookServiceScreen() {
         // Optimistic update - show coordinates first then loading
         let addressText = "Locating...";
 
+        const snapped = snapToValidNode(coords.latitude, coords.longitude);
+        if (snapped.snapped) {
+            coords.latitude = snapped.lat;
+            coords.longitude = snapped.lng;
+
+            // Re-adjust camera if snapped
+            cameraRef.current?.setCamera({
+                centerCoordinate: [snapped.lng, snapped.lat],
+                animationDuration: 500,
+                animationMode: 'flyTo',
+            });
+        }
+
         if (activeField === 'pickup') {
             setPickupCoords(coords);
             setPickupText(addressText);
+
+            if (snapped.snapped && snapped.reason) {
+                Alert.alert('Restricted Zone', `${snapped.reason}\nMoved to: ${snapped.nodeName}`);
+            }
 
             // Auto-focus dropoff after a short delay to let user see the pickup is set
             setTimeout(() => {
@@ -388,12 +434,14 @@ export default function BookServiceScreen() {
         } else {
             setDropoffCoords(coords);
             setDropoffText(addressText);
+
+            if (snapped.snapped && snapped.reason) {
+                Alert.alert('Restricted Zone', `${snapped.reason}\nMoved to: ${snapped.nodeName}`);
+            }
         }
 
-        // Use Mapbox for POI-aware reverse geocoding
-        // Note: Reverse geocoding might still use standard Geocoding API or Search Box Retrieve
-        // For simplicity reusing existing helper for now, but commonly Reverse Geocoding v5 is used
-        const poiName = await reverseGeocodeMapbox(coords.latitude, coords.longitude);
+        // Use Google for POI-aware reverse geocoding
+        const poiName = await reverseGeocodeGoogle(coords.latitude, coords.longitude);
 
         if (poiName) {
             addressText = poiName;
@@ -418,14 +466,40 @@ export default function BookServiceScreen() {
         if (item.coordinates && item.coordinates.length >= 2) {
             coords = { longitude: item.coordinates[0], latitude: item.coordinates[1] };
         } else {
-            // With Geocoding API v5, coordinates should always be present.
-            // But just in case, we show an error.
-            console.error("No coordinates found in the selected Mapbox suggestion");
-            Alert.alert("Error", "Could not retrieve location details.");
-            return;
+            // Need to fetch details from Google Places Details API (New) because autocomplete only returns placeId
+            try {
+                const url = `https://places.googleapis.com/v1/places/${item.id}?fields=location`;
+                const response = await fetch(url, {
+                    headers: {
+                        'X-Goog-Api-Key': GOOGLE_MAPS_TOKEN
+                    }
+                });
+                const data = await response.json();
+
+                if (data.location) {
+                    coords = {
+                        longitude: data.location.longitude,
+                        latitude: data.location.latitude
+                    };
+                } else {
+                    console.error("Google Places Details API failed:", data.error?.message);
+                    Alert.alert("Error", "Could not retrieve exact location coordinates.");
+                    return;
+                }
+            } catch (e) {
+                console.error("Failed to retrieve place details from Google", e);
+                Alert.alert("Error", "Network error while fetching location details.");
+                return;
+            }
         }
 
         if (!coords) return;
+
+        const snapped = snapToValidNode(coords.latitude, coords.longitude);
+        if (snapped.snapped) {
+            coords.latitude = snapped.lat;
+            coords.longitude = snapped.lng;
+        }
 
         // Animate camera
         cameraRef.current?.setCamera({
@@ -437,12 +511,20 @@ export default function BookServiceScreen() {
         if (activeField === 'pickup') {
             setPickupCoords(coords);
             setPickupText(item.name);
+
+            if (snapped.snapped && snapped.reason) {
+                Alert.alert('Restricted Zone', `${snapped.reason}\nMoved to: ${snapped.nodeName}`);
+            }
             // Auto-advance
             setActiveField('dropoff');
             dropoffInputRef.current?.focus();
         } else {
             setDropoffCoords(coords);
             setDropoffText(item.name);
+
+            if (snapped.snapped && snapped.reason) {
+                Alert.alert('Restricted Zone', `${snapped.reason}\nMoved to: ${snapped.nodeName}`);
+            }
         }
 
         setSuggestions([]);
@@ -597,8 +679,8 @@ export default function BookServiceScreen() {
             animationDuration: 1000,
         });
 
-        // Use Mapbox POI Reverse Geocode
-        const poiName = await reverseGeocodeMapbox(coords.latitude, coords.longitude);
+        // Use Google Reverse Geocode
+        const poiName = await reverseGeocodeGoogle(coords.latitude, coords.longitude);
         if (poiName) {
             setPickupText(poiName);
         } else {
