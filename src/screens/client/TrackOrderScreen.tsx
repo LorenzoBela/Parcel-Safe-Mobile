@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { View, StyleSheet, Dimensions, TouchableOpacity, Alert, Share, Image, Animated, Easing, Linking, ActivityIndicator } from 'react-native';
+import { View, StyleSheet, Dimensions, TouchableOpacity, Alert, Share, Image, Animated, Easing, Linking, ActivityIndicator, Modal, TextInput } from 'react-native';
 import MapboxGL, { isMapboxNativeAvailable, MapFallback } from '../../components/map/MapboxWrapper';
 import { Text, Card, Avatar, Button, IconButton, Surface, useTheme } from 'react-native-paper';
 import { useNavigation, useRoute } from '@react-navigation/native';
@@ -145,6 +145,13 @@ export default function TrackOrderScreen() {
     const [isRouteView, setIsRouteView] = useState(false);
     const [isNavigationMode, setIsNavigationMode] = useState(false);
     const [isBottomSheetExpanded, setIsBottomSheetExpanded] = useState(true);
+
+    // Modals & Rating State
+    const [showRiderDetailsModal, setShowRiderDetailsModal] = useState(false);
+    const [showRatingModal, setShowRatingModal] = useState(false);
+    const [ratingScore, setRatingScore] = useState(0);
+    const [isRatingSubmitting, setIsRatingSubmitting] = useState(false);
+    const [ratingSubmitted, setRatingSubmitted] = useState(false);
 
     // EC-SMART-ROUTE: Refs for optimization (borrowed from Web)
     const consecutiveOffRouteCount = useRef(0);
@@ -472,6 +479,57 @@ export default function TrackOrderScreen() {
             url,
         });
     };
+
+    const handleRatingSubmit = async () => {
+        if (ratingScore < 1 || ratingScore > 5 || !delivery) return;
+
+        setIsRatingSubmitting(true);
+        try {
+            // Note: In mobile, we might not use relative paths like '/api/...'.
+            // We need to use the full API URL based on EXPO_PUBLIC_TRACKING_WEB_BASE_URL
+            const baseUrl = process.env.EXPO_PUBLIC_TRACKING_WEB_BASE_URL || 'https://parcel-safe.vercel.app';
+            const res = await fetch(`${baseUrl}/api/rate-delivery`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    delivery_id: delivery.id,
+                    share_token: delivery.share_token,
+                    rating: ratingScore
+                })
+            });
+
+            const data = await res.json();
+            if (data.success) {
+                setRatingSubmitted(true);
+                setShowRatingModal(false);
+                setDelivery(prev => prev ? { ...prev, rating: ratingScore } : prev);
+                Alert.alert('Success', 'Thank you for your rating!');
+            } else {
+                Alert.alert('Error', data.error || 'Failed to submit rating.');
+            }
+        } catch (err) {
+            console.error('Rating submission error:', err);
+            Alert.alert('Error', 'An unexpected error occurred while submitting your rating.');
+        } finally {
+            setIsRatingSubmitting(false);
+        }
+    };
+
+    // Auto-show rating modal when completed
+    useEffect(() => {
+        if (
+            delivery?.status === 'COMPLETED' &&
+            delivery.customer_id === customerId &&
+            !ratingSubmitted &&
+            !delivery.rating // Not rated yet
+        ) {
+            // Slight delay so the user sees the delivery completed first
+            const timer = setTimeout(() => {
+                setShowRatingModal(true);
+            }, 1500);
+            return () => clearTimeout(timer);
+        }
+    }, [delivery?.status, delivery?.customer_id, customerId, ratingSubmitted, delivery?.rating]);
 
     const canCancelResult = canCustomerCancel(deliveryStatus);
 
@@ -1024,7 +1082,11 @@ export default function TrackOrderScreen() {
 
                         <View style={[styles.divider, { backgroundColor: theme.colors.outlineVariant }]} />
 
-                        <View style={styles.riderInfo}>
+                        <TouchableOpacity
+                            style={styles.riderInfo}
+                            activeOpacity={0.7}
+                            onPress={() => setShowRiderDetailsModal(true)}
+                        >
                             <Avatar.Image size={50} source={{ uri: riderDetails.avatar }} />
                             <View style={{ flex: 1, marginLeft: 16 }}>
                                 <Text variant="titleMedium" style={{ fontWeight: 'bold', color: theme.colors.onSurface }}>{riderDetails.name}</Text>
@@ -1064,7 +1126,7 @@ export default function TrackOrderScreen() {
                                     }}
                                 />
                             </View>
-                        </View>
+                        </TouchableOpacity>
 
                         {/* Pickup Photo - Show if available and NOT pending */}
                         {delivery?.pickup_photo_url && delivery?.status !== 'PENDING' && (
@@ -1192,6 +1254,139 @@ export default function TrackOrderScreen() {
                 onSubmit={handleCancellationSubmit}
                 loading={cancelLoading}
             />
+
+            {/* Rider Details Modal */}
+            <Modal
+                visible={showRiderDetailsModal}
+                transparent
+                animationType="fade"
+                onRequestClose={() => setShowRiderDetailsModal(false)}
+            >
+                <View style={styles.modalOverlay}>
+                    <Surface style={[styles.modalContent, { backgroundColor: theme.colors.surface }]} elevation={5}>
+                        <View style={styles.modalHeader}>
+                            <Text style={[styles.modalTitle, { color: theme.colors.onSurface }]}>Rider Details</Text>
+                            <IconButton
+                                icon="close"
+                                size={24}
+                                onPress={() => setShowRiderDetailsModal(false)}
+                                iconColor={theme.colors.onSurfaceVariant}
+                            />
+                        </View>
+
+                        <View style={{ alignItems: 'center', marginVertical: 16 }}>
+                            <Avatar.Image size={80} source={{ uri: riderDetails.avatar }} />
+                            <Text variant="titleLarge" style={{ fontWeight: 'bold', color: theme.colors.onSurface, marginTop: 12 }}>
+                                {riderDetails.name}
+                            </Text>
+                            <Text variant="bodyMedium" style={{ color: theme.colors.onSurfaceVariant }}>
+                                {riderDetails.phone}
+                            </Text>
+                        </View>
+
+                        <View style={{ flexDirection: 'row', justifyContent: 'space-between', gap: 12 }}>
+                            <Surface style={[styles.modalStatCard, { backgroundColor: theme.dark ? '#1A237E' : '#E3F2FD' }]} elevation={0}>
+                                <Text variant="labelMedium" style={{ color: '#2196F3' }}>RATING</Text>
+                                <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 8 }}>
+                                    <Text variant="displaySmall" style={{ fontWeight: 'bold', color: '#2196F3', marginRight: 4 }}>
+                                        {riderDetails.rating}
+                                    </Text>
+                                    <MaterialCommunityIcons name="star" size={24} color="#FFC107" />
+                                </View>
+                            </Surface>
+
+                            <Surface style={[styles.modalStatCard, { backgroundColor: theme.dark ? '#1B5E20' : '#E8F5E9' }]} elevation={0}>
+                                <Text variant="labelMedium" style={{ color: '#4CAF50' }}>DELIVERIES</Text>
+                                <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 8 }}>
+                                    <Text variant="displaySmall" style={{ fontWeight: 'bold', color: '#4CAF50', marginRight: 4 }}>
+                                        {riderProfile?.totalDeliveries || 0}
+                                    </Text>
+                                    <MaterialCommunityIcons name="bike" size={24} color="#4CAF50" />
+                                </View>
+                            </Surface>
+                        </View>
+                    </Surface>
+                </View>
+            </Modal>
+
+            {/* Rating Modal */}
+            <Modal
+                visible={showRatingModal}
+                transparent
+                animationType="slide"
+                onRequestClose={() => {
+                    // Do nothing - ensure they click a button to skip or rate
+                }}
+            >
+                <View style={styles.modalOverlay}>
+                    <View style={{ flex: 1 }} />
+                    <Surface style={[styles.ratingModalContent, { backgroundColor: theme.colors.surface }]} elevation={5}>
+                        <View style={{ alignItems: 'center', marginBottom: 24 }}>
+                            <View style={{
+                                width: 80, height: 80, borderRadius: 40,
+                                backgroundColor: '#10B981', justifyContent: 'center', alignItems: 'center',
+                                marginBottom: 16,
+                                shadowColor: '#10B981', shadowOpacity: 0.5, shadowRadius: 10, shadowOffset: { width: 0, height: 4 },
+                                elevation: 8
+                            }}>
+                                <MaterialCommunityIcons name="check" size={48} color="white" />
+                            </View>
+                            <Text variant="headlineSmall" style={{ fontWeight: 'bold', color: theme.colors.onSurface, textAlign: 'center' }}>
+                                Delivery Complete!
+                            </Text>
+                            <Text variant="bodyMedium" style={{ color: theme.colors.onSurfaceVariant, textAlign: 'center', marginTop: 8 }}>
+                                How was your experience with {riderDetails.name}?
+                            </Text>
+                        </View>
+
+                        <View style={{ flexDirection: 'row', justifyContent: 'center', gap: 12, marginBottom: 32 }}>
+                            {[1, 2, 3, 4, 5].map((star) => (
+                                <TouchableOpacity
+                                    key={star}
+                                    onPress={() => setRatingScore(star)}
+                                    activeOpacity={0.7}
+                                    style={{ padding: 4 }}
+                                >
+                                    <MaterialCommunityIcons
+                                        name={ratingScore >= star ? "star" : "star-outline"}
+                                        size={48}
+                                        color={ratingScore >= star ? "#FFC107" : theme.colors.onSurfaceVariant}
+                                        style={ratingScore >= star ? {
+                                            textShadowColor: 'rgba(255, 193, 7, 0.4)',
+                                            textShadowOffset: { width: 0, height: 2 },
+                                            textShadowRadius: 8,
+                                        } : undefined}
+                                    />
+                                </TouchableOpacity>
+                            ))}
+                        </View>
+
+                        <Button
+                            mode="contained"
+                            onPress={handleRatingSubmit}
+                            disabled={ratingScore === 0 || isRatingSubmitting}
+                            loading={isRatingSubmitting}
+                            style={{ paddingVertical: 8, borderRadius: 16, shadowColor: '#000', shadowOpacity: 0.2, shadowRadius: 8, shadowOffset: { width: 0, height: 4 }, elevation: 4 }}
+                            buttonColor={theme.colors.onSurface}
+                            textColor={theme.colors.surface}
+                        >
+                            <Text style={{ fontSize: 18, fontWeight: 'bold' }}>Submit Rating</Text>
+                        </Button>
+
+                        <Button
+                            mode="text"
+                            onPress={() => {
+                                setRatingSubmitted(true);
+                                setShowRatingModal(false);
+                            }}
+                            textColor={theme.colors.onSurfaceVariant}
+                            style={{ marginTop: 16 }}
+                        >
+                            Skip for now
+                        </Button>
+                    </Surface>
+                </View>
+            </Modal>
         </View>
     );
 }
@@ -1359,5 +1554,36 @@ const styles = StyleSheet.create({
         color: '#94a3b8',
         fontSize: 13,
         marginTop: 4,
+    },
+    modalOverlay: {
+        flex: 1,
+        backgroundColor: 'rgba(0, 0, 0, 0.5)',
+        justifyContent: 'center',
+        padding: 24,
+    },
+    modalContent: {
+        borderRadius: 24,
+        padding: 24,
+    },
+    modalHeader: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+    },
+    modalTitle: {
+        fontSize: 20,
+        fontWeight: 'bold',
+    },
+    modalStatCard: {
+        flex: 1,
+        padding: 16,
+        borderRadius: 16,
+        alignItems: 'center',
+    },
+    ratingModalContent: {
+        borderTopLeftRadius: 32,
+        borderTopRightRadius: 32,
+        padding: 32,
+        paddingBottom: 48,
     },
 });

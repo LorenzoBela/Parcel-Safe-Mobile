@@ -57,6 +57,13 @@ export default function BookServiceScreen() {
     // Which input is currently focused/active for map selection
     const [activeField, setActiveField] = useState<'pickup' | 'dropoff'>('pickup');
 
+    // Contact form state
+    const [senderName, setSenderName] = useState('');
+    const [senderPhone, setSenderPhone] = useState('');
+    const [recipientName, setRecipientName] = useState('');
+    const [recipientPhone, setRecipientPhone] = useState('');
+    const [deliveryNotes, setDeliveryNotes] = useState('');
+
     // Route data (auto-calculated)
     const [routeData, setRouteData] = useState<{
         distance: number;
@@ -603,6 +610,11 @@ export default function BookServiceScreen() {
             return;
         }
 
+        if (!senderName.trim() || !senderPhone.trim() || !recipientName.trim() || !recipientPhone.trim()) {
+            Alert.alert('Missing Details', 'Please fill in all contact names and phones before booking.');
+            return;
+        }
+
         // Block new bookings if there is already an active one
         if (hasActiveBooking) {
             Alert.alert(
@@ -643,6 +655,11 @@ export default function BookServiceScreen() {
             distance: routeData?.distance, // EC-Fix: Added
             duration: routeData?.duration, // EC-Fix: Added
             customerName: userFullName, // EC-Fix: Pass customer name for rider preview
+            senderName,
+            senderPhone,
+            recipientName,
+            recipientPhone,
+            deliveryNotes,
         });
     };
 
@@ -807,6 +824,7 @@ export default function BookServiceScreen() {
                                     setActiveField('pickup');
                                 }}
                                 style={[styles.minimalTextInput, { backgroundColor: 'transparent' }]}
+                                {...(activeField !== 'pickup' ? { selection: { start: 0, end: 0 } } : {})}
                                 textColor={theme.colors.onSurface}
                                 underlineColor="transparent"
                                 activeUnderlineColor="transparent"
@@ -838,6 +856,7 @@ export default function BookServiceScreen() {
                                     setActiveField('dropoff');
                                 }}
                                 style={[styles.minimalTextInput, { backgroundColor: 'transparent' }]}
+                                {...(activeField !== 'dropoff' ? { selection: { start: 0, end: 0 } } : {})}
                                 textColor={theme.colors.onSurface}
                                 underlineColor="transparent"
                                 activeUnderlineColor="transparent"
@@ -992,6 +1011,23 @@ export default function BookServiceScreen() {
                 <View style={[styles.bottomPreviewContainer, { bottom: 20 + insets.bottom }]}>
                     <Card style={[styles.bottomPreviewCard, { backgroundColor: theme.colors.surface }]} elevation={5}>
                         <Card.Content>
+                            <ScrollView style={{ maxHeight: 200 }} showsVerticalScrollIndicator={false}>
+                                <Text variant="titleSmall" style={{ marginTop: 8, marginBottom: 4 }}>Pickup Contact</Text>
+                                <View style={{ flexDirection: 'row', gap: 8 }}>
+                                    <TextInput mode="outlined" placeholder="Name" value={senderName} onChangeText={setSenderName} style={{ flex: 1, height: 40, backgroundColor: 'white' }} dense />
+                                    <TextInput mode="outlined" placeholder="Phone" value={senderPhone} onChangeText={setSenderPhone} keyboardType="phone-pad" style={{ flex: 1, height: 40, backgroundColor: 'white' }} dense />
+                                </View>
+
+                                <Text variant="titleSmall" style={{ marginTop: 12, marginBottom: 4 }}>Drop-off Contact</Text>
+                                <View style={{ flexDirection: 'row', gap: 8 }}>
+                                    <TextInput mode="outlined" placeholder="Name" value={recipientName} onChangeText={setRecipientName} style={{ flex: 1, height: 40, backgroundColor: 'white' }} dense />
+                                    <TextInput mode="outlined" placeholder="Phone" value={recipientPhone} onChangeText={setRecipientPhone} keyboardType="phone-pad" style={{ flex: 1, height: 40, backgroundColor: 'white' }} dense />
+                                </View>
+
+                                <Text variant="titleSmall" style={{ marginTop: 12, marginBottom: 4 }}>Rider Notes (Optional)</Text>
+                                <TextInput mode="outlined" placeholder="E.g. Call upon arrival" value={deliveryNotes} onChangeText={setDeliveryNotes} style={{ height: 40, backgroundColor: 'white', marginBottom: 8 }} dense />
+                            </ScrollView>
+
                             <View style={styles.previewHeader}>
                                 <Text variant="titleMedium" style={{ color: theme.colors.onSurface, fontWeight: 'bold' }}>
                                     Total: ₱{routeData.cost}
@@ -1089,12 +1125,12 @@ const styles = StyleSheet.create({
         paddingRight: 8,
     },
     minimalInputWrapper: {
-        height: 40,
+        height: 44,
         justifyContent: 'center',
     },
     minimalTextInput: {
         backgroundColor: 'transparent',
-        height: 40,
+        height: 44,
         fontSize: 14,
         paddingHorizontal: 0,
     },

@@ -457,6 +457,9 @@ export default function RiderDashboard() {
         snappedPickupLng: activeDelivery.snapped_pickup_lng,
         snappedDropoffLat: activeDelivery.snapped_dropoff_lat,
         snappedDropoffLng: activeDelivery.snapped_dropoff_lng,
+        senderName: activeDelivery.sender_name,
+        senderPhone: activeDelivery.sender_phone,
+        deliveryNotes: activeDelivery.delivery_notes,
     } : null, [activeDelivery, distance, duration]);
 
     // Derive destination directly from activeDelivery (NOT nextDelivery) to avoid

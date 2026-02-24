@@ -144,6 +144,11 @@ export interface Delivery {
     manual_completion_reason?: string;
     manual_completion_at?: string;
     created_at: string;
+    sender_name?: string;
+    sender_phone?: string;
+    recipient_name?: string;
+    recipient_phone?: string;
+    delivery_notes?: string;
 }
 
 export interface SmartBoxSummary {

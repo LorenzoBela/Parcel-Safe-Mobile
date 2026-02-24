@@ -71,9 +71,14 @@ export default function SearchingRiderScreen() {
         dropoffLng = 120.9794,
         estimatedFare,
         estimatedCost,
-        distance, // EC-Fix: Added
+        distance, // EC-Fix: Restore
         duration, // EC-Fix: Added
         customerName, // EC-Fix: Added
+        senderName,
+        senderPhone,
+        recipientName,
+        recipientPhone,
+        deliveryNotes,
         snappedPickupLat,
         snappedPickupLng,
         snappedDropoffLat,
@@ -157,6 +162,11 @@ export default function SearchingRiderScreen() {
                 distance, // EC-Fix: Added
                 duration, // EC-Fix: Added
                 customerName: customerName || 'Valued Customer', // EC-Fix: Added with fallback
+                senderName,
+                senderPhone,
+                recipientName,
+                recipientPhone,
+                deliveryNotes,
                 snappedPickupLat,
                 snappedPickupLng,
                 snappedDropoffLat,

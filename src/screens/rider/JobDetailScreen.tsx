@@ -76,6 +76,10 @@ export default function JobDetailScreen() {
             targetLng: jobData.snappedDropoffLng ?? jobData.dropoffLng,
             targetAddress: jobData.address,
             customerPhone: jobData.phone,
+            senderName: jobData.senderName,
+            senderPhone: jobData.senderPhone,
+            recipientName: jobData.customer,
+            deliveryNotes: jobData.deliveryNotes,
         });
     };
     // Helper to ensure time is in PH format
@@ -254,6 +258,20 @@ export default function JobDetailScreen() {
                                 <Text variant="titleMedium" style={{ fontWeight: 'bold', marginLeft: 8 }}>Pickup</Text>
                             </View>
 
+                            {jobData.senderName ? (
+                                <View style={styles.detailRow}>
+                                    <MaterialCommunityIcons name="account" size={18} color={theme.colors.onSurfaceVariant} />
+                                    <Text variant="bodyMedium" style={{ flex: 1, marginLeft: 8 }}>{jobData.senderName}</Text>
+                                </View>
+                            ) : null}
+
+                            {jobData.senderPhone ? (
+                                <View style={styles.detailRow}>
+                                    <MaterialCommunityIcons name="phone" size={18} color={theme.colors.onSurfaceVariant} />
+                                    <Text variant="bodyMedium" style={{ flex: 1, marginLeft: 8 }}>{jobData.senderPhone}</Text>
+                                </View>
+                            ) : null}
+
                             <View style={styles.detailRow}>
                                 <MaterialCommunityIcons name="map-marker" size={18} color={theme.colors.onSurfaceVariant} />
                                 <Text variant="bodyMedium" style={{ flex: 1, marginLeft: 8 }}>{jobData.pickupAddress}</Text>
@@ -295,6 +313,13 @@ export default function JobDetailScreen() {
                                 <MaterialCommunityIcons name="clock" size={18} color={theme.colors.onSurfaceVariant} />
                                 <Text variant="bodyMedium" style={{ flex: 1, marginLeft: 8 }}>{getFormattedTime(jobData.dropoffTime)}</Text>
                             </View>
+
+                            {jobData.deliveryNotes ? (
+                                <View style={{ marginTop: 8, padding: 12, backgroundColor: theme.colors.surfaceVariant, borderRadius: 8 }}>
+                                    <Text variant="labelMedium" style={{ color: theme.colors.onSurfaceVariant, marginBottom: 4 }}>Delivery Notes</Text>
+                                    <Text variant="bodyMedium">{jobData.deliveryNotes}</Text>
+                                </View>
+                            ) : null}
                         </Card.Content>
                     </Card>
                 </View>

@@ -86,6 +86,10 @@ interface RouteParams {
     targetAddress: string;
     customerPhone?: string;
     riderName?: string;
+    senderName?: string;
+    senderPhone?: string;
+    recipientName?: string;
+    deliveryNotes?: string;
 }
 
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -1118,6 +1122,34 @@ export default function ArrivalScreen() {
                         <View style={{ flex: 1 }}>
                             <Text style={styles.addressLabel}>TARGET ADDRESS</Text>
                             <Text numberOfLines={2} style={styles.address}>{params.targetAddress}</Text>
+
+                            {params.senderName ? (
+                                <View style={{ marginTop: 12 }}>
+                                    <Text style={styles.addressLabel}>SENDER</Text>
+                                    <Text style={styles.address}>{params.senderName}{params.senderPhone ? ` • ${params.senderPhone}` : ''}</Text>
+                                </View>
+                            ) : null}
+
+                            {params.recipientName ? (
+                                <View style={{ marginTop: 12 }}>
+                                    <Text style={styles.addressLabel}>RECIPIENT</Text>
+                                    <Text style={styles.address}>{params.recipientName}{params.customerPhone ? ` • ${params.customerPhone}` : ''}</Text>
+                                </View>
+                            ) : (
+                                params.customerPhone ? (
+                                    <View style={{ marginTop: 12 }}>
+                                        <Text style={styles.addressLabel}>CUSTOMER PHONE</Text>
+                                        <Text style={styles.address}>{params.customerPhone}</Text>
+                                    </View>
+                                ) : null
+                            )}
+
+                            {params.deliveryNotes ? (
+                                <View style={{ marginTop: 12, padding: 8, backgroundColor: '#f1f5f9', borderRadius: 6 }}>
+                                    <Text style={[styles.addressLabel, { color: '#475569' }]}>DELIVERY NOTES</Text>
+                                    <Text style={[styles.address, { color: '#334155' }]}>{params.deliveryNotes}</Text>
+                                </View>
+                            ) : null}
                         </View>
                         <View style={styles.navActions}>
                             <IconButton

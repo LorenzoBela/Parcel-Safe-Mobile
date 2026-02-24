@@ -53,6 +53,11 @@ export interface BookingRequest {
     distance?: number; // EC-Fix: Added for rider preview (km)
     duration?: number; // EC-Fix: Added for rider preview (min)
     customerName?: string; // EC-Fix: Added for rider preview
+    senderName?: string;
+    senderPhone?: string;
+    recipientName?: string;
+    recipientPhone?: string;
+    deliveryNotes?: string;
     snappedPickupLat?: number;
     snappedPickupLng?: number;
     snappedDropoffLat?: number;
@@ -87,6 +92,7 @@ export interface DeliveryRecord {
     picked_up_at?: string;
     delivered_at?: string;
     estimated_fare?: number;
+    rating?: number;
 }
 
 export interface RiderLiveLocation {
@@ -151,6 +157,11 @@ export interface RiderOrderRequest {
     distance?: number;
     duration?: number;
     customerName?: string;
+    senderName?: string;
+    senderPhone?: string;
+    recipientName?: string;
+    recipientPhone?: string;
+    deliveryNotes?: string;
 }
 
 /**
@@ -284,6 +295,11 @@ export async function createPendingBooking(request: BookingRequest): Promise<boo
             created_at: request.createdAt,
             share_token: shareToken,
             customer_name: request.customerName, // EC-Fix: Store for good measure, though mostly passed via request
+            sender_name: request.senderName,
+            sender_phone: request.senderPhone,
+            recipient_name: request.recipientName,
+            recipient_phone: request.recipientPhone,
+            delivery_notes: request.deliveryNotes,
             snapped_pickup_lat: request.snappedPickupLat || null,
             snapped_pickup_lng: request.snappedPickupLng || null,
             snapped_dropoff_lat: request.snappedDropoffLat || null,
@@ -320,6 +336,11 @@ export async function createPendingBooking(request: BookingRequest): Promise<boo
                         distance: request.distance ? Math.round(request.distance) : null, // Persist distance (rounded)
                         duration: request.duration ? Math.round(request.duration) : null, // Persist duration (rounded)
                         share_token: shareToken,
+                        sender_name: request.senderName,
+                        sender_phone: request.senderPhone,
+                        recipient_name: request.recipientName,
+                        recipient_phone: request.recipientPhone,
+                        delivery_notes: request.deliveryNotes,
                         otp_code: otpCode,
                         status: 'PENDING',
                         created_at: new Date(request.createdAt).toISOString(),
@@ -381,6 +402,11 @@ export async function sendOrderRequestToRider(
             distance: request.distance, // EC-Fix: Added
             duration: request.duration, // EC-Fix: Added
             customer_name: request.customerName, // EC-Fix: Added
+            sender_name: request.senderName,
+            sender_phone: request.senderPhone,
+            recipient_name: request.recipientName,
+            recipient_phone: request.recipientPhone,
+            delivery_notes: request.deliveryNotes,
         });
 
         return true;
@@ -427,6 +453,11 @@ export async function notifyNearbyRiders(
             distance: booking.distance, // EC-Fix: Propagate distance from booking
             duration: booking.duration, // EC-Fix: Propagate duration from booking
             customerName: booking.customerName, // EC-Fix: Propagate customer name
+            senderName: booking.senderName,
+            senderPhone: booking.senderPhone,
+            recipientName: booking.recipientName,
+            recipientPhone: booking.recipientPhone,
+            deliveryNotes: booking.deliveryNotes,
         };
 
         const success = await sendOrderRequestToRider(rider.riderId, orderRequest);
@@ -1158,6 +1189,7 @@ export interface RiderProfile {
     full_name: string;
     avatar_url: string | null;
     rating?: number;
+    totalDeliveries?: number;
 }
 
 /**
@@ -1178,7 +1210,16 @@ export async function getRiderProfile(riderId: string): Promise<RiderProfile | n
             return null;
         }
 
-        return data as RiderProfile;
+        const { count } = await supabase
+            .from('deliveries')
+            .select('*', { count: 'exact', head: true })
+            .eq('rider_id', riderId)
+            .eq('status', 'COMPLETED');
+
+        return {
+            ...data,
+            totalDeliveries: count || 0,
+        } as RiderProfile;
     } catch (error) {
         console.error('Error in getRiderProfile:', error);
         return null;
