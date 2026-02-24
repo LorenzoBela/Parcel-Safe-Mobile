@@ -271,6 +271,14 @@ class StatusUpdateService {
                             updated_at: new Date().toISOString()
                         })
                         .eq('id', deliveryId);
+
+                    if (boxId && boxId !== 'UNKNOWN_BOX') {
+                        await supabase
+                            .from('smart_boxes')
+                            .update({ status: 'IDLE' })
+                            .eq('id', boxId);
+                    }
+
                     console.log('[EC35] Manually marked complete in Supabase:', deliveryId);
                 } catch (e) {
                     console.error('[EC35] Failed to sync manual completion to Supabase:', e);

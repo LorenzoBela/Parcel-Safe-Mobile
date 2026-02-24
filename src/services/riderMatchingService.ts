@@ -93,6 +93,10 @@ export interface DeliveryRecord {
     delivered_at?: string;
     estimated_fare?: number;
     rating?: number;
+    distance?: number;
+    recipient_name?: string;
+    sender_name?: string;
+    sender_phone?: string;
 }
 
 export interface RiderLiveLocation {
@@ -1022,7 +1026,29 @@ export async function updateDeliveryStatus(
                         status,
                     });
                 } else {
-                    // console.log('[updateDeliveryStatus] Supabase synced:', deliveryId, status);
+                    // Update the smart box status if boxId is provided
+                    const boxId = additionalFields?.boxId as string | undefined;
+                    if (boxId) {
+                        let boxStatus: 'IDLE' | 'IN_TRANSIT' | null = null;
+
+                        // Map delivery status to box physical status
+                        if (status === 'IN_TRANSIT' || status === 'ARRIVED') {
+                            boxStatus = 'IN_TRANSIT';
+                        } else if (status === 'COMPLETED' || status === 'CANCELLED' || status === 'TAMPERED') {
+                            boxStatus = 'IDLE';
+                        }
+
+                        if (boxStatus) {
+                            const { error: boxError } = await supabase
+                                .from('smart_boxes')
+                                .update({ status: boxStatus })
+                                .eq('id', boxId);
+
+                            if (boxError) {
+                                console.error('[updateDeliveryStatus] Failed to update smart_boxes status:', boxError);
+                            }
+                        }
+                    }
                 }
             } catch (sbException) {
                 console.error('[updateDeliveryStatus] Supabase sync exception:', sbException);

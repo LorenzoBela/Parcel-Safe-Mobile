@@ -1039,8 +1039,8 @@ export default function RiderDashboard() {
         }
     }, [MAPBOX_TOKEN]);
 
-    // Track last route fetch location to prevent spamming API
     const lastRouteFetchLocation = useRef<{ latitude: number, longitude: number } | null>(null);
+    const lastRouteDestination = useRef<{ latitude: number, longitude: number } | null>(null);
 
     // Track last ETA update to prevent DB spam
     const lastEtaUpdateRef = useRef<number>(0);
@@ -1063,7 +1063,13 @@ export default function RiderDashboard() {
 
         // Throttle: Only fetch if moved > 20 meters from last fetch
         let shouldFetch = true;
-        if (lastRouteFetchLocation.current) {
+
+        // EC-FIX: Check if destination changed. If so, force fetch to get accurate ETA/Route.
+        const destinationChanged = !lastRouteDestination.current ||
+            lastRouteDestination.current.latitude !== destination.latitude ||
+            lastRouteDestination.current.longitude !== destination.longitude;
+
+        if (!destinationChanged && lastRouteFetchLocation.current) {
             const dist = calculateDistance(
                 currentLoc.latitude,
                 currentLoc.longitude,
@@ -1078,6 +1084,8 @@ export default function RiderDashboard() {
         }
 
         if (!shouldFetch) return;
+
+        lastRouteDestination.current = { latitude: destination.latitude, longitude: destination.longitude };
 
         try {
             const url = `https://api.mapbox.com/directions/v5/mapbox/driving/${currentLoc.longitude},${currentLoc.latitude};${destination.longitude},${destination.latitude}?geometries=geojson&access_token=${MAPBOX_TOKEN}`;
@@ -1656,11 +1664,20 @@ export default function RiderDashboard() {
                                     zoomEnabled={true}
                                 >
                                     <MapboxGL.Camera
-                                        zoomLevel={15}
-                                        centerCoordinate={[
-                                            lastLocation ? lastLocation.longitude : riderLocation!.coords.longitude,
-                                            lastLocation ? lastLocation.latitude : riderLocation!.coords.latitude
-                                        ]}
+                                        bounds={{
+                                            ne: [
+                                                Math.max(lastLocation ? lastLocation.longitude : riderLocation!.coords.longitude, destination.longitude),
+                                                Math.max(lastLocation ? lastLocation.latitude : riderLocation!.coords.latitude, destination.latitude)
+                                            ],
+                                            sw: [
+                                                Math.min(lastLocation ? lastLocation.longitude : riderLocation!.coords.longitude, destination.longitude),
+                                                Math.min(lastLocation ? lastLocation.latitude : riderLocation!.coords.latitude, destination.latitude)
+                                            ],
+                                            paddingTop: 40,
+                                            paddingRight: 40,
+                                            paddingBottom: 40,
+                                            paddingLeft: 40
+                                        }}
                                         animationMode="easeTo"
                                         animationDuration={1000}
                                     />

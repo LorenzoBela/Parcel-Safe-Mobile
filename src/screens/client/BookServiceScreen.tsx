@@ -4,9 +4,24 @@ import { View, StyleSheet, Alert, ActivityIndicator, TouchableOpacity, Modal, An
 import { Text, TextInput, Button, useTheme, Card, Divider, List } from 'react-native-paper';
 import MapboxGL, { StyleURL } from '../../components/map/MapboxWrapper';
 import * as Location from 'expo-location';
+import * as Haptics from 'expo-haptics';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { supabase } from '../../services/supabaseClient'; // Import Supabase
-import { snapToValidNode, restrictedZones } from '../../utils/geofence';
+
+const getDistance = (lat1: number, lon1: number, lat2: number, lon2: number) => {
+    const R = 6371e3; // metres
+    const p1 = lat1 * Math.PI / 180;
+    const p2 = lat2 * Math.PI / 180;
+    const dp = (lat2 - lat1) * Math.PI / 180;
+    const dl = (lon2 - lon1) * Math.PI / 180;
+
+    const a = Math.sin(dp / 2) * Math.sin(dp / 2) +
+        Math.cos(p1) * Math.cos(p2) *
+        Math.sin(dl / 2) * Math.sin(dl / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+
+    return R * c;
+};
 
 // Fallback initial region (Manila)
 const INITIAL_REGION = {
@@ -51,6 +66,9 @@ export default function BookServiceScreen() {
     const [isSearching, setIsSearching] = useState(false);
     const [searchError, setSearchError] = useState<string | null>(null);
 
+    // Dynamic Nodes for map
+    const [nearbyNodes, setNearbyNodes] = useState<{ id: string, name: string, lat: number, lng: number }[]>([]);
+
     // Coordinates
     const [pickupCoords, setPickupCoords] = useState<{ latitude: number; longitude: number } | null>(null);
     const [dropoffCoords, setDropoffCoords] = useState<{ latitude: number; longitude: number } | null>(null);
@@ -62,8 +80,7 @@ export default function BookServiceScreen() {
     const [activeField, setActiveField] = useState<'pickup' | 'dropoff'>('pickup');
 
     // Explicit cursor tracking to fix the TextInput scrolling
-    const [pickupSelection, setPickupSelection] = useState<{ start: number, end: number } | undefined>(undefined);
-    const [dropoffSelection, setDropoffSelection] = useState<{ start: number, end: number } | undefined>(undefined);
+    const [focusedField, setFocusedField] = useState<'pickup' | 'dropoff' | null>(null);
 
     // Contact form state
     const [senderName, setSenderName] = useState('');
@@ -145,23 +162,107 @@ export default function BookServiceScreen() {
     // End of EC-Update
 
 
+    // Refs for advanced snapping & hysteresis
+    const lastFetchedCoordinate = React.useRef<{ lat: number; lng: number } | null>(null);
+    const lastGeocodedCoordinate = React.useRef<{ lat: number; lng: number, address: string } | null>(null);
+    const lastHapticNodeId = React.useRef<string | null>(null);
+
     // Helper to reverse geocode using Google (much better exact address resolution)
     const reverseGeocodeGoogle = async (lat: number, lng: number): Promise<string | null> => {
         if (!GOOGLE_MAPS_TOKEN) return null;
+
+        // Hyper-aggressive Reverse Geocoding Cache:
+        // If the user only shifted the map by less than 20 meters and didn't snap, 
+        // they are effectively looking at the same building/street segment.
+        // Save $0.005 per micro-drag by reusing the last address.
+        if (lastGeocodedCoordinate.current) {
+            const dist = getDistance(
+                lat, lng,
+                lastGeocodedCoordinate.current.lat, lastGeocodedCoordinate.current.lng
+            );
+            if (dist < 20) {
+                return lastGeocodedCoordinate.current.address;
+            }
+        }
+
         try {
             const url = `https://maps.googleapis.com/maps/api/geocode/json?latlng=${lat},${lng}&key=${GOOGLE_MAPS_TOKEN}&result_type=street_address|premise|subpremise|point_of_interest`;
             const response = await fetch(url);
             const data = await response.json();
 
             if (data.results && data.results.length > 0) {
-                // We prefer the first result which is usually the most specific
-                // We could also loop to prefer a POI or a specific length
-                return data.results[0].formatted_address;
+                const formattedAddress = data.results[0].formatted_address;
+                lastGeocodedCoordinate.current = { lat, lng, address: formattedAddress };
+                return formattedAddress;
             }
         } catch (error) {
             console.error("Google Reverse Geocode Error", error);
         }
         return null;
+    };
+
+    const fetchNearbyNodesGoogle = async (lat: number, lng: number) => {
+        if (!GOOGLE_MAPS_TOKEN) return;
+
+        // Hyper-aggressive Places Cache:
+        // Only fetch if we moved more than 1000m (1km) from last fetch.
+        // This effectively fetches 20 nodes for a whole neighborhood ONCE.
+        if (lastFetchedCoordinate.current) {
+            const dist = getDistance(
+                lat, lng,
+                lastFetchedCoordinate.current.lat, lastFetchedCoordinate.current.lng
+            );
+            if (dist < 1000) {
+                return; // Skip the $0.032 API call entirely
+            }
+        }
+
+        try {
+            const url = `https://places.googleapis.com/v1/places:searchNearby`;
+            const response = await fetch(url, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-Goog-Api-Key': GOOGLE_MAPS_TOKEN,
+                    'X-Goog-FieldMask': 'places.id,places.displayName,places.location,places.routingLocations'
+                },
+                body: JSON.stringify({
+                    maxResultCount: 20,
+                    locationRestriction: {
+                        circle: {
+                            center: { latitude: lat, longitude: lng },
+                            radius: 1000.0 // 1000 meters radius to match the hysteresis
+                        }
+                    }
+                })
+            });
+            const data = await response.json();
+            if (data.places) {
+                const newNodes = data.places.map((p: any) => {
+                    // Prefer street-level routing locations over the geometric center of the building
+                    const hasRouting = p.routingLocations && p.routingLocations.length > 0;
+                    const snappedLoc = hasRouting ? p.routingLocations[0].location : p.location;
+
+                    return {
+                        id: p.id,
+                        name: p.displayName?.text || 'Point',
+                        lat: snappedLoc.latitude,
+                        lng: snappedLoc.longitude
+                    };
+                });
+
+                // Append unique nodes
+                setNearbyNodes(prev => {
+                    const existingIds = new Set(prev.map(n => n.id));
+                    const uniqueNewNodes = newNodes.filter((n: any) => !existingIds.has(n.id));
+                    return [...prev, ...uniqueNewNodes];
+                });
+
+                lastFetchedCoordinate.current = { lat, lng };
+            }
+        } catch (e) {
+            console.error(e);
+        }
     };
 
     useEffect(() => {
@@ -375,31 +476,41 @@ export default function BookServiceScreen() {
             setDropoffText("Locating...");
         }
 
-        const snapped = snapToValidNode(coords.latitude, coords.longitude);
-        if (snapped.snapped) {
-            coords.latitude = snapped.lat;
-            coords.longitude = snapped.lng;
+        // Fetch nearby POI nodes around this new location for the map
+        fetchNearbyNodesGoogle(coords.latitude, coords.longitude);
 
-            // Animate map to snap point and add a slight delay to allow Mapbox to catch up
+        // Check for magnetic snapping to nearby dynamic nodes
+        let snappedNode = null;
+        let minDistance = 40; // 40 meters snapping radius
+
+        for (const node of nearbyNodes) {
+            const dist = getDistance(coords.latitude, coords.longitude, node.lat, node.lng);
+            if (dist < minDistance) {
+                minDistance = dist;
+                snappedNode = node;
+            }
+        }
+
+        if (snappedNode) {
+            coords.latitude = snappedNode.lat;
+            coords.longitude = snappedNode.lng;
+
             setTimeout(() => {
                 cameraRef.current?.setCamera({
-                    centerCoordinate: [snapped.lng, snapped.lat],
-                    zoomLevel: 16,
-                    animationDuration: 500,
+                    centerCoordinate: [snappedNode.lng, snappedNode.lat],
+                    animationDuration: 300,
+                    animationMode: 'easeTo'
                 });
-            }, 100);
+            }, 10);
 
             if (activeField === 'pickup') {
-                setPickupCoords({ latitude: snapped.lat, longitude: snapped.lng });
-                if (snapped.reason) {
-                    Alert.alert('Restricted Zone', `${snapped.reason}\nMoved to: ${snapped.nodeName}`);
-                }
+                setPickupCoords({ latitude: snappedNode.lat, longitude: snappedNode.lng });
+                setPickupText(snappedNode.name);
             } else {
-                setDropoffCoords({ latitude: snapped.lat, longitude: snapped.lng });
-                if (snapped.reason) {
-                    Alert.alert('Restricted Zone', `${snapped.reason}\nMoved to: ${snapped.nodeName}`);
-                }
+                setDropoffCoords({ latitude: snappedNode.lat, longitude: snappedNode.lng });
+                setDropoffText(snappedNode.name);
             }
+            return; // Skip reverse geocode since we snapped to a known POI
         }
 
         const poiName = await reverseGeocodeGoogle(coords.latitude, coords.longitude);
@@ -409,6 +520,36 @@ export default function BookServiceScreen() {
             setPickupText(addressText);
         } else {
             setDropoffText(addressText);
+        }
+    };
+
+    const handleRegionIsChanging = (e: any) => {
+        const isUserInteraction = e?.properties?.isUserInteraction || e?.isUserInteraction;
+        if (!isUserInteraction) return;
+
+        const lat = e.geometry.coordinates[1];
+        const lng = e.geometry.coordinates[0];
+
+        let isNearNode = false;
+        let nearestNodeId: string | null = null;
+        let minDistance = 40; // 40m snap radius
+
+        for (const node of nearbyNodes) {
+            const dist = getDistance(lat, lng, node.lat, node.lng);
+            if (dist < minDistance) {
+                isNearNode = true;
+                nearestNodeId = node.id;
+                break;
+            }
+        }
+
+        if (isNearNode && nearestNodeId) {
+            if (lastHapticNodeId.current !== nearestNodeId) {
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                lastHapticNodeId.current = nearestNodeId;
+            }
+        } else {
+            lastHapticNodeId.current = null;
         }
     };
 
@@ -430,28 +571,11 @@ export default function BookServiceScreen() {
         // Optimistic update - show coordinates first then loading
         let addressText = "Locating...";
 
-        const snapped = snapToValidNode(coords.latitude, coords.longitude);
-        if (snapped.snapped) {
-            coords.latitude = snapped.lat;
-            coords.longitude = snapped.lng;
-
-            // Re-adjust camera if snapped
-            cameraRef.current?.setCamera({
-                centerCoordinate: [snapped.lng, snapped.lat],
-                animationDuration: 500,
-                animationMode: 'flyTo',
-            });
-        }
-
         if (activeField === 'pickup') {
             setPickupCoords(coords);
             setPickupText(addressText);
 
-            if (snapped.snapped && snapped.reason) {
-                Alert.alert('Restricted Zone', `${snapped.reason}\nMoved to: ${snapped.nodeName}`);
-            }
-
-            // Auto-focus dropoff after a short delay to let user see the pickup is set
+            // Auto-focus dropoff after a short delay
             setTimeout(() => {
                 setActiveField('dropoff');
                 dropoffInputRef.current?.focus();
@@ -459,10 +583,6 @@ export default function BookServiceScreen() {
         } else {
             setDropoffCoords(coords);
             setDropoffText(addressText);
-
-            if (snapped.snapped && snapped.reason) {
-                Alert.alert('Restricted Zone', `${snapped.reason}\nMoved to: ${snapped.nodeName}`);
-            }
         }
 
         // Use Google for POI-aware reverse geocoding
@@ -471,7 +591,6 @@ export default function BookServiceScreen() {
         if (poiName) {
             addressText = poiName;
         } else {
-            // Fallback to coordinates or Expo
             addressText = `${coords.latitude.toFixed(4)}, ${coords.longitude.toFixed(4)}`;
         }
 
@@ -480,6 +599,9 @@ export default function BookServiceScreen() {
         } else {
             setDropoffText(addressText);
         }
+
+        // Fetch new nodes
+        fetchNearbyNodesGoogle(coords.latitude, coords.longitude);
     };
 
     const handleSelectSuggestion = async (item: MapboxSuggestion) => {
@@ -520,12 +642,6 @@ export default function BookServiceScreen() {
 
         if (!coords) return;
 
-        const snapped = snapToValidNode(coords.latitude, coords.longitude);
-        if (snapped.snapped) {
-            coords.latitude = snapped.lat;
-            coords.longitude = snapped.lng;
-        }
-
         // Animate camera
         cameraRef.current?.setCamera({
             centerCoordinate: [coords.longitude, coords.latitude],
@@ -537,23 +653,18 @@ export default function BookServiceScreen() {
             setPickupCoords(coords);
             setPickupText(item.name);
 
-            if (snapped.snapped && snapped.reason) {
-                Alert.alert('Restricted Zone', `${snapped.reason}\nMoved to: ${snapped.nodeName}`);
-            }
             // Auto-advance
             setActiveField('dropoff');
             dropoffInputRef.current?.focus();
         } else {
             setDropoffCoords(coords);
             setDropoffText(item.name);
-
-            if (snapped.snapped && snapped.reason) {
-                Alert.alert('Restricted Zone', `${snapped.reason}\nMoved to: ${snapped.nodeName}`);
-            }
         }
 
         setSuggestions([]);
         setSearchError(null);
+
+        fetchNearbyNodesGoogle(coords.latitude, coords.longitude);
     };
 
     const calculateRoute = async () => {
@@ -792,6 +903,7 @@ export default function BookServiceScreen() {
                             style={StyleSheet.absoluteFillObject}
                             styleURL={theme.dark ? StyleURL.Dark : StyleURL.Street}
                             onPress={handleMapPress}
+                            onRegionIsChanging={handleRegionIsChanging}
                             onRegionDidChange={handleRegionChange}
                             logoEnabled={false}
                             attributionEnabled={false}
@@ -809,16 +921,18 @@ export default function BookServiceScreen() {
                             <MapboxGL.UserLocation visible />
 
 
-                            {restrictedZones.flatMap(zone => zone.accessNodes.map((node, index) => (
+                            {nearbyNodes.map((node) => (
                                 <MapboxGL.PointAnnotation
-                                    key={`${zone.id}-node-${index}`}
-                                    id={`${zone.id}-node-${index}`}
-                                    coordinate={node.geometry.coordinates}
-                                    title={node.properties?.name || "Access Point"}
+                                    key={node.id}
+                                    id={node.id}
+                                    coordinate={[node.lng, node.lat]}
+                                    title={node.name}
                                 >
-                                    <View style={styles.accessNodeMarker} />
+                                    <View style={styles.poiNodeMarker}>
+                                        <View style={styles.poiNodeInner} />
+                                    </View>
                                 </MapboxGL.PointAnnotation>
-                            )))}
+                            ))}
 
                             {pickupCoords && activeField !== 'pickup' && (
                                 <MapboxGL.PointAnnotation
@@ -878,7 +992,7 @@ export default function BookServiceScreen() {
                     </TouchableOpacity>
 
                     <TouchableOpacity
-                        style={[styles.floatingActionBtn, { backgroundColor: theme.colors.surface, bottom: 140 + insets.bottom }]}
+                        style={[styles.floatingActionBtn, { backgroundColor: theme.colors.surface, bottom: 180 + insets.bottom }]}
                         onPress={handleRecenter}
                     >
                         <MaterialCommunityIcons name="crosshairs-gps" size={24} color={theme.colors.primary} />
@@ -925,7 +1039,7 @@ export default function BookServiceScreen() {
                                         textColor={theme.colors.onSurface}
                                         underlineColor="transparent"
                                         activeUnderlineColor="transparent"
-                                        onFocus={() => setActiveField('pickup')}
+                                        onFocus={() => { setActiveField('pickup'); setFocusedField('pickup'); }}
                                         left={<TextInput.Icon icon="map-marker" size={16} color="green" />}
                                         right={
                                             activeField === 'pickup' && pickupText.length === 0 ? (
@@ -934,13 +1048,8 @@ export default function BookServiceScreen() {
                                                 <TextInput.Icon icon="close-circle" size={16} onPress={() => { setPickupText(''); setPickupCoords(null); setRouteData(null); }} />
                                             ) : null
                                         }
-                                        selection={activeField === 'pickup' ? pickupSelection : { start: 0, end: 0 }}
-                                        onSelectionChange={(e) => {
-                                            if (activeField === 'pickup') {
-                                                setPickupSelection(e.nativeEvent.selection);
-                                            }
-                                        }}
-                                        onBlur={() => setPickupSelection({ start: 0, end: 0 })}
+                                        selection={focusedField === 'pickup' ? undefined : { start: 0, end: 0 }}
+                                        onBlur={() => setFocusedField(null)}
                                     />
                                     <TouchableOpacity style={{ justifyContent: 'center', paddingRight: 12 }} onPress={() => setIsMapVisible(true)}>
                                         <View style={{ width: 32, height: 32, borderRadius: 8, backgroundColor: '#f0f0f0', alignItems: 'center', justifyContent: 'center' }}>
@@ -965,16 +1074,11 @@ export default function BookServiceScreen() {
                                         textColor={theme.colors.onSurface}
                                         underlineColor="transparent"
                                         activeUnderlineColor="transparent"
-                                        onFocus={() => setActiveField('dropoff')}
+                                        onFocus={() => { setActiveField('dropoff'); setFocusedField('dropoff'); }}
                                         left={<TextInput.Icon icon="map-marker" size={16} color="#ffb300" />}
                                         right={dropoffText.length > 0 ? <TextInput.Icon icon="close-circle" size={16} onPress={() => { setDropoffText(''); setDropoffCoords(null); setRouteData(null); }} /> : null}
-                                        selection={activeField === 'dropoff' ? dropoffSelection : { start: 0, end: 0 }}
-                                        onSelectionChange={(e) => {
-                                            if (activeField === 'dropoff') {
-                                                setDropoffSelection(e.nativeEvent.selection);
-                                            }
-                                        }}
-                                        onBlur={() => setDropoffSelection({ start: 0, end: 0 })}
+                                        selection={focusedField === 'dropoff' ? undefined : { start: 0, end: 0 }}
+                                        onBlur={() => setFocusedField(null)}
                                     />
                                     <TouchableOpacity style={{ justifyContent: 'center', paddingRight: 12 }} onPress={() => setIsMapVisible(true)}>
                                         <View style={{ width: 32, height: 32, borderRadius: 8, backgroundColor: '#f0f0f0', alignItems: 'center', justifyContent: 'center' }}>
@@ -1315,13 +1419,24 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         justifyContent: 'center',
     },
-    accessNodeMarker: {
-        width: 16,
-        height: 16,
-        borderRadius: 8,
-        backgroundColor: '#9c27b0', // Purple dot
-        borderWidth: 2,
-        borderColor: 'white',
+    poiNodeMarker: {
+        width: 14,
+        height: 14,
+        borderRadius: 7,
+        backgroundColor: '#FFFFFF', // White outer ring like Grab/Indrive
+        justifyContent: 'center',
+        alignItems: 'center',
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.25,
+        shadowRadius: 3,
+        elevation: 4,
+    },
+    poiNodeInner: {
+        width: 6,
+        height: 6,
+        borderRadius: 3,
+        backgroundColor: '#4A90E2', // Subtle blue inner dot
     },
     bottomMapActionPanel: {
         position: 'absolute',

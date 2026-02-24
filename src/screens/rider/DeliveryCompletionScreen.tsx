@@ -8,7 +8,8 @@ import useAuthStore from '../../store/authStore';
 import { uploadDeliveryProofPhoto, uploadPickupPhoto } from '../../services/proofPhotoService';
 import { subscribeToLocation, LocationData } from '../../services/firebaseClient';
 
-// Standard import
+import statusUpdateService from '../../services/statusUpdateService';
+import { supabase } from '../../services/supabaseClient';
 import * as ImagePicker from 'expo-image-picker';
 
 interface CompletionRouteParams {
@@ -251,6 +252,104 @@ export default function DeliveryCompletionScreen() {
             }
 
             setStatus('COMPLETED');
+
+            // --- EMAIL RECEIPT TRIGGER ---
+            try {
+                if (delivery && delivery.customer_id) {
+                    // Fetch Customer Email from Supabase (Requires Email access)
+                    const { data: profileData, error: profileError } = await supabase
+                        .from('profiles')
+                        .select('email')
+                        .eq('id', delivery.customer_id)
+                        .maybeSingle();
+
+                    if (!profileError && profileData?.email) {
+                        const parseDate = (dString: string | number | null | undefined) => {
+                            if (!dString) return new Date().getTime();
+                            if (typeof dString === 'number') return dString;
+                            let safeStr = dString;
+                            if (safeStr.includes(' ') && !safeStr.includes('T')) {
+                                safeStr = safeStr.replace(' ', 'T') + 'Z';
+                            }
+                            const t = new Date(safeStr).getTime();
+                            if (isNaN(t)) return new Date().getTime();
+                            return t;
+                        };
+
+                        const formatDuration = (d: any) => {
+                            if (d.duration) {
+                                if (d.duration < 60) return `${Math.round(d.duration)} mins`;
+                                const hrs = Math.floor(d.duration / 60);
+                                const mins = Math.round(d.duration % 60);
+                                return `${hrs}h ${mins}m`;
+                            }
+                            const start = parseDate(d.accepted_at || d.created_at);
+                            const end = parseDate(d.delivered_at || new Date().toISOString());
+                            const diffMins = Math.round((end - start) / 60000);
+                            if (diffMins < 60) return `${Math.max(1, diffMins)} mins`;
+                            const hrs = Math.floor(diffMins / 60);
+                            const mins = diffMins % 60;
+                            if (hrs > 48) return `N/A`;
+                            return `${hrs}h ${mins}m`;
+                        };
+
+                        let finalDistanceStr = 'N/A';
+                        if (delivery.distance != null) {
+                            finalDistanceStr = `${Number(delivery.distance).toFixed(2)} km`;
+                        } else if (delivery.pickup_lat && delivery.pickup_lng && delivery.dropoff_lat && delivery.dropoff_lng) {
+                            const distMeters = calculateHaversineDistance(
+                                delivery.pickup_lat,
+                                delivery.pickup_lng,
+                                delivery.dropoff_lat,
+                                delivery.dropoff_lng
+                            );
+                            finalDistanceStr = `${(distMeters / 1000).toFixed(2)} km`;
+                        }
+
+                        // Gather data for the email
+                        const emailData = {
+                            email: profileData.email,
+                            trackingNumber: delivery.tracking_number,
+                            date: new Date().toLocaleDateString("en-US", { year: 'numeric', month: 'long', day: 'numeric' }),
+                            distance: finalDistanceStr,
+                            duration: formatDuration(delivery),
+                            fare: delivery.estimated_fare ? `₱ ${delivery.estimated_fare.toFixed(2)}` : 'N/A',
+                            customerName: delivery.recipient_name || 'Customer', // Use explicitly provided recipient name if available
+                            senderName: delivery.sender_name || 'Sender',
+                            senderPhone: delivery.sender_phone || 'N/A',
+                            pickupAddress: delivery.pickup_address,
+                            dropoffAddress: delivery.dropoff_address,
+                            pickupPhotoUrl: delivery.pickup_photo_url || undefined, // Existing URL in DB
+                            pickupPhotoTime: parseDate(delivery.picked_up_at) ? new Date(parseDate(delivery.picked_up_at)).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }) : undefined,
+                            proofPhotoUrl: proofPhotoUrl || undefined, // URL from the upload
+                            proofPhotoTime: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }), // Just taken now
+                            websiteUrl: 'https://parcel-safe.vercel.app',
+                        };
+
+                        const apiUrl = `${process.env.EXPO_PUBLIC_TRACKING_WEB_BASE_URL}/api/send-receipt`;
+                        console.log('[DeliveryCompletion] Triggering Email Receipt API:', apiUrl);
+
+                        const emailResponse = await fetch(apiUrl, {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                            },
+                            body: JSON.stringify(emailData),
+                        });
+
+                        if (!emailResponse.ok) {
+                            console.error('[DeliveryCompletion] Failed to send receipt email. Status:', emailResponse.status);
+                        } else {
+                            console.log('[DeliveryCompletion] Successfully triggered email receipt API.');
+                        }
+                    } else {
+                        console.warn('[DeliveryCompletion] Customer email not found, could not send receipt.');
+                    }
+                }
+            } catch (emailTriggerError) {
+                console.error('[DeliveryCompletion] Error triggering email receipt:', emailTriggerError);
+            }
+            // --- END EMAIL RECEIPT TRIGGER ---
 
             // Restore rider availability so they can receive new orders
             if (riderId) {
