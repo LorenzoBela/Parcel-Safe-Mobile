@@ -320,6 +320,16 @@ export async function createPendingBooking(request: BookingRequest): Promise<boo
                 // Ensure customer profile exists (FK constraint)
                 await ensureProfileExists(request.customerId);
 
+                // Check if delivery already exists in Supabase (e.g., created by web booking)
+                // If so, DON'T overwrite the existing OTP
+                const { data: existing } = await supabase
+                    .from('deliveries')
+                    .select('id, otp_code')
+                    .eq('id', request.bookingId)
+                    .maybeSingle();
+
+                const finalOtp = existing?.otp_code || otpCode;
+
                 const { error } = await supabase
                     .from('deliveries')
                     .upsert({
@@ -341,7 +351,7 @@ export async function createPendingBooking(request: BookingRequest): Promise<boo
                         recipient_name: request.recipientName,
                         recipient_phone: request.recipientPhone,
                         delivery_notes: request.deliveryNotes,
-                        otp_code: otpCode,
+                        otp_code: finalOtp,
                         status: 'PENDING',
                         created_at: new Date(request.createdAt).toISOString(),
                         updated_at: new Date(request.createdAt).toISOString(),
@@ -650,6 +660,22 @@ export async function acceptOrder(
                     }
                 }
 
+                // Fetch existing OTP from Supabase instead of generating a new one
+                // OTP is created once at booking time and must stay consistent
+                let existingOtp = '';
+                try {
+                    const { data: existingDelivery } = await supabase
+                        .from('deliveries')
+                        .select('otp_code')
+                        .eq('id', bookingId)
+                        .maybeSingle();
+                    existingOtp = existingDelivery?.otp_code || '';
+                } catch (e) {
+                    console.error('[RiderMatching] Failed to fetch existing OTP:', e);
+                }
+                // Only generate new OTP if none exists (should not happen in normal flow)
+                const finalOtp = existingOtp || generateOTP();
+
                 const upsertData: any = {
                     id: bookingId,
                     tracking_number: bookingId,
@@ -663,11 +689,11 @@ export async function acceptOrder(
                     dropoff_lat: booking.dropoff_lat,
                     dropoff_lng: booking.dropoff_lng,
                     dropoff_address: booking.dropoff_address,
-                    distance: booking.distance ? Math.round(booking.distance) : null, // Persist distance (rounded)
-                    duration: booking.duration ? Math.round(booking.duration) : null, // Persist duration (rounded)
-                    estimated_fare: booking.estimated_fare ? Math.round(booking.estimated_fare) : 0, // Ensure fare is persisted (rounded)
+                    distance: booking.distance ? Math.round(booking.distance) : null,
+                    duration: booking.duration ? Math.round(booking.duration) : null,
+                    estimated_fare: booking.estimated_fare ? Math.round(booking.estimated_fare) : 0,
                     share_token: shareToken,
-                    otp_code: generateOTP(),
+                    otp_code: finalOtp,
                     status: 'ASSIGNED',
                     accepted_at: new Date(acceptedAt).toISOString(),
                     updated_at: new Date(acceptedAt).toISOString(),
@@ -969,6 +995,9 @@ export async function updateDeliveryStatus(
                 };
                 if (additionalFields?.picked_up_at) {
                     supabaseUpdates.picked_up_at = new Date(additionalFields.picked_up_at as number).toISOString();
+                }
+                if (additionalFields?.arrived_at) {
+                    supabaseUpdates.arrived_at = new Date(additionalFields.arrived_at as number).toISOString();
                 }
                 if (additionalFields?.completed_at) {
                     supabaseUpdates.delivered_at = new Date(additionalFields.completed_at as number).toISOString();

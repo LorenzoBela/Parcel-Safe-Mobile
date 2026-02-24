@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react';
-import { View, StyleSheet, TouchableOpacity } from 'react-native';
-import { Text, Button, Surface, ProgressBar, IconButton, useTheme, Portal } from 'react-native-paper';
+import React, { useState, useEffect, useCallback } from 'react';
+import { View, StyleSheet, TouchableOpacity, Alert } from 'react-native';
+import { Text, Button, Surface, IconButton, useTheme, Portal, ActivityIndicator } from 'react-native-paper';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import {
@@ -10,7 +10,10 @@ import {
     useClearByFocusCell,
 } from 'react-native-confirmation-code-field';
 import { CustomerBleUnlockModal } from '../../components';
-import { subscribeToDisplay, subscribeToBoxState } from '../../services/firebaseClient';
+import { subscribeToDisplay, subscribeToBoxState, getFirebaseDatabase } from '../../services/firebaseClient';
+import { ref, onValue, off, set } from 'firebase/database';
+import { supabase } from '../../services/supabaseClient';
+import { generateOTP } from '../../utils/tokenUtils';
 
 const CELL_COUNT = 6;
 
@@ -18,26 +21,20 @@ export default function OTPScreen() {
     const navigation = useNavigation<any>();
     const route = useRoute<any>();
     const theme = useTheme();
-    const { boxId } = route.params || { boxId: 'BOX_001' }; // Default for dev/testing if not passed
+    const { boxId, deliveryId } = route.params || { boxId: 'BOX_001', deliveryId: '' };
 
     const [otpCode, setOtpCode] = useState('');
     const [boxStatus, setBoxStatus] = useState<string>('UNKNOWN');
-    const [timeLeft, setTimeLeft] = useState(300); // 5 minutes
     const [displayStatus, setDisplayStatus] = useState<'OK' | 'DEGRADED' | 'FAILED'>('OK');
     const [showBleModal, setShowBleModal] = useState(false);
+    const [isRegenerating, setIsRegenerating] = useState(false);
 
-    // CodeField props
+    // CodeField props — hooks must be called unconditionally at top level
+    const blurRef = useBlurOnFulfill({ value: otpCode, cellCount: CELL_COUNT });
     const [props, getCellOnLayoutHandler] = useClearByFocusCell({
         value: otpCode,
         setValue: setOtpCode,
     });
-
-    useEffect(() => {
-        const timer = setInterval(() => {
-            setTimeLeft((prev) => (prev > 0 ? prev - 1 : 0));
-        }, 1000);
-        return () => clearInterval(timer);
-    }, []);
 
     useEffect(() => {
         // EC-86: Monitor display health
@@ -50,29 +47,117 @@ export default function OTPScreen() {
     }, [boxId]);
 
     useEffect(() => {
-        // Subscribe to Box State (Status & OTP)
-        // We only show OTP if status === 'ARRIVED' (Photo-First / Geo-Fence Rule)
+        // Subscribe to Box State (Status only — OTP comes from Supabase)
         const unsubscribe = subscribeToBoxState(boxId, (state) => {
             if (state) {
-                setBoxStatus(state.status);
-                // Only set the OTP code if the rider has arrived
                 if (state.status === 'ARRIVED') {
-                    setOtpCode(state.otp_code || '------');
-                } else {
-                    setOtpCode(''); // Clear it if not arrived (security fallback)
+                    setBoxStatus('ARRIVED');
                 }
             }
         });
         return () => unsubscribe();
     }, [boxId]);
 
-    const formatTime = (seconds: number) => {
-        const m = Math.floor(seconds / 60);
-        const s = seconds % 60;
-        return `${m}:${s < 10 ? '0' : ''}${s}`;
-    };
+    // Subscribe to delivery node from Firebase for real-time status AND OTP updates
+    // When ARRIVED is detected, fetch OTP from Supabase. Also picks up regenerated OTP in real-time.
+    useEffect(() => {
+        if (!deliveryId) return;
 
-    const progress = timeLeft / 300;
+        const db = getFirebaseDatabase();
+        const deliveryRef = ref(db, `deliveries/${deliveryId}`);
+
+        const unsubscribe = onValue(deliveryRef, async (snapshot) => {
+            const data = snapshot.val();
+            if (!data) return;
+
+            if (data.status === 'ARRIVED' || data.status === 'COMPLETED') {
+                setBoxStatus('ARRIVED');
+            }
+
+            // Real-time OTP sync: pick up OTP changes from Firebase
+            // (written by web or mobile regeneration)
+            if (data.otp_code) {
+                setOtpCode(data.otp_code);
+            } else if (data.status === 'ARRIVED' || data.status === 'COMPLETED') {
+                // Fallback: fetch from Supabase if Firebase doesn't have it
+                await fetchOtpFromSupabase();
+            }
+        });
+
+        return () => off(deliveryRef);
+    }, [deliveryId]);
+
+    /** Fetch OTP from Supabase (the Historian — source of truth for business data) */
+    const fetchOtpFromSupabase = useCallback(async () => {
+        if (!deliveryId) return;
+        try {
+            const { data: delivery, error } = await supabase
+                .from('deliveries')
+                .select('otp_code')
+                .eq('id', deliveryId)
+                .single();
+            if (delivery?.otp_code && !error) {
+                setOtpCode(delivery.otp_code);
+            }
+        } catch (e) {
+            console.error('[OTPScreen] Failed to fetch OTP from Supabase:', e);
+        }
+    }, [deliveryId]);
+
+    /** Generate a new OTP and update Supabase — reflects on both web and mobile */
+    const handleRegenerateOtp = useCallback(async () => {
+        if (!deliveryId) {
+            Alert.alert('Error', 'No delivery ID available.');
+            return;
+        }
+
+        Alert.alert(
+            'Generate New Code',
+            'This will invalidate the current code and create a new one. Continue?',
+            [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                    text: 'Generate',
+                    style: 'destructive',
+                    onPress: async () => {
+                        setIsRegenerating(true);
+                        try {
+                            const newOtp = generateOTP();
+                            // Write to Supabase (Historian — source of truth)
+                            const { error } = await supabase
+                                .from('deliveries')
+                                .update({
+                                    otp_code: newOtp,
+                                    updated_at: new Date().toISOString(),
+                                })
+                                .eq('id', deliveryId);
+
+                            if (error) {
+                                console.error('[OTPScreen] Failed to regenerate OTP:', error);
+                                Alert.alert('Error', 'Failed to generate new code. Please try again.');
+                            } else {
+                                setOtpCode(newOtp);
+                                // Write to Firebase (Nervous System — real-time sync to web)
+                                try {
+                                    const db = getFirebaseDatabase();
+                                    const otpRef = ref(db, `deliveries/${deliveryId}/otp_code`);
+                                    await set(otpRef, newOtp);
+                                } catch (fbErr) {
+                                    console.error('[OTPScreen] Failed to sync OTP to Firebase:', fbErr);
+                                }
+                            }
+                        } catch (e) {
+                            console.error('[OTPScreen] OTP regeneration exception:', e);
+                            Alert.alert('Error', 'Something went wrong. Please try again.');
+                        } finally {
+                            setIsRegenerating(false);
+                        }
+                    },
+                },
+            ]
+        );
+    }, [deliveryId]);
+
     const isArrived = boxStatus === 'ARRIVED';
 
     return (
@@ -98,14 +183,14 @@ export default function OTPScreen() {
                 </Text>
                 <Text variant="bodyMedium" style={[styles.subtitle, { color: theme.colors.onSurfaceVariant }]}>
                     {isArrived
-                        ? "Share this code with your rider ONLY when you have physically received your parcel."
+                        ? "Enter this code on the Smart Box keypad to unlock and collect your parcel."
                         : "For your security, the code is hidden until the rider arrives at your location."}
                 </Text>
 
                 {isArrived ? (
                     <View style={styles.codeContainer}>
                         <CodeField
-                            ref={useBlurOnFulfill({ value: otpCode, cellCount: CELL_COUNT })}
+                            ref={blurRef}
                             {...props}
                             value={otpCode}
                             onChangeText={setOtpCode}
@@ -139,16 +224,6 @@ export default function OTPScreen() {
                     </View>
                 )}
 
-                {isArrived && (
-                    <View style={styles.timerContainer}>
-                        <View style={styles.timerHeader}>
-                            <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>Code expires in</Text>
-                            <Text variant="labelLarge" style={{ color: theme.colors.error, fontWeight: 'bold' }}>{formatTime(timeLeft)}</Text>
-                        </View>
-                        <ProgressBar progress={progress} color={progress < 0.2 ? theme.colors.error : theme.colors.primary} style={styles.progressBar} />
-                    </View>
-                )}
-
                 <Surface style={[styles.warningCard, { backgroundColor: isArrived ? (theme.dark ? '#3E2723' : '#FFF3E0') : theme.colors.surfaceVariant }]} elevation={1}>
                     <MaterialCommunityIcons
                         name={isArrived ? "alert-circle-outline" : "information-outline"}
@@ -157,21 +232,25 @@ export default function OTPScreen() {
                     />
                     <Text variant="bodySmall" style={[styles.warningText, { color: isArrived ? (theme.dark ? '#FFCCBC' : '#E65100') : theme.colors.onSurfaceVariant }]}>
                         {isArrived
-                            ? "Do not share this code via call or text. This is for face-to-face verification only."
+                            ? "Never share this code via call or text. Enter it directly on the box keypad only."
                             : "System is monitoring rider location. Code will appear automatically upon arrival."}
                     </Text>
                 </Surface>
 
                 {isArrived && (
-                    <Button
-                        mode="contained"
-                        icon="content-copy"
-                        onPress={() => console.log('Copy OTP')}
-                        style={styles.button}
-                        contentStyle={{ paddingVertical: 8 }}
-                    >
-                        Copy Code
-                    </Button>
+                    <View style={styles.buttonGroup}>
+                        <Button
+                            mode="contained"
+                            icon="refresh"
+                            onPress={handleRegenerateOtp}
+                            loading={isRegenerating}
+                            disabled={isRegenerating}
+                            style={styles.button}
+                            contentStyle={{ paddingVertical: 8 }}
+                        >
+                            Generate New Code
+                        </Button>
+                    </View>
                 )}
 
                 {/* EC-86: BLE unlock option when display failed AND arrived */}
@@ -198,8 +277,6 @@ export default function OTPScreen() {
         </View>
     );
 }
-
-
 
 const styles = StyleSheet.create({
     container: {
@@ -255,31 +332,22 @@ const styles = StyleSheet.create({
         fontSize: 24,
         fontWeight: 'bold',
     },
-    timerContainer: {
-        width: '100%',
-        marginBottom: 32,
-    },
-    timerHeader: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        marginBottom: 8,
-    },
-    progressBar: {
-        height: 8,
-        borderRadius: 4,
-        backgroundColor: '#F0F0F0',
-    },
     warningCard: {
         flexDirection: 'row',
         alignItems: 'center',
         padding: 16,
         borderRadius: 12,
-        marginBottom: 32,
+        marginBottom: 24,
         width: '100%',
     },
     warningText: {
         flex: 1,
         marginLeft: 12,
+    },
+    buttonGroup: {
+        width: '100%',
+        gap: 12,
+        marginBottom: 16,
     },
     button: {
         width: '100%',

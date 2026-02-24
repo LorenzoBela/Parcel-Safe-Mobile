@@ -386,7 +386,7 @@ export default function CustomerDashboard() {
                             <View style={{ flexDirection: 'row', gap: 12 }}>
                                 <Button
                                     mode="contained-tonal"
-                                    onPress={() => navigation.navigate('OTP', { boxId: activeDelivery.id })}
+                                    onPress={() => navigation.navigate('OTP', { boxId: activeDelivery.id, deliveryId: activeDelivery.id })}
                                     icon="lock-open"
                                     style={{ flex: 1, borderRadius: 8 }}
                                     contentStyle={{ height: 48 }}

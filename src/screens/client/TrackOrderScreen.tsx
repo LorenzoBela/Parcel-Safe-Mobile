@@ -1221,7 +1221,7 @@ export default function TrackOrderScreen() {
                                             if (!boxId) {
                                                 return;
                                             }
-                                            navigation.navigate('OTP', { boxId });
+                                            navigation.navigate('OTP', { boxId, deliveryId: delivery?.id });
                                         }}
                                         disabled={!delivery?.box_id}
                                     >

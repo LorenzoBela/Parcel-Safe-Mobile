@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import circle from '@turf/circle';
-import { View, StyleSheet, ScrollView, Image, Dimensions } from 'react-native';
+import { View, StyleSheet, ScrollView, Image, Dimensions, Linking } from 'react-native';
 import { Text, Card, Button, useTheme, Chip, Surface, IconButton } from 'react-native-paper';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -89,7 +89,7 @@ export default function DeliveryDetailScreen() {
             try {
                 const { data, error } = await supabase
                     .from('deliveries')
-                    .select('*, profiles:customer_id(full_name)')
+                    .select('*, profiles:customer_id(full_name, phone_number)')
                     .or(`id.eq.${delivery.id},tracking_number.eq.${delivery.id}`)
                     .maybeSingle();
 
@@ -483,6 +483,41 @@ export default function DeliveryDetailScreen() {
                                 <Text variant="bodyMedium" style={styles.detailValue}>{deliveryData.customer || deliveryData.customerName || 'N/A'}</Text>
                             </View>
                         </View>
+
+                        {/* Sender Contact */}
+                        {(deliveryData.sender_name || deliveryData.senderName) ? (
+                            <View style={styles.detailRow}>
+                                <MaterialCommunityIcons name="account-arrow-right" size={24} color="#2196F3" />
+                                <View style={[styles.detailTextContainer, { flex: 1 }]}>
+                                    <Text variant="bodyLarge" style={styles.detailLabel}>Sender</Text>
+                                    <Text variant="bodyMedium" style={styles.detailValue}>{deliveryData.sender_name || deliveryData.senderName}</Text>
+                                </View>
+                                {(deliveryData.sender_phone || deliveryData.senderPhone) ? (
+                                    <View style={{ flexDirection: 'row' }}>
+                                        <IconButton icon="phone" size={18} mode="contained-tonal" iconColor="#1976D2" onPress={() => Linking.openURL(`tel:${deliveryData.sender_phone || deliveryData.senderPhone}`)} style={{ margin: 0, marginRight: 4 }} />
+                                        <IconButton icon="message-text" size={18} mode="contained-tonal" iconColor="#1976D2" onPress={() => Linking.openURL(`sms:${deliveryData.sender_phone || deliveryData.senderPhone}`)} style={{ margin: 0 }} />
+                                    </View>
+                                ) : null}
+                            </View>
+                        ) : null}
+
+                        {/* Recipient Contact */}
+                        {(deliveryData.recipient_name || deliveryData.recipientName) ? (
+                            <View style={styles.detailRow}>
+                                <MaterialCommunityIcons name="account-arrow-left" size={24} color="#4CAF50" />
+                                <View style={[styles.detailTextContainer, { flex: 1 }]}>
+                                    <Text variant="bodyLarge" style={styles.detailLabel}>Recipient</Text>
+                                    <Text variant="bodyMedium" style={styles.detailValue}>{deliveryData.recipient_name || deliveryData.recipientName}</Text>
+                                </View>
+                                {(deliveryData.profiles?.phone_number) ? (
+                                    <View style={{ flexDirection: 'row' }}>
+                                        <IconButton icon="phone" size={18} mode="contained-tonal" iconColor="#1976D2" onPress={() => Linking.openURL(`tel:${deliveryData.profiles.phone_number}`)} style={{ margin: 0, marginRight: 4 }} />
+                                        <IconButton icon="message-text" size={18} mode="contained-tonal" iconColor="#1976D2" onPress={() => Linking.openURL(`sms:${deliveryData.profiles.phone_number}`)} style={{ margin: 0 }} />
+                                    </View>
+                                ) : null}
+                            </View>
+                        ) : null}
+
                         <View style={styles.detailRow}>
                             <MaterialCommunityIcons name="map-marker-outline" size={24} color={theme.colors.primary} />
                             <View style={styles.detailTextContainer}>
@@ -497,6 +532,14 @@ export default function DeliveryDetailScreen() {
                                 <Text variant="bodyMedium" style={styles.detailValue}>{deliveryData.dropoffAddress || deliveryData.dropoff_address || deliveryData.address || 'N/A'}</Text>
                             </View>
                         </View>
+
+                        {/* Delivery Notes */}
+                        {(deliveryData.delivery_notes || deliveryData.deliveryNotes) ? (
+                            <View style={{ marginTop: 4, padding: 12, backgroundColor: '#f1f5f9', borderRadius: 8 }}>
+                                <Text variant="labelMedium" style={{ color: '#475569', marginBottom: 4 }}>Delivery Notes</Text>
+                                <Text variant="bodyMedium" style={{ color: '#334155' }}>{deliveryData.delivery_notes || deliveryData.deliveryNotes}</Text>
+                            </View>
+                        ) : null}
                     </Card.Content>
                 </Card>
 
@@ -520,9 +563,9 @@ export default function DeliveryDetailScreen() {
                 {/* Proof of Delivery */}
                 <Text variant="titleMedium" style={styles.sectionTitle}>Proof of Delivery</Text>
                 {
-                    deliveryData.image ? (
+                    deliveryData.proof_photo_url || deliveryData.image ? (
                         <Card style={styles.imageCard} mode="elevated">
-                            <Image source={{ uri: deliveryData.image }} style={styles.proofImage} resizeMode="cover" />
+                            <Image source={{ uri: deliveryData.proof_photo_url || deliveryData.image }} style={styles.proofImage} resizeMode="cover" />
                             {deliveryData.delivered_at && (
                                 <Text style={{ padding: 10, textAlign: 'center', color: '#666', fontSize: 12 }}>
                                     Taken on {dayjs.utc(parseUTCString(deliveryData.delivered_at)).add(8, 'hour').format('MMM D, YYYY h:mm A')}

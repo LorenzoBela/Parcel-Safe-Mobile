@@ -494,42 +494,41 @@ export default function RiderDashboard() {
     }, [activeDelivery]);
 
     // Check for active deliveries
-    useEffect(() => {
+    const checkActiveDeliveries = useCallback(async () => {
         if (!riderId) return;
+        try {
+            const { supabase } = await import('../../services/supabaseClient');
+            if (!supabase) {
+                setHasActiveDelivery(false);
+                return;
+            }
+            const { data, error } = await supabase
+                .from('deliveries')
+                .select('*, customer:profiles!deliveries_customer_id_fkey(full_name, phone_number)')
+                .eq('rider_id', riderId)
+                .in('status', ['ASSIGNED', 'PENDING', 'IN_TRANSIT', 'ARRIVED'])
+                .limit(1);
 
-        const checkActiveDeliveries = async () => {
-            try {
-                const { supabase } = await import('../../services/supabaseClient');
-                if (!supabase) {
-                    setHasActiveDelivery(false);
-                    return;
-                }
-                const { data, error } = await supabase
-                    .from('deliveries')
-                    .select('*, customer:profiles!deliveries_customer_id_fkey(full_name, phone_number)')
-                    .eq('rider_id', riderId)
-                    .in('status', ['ASSIGNED', 'PENDING', 'IN_TRANSIT', 'ARRIVED'])
-                    .limit(1);
-
-                if (!error && data && data.length > 0) {
-                    setHasActiveDelivery(true);
-                    setActiveDelivery(data[0]);
-                } else {
-                    setHasActiveDelivery(false);
-                    setActiveDelivery(null);
-                }
-            } catch (err) {
-                console.error('[RiderDashboard] Failed to check active deliveries:', err);
+            if (!error && data && data.length > 0) {
+                setHasActiveDelivery(true);
+                setActiveDelivery(data[0]);
+            } else {
                 setHasActiveDelivery(false);
                 setActiveDelivery(null);
             }
-        };
+        } catch (err) {
+            console.error('[RiderDashboard] Failed to check active deliveries:', err);
+            setHasActiveDelivery(false);
+            setActiveDelivery(null);
+        }
+    }, [riderId]);
 
+    useEffect(() => {
         checkActiveDeliveries();
         // Re-check every 30 seconds
         const interval = setInterval(checkActiveDeliveries, 30000);
         return () => clearInterval(interval);
-    }, [riderId]);
+    }, [checkActiveDeliveries]);
 
     // EC-15: Heartbeat Watchdog — auto-recover background location on app resume
     useEffect(() => {
@@ -947,6 +946,7 @@ export default function RiderDashboard() {
             setShowOrderModal(false);
             setIncomingRequests([]); // Clear requests optimistically
             setHasActiveDelivery(true); // Stop listening for new requests immediately
+            checkActiveDeliveries(); // Fetch active delivery details right away for the dashboard
 
             // Prepare trip details for preview
             const tripDetails = {
@@ -1227,9 +1227,12 @@ export default function RiderDashboard() {
 
     const onRefresh = useCallback(async () => {
         setRefreshing(true);
-        await fetchLocation();
+        await Promise.all([
+            fetchLocation(),
+            checkActiveDeliveries()
+        ]);
         setRefreshing(false);
-    }, [fetchLocation]);
+    }, [fetchLocation, checkActiveDeliveries]);
 
     const handleNavigate = (target: 'PICKUP' | 'DROPOFF' = 'DROPOFF') => {
         if (!nextDelivery) return;
@@ -1810,6 +1813,10 @@ export default function RiderDashboard() {
                                         targetLng: isPickup ? (nextDelivery.snappedPickupLng ?? nextDelivery.pickupLng) : (nextDelivery.snappedDropoffLng ?? nextDelivery.dropoffLng),
                                         targetAddress: isPickup ? nextDelivery.pickupAddress : nextDelivery.address,
                                         customerPhone: nextDelivery.phone,
+                                        senderName: (nextDelivery as any).sender_name || (activeDelivery as any)?.sender_name,
+                                        senderPhone: (nextDelivery as any).sender_phone || (activeDelivery as any)?.sender_phone,
+                                        recipientName: (nextDelivery as any).recipient_name || (activeDelivery as any)?.recipient_name,
+                                        deliveryNotes: (nextDelivery as any).delivery_notes || (activeDelivery as any)?.delivery_notes,
                                         riderName: riderName
                                     });
                                 }}

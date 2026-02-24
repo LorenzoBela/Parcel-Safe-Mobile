@@ -38,18 +38,63 @@ function getStorageClient(): SupabaseClient {
 }
 
 /**
- * Helper to ensure storage client has the latest session from the main auth client
+ * Helper to ensure storage client has the latest session from the main auth client.
+ * This is CRITICAL — without a valid session, uploads fail silently with a 401
+ * because the INSERT policy requires the 'authenticated' role.
  */
-async function syncStorageSession() {
+async function syncStorageSession(): Promise<boolean> {
     try {
         const client = getStorageClient();
+
+        // Strategy 1: Pull session from the main supabase client
         const mainSession = await supabase?.auth.getSession();
 
         if (mainSession?.data.session) {
-            await client.auth.setSession(mainSession.data.session);
+            const { error } = await client.auth.setSession(mainSession.data.session);
+            if (error) {
+                console.warn('[ProofPhoto] setSession from main client failed:', error.message);
+            } else {
+                console.log('[ProofPhoto] Session synced from main client successfully.');
+                return true;
+            }
+        } else {
+            console.warn('[ProofPhoto] Main supabase client has no active session.');
         }
+
+        // Strategy 2: Fallback — try to retrieve tokens from AsyncStorage directly
+        // (in case the main client's session hasn't been hydrated yet)
+        try {
+            const storedSession = await AsyncStorage.getItem('sb-' + (SUPABASE_URL.split('//')[1]?.split('.')[0] || '') + '-auth-token');
+            if (storedSession) {
+                const parsed = JSON.parse(storedSession);
+                if (parsed?.access_token && parsed?.refresh_token) {
+                    const { error: fallbackError } = await client.auth.setSession({
+                        access_token: parsed.access_token,
+                        refresh_token: parsed.refresh_token,
+                    });
+                    if (!fallbackError) {
+                        console.log('[ProofPhoto] Session synced from AsyncStorage fallback.');
+                        return true;
+                    }
+                    console.warn('[ProofPhoto] AsyncStorage fallback setSession failed:', fallbackError.message);
+                }
+            }
+        } catch (storageErr) {
+            console.warn('[ProofPhoto] AsyncStorage session fallback error:', storageErr);
+        }
+
+        // Strategy 3: Check if the storage client already has a valid session
+        const { data: existingSession } = await client.auth.getSession();
+        if (existingSession?.session) {
+            console.log('[ProofPhoto] Storage client already has a valid session.');
+            return true;
+        }
+
+        console.error('[ProofPhoto] ❌ No valid session found. Upload will likely fail with 401.');
+        return false;
     } catch (e) {
-        console.warn('[ProofPhoto] Failed to sync session:', e);
+        console.error('[ProofPhoto] syncStorageSession exception:', e);
+        return false;
     }
 }
 
@@ -107,8 +152,12 @@ export async function uploadDeliveryProofPhoto(params: {
         });
         const arrayBuffer = base64ToUint8Array(base64);
 
-        // Ensure auth is synced before upload
-        await syncStorageSession();
+        // Ensure auth is synced before upload — abort early if session is invalid
+        const sessionOk = await syncStorageSession();
+        if (!sessionOk) {
+            console.error('[ProofPhoto] Aborting delivery proof upload: no authenticated session.');
+            return { success: false, error: 'Authentication session not available. Please sign in and try again.' };
+        }
         const storage = getStorageClient();
 
         const fileName = `${deliveryId}_${Date.now()}.jpg`;
@@ -183,8 +232,12 @@ export async function uploadPickupPhoto(params: {
         });
         const arrayBuffer = base64ToUint8Array(base64);
 
-        // Ensure auth is synced before upload
-        await syncStorageSession();
+        // Ensure auth is synced before upload — abort early if session is invalid
+        const sessionOk = await syncStorageSession();
+        if (!sessionOk) {
+            console.error('[ProofPhoto] Aborting pickup photo upload: no authenticated session.');
+            return { success: false, error: 'Authentication session not available. Please sign in and try again.' };
+        }
         const storage = getStorageClient();
 
         const fileName = `${deliveryId}_${Date.now()}.jpg`;

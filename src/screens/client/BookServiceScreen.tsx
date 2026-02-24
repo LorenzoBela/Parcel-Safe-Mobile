@@ -6,7 +6,7 @@ import MapboxGL, { StyleURL } from '../../components/map/MapboxWrapper';
 import * as Location from 'expo-location';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { supabase } from '../../services/supabaseClient'; // Import Supabase
-import { snapToValidNode } from '../../utils/geofence';
+import { snapToValidNode, restrictedZones } from '../../utils/geofence';
 
 // Fallback initial region (Manila)
 const INITIAL_REGION = {
@@ -40,6 +40,10 @@ export default function BookServiceScreen() {
     const MAPBOX_TOKEN = process.env.EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN;
     const GOOGLE_MAPS_TOKEN = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY;
 
+    const [isMapVisible, setIsMapVisible] = useState(false);
+    const [bookingStep, setBookingStep] = useState<'location' | 'contacts'>('location');
+    const [activeTab, setActiveTab] = useState<'suggested' | 'saved'>('saved');
+
     const [pickupText, setPickupText] = useState('');
     const [dropoffText, setDropoffText] = useState('');
 
@@ -56,6 +60,10 @@ export default function BookServiceScreen() {
 
     // Which input is currently focused/active for map selection
     const [activeField, setActiveField] = useState<'pickup' | 'dropoff'>('pickup');
+
+    // Explicit cursor tracking to fix the TextInput scrolling
+    const [pickupSelection, setPickupSelection] = useState<{ start: number, end: number } | undefined>(undefined);
+    const [dropoffSelection, setDropoffSelection] = useState<{ start: number, end: number } | undefined>(undefined);
 
     // Contact form state
     const [senderName, setSenderName] = useState('');
@@ -371,6 +379,16 @@ export default function BookServiceScreen() {
         if (snapped.snapped) {
             coords.latitude = snapped.lat;
             coords.longitude = snapped.lng;
+
+            // Animate map to snap point and add a slight delay to allow Mapbox to catch up
+            setTimeout(() => {
+                cameraRef.current?.setCamera({
+                    centerCoordinate: [snapped.lng, snapped.lat],
+                    zoomLevel: 16,
+                    animationDuration: 500,
+                });
+            }, 100);
+
             if (activeField === 'pickup') {
                 setPickupCoords({ latitude: snapped.lat, longitude: snapped.lng });
                 if (snapped.reason) {
@@ -714,256 +732,352 @@ export default function BookServiceScreen() {
 
     return (
         <View style={styles.container}>
-            {/* Map Background */}
-            {MAPBOX_TOKEN ? (
-                <MapboxGL.MapView
-                    style={StyleSheet.absoluteFillObject}
-                    styleURL={theme.dark ? StyleURL.Dark : StyleURL.Street}
-                    onPress={handleMapPress}
-                    onRegionDidChange={handleRegionChange}
-                    logoEnabled={false}
-                    attributionEnabled={false}
-                    scaleBarEnabled={false}
-                >
-                    <MapboxGL.Camera
-                        ref={cameraRef}
-                        zoomLevel={15} // Slightly closer
-                        centerCoordinate={pickupCoords
-                            ? [pickupCoords.longitude, pickupCoords.latitude]
-                            : [INITIAL_REGION.longitude, INITIAL_REGION.latitude]}
-                        animationMode={'flyTo'}
-                        animationDuration={1000}
-                    />
-                    <MapboxGL.UserLocation visible />
-
-                    {pickupCoords && activeField !== 'pickup' && (
-                        <MapboxGL.PointAnnotation
-                            id="pickup-marker"
-                            coordinate={[pickupCoords.longitude, pickupCoords.latitude]}
-                            title="Pickup"
-                        >
-                            <View style={styles.markerContainer}>
-                                <MaterialCommunityIcons name="map-marker" size={40} color="green" />
-                            </View>
-                        </MapboxGL.PointAnnotation>
-                    )}
-
-                    {dropoffCoords && activeField !== 'dropoff' && (
-                        <MapboxGL.PointAnnotation
-                            id="dropoff-marker"
-                            coordinate={[dropoffCoords.longitude, dropoffCoords.latitude]}
-                            title="Dropoff"
-                        >
-                            <View style={styles.markerContainer}>
-                                <MaterialCommunityIcons name="map-marker" size={40} color="red" />
-                            </View>
-                        </MapboxGL.PointAnnotation>
-                    )}
-
-                    {/* Route Line */}
-                    {routeData && routeData.route && (
-                        <MapboxGL.ShapeSource id="route-line" shape={routeData.route}>
-                            <MapboxGL.LineLayer
-                                id="route-layer"
-                                style={{
-                                    lineColor: theme.colors.primary,
-                                    lineWidth: 4,
-                                    lineOpacity: 0.8,
-                                    lineCap: 'round',
-                                    lineJoin: 'round',
-                                }}
-                            />
-                        </MapboxGL.ShapeSource>
-                    )}
-                </MapboxGL.MapView>
-            ) : (
-                <View style={[StyleSheet.absoluteFillObject, styles.mapFallback]}>
-                    <Text>Map unavailable</Text>
-                </View>
-            )}
-
-            {/* Center Fixed Marker */}
-            {MAPBOX_TOKEN && (
-                <View style={styles.fixedCenterMarker} pointerEvents="none">
-                    <MaterialCommunityIcons
-                        name="map-marker"
-                        size={40}
-                        color={activeField === 'pickup' ? "green" : "red"}
-                    />
-                </View>
-            )}
-
-            {/* Back Button */}
-            <TouchableOpacity style={[styles.backButton, { backgroundColor: theme.colors.surface, top: 50 + insets.top }]} onPress={() => navigation.goBack()}>
-                <MaterialCommunityIcons name="arrow-left" size={24} color={theme.colors.onSurface} />
-            </TouchableOpacity>
-
-            {/* Float Input Panel */}
-            <View style={[styles.inputContainer, { top: 45 + insets.top }]}>
-                <View style={[styles.minimalCard, { backgroundColor: theme.dark ? '#1E1E1E' : 'white', shadowColor: '#000' }]}>
-
-                    {/* Visual Connector */}
-                    <View style={styles.connectorColumn}>
-                        <View style={[styles.dot, { backgroundColor: '#4CAF50' }]} />
-                        <View style={styles.connectorLine} />
-                        <View style={[styles.square, { backgroundColor: '#F44336' }]} />
+            {bookingStep === 'contacts' ? (
+                // --- CONTACTS STEP ---
+                <View style={[styles.contactStepContainer, { paddingTop: insets.top }]}>
+                    <View style={styles.header}>
+                        <TouchableOpacity onPress={() => setBookingStep('location')} style={styles.iconButton}>
+                            <MaterialCommunityIcons name="arrow-left" size={24} color={theme.colors.onSurface} />
+                        </TouchableOpacity>
+                        <Text variant="titleMedium" style={{ fontWeight: '600', color: '#000' }}>Contact Details</Text>
+                        <View style={{ width: 40 }} />
                     </View>
-
-                    {/* Inputs */}
-                    <View style={styles.inputsColumn}>
-
-                        {/* Pickup */}
-                        <View style={[styles.minimalInputWrapper, activeField === 'pickup' && styles.minimalActiveInput]}>
-                            <TextInput
-                                mode="flat"
-                                placeholder="Current Location"
-                                placeholderTextColor={theme.colors.primary}
-                                value={pickupText}
-                                onChangeText={(text) => {
-                                    setPickupText(text);
-                                    setActiveField('pickup');
-                                }}
-                                style={[styles.minimalTextInput, { backgroundColor: 'transparent' }]}
-                                {...(activeField !== 'pickup' ? { selection: { start: 0, end: 0 } } : {})}
-                                textColor={theme.colors.onSurface}
-                                underlineColor="transparent"
-                                activeUnderlineColor="transparent"
-                                onFocus={() => {
-                                    setActiveField('pickup');
-                                    if (pickupCoords) {
-                                        cameraRef.current?.setCamera({
-                                            centerCoordinate: [pickupCoords.longitude, pickupCoords.latitude],
-                                            animationDuration: 500,
-                                        });
-                                    }
-                                }}
-                                right={pickupText.length > 0 ? <TextInput.Icon icon="close-circle" size={16} onPress={() => setPickupText('')} /> : null}
-                            />
+                    <ScrollView style={{ padding: 20 }} showsVerticalScrollIndicator={false}>
+                        <View style={styles.formSection}>
+                            <Text variant="titleSmall" style={styles.sectionTitle}>Pickup Contact</Text>
+                            <View style={styles.inputRow}>
+                                <TextInput mode="flat" placeholder="Sender Name" value={senderName} onChangeText={setSenderName} style={styles.modernInput} activeUnderlineColor="#000" underlineColor="#E0E0E0" />
+                                <TextInput mode="flat" placeholder="Phone Number" value={senderPhone} onChangeText={setSenderPhone} keyboardType="phone-pad" style={styles.modernInput} activeUnderlineColor="#000" underlineColor="#E0E0E0" />
+                            </View>
                         </View>
 
-                        {/* Divider */}
-                        <View style={{ height: 1, backgroundColor: '#E0E0E0', marginLeft: 10, marginRight: 10 }} />
-
-                        {/* Dropoff */}
-                        <View style={[styles.minimalInputWrapper, activeField === 'dropoff' && styles.minimalActiveInput]}>
-                            <TextInput
-                                ref={dropoffInputRef}
-                                mode="flat"
-                                placeholder="Where to?"
-                                value={dropoffText}
-                                onChangeText={(text) => {
-                                    setDropoffText(text);
-                                    setActiveField('dropoff');
-                                }}
-                                style={[styles.minimalTextInput, { backgroundColor: 'transparent' }]}
-                                {...(activeField !== 'dropoff' ? { selection: { start: 0, end: 0 } } : {})}
-                                textColor={theme.colors.onSurface}
-                                underlineColor="transparent"
-                                activeUnderlineColor="transparent"
-                                placeholderTextColor={theme.colors.onSurfaceVariant}
-                                onFocus={() => {
-                                    setActiveField('dropoff');
-                                    if (dropoffCoords) {
-                                        cameraRef.current?.setCamera({
-                                            centerCoordinate: [dropoffCoords.longitude, dropoffCoords.latitude],
-                                            animationDuration: 500,
-                                        });
-                                    }
-                                }}
-                                right={dropoffText.length > 0 ? <TextInput.Icon icon="close-circle" size={16} onPress={() => setDropoffText('')} /> : null}
-                            />
+                        <View style={styles.formSection}>
+                            <Text variant="titleSmall" style={styles.sectionTitle}>Drop-off Contact</Text>
+                            <View style={styles.inputRow}>
+                                <TextInput mode="flat" placeholder="Recipient Name" value={recipientName} onChangeText={setRecipientName} style={styles.modernInput} activeUnderlineColor="#000" underlineColor="#E0E0E0" />
+                                <TextInput mode="flat" placeholder="Phone Number" value={recipientPhone} onChangeText={setRecipientPhone} keyboardType="phone-pad" style={styles.modernInput} activeUnderlineColor="#000" underlineColor="#E0E0E0" />
+                            </View>
                         </View>
-                    </View>
+
+                        <View style={styles.formSection}>
+                            <Text variant="titleSmall" style={styles.sectionTitle}>Delivery Notes (Optional)</Text>
+                            <TextInput mode="flat" placeholder="E.g. Call upon arrival" value={deliveryNotes} onChangeText={setDeliveryNotes} style={[styles.modernInput, { marginBottom: 24 }]} multiline numberOfLines={2} activeUnderlineColor="#000" underlineColor="#E0E0E0" />
+                        </View>
+
+                        <View style={styles.previewHeader}>
+                            <Text variant="titleMedium" style={{ color: theme.colors.onSurface, fontWeight: 'bold' }}>
+                                Total: ₱{routeData?.cost || 0}
+                            </Text>
+                            <Text variant="bodyMedium" style={{ color: theme.colors.onSurfaceVariant }}>
+                                {routeData?.distance?.toFixed(1) || 0}km • {Math.round(routeData?.duration || 0)}mins
+                            </Text>
+                        </View>
+
+                        <Button
+                            mode="contained"
+                            onPress={handleConfirm}
+                            style={{ marginTop: 12, borderRadius: 8, backgroundColor: '#000' }}
+                            textColor="#FFF"
+                            contentStyle={{ paddingVertical: 6 }}
+                        >
+                            Confirm Booking
+                        </Button>
+                    </ScrollView>
                 </View>
-            </View>
+            ) : isMapVisible ? (
+                // --- MAP VIEW ---
+                <View style={styles.container}>
+                    {MAPBOX_TOKEN ? (
+                        <MapboxGL.MapView
+                            style={StyleSheet.absoluteFillObject}
+                            styleURL={theme.dark ? StyleURL.Dark : StyleURL.Street}
+                            onPress={handleMapPress}
+                            onRegionDidChange={handleRegionChange}
+                            logoEnabled={false}
+                            attributionEnabled={false}
+                            scaleBarEnabled={false}
+                        >
+                            <MapboxGL.Camera
+                                ref={cameraRef}
+                                zoomLevel={15}
+                                centerCoordinate={pickupCoords
+                                    ? [pickupCoords.longitude, pickupCoords.latitude]
+                                    : [INITIAL_REGION.longitude, INITIAL_REGION.latitude]}
+                                animationMode={'flyTo'}
+                                animationDuration={1000}
+                            />
+                            <MapboxGL.UserLocation visible />
 
-            {/* Helper text removed */}
 
-            {/* Suggestions List */}
-            {/* Logic: Show if searching OR if we have valid saved addresses and inputs are focused (implied by this rendering conditionally if activeField set?) */}
-            {/* Actually we want to show this overlay if there is a query OR if the field is empty (to show saved/recent) */}
-            {/* We need to tweak the conditional. Let's say: if isSearching OR suggestions>0 OR (activeField && !routeData) */}
-            {/* Simplest: If the query > 2 chars, we show suggestions. If query is empty, we show saved addresses + current location option. */}
-            {(isSearching || searchError || suggestions.length > 0 || (activeQuery.length === 0 && !routeData)) && (
-                <View style={[styles.suggestionsContainer, { top: 160 + insets.top, backgroundColor: theme.colors.elevation.level3 }]}>
-                    <ScrollView
-                        keyboardShouldPersistTaps="handled"
-                        showsVerticalScrollIndicator={false}
-                        contentContainerStyle={{ flexGrow: 1 }}
+                            {restrictedZones.flatMap(zone => zone.accessNodes.map((node, index) => (
+                                <MapboxGL.PointAnnotation
+                                    key={`${zone.id}-node-${index}`}
+                                    id={`${zone.id}-node-${index}`}
+                                    coordinate={node.geometry.coordinates}
+                                    title={node.properties?.name || "Access Point"}
+                                >
+                                    <View style={styles.accessNodeMarker} />
+                                </MapboxGL.PointAnnotation>
+                            )))}
+
+                            {pickupCoords && activeField !== 'pickup' && (
+                                <MapboxGL.PointAnnotation
+                                    id="pickup-marker"
+                                    coordinate={[pickupCoords.longitude, pickupCoords.latitude]}
+                                    title="Pickup"
+                                >
+                                    <View style={styles.markerContainer}>
+                                        <MaterialCommunityIcons name="map-marker" size={40} color="green" />
+                                    </View>
+                                </MapboxGL.PointAnnotation>
+                            )}
+
+                            {dropoffCoords && activeField !== 'dropoff' && (
+                                <MapboxGL.PointAnnotation
+                                    id="dropoff-marker"
+                                    coordinate={[dropoffCoords.longitude, dropoffCoords.latitude]}
+                                    title="Dropoff"
+                                >
+                                    <View style={styles.markerContainer}>
+                                        <MaterialCommunityIcons name="map-marker" size={40} color="red" />
+                                    </View>
+                                </MapboxGL.PointAnnotation>
+                            )}
+
+                            {routeData && routeData.route && (
+                                <MapboxGL.ShapeSource id="route-line" shape={routeData.route}>
+                                    <MapboxGL.LineLayer
+                                        id="route-layer"
+                                        style={{
+                                            lineColor: theme.colors.primary,
+                                            lineWidth: 4,
+                                            lineOpacity: 0.8,
+                                            lineCap: 'round',
+                                            lineJoin: 'round',
+                                        }}
+                                    />
+                                </MapboxGL.ShapeSource>
+                            )}
+                        </MapboxGL.MapView>
+                    ) : (
+                        <View style={[StyleSheet.absoluteFillObject, styles.mapFallback]}>
+                            <Text>Map unavailable</Text>
+                        </View>
+                    )}
+
+                    <View style={styles.fixedCenterMarker} pointerEvents="none">
+                        <MaterialCommunityIcons
+                            name="map-marker"
+                            size={40}
+                            color={activeField === 'pickup' ? "green" : "red"}
+                        />
+                    </View>
+
+                    <TouchableOpacity style={[styles.backButton, { backgroundColor: theme.colors.surface, top: 10 + insets.top }]} onPress={() => setIsMapVisible(false)}>
+                        <MaterialCommunityIcons name="arrow-left" size={24} color={theme.colors.onSurface} />
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                        style={[styles.floatingActionBtn, { backgroundColor: theme.colors.surface, bottom: 140 + insets.bottom }]}
+                        onPress={handleRecenter}
                     >
-                        {/* Saved Addresses Section - Visible when NOT searching provided we have some */}
-                        {!isSearching && suggestions.length === 0 && savedAddresses.length > 0 && (
+                        <MaterialCommunityIcons name="crosshairs-gps" size={24} color={theme.colors.primary} />
+                    </TouchableOpacity>
+
+                    <View style={[styles.bottomMapActionPanel, { bottom: 20 + insets.bottom }]}>
+                        <View style={{ backgroundColor: 'white', padding: 16, borderRadius: 16, elevation: 4, shadowColor: '#000', shadowOpacity: 0.1, shadowRadius: 4, shadowOffset: { width: 0, height: 2 }, marginBottom: 12 }}>
+                            <Text variant="labelMedium" style={{ color: '#757575', marginBottom: 4 }}>
+                                {activeField === 'pickup' ? 'SELECT PICKUP LOCATION' : 'SELECT DROPOFF LOCATION'}
+                            </Text>
+                            <Text variant="titleMedium" style={{ fontWeight: 'bold', color: '#424242' }} numberOfLines={2}>
+                                {activeField === 'pickup' ? (pickupText || 'Locating...') : (dropoffText || 'Locating...')}
+                            </Text>
+                        </View>
+                        <Button mode="contained" onPress={() => setIsMapVisible(false)} style={{ borderRadius: 8, backgroundColor: '#000' }} textColor="#FFF" contentStyle={{ paddingVertical: 8 }}>
+                            Confirm Location
+                        </Button>
+                    </View>
+                </View>
+            ) : (
+                // --- SEARCH VIEW ---
+                <View style={[styles.container, { backgroundColor: '#FFFFFF' }]}>
+                    <View style={[styles.searchHeader, { paddingTop: insets.top + 10 }]}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, marginBottom: 16 }}>
+                            <TouchableOpacity onPress={() => navigation.goBack()}>
+                                <MaterialCommunityIcons name="arrow-left" size={24} color={theme.colors.onSurface} />
+                            </TouchableOpacity>
+                            <Text variant="titleMedium" style={{ marginLeft: 16, fontWeight: 'bold' }}>Select an Address</Text>
+                        </View>
+
+
+                        <View style={[styles.minimalCard, { marginHorizontal: 20, backgroundColor: 'white', borderColor: '#000', borderWidth: 2, borderRadius: 8 }]}>
+                            <View style={[styles.inputsColumn, { paddingRight: 0 }]}>
+                                <View style={[styles.minimalInputWrapper, activeField === 'pickup' && { backgroundColor: '#f0f8ff' }]}>
+                                    <TextInput
+                                        mode="flat"
+                                        placeholder="Pick-up point"
+                                        value={pickupText}
+                                        onChangeText={(text) => {
+                                            setPickupText(text);
+                                            setActiveField('pickup');
+                                        }}
+                                        style={[styles.minimalTextInput, { backgroundColor: 'transparent', flex: 1, paddingRight: 0 }]}
+                                        textColor={theme.colors.onSurface}
+                                        underlineColor="transparent"
+                                        activeUnderlineColor="transparent"
+                                        onFocus={() => setActiveField('pickup')}
+                                        left={<TextInput.Icon icon="map-marker" size={16} color="green" />}
+                                        right={
+                                            activeField === 'pickup' && pickupText.length === 0 ? (
+                                                <TextInput.Icon icon="crosshairs-gps" size={18} color="#000" onPress={handleSetPickupToCurrent} />
+                                            ) : pickupText.length > 0 ? (
+                                                <TextInput.Icon icon="close-circle" size={16} onPress={() => { setPickupText(''); setPickupCoords(null); setRouteData(null); }} />
+                                            ) : null
+                                        }
+                                        selection={activeField === 'pickup' ? pickupSelection : { start: 0, end: 0 }}
+                                        onSelectionChange={(e) => {
+                                            if (activeField === 'pickup') {
+                                                setPickupSelection(e.nativeEvent.selection);
+                                            }
+                                        }}
+                                        onBlur={() => setPickupSelection({ start: 0, end: 0 })}
+                                    />
+                                    <TouchableOpacity style={{ justifyContent: 'center', paddingRight: 12 }} onPress={() => setIsMapVisible(true)}>
+                                        <View style={{ width: 32, height: 32, borderRadius: 8, backgroundColor: '#f0f0f0', alignItems: 'center', justifyContent: 'center' }}>
+                                            <MaterialCommunityIcons name="map-search-outline" size={18} color="#000" />
+                                        </View>
+                                    </TouchableOpacity>
+                                </View>
+
+                                <View style={{ height: 1, backgroundColor: '#E0E0E0', marginLeft: 40 }} />
+
+                                <View style={[styles.minimalInputWrapper, activeField === 'dropoff' && { backgroundColor: '#fff8f0' }]}>
+                                    <TextInput
+                                        ref={dropoffInputRef}
+                                        mode="flat"
+                                        placeholder="Enter destination"
+                                        value={dropoffText}
+                                        onChangeText={(text) => {
+                                            setDropoffText(text);
+                                            setActiveField('dropoff');
+                                        }}
+                                        style={[styles.minimalTextInput, { backgroundColor: 'transparent', flex: 1, paddingRight: 0 }]}
+                                        textColor={theme.colors.onSurface}
+                                        underlineColor="transparent"
+                                        activeUnderlineColor="transparent"
+                                        onFocus={() => setActiveField('dropoff')}
+                                        left={<TextInput.Icon icon="map-marker" size={16} color="#ffb300" />}
+                                        right={dropoffText.length > 0 ? <TextInput.Icon icon="close-circle" size={16} onPress={() => { setDropoffText(''); setDropoffCoords(null); setRouteData(null); }} /> : null}
+                                        selection={activeField === 'dropoff' ? dropoffSelection : { start: 0, end: 0 }}
+                                        onSelectionChange={(e) => {
+                                            if (activeField === 'dropoff') {
+                                                setDropoffSelection(e.nativeEvent.selection);
+                                            }
+                                        }}
+                                        onBlur={() => setDropoffSelection({ start: 0, end: 0 })}
+                                    />
+                                    <TouchableOpacity style={{ justifyContent: 'center', paddingRight: 12 }} onPress={() => setIsMapVisible(true)}>
+                                        <View style={{ width: 32, height: 32, borderRadius: 8, backgroundColor: '#f0f0f0', alignItems: 'center', justifyContent: 'center' }}>
+                                            <MaterialCommunityIcons name="map-search-outline" size={18} color="#000" />
+                                        </View>
+                                    </TouchableOpacity>
+                                </View>
+                            </View>
+                        </View>
+                    </View>
+
+                    <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false} contentContainerStyle={{ padding: 20 }}>
+                        {(!isSearching && suggestions.length === 0 && (!routeData || activeQuery.length === 0)) ? (
+                            <View style={{ flexDirection: 'row', marginBottom: 20, gap: 10 }}>
+                                <TouchableOpacity
+                                    style={activeTab === 'suggested' ? styles.pillButtonActive : styles.pillButton}
+                                    onPress={() => setActiveTab('suggested')}
+                                >
+                                    <Text style={activeTab === 'suggested' ? styles.pillTextActive : styles.pillText}>Suggested</Text>
+                                </TouchableOpacity>
+                                <TouchableOpacity
+                                    style={activeTab === 'saved' ? styles.pillButtonActive : styles.pillButton}
+                                    onPress={() => setActiveTab('saved')}
+                                >
+                                    <Text style={activeTab === 'saved' ? styles.pillTextActive : styles.pillText}>Saved</Text>
+                                </TouchableOpacity>
+                            </View>
+                        ) : null}
+
+                        {routeData && !isSearching && suggestions.length === 0 && pickupCoords && dropoffCoords ? (
+                            <View style={{ marginBottom: 24 }}>
+                                <Card style={{ backgroundColor: theme.colors.surface, borderRadius: 16 }} elevation={2}>
+                                    <Card.Content>
+                                        <View style={styles.previewHeader}>
+                                            <Text variant="titleMedium" style={{ color: theme.colors.onSurface, fontWeight: 'bold' }}>
+                                                Total: ₱{routeData.cost}
+                                            </Text>
+                                            <Text variant="bodyMedium" style={{ color: theme.colors.onSurfaceVariant }}>
+                                                {routeData.distance.toFixed(1)}km • {Math.round(routeData.duration)}mins
+                                            </Text>
+                                        </View>
+                                        <Button
+                                            mode="contained"
+                                            onPress={() => setBookingStep('contacts')}
+                                            style={{ marginTop: 12, borderRadius: 8, backgroundColor: '#000' }}
+                                            contentStyle={{ paddingVertical: 6 }}
+                                            textColor="#FFF"
+                                        >
+                                            Proceed to Contact Details
+                                        </Button>
+                                    </Card.Content>
+                                </Card>
+                            </View>
+                        ) : null}
+
+                        {activeTab === 'suggested' && !isSearching && suggestions.length === 0 && (!routeData || activeQuery.length === 0) && (
+                            <View style={{ alignItems: 'center', marginTop: 40, marginBottom: 40 }}>
+                                <MaterialCommunityIcons name="map-marker-star" size={80} color={theme.colors.surfaceVariant} />
+                                <Text variant="titleMedium" style={{ fontWeight: 'bold', marginTop: 16 }}>No suggestions yet</Text>
+                                <Text variant="bodyMedium" style={{ textAlign: 'center', marginTop: 8, color: theme.colors.onSurfaceVariant }}>
+                                    Your recent trips and suggested places will appear here.
+                                </Text>
+                            </View>
+                        )}
+
+                        {activeTab === 'saved' && !isSearching && suggestions.length === 0 && savedAddresses.length === 0 && (!routeData || activeQuery.length === 0) && (
+                            <View style={{ alignItems: 'center', marginTop: 40, marginBottom: 40 }}>
+                                <MaterialCommunityIcons name="bookmark-outline" size={80} color={theme.colors.surfaceVariant} />
+                                <Text variant="titleMedium" style={{ fontWeight: 'bold', marginTop: 16 }}>No saved addresses yet</Text>
+                                <Text variant="bodyMedium" style={{ textAlign: 'center', marginTop: 8, color: theme.colors.onSurfaceVariant }}>
+                                    Go to your profile to save addresses for quicker booking.
+                                </Text>
+                            </View>
+                        )}
+
+                        {activeTab === 'saved' && !isSearching && suggestions.length === 0 && savedAddresses.length > 0 && (!routeData || activeQuery.length === 0) && (
                             <View>
-                                <List.Subheader style={{ color: theme.colors.primary }}>Saved Locations</List.Subheader>
                                 {savedAddresses.map((addr: any) => (
                                     <TouchableOpacity
                                         key={addr.id}
-                                        style={[styles.suggestionItem, { borderBottomColor: theme.colors.outlineVariant }]}
+                                        style={styles.suggestionItem}
                                         onPress={() => handleSelectSavedAddress(addr)}
                                     >
-                                        <View style={[styles.iconCircle, { backgroundColor: theme.dark ? theme.colors.secondaryContainer : '#FFF3E0' }]}>
+                                        <View style={[styles.iconCircle, { backgroundColor: '#f5f5f5' }]}>
                                             <MaterialCommunityIcons
-                                                name={addr.label.toLowerCase().includes('home') ? 'home' : addr.label.toLowerCase().includes('office') ? 'office-building' : 'star'}
+                                                name={addr.label?.toLowerCase().includes('home') ? 'home' : addr.label?.toLowerCase().includes('office') ? 'office-building' : 'map-marker-outline'}
                                                 size={20}
-                                                color={theme.dark ? theme.colors.onSecondaryContainer : '#F57C00'}
+                                                color={'#757575'}
                                             />
                                         </View>
-                                        <View style={{ marginLeft: 12 }}>
-                                            <Text variant="bodyMedium" style={{ fontWeight: 'bold', color: theme.dark ? theme.colors.primary : '#F57C00' }}>
+                                        <View style={{ marginLeft: 12, flex: 1 }}>
+                                            <Text variant="bodyMedium" style={{ fontWeight: 'bold', color: '#424242' }}>
                                                 {addr.label}
                                             </Text>
-                                            <Text variant="bodySmall" numberOfLines={1} style={{ color: theme.colors.onSurfaceVariant }}>
+                                            <Text variant="bodySmall" numberOfLines={1} style={{ color: '#757575' }}>
                                                 {addr.address}
                                             </Text>
                                         </View>
+                                        <MaterialCommunityIcons name="dots-vertical" size={20} color="#9e9e9e" />
                                     </TouchableOpacity>
                                 ))}
-                                <Divider style={{ marginVertical: 8 }} />
                             </View>
                         )}
-
-
-                        {/* "My Current Location" - Only for pickup */}
-                        {/* Show "Set location on map" - Always visible when searching or if query is empty */}
-                        <TouchableOpacity
-                            style={styles.suggestionItem}
-                            onPress={() => {
-                                // Hide suggestions
-                                setSuggestions([]);
-                                // Just focus the map
-                            }}
-                        >
-                            <View style={[styles.iconCircle, { backgroundColor: theme.colors.secondaryContainer }]}>
-                                <MaterialCommunityIcons name="map-marker-radius" size={20} color={theme.colors.onSecondaryContainer} />
-                            </View>
-                            <View style={{ marginLeft: 12 }}>
-                                <Text variant="bodyMedium" style={{ fontWeight: 'bold', color: theme.colors.primary }}>
-                                    Set location on map
-                                </Text>
-                                <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
-                                    Choose specific point
-                                </Text>
-                            </View>
-                        </TouchableOpacity>
-
-                        {/* "My Current Location" - Only for pickup */}
-                        {activeField === 'pickup' && !isSearching && (
-                            <TouchableOpacity
-                                style={styles.suggestionItem}
-                                onPress={handleSetPickupToCurrent}
-                            >
-                                <View style={[styles.iconCircle, { backgroundColor: theme.colors.tertiaryContainer }]}>
-                                    <MaterialCommunityIcons name="crosshairs-gps" size={20} color={theme.colors.onTertiaryContainer} />
-                                </View>
-                                <View style={{ marginLeft: 12 }}>
-                                    <Text variant="bodyMedium" style={{ fontWeight: 'bold', color: theme.colors.tertiary }}>
-                                        Use Current Location
-                                    </Text>
-                                </View>
-                            </TouchableOpacity>
-                        )}
-
-                        <Divider />
 
                         {isSearching && (
                             <View style={styles.suggestionLoading}>
@@ -971,82 +1085,45 @@ export default function BookServiceScreen() {
                                 <Text variant="bodySmall" style={{ marginLeft: 8 }}>Searching nearby places...</Text>
                             </View>
                         )}
-
                         {suggestions.map((item) => (
                             <TouchableOpacity
                                 key={item.id}
                                 style={styles.suggestionItem}
                                 onPress={() => handleSelectSuggestion(item)}
                             >
-                                <View style={[styles.iconCircle, { backgroundColor: theme.colors.surfaceVariant }]}>
-                                    <MaterialCommunityIcons name="map-marker-outline" size={20} color={theme.colors.onSurfaceVariant} />
+                                <View style={[styles.iconCircle, { backgroundColor: '#f5f5f5' }]}>
+                                    <MaterialCommunityIcons name="map-marker-outline" size={20} color="#757575" />
                                 </View>
                                 <View style={{ marginLeft: 12, flex: 1 }}>
-                                    <Text variant="bodyMedium" style={{ color: theme.colors.onSurface, fontWeight: '600' }} numberOfLines={1}>
+                                    <Text variant="bodyMedium" style={{ color: '#424242', fontWeight: '600' }} numberOfLines={1}>
                                         {item.name}
                                     </Text>
                                     {item.address ? (
-                                        <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }} numberOfLines={1}>
+                                        <Text variant="bodySmall" style={{ color: '#757575' }} numberOfLines={1}>
                                             {item.address}
                                         </Text>
                                     ) : null}
                                 </View>
+                                <MaterialCommunityIcons name="bookmark-outline" size={20} color="#9e9e9e" style={{ marginRight: 8 }} />
+                                <MaterialCommunityIcons name="dots-vertical" size={20} color="#9e9e9e" />
                             </TouchableOpacity>
                         ))}
+
+                        <View style={{ height: 80 }} />
                     </ScrollView>
-                </View>
-            )}
 
-            {/* Recenter / Get Location FAB */}
-            {/* Recenter / Get Location FAB */}
-            <TouchableOpacity
-                style={[styles.floatingActionBtn, { backgroundColor: theme.colors.primary, bottom: 240 + insets.bottom }]}
-                onPress={handleSetPickupToCurrent}
-            >
-                <MaterialCommunityIcons name="crosshairs-gps" size={24} color={theme.colors.onPrimary} />
-            </TouchableOpacity>
 
-            {/* Bottom Sheet / Trip Details */}
-            {routeData && (
-                <View style={[styles.bottomPreviewContainer, { bottom: 20 + insets.bottom }]}>
-                    <Card style={[styles.bottomPreviewCard, { backgroundColor: theme.colors.surface }]} elevation={5}>
-                        <Card.Content>
-                            <ScrollView style={{ maxHeight: 200 }} showsVerticalScrollIndicator={false}>
-                                <Text variant="titleSmall" style={{ marginTop: 8, marginBottom: 4 }}>Pickup Contact</Text>
-                                <View style={{ flexDirection: 'row', gap: 8 }}>
-                                    <TextInput mode="outlined" placeholder="Name" value={senderName} onChangeText={setSenderName} style={{ flex: 1, height: 40, backgroundColor: 'white' }} dense />
-                                    <TextInput mode="outlined" placeholder="Phone" value={senderPhone} onChangeText={setSenderPhone} keyboardType="phone-pad" style={{ flex: 1, height: 40, backgroundColor: 'white' }} dense />
-                                </View>
-
-                                <Text variant="titleSmall" style={{ marginTop: 12, marginBottom: 4 }}>Drop-off Contact</Text>
-                                <View style={{ flexDirection: 'row', gap: 8 }}>
-                                    <TextInput mode="outlined" placeholder="Name" value={recipientName} onChangeText={setRecipientName} style={{ flex: 1, height: 40, backgroundColor: 'white' }} dense />
-                                    <TextInput mode="outlined" placeholder="Phone" value={recipientPhone} onChangeText={setRecipientPhone} keyboardType="phone-pad" style={{ flex: 1, height: 40, backgroundColor: 'white' }} dense />
-                                </View>
-
-                                <Text variant="titleSmall" style={{ marginTop: 12, marginBottom: 4 }}>Rider Notes (Optional)</Text>
-                                <TextInput mode="outlined" placeholder="E.g. Call upon arrival" value={deliveryNotes} onChangeText={setDeliveryNotes} style={{ height: 40, backgroundColor: 'white', marginBottom: 8 }} dense />
-                            </ScrollView>
-
-                            <View style={styles.previewHeader}>
-                                <Text variant="titleMedium" style={{ color: theme.colors.onSurface, fontWeight: 'bold' }}>
-                                    Total: ₱{routeData.cost}
-                                </Text>
-                                <Text variant="bodyMedium" style={{ color: theme.colors.onSurfaceVariant }}>
-                                    {routeData.distance.toFixed(1)}km • {Math.round(routeData.duration)}mins
-                                </Text>
-                            </View>
-
-                            <Button
-                                mode="contained"
-                                onPress={handleConfirm}
-                                style={{ marginTop: 12, borderRadius: 8 }}
-                                contentStyle={{ paddingVertical: 6 }}
-                            >
-                                Confirm Booking
-                            </Button>
-                        </Card.Content>
-                    </Card>
+                    <View style={styles.fixedBottomButtonContainer}>
+                        <TouchableOpacity
+                            style={styles.setOnMapBtn}
+                            onPress={() => setIsMapVisible(true)}
+                        >
+                            <MaterialCommunityIcons name="map-outline" size={20} color="#424242" style={{ marginRight: 8 }} />
+                            <Text variant="bodyMedium" style={{ fontWeight: 'bold', color: '#424242' }}>
+                                Set on map
+                            </Text>
+                        </TouchableOpacity>
+                    </View>
                 </View>
             )}
         </View>
@@ -1123,10 +1200,13 @@ const styles = StyleSheet.create({
         flex: 1,
         justifyContent: 'center',
         paddingRight: 8,
+        paddingLeft: 12
     },
     minimalInputWrapper: {
-        height: 44,
+        height: 48,
         justifyContent: 'center',
+        flexDirection: 'row',
+        alignItems: 'center',
     },
     minimalTextInput: {
         backgroundColor: 'transparent',
@@ -1214,4 +1294,109 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         justifyContent: 'center',
     },
+    contactStepContainer: {
+        flex: 1,
+        backgroundColor: '#F5F5F5',
+    },
+    header: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingHorizontal: 20,
+        paddingVertical: 16,
+        backgroundColor: 'white',
+        borderBottomWidth: 1,
+        borderBottomColor: '#E0E0E0',
+        justifyContent: 'space-between'
+    },
+    iconButton: {
+        width: 40,
+        height: 40,
+        borderRadius: 20,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    accessNodeMarker: {
+        width: 16,
+        height: 16,
+        borderRadius: 8,
+        backgroundColor: '#9c27b0', // Purple dot
+        borderWidth: 2,
+        borderColor: 'white',
+    },
+    bottomMapActionPanel: {
+        position: 'absolute',
+        bottom: 20,
+        left: 20,
+        right: 20,
+        padding: 5,
+        backgroundColor: 'transparent',
+        borderRadius: 16,
+        elevation: 0,
+    },
+    searchHeader: {
+        backgroundColor: 'white',
+        paddingBottom: 20,
+        borderBottomLeftRadius: 0,
+        borderBottomRightRadius: 0,
+        elevation: 0,
+        zIndex: 5
+    },
+    pillButton: {
+        paddingHorizontal: 16,
+        paddingVertical: 8,
+        borderRadius: 20,
+        backgroundColor: '#f5f5f5',
+    },
+    pillText: {
+        color: '#757575',
+        fontWeight: 'bold',
+    },
+    pillButtonActive: {
+        paddingHorizontal: 16,
+        paddingVertical: 8,
+        borderRadius: 20,
+        backgroundColor: '#212121',
+    },
+    pillTextActive: {
+        color: 'white',
+        fontWeight: 'bold',
+    },
+    fixedBottomButtonContainer: {
+        position: 'absolute',
+        bottom: 0,
+        left: 0,
+        right: 0,
+        backgroundColor: 'white',
+        paddingVertical: 12,
+        paddingHorizontal: 20,
+        borderTopWidth: 1,
+        borderTopColor: '#f0f0f0',
+        alignItems: 'center',
+    },
+    setOnMapBtn: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        padding: 12,
+        backgroundColor: '#f5f5f5',
+        borderRadius: 24,
+        paddingHorizontal: 24
+    },
+    formSection: {
+        marginBottom: 16,
+    },
+    sectionTitle: {
+        marginBottom: 8,
+        color: '#424242',
+        fontWeight: '600',
+    },
+    inputRow: {
+        flexDirection: 'row',
+        gap: 12,
+    },
+    modernInput: {
+        flex: 1,
+        backgroundColor: 'transparent',
+        fontSize: 14,
+        paddingHorizontal: 0,
+    }
 });

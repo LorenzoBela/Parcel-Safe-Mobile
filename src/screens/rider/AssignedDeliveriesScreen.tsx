@@ -87,10 +87,17 @@ export default function AssignedDeliveriesScreen() {
                     boxId: d.assigned_box_id || d.box_id,
                     pickupTime: d.created_at,
                     dropoffTime: d.accepted_at || d.created_at,
+                    acceptedAt: d.accepted_at,
+                    deliveredAt: d.delivered_at,
+                    pickedUpAt: d.picked_up_at,
                     packageType: 'Standard',
                     weight: 'N/A',
                     priority: 'Standard',
                     specialInstructions: d.package_description || '',
+                    senderName: d.sender_name,
+                    senderPhone: d.sender_phone,
+                    recipientName: d.recipient_name,
+                    deliveryNotes: d.delivery_notes,
                 }));
                 setDeliveries(mapped);
             }
@@ -326,6 +333,17 @@ export default function AssignedDeliveriesScreen() {
                                     targetLng: isPickup ? (item.snappedPickupLng ?? item.pickupLng) : (item.snappedDropoffLng ?? item.dropoffLng),
                                     targetAddress: isPickup ? item.pickupAddress : item.address,
                                     customerPhone: item.phone,
+                                    senderName: item.senderName,
+                                    senderPhone: item.senderPhone,
+                                    recipientName: item.recipientName,
+                                    deliveryNotes: item.deliveryNotes,
+                                    // Both coordinates for dynamic geofence switching
+                                    pickupLat: item.snappedPickupLat ?? item.pickupLat,
+                                    pickupLng: item.snappedPickupLng ?? item.pickupLng,
+                                    pickupAddress: item.pickupAddress,
+                                    dropoffLat: item.snappedDropoffLat ?? item.dropoffLat,
+                                    dropoffLng: item.snappedDropoffLng ?? item.dropoffLng,
+                                    dropoffAddress: item.address,
                                     // @ts-ignore
                                     riderName: useAuthStore.getState().user?.fullName || 'Rider'
                                 });
@@ -338,15 +356,17 @@ export default function AssignedDeliveriesScreen() {
                     )}
 
                     <View style={{ flexDirection: 'row', width: '100%', gap: 8 }}>
-                        <Button
-                            mode="outlined"
-                            onPress={() => console.log('Call')}
-                            icon="phone"
-                            style={{ flex: 1, borderColor: theme.colors.primary }}
-                            textColor={theme.colors.primary}
-                        >
-                            Call
-                        </Button>
+                        {item.phone !== 'N/A' && (
+                            <Button
+                                mode="outlined"
+                                onPress={() => Linking.openURL(`tel:${item.phone}`)}
+                                icon="phone"
+                                style={{ flex: 1, borderColor: theme.colors.primary }}
+                                textColor={theme.colors.primary}
+                            >
+                                Call
+                            </Button>
+                        )}
 
                         {['ASSIGNED', 'PENDING', 'IN_TRANSIT'].includes(item.status) && (
                             <Button

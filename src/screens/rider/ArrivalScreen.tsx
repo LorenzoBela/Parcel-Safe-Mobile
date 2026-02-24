@@ -75,8 +75,9 @@ import {
 } from '../../services/deliveryReassignmentService';
 import { subscribeToDelivery, updateDeliveryStatus } from '../../services/riderMatchingService';
 import useAuthStore from '../../store/authStore';
-import SwipeConfirmButton from '../../components/SwipeConfirmButton';
-import { uploadPickupPhoto } from '../../services/proofPhotoService';
+import PickupVerification from './components/PickupVerification';
+import DropoffVerification from './components/DropoffVerification';
+
 
 interface RouteParams {
     deliveryId: string;
@@ -90,6 +91,13 @@ interface RouteParams {
     senderPhone?: string;
     recipientName?: string;
     deliveryNotes?: string;
+    // Separate pickup/dropoff coords for dynamic geofence switching
+    pickupLat?: number;
+    pickupLng?: number;
+    pickupAddress?: string;
+    dropoffLat?: number;
+    dropoffLng?: number;
+    dropoffAddress?: string;
 }
 
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -134,8 +142,6 @@ export default function ArrivalScreen() {
     const [displayTime, setDisplayTime] = useState('5:00');
     const [arrivalPhotoUri, setArrivalPhotoUri] = useState<string | null>(null);
     const [isLoading, setIsLoading] = useState(false);
-    const [pickupPhotoUri, setPickupPhotoUri] = useState<string | null>(null);
-    const [pickupPhotoUrl, setPickupPhotoUrl] = useState<string | null>(null);
 
     // EC-12: Address Update State
     const [showAddressModal, setShowAddressModal] = useState(false);
@@ -171,8 +177,6 @@ export default function ArrivalScreen() {
     // EC-78: Delivery Reassignment State
     const [reassignmentState, setReassignmentState] = useState<ReassignmentState | null>(null);
     const [showReassignmentModal, setShowReassignmentModal] = useState(false);
-    const [hasBeenInsideGeofence, setHasBeenInsideGeofence] = useState(false);
-    const [autoPickupFallbackApplied, setAutoPickupFallbackApplied] = useState(false);
     const authedUserId = useAuthStore((state: any) => state.user?.userId) as string | undefined;
     const riderId = authedUserId;
     const [deliveryStatus, setDeliveryStatus] = useState<string>('ASSIGNED');
@@ -285,7 +289,16 @@ export default function ArrivalScreen() {
         return unsubscribe;
     }, [params.deliveryId]);
 
-    const isPickupConfirmed = ['IN_TRANSIT', 'COMPLETED'].includes(deliveryStatus);
+    const isPickupConfirmed = ['IN_TRANSIT', 'ARRIVED', 'COMPLETED'].includes(deliveryStatus);
+
+    // Dynamically switch geofence target when transitioning from pickup to dropoff
+    useEffect(() => {
+        if (isPickupConfirmed && params.dropoffLat && params.dropoffLng) {
+            setGeofence(createDefaultGeofence(params.dropoffLat, params.dropoffLng));
+        } else if (!isPickupConfirmed && params.pickupLat && params.pickupLng) {
+            setGeofence(createDefaultGeofence(params.pickupLat, params.pickupLng));
+        }
+    }, [isPickupConfirmed, params.pickupLat, params.pickupLng, params.dropoffLat, params.dropoffLng]);
 
     // 1. Track PHONE Location (The "Golden Rule")
     useEffect(() => {
@@ -318,10 +331,6 @@ export default function ArrivalScreen() {
                     const result = checkGeofence(position, geofence);
                     setIsPhoneInside(result.isInside);
                     setDistanceMeters(result.distanceMeters); // Distance from Phone to Target
-
-                    if (result.isInside) {
-                        setHasBeenInsideGeofence(true);
-                    }
                 }
             );
         };
@@ -381,189 +390,6 @@ export default function ArrivalScreen() {
             setIsInsideGeoFence(isBoxInside); // Strict check
         }
     }, [isPhoneInside, isBoxInside, isBoxOffline]);
-
-    useEffect(() => {
-        const canAutoRecoverPickup = ['ASSIGNED', 'PICKUP_PENDING', 'ARRIVED'].includes(deliveryStatus);
-
-        if (!hasBeenInsideGeofence || isInsideGeoFence || isPickupConfirmed || autoPickupFallbackApplied || !canAutoRecoverPickup) {
-            return;
-        }
-
-        // EC-XX: Refined Auto-Pickup Logic (100m Buffer)
-        // Check distance from pickup point to prevent premature trigger
-        const distanceFromPickup = calculateDistanceMeters(
-            currentPosition.lat,
-            currentPosition.lng,
-            geofence.centerLat,
-            geofence.centerLng
-        );
-
-        // Only trigger if rider is significantly away (> 100m)
-        if (distanceFromPickup < 100) {
-            return;
-        }
-
-        setAutoPickupFallbackApplied(true);
-
-        // Auto-pickup without a photo is blocked; alert rider to take photo first
-        if (!pickupPhotoUri) {
-            Alert.alert(
-                'Photo Required',
-                'Please capture a pickup photo before the system can auto-confirm pickup.',
-                [{ text: 'OK' }]
-            );
-            setAutoPickupFallbackApplied(false);
-            return;
-        }
-
-        const applyAutoPickupFallback = async () => {
-            // Upload pickup photo first
-            const uploadResult = await uploadPickupPhoto({
-                deliveryId: params.deliveryId,
-                boxId: params.boxId,
-                localUri: pickupPhotoUri,
-            });
-
-            if (!uploadResult.success) {
-                setAutoPickupFallbackApplied(false);
-                return;
-            }
-            setPickupPhotoUrl(uploadResult.url || null);
-
-            const now = Date.now();
-            const pickedUpOk = await updateDeliveryStatus(params.deliveryId, 'IN_TRANSIT', {
-                picked_up_at: now,
-                pickup_confirmed_fallback: true,
-                pickup_fallback_reason: 'AUTO_GEOFENCE_EXIT',
-                in_transit_at: now,
-                in_transit_reason: 'AUTO_GEOFENCE_EXIT',
-                pickup_photo_url: uploadResult.url,
-            });
-
-            if (!pickedUpOk) {
-                setAutoPickupFallbackApplied(false);
-                return;
-            }
-
-            // Removed redundant update call as IN_TRANSIT is set above
-
-            setDeliveryStatus('IN_TRANSIT');
-            Alert.alert(
-                'Auto Recovery Applied',
-                'Pickup was auto-confirmed because geofence exit was detected after arrival zone entry.'
-            );
-        };
-
-        applyAutoPickupFallback();
-    }, [
-        autoPickupFallbackApplied,
-        deliveryStatus,
-        hasBeenInsideGeofence,
-        isInsideGeoFence,
-        isPickupConfirmed,
-        params.deliveryId,
-        currentPosition,
-        geofence,
-    ]);
-
-    const ensurePickupConfirmed = useCallback(async () => {
-        if (isPickupConfirmed) {
-            return true;
-        }
-
-        if (!pickupPhotoUri) {
-            Alert.alert('Photo Required', 'Please capture a pickup photo before confirming pickup.');
-            return false;
-        }
-
-        // Upload pickup photo first
-        const uploadResult = await uploadPickupPhoto({
-            deliveryId: params.deliveryId,
-            boxId: params.boxId,
-            localUri: pickupPhotoUri,
-        });
-
-        if (!uploadResult.success) {
-            Alert.alert('Upload Failed', 'Pickup photo upload failed. Please retry.');
-            return false;
-        }
-        setPickupPhotoUrl(uploadResult.url || null);
-
-        const success = await updateDeliveryStatus(params.deliveryId, 'IN_TRANSIT', {
-            picked_up_at: Date.now(),
-            pickup_confirmed_fallback: true,
-            in_transit_at: Date.now(),
-            pickup_photo_url: uploadResult.url,
-        });
-
-        if (!success) {
-            Alert.alert('Action Failed', 'Could not update pickup status. Please try again.');
-            return false;
-        }
-
-        setDeliveryStatus('IN_TRANSIT');
-        return true;
-    }, [isPickupConfirmed, params.deliveryId, params.boxId, pickupPhotoUri]);
-
-    const handleCapturePickupPhoto = async () => {
-        try {
-            const result = await ImagePicker.launchCameraAsync({
-                mediaTypes: ImagePicker.MediaTypeOptions.Images,
-                quality: 0.7,
-                allowsEditing: false,
-            });
-            if (!result.canceled && result.assets?.[0]?.uri) {
-                setPickupPhotoUri(result.assets[0].uri);
-                setPickupPhotoUrl(null);
-            }
-        } catch (e) {
-            Alert.alert('Camera Error', 'Unable to capture pickup photo right now.');
-        }
-    };
-
-    const handlePickupSwipe = async () => {
-        if (!isInsideGeoFence) {
-            Alert.alert('Location Required', 'Check GPS first and move inside the geofence before confirming pickup.');
-            return;
-        }
-
-        if (!pickupPhotoUri) {
-            Alert.alert('Photo Required', 'Please capture a pickup photo before confirming pickup.');
-            return;
-        }
-
-        setIsLoading(true);
-        try {
-            // Upload pickup photo first
-            const uploadResult = await uploadPickupPhoto({
-                deliveryId: params.deliveryId,
-                boxId: params.boxId,
-                localUri: pickupPhotoUri,
-            });
-
-            if (!uploadResult.success) {
-                Alert.alert('Upload Failed', 'Pickup photo upload failed. Please retry.');
-                return;
-            }
-            setPickupPhotoUrl(uploadResult.url || null);
-
-            const success = await updateDeliveryStatus(params.deliveryId, 'IN_TRANSIT', {
-                picked_up_at: Date.now(),
-                in_transit_at: Date.now(),
-                pickup_photo_url: uploadResult.url,
-            });
-
-            if (!success) {
-                Alert.alert('Action Failed', 'Unable to confirm pickup right now.');
-                return;
-            }
-
-            setDeliveryStatus('IN_TRANSIT');
-            Alert.alert('Pickup Confirmed', 'Package marked as picked up. Continue to handover flow.');
-        } finally {
-            setIsLoading(false);
-        }
-    };
 
     // EC-04: Lockout countdown timer
     useEffect(() => {
@@ -653,8 +479,7 @@ export default function ArrivalScreen() {
 
     // EC-11: Customer arrived during wait
     const handleCustomerArrived = async () => {
-        const pickupOk = await ensurePickupConfirmed();
-        if (!pickupOk) {
+        if (!isPickupConfirmed) {
             return;
         }
 
@@ -668,8 +493,7 @@ export default function ArrivalScreen() {
     };
 
     const handleProceedToHandover = async () => {
-        const pickupOk = await ensurePickupConfirmed();
-        if (!pickupOk) {
+        if (!isPickupConfirmed) {
             return;
         }
 
@@ -1068,212 +892,79 @@ export default function ArrivalScreen() {
                 Arrival & Verification
             </Text>
 
-            {/* New Visual Geofence Card */}
-            <Card mode="elevated" style={[styles.statusCard, isInsideGeoFence ? styles.borderSuccess : styles.borderError]}>
-                <Card.Content>
-                    <View style={styles.statusHeader}>
-                        <Text variant="titleMedium" style={{ fontWeight: 'bold', color: '#333' }}>
-                            Verification Zone
-                        </Text>
-                        {distanceMeters !== null && (
-                            <View style={styles.distanceBadge}>
-                                <Text style={styles.distanceText}>{distanceMeters}m away</Text>
-                            </View>
-                        )}
-                    </View>
-
-                    <View style={styles.checksContainer}>
-                        {/* Phone Status */}
-                        <View style={styles.checkItem}>
-                            <View style={[styles.checkCircle, isPhoneInside ? styles.bgSuccess : styles.bgError]}>
-                                <Text style={styles.checkIcon}>{isPhoneInside ? '✓' : '✗'}</Text>
-                            </View>
-                            <Text style={styles.checkLabel}>Phone GPS</Text>
-                        </View>
-
-                        <View style={styles.checkDivider} />
-
-                        {/* Box Status */}
-                        <View style={styles.checkItem}>
-                            <View style={[
-                                styles.checkCircle,
-                                isBoxOffline ? styles.bgWarning : (isBoxInside ? styles.bgSuccess : styles.bgError)
-                            ]}>
-                                <Text style={styles.checkIcon}>
-                                    {isBoxOffline ? '?' : (isBoxInside ? '✓' : '✗')}
-                                </Text>
-                            </View>
-                            <Text style={styles.checkLabel}>{isBoxOffline ? 'Box Offline' : 'Smart Box'}</Text>
-                        </View>
-                    </View>
-
-                    <View style={[styles.statusMessageContainer, isInsideGeoFence ? styles.bgSubtleSuccess : styles.bgSubtleError]}>
-                        <Text style={[styles.statusMessageText, isInsideGeoFence ? styles.textSuccess : styles.textError]}>
-                            {isInsideGeoFence
-                                ? (isBoxOffline ? '⚠️ Box is offline. Using Phone GPS backup.' : 'You are at the location.')
-                                : (!isPhoneInside
-                                    ? 'Move closer to the drop-off point.'
-                                    : 'Phone is here, but Box is detected elsewhere.')}
-                        </Text>
-                    </View>
-
-                    {/* Address & Navigation */}
-                    <View style={styles.addressRow}>
-                        <View style={{ flex: 1 }}>
-                            <Text style={styles.addressLabel}>TARGET ADDRESS</Text>
-                            <Text numberOfLines={2} style={styles.address}>{params.targetAddress}</Text>
-
-                            {params.senderName ? (
-                                <View style={{ marginTop: 12 }}>
-                                    <Text style={styles.addressLabel}>SENDER</Text>
-                                    <Text style={styles.address}>{params.senderName}{params.senderPhone ? ` • ${params.senderPhone}` : ''}</Text>
-                                </View>
-                            ) : null}
-
-                            {params.recipientName ? (
-                                <View style={{ marginTop: 12 }}>
-                                    <Text style={styles.addressLabel}>RECIPIENT</Text>
-                                    <Text style={styles.address}>{params.recipientName}{params.customerPhone ? ` • ${params.customerPhone}` : ''}</Text>
-                                </View>
-                            ) : (
-                                params.customerPhone ? (
-                                    <View style={{ marginTop: 12 }}>
-                                        <Text style={styles.addressLabel}>CUSTOMER PHONE</Text>
-                                        <Text style={styles.address}>{params.customerPhone}</Text>
-                                    </View>
-                                ) : null
-                            )}
-
-                            {params.deliveryNotes ? (
-                                <View style={{ marginTop: 12, padding: 8, backgroundColor: '#f1f5f9', borderRadius: 6 }}>
-                                    <Text style={[styles.addressLabel, { color: '#475569' }]}>DELIVERY NOTES</Text>
-                                    <Text style={[styles.address, { color: '#334155' }]}>{params.deliveryNotes}</Text>
-                                </View>
-                            ) : null}
-                        </View>
-                        <View style={styles.navActions}>
-                            <IconButton
-                                icon="map-marker-question"
-                                size={20}
-                                onPress={() => setShowAddressModal(true)}
-                            />
-                            <IconButton
-                                icon="navigation"
-                                mode="contained"
-                                containerColor="#E3F2FD"
-                                iconColor="#1976D2"
-                                size={24}
-                                onPress={handleNavigate}
-                            />
-                        </View>
-                    </View>
-                </Card.Content>
-            </Card>
-
-            {!isPickupConfirmed && (
-                <Card style={styles.actionCard}>
-                    <Card.Content>
-                        <Text style={styles.actionTitle}>Step 1: Confirm Pickup</Text>
-                        <View style={{ marginTop: 12 }}>
-                            <Button
-                                mode="outlined"
-                                icon="camera"
-                                onPress={handleCapturePickupPhoto}
-                                disabled={isLoading}
-                            >
-                                {pickupPhotoUri ? 'Retake pickup photo' : 'Capture pickup photo (required)'}
-                            </Button>
-                            {pickupPhotoUri ? (
-                                <Text style={{ marginTop: 6, color: '#16a34a', textAlign: 'center' }}>
-                                    ✅ Pickup photo ready{pickupPhotoUrl ? ' (uploaded)' : ''}.
-                                </Text>
-                            ) : (
-                                <Text style={{ marginTop: 6, color: '#6b7280', textAlign: 'center' }}>
-                                    A pickup photo is required to proceed.
-                                </Text>
-                            )}
-                        </View>
-                        <View style={{ marginTop: 16 }}>
-                            <SwipeConfirmButton
-                                label="Swipe to Pick Up"
-                                onConfirm={handlePickupSwipe}
-                                disabled={!isInsideGeoFence || !pickupPhotoUri || isLoading}
-                            />
-                        </View>
-                        <Button
-                            mode="text"
-                            compact
-                            labelStyle={{ fontSize: 12, color: '#666' }}
-                            style={{ marginTop: 8, alignSelf: 'center' }}
-                            onPress={ensurePickupConfirmed}
-                            disabled={!pickupPhotoUri || isLoading}
-                        >
-                            Trouble? Use Fallback
-                        </Button>
-                    </Card.Content>
-                </Card>
+            {/* Status Modals & Top Alerts */}
+            {lockoutState?.active && (
+                <View style={[styles.statusMessageContainer, styles.bgSubtleError, { marginTop: 16 }]}>
+                    <Text style={[styles.statusMessageText, styles.textError]}>
+                        🔒 Smart Box is locked out. Wait {Math.ceil((lockoutState.expires_at - Date.now()) / 60000)} minutes.
+                    </Text>
+                </View>
+            )}
+            {batteryState?.criticalBatteryWarning && (
+                <View style={[styles.statusMessageContainer, styles.bgSubtleError, { marginTop: 16 }]}>
+                    <Text style={[styles.statusMessageText, styles.textError]}>
+                        ⚠️ Smart Box Battery Critical ({batteryState.percentage}%)
+                    </Text>
+                </View>
+            )}
+            {tamperState?.detected && (
+                <View style={[styles.statusMessageContainer, styles.bgSubtleError, { marginTop: 16 }]}>
+                    <Text style={[styles.statusMessageText, styles.textError]}>
+                        🚨 TAMPER DETECTED! Box is in lockdown. Contact support.
+                    </Text>
+                </View>
             )}
 
-            {/* Show waiting UI if timer is active */}
             {(waitTimerState.status === 'WAITING' || waitTimerState.status === 'EXPIRED') ? (
                 renderWaitingUI()
             ) : (
-                <>
-                    {/* Customer Not Home Button */}
-                    {isInsideGeoFence && (
-                        <Button
-                            mode="outlined"
-                            onPress={handleCustomerNotHome}
-                            style={styles.auxButton}
-                            icon="account-off"
-                            textColor="#555"
-                            loading={isLoading}
-                        >
-                            Customer Not Home
-                        </Button>
-                    )}
-
-                    {!(!isPickupConfirmed) && ( // Ensure we don't show Arrival swipe if Pickup isn't done, though logic handles flow
-                        <View style={{ marginTop: 24, paddingHorizontal: 4 }}>
-                            <Text style={[styles.actionTitle, { marginBottom: 16, marginLeft: 4 }]}>Step 2: Confirm Arrival</Text>
-                            <SwipeConfirmButton
-                                label="Swipe to Arrive"
-                                onConfirm={handleProceedToHandover}
-                                disabled={!isInsideGeoFence || isLoading}
-                            />
-                        </View>
-                    )}
-                </>
+                isPickupConfirmed ? (
+                    <DropoffVerification
+                        deliveryId={params.deliveryId}
+                        boxId={params.boxId}
+                        targetAddress={params.dropoffAddress || params.targetAddress}
+                        recipientName={params.recipientName}
+                        customerPhone={params.customerPhone}
+                        deliveryNotes={params.deliveryNotes}
+                        deliveryStatus={deliveryStatus}
+                        isInsideGeoFence={isInsideGeoFence}
+                        distanceMeters={distanceMeters}
+                        isPhoneInside={isPhoneInside}
+                        isBoxInside={isBoxInside}
+                        isBoxOffline={isBoxOffline}
+                        onDeliveryCompleted={() => navigation.goBack()}
+                        onShowAddressModal={() => setShowAddressModal(true)}
+                        onNavigate={handleNavigate}
+                        onShowBleModal={handleBleTransfer}
+                        onShowCancelModal={() => setShowCancelModal(true)}
+                        onShowCustomerNotHome={handleCustomerNotHome}
+                        isWaitTimerActive={false}
+                    />
+                ) : (
+                    <PickupVerification
+                        deliveryId={params.deliveryId}
+                        boxId={params.boxId}
+                        targetAddress={params.pickupAddress || params.targetAddress}
+                        targetLat={params.pickupLat || params.targetLat}
+                        targetLng={params.pickupLng || params.targetLng}
+                        senderName={params.senderName}
+                        senderPhone={params.senderPhone}
+                        deliveryNotes={params.deliveryNotes}
+                        isInsideGeoFence={isInsideGeoFence}
+                        distanceMeters={distanceMeters}
+                        isPhoneInside={isPhoneInside}
+                        isBoxInside={isBoxInside}
+                        isBoxOffline={isBoxOffline}
+                        onPickupConfirmed={() => {
+                            // The Firebase listener will pick up the 'IN_TRANSIT' status change
+                            // and automatically switch to DropoffVerification. No navigation needed.
+                        }}
+                        onShowAddressModal={() => setShowAddressModal(true)}
+                        onNavigate={handleNavigate}
+                    />
+                )
             )}
 
-            {/* Helper Cards (BLE, Cancel) */}
-            <View style={styles.helperCardsRow}>
-                {/* BLE Card */}
-                <Card style={[styles.helperCard, styles.bleCard]} onPress={handleBleTransfer}>
-                    <Card.Content style={styles.helperCardContent}>
-                        <View style={styles.helperIconContainer}>
-                            <Text style={{ fontSize: 20 }}>📡</Text>
-                        </View>
-                        <View>
-                            <Text style={styles.helperTitle}>BLE Transfer</Text>
-                            <Text style={styles.helperText}>Send OTP Manually</Text>
-                        </View>
-                    </Card.Content>
-                </Card>
-
-                {/* Cancel Card */}
-                <Card style={[styles.helperCard, styles.cancelCard]} onPress={() => setShowCancelModal(true)}>
-                    <Card.Content style={styles.helperCardContent}>
-                        <View style={styles.helperIconContainer}>
-                            <Text style={{ fontSize: 20 }}>❌</Text>
-                        </View>
-                        <View>
-                            <Text style={[styles.helperTitle, { color: '#ef4444' }]}>Cancel</Text>
-                            <Text style={styles.helperText}>Abort Delivery</Text>
-                        </View>
-                    </Card.Content>
-                </Card>
-            </View>
 
             {/* Modals ... */}
             {/* ... keeping existing modals ... */}
