@@ -17,7 +17,9 @@ import * as IntentLauncher from 'expo-intent-launcher';
 import * as Application from 'expo-application';
 import * as Notifications from 'expo-notifications';
 import { Platform, AppState, AppStateStatus, Alert, PermissionsAndroid } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getFirebaseDatabase, ref, set, serverTimestamp, onValue, off } from './firebaseClient';
+import { update } from 'firebase/database';
 import { offlineQueueService } from './offlineQueueService';
 
 // NetInfo — conditionally imported to prevent startup crashes
@@ -47,11 +49,32 @@ export interface PhoneNetworkStatus {
     source: 'phone_background' | 'phone_foreground';
     /** Timestamp of this status snapshot */
     timestamp: number;
+    /** Cumulative data bytes sent from the mobile app */
+    data_bytes?: number;
 }
 
 /** Rate-limit: minimum interval between phone status writes (ms) */
 const PHONE_STATUS_WRITE_INTERVAL_MS = 30_000; // 30 seconds
 let lastPhoneStatusWriteTime = 0;
+
+/** Cumulative bytes sent from mobile app */
+let cumulativeDataBytes = 0;
+const MOBILE_DATA_BYTES_KEY = 'parcelSafe:mobileDataBytes';
+
+/** Initialize data bytes from storage */
+AsyncStorage.getItem(MOBILE_DATA_BYTES_KEY).then((val) => {
+    if (val) cumulativeDataBytes = parseInt(val, 10) || 0;
+}).catch(() => { });
+
+/** Estimate the HTTP REST payload size (safe — never throws) */
+function estimatePayloadSize(path: string, payload: any): number {
+    try {
+        return path.length + JSON.stringify(payload).length + 200; // 200 bytes for HTTP headers/overhead
+    } catch {
+        // serverTimestamp() sentinels or circular refs can break JSON.stringify
+        return path.length + 300; // conservative fallback
+    }
+}
 
 /**
  * Collect current phone network status from NetInfo + location data.
@@ -85,6 +108,7 @@ async function collectPhoneNetworkStatus(
             gps_altitude: locationCoords.altitude,
             source,
             timestamp: Date.now(),
+            data_bytes: cumulativeDataBytes,
         };
     } catch (e) {
         if (__DEV__) console.warn('[EC-15] Failed to collect phone network status:', e);
@@ -155,7 +179,7 @@ export const CONFIG = {
     LOCATION_STALE_THRESHOLD_MS: 120000, // 2 minutes
 
     /** GPS accuracy threshold — readings above this are rejected (meters) */
-    ACCURACY_REJECT_THRESHOLD_M: 100,
+    ACCURACY_REJECT_THRESHOLD_M: 500,
 
     /** Speed below which rider is considered stationary (m/s) */
     STATIONARY_SPEED_THRESHOLD: 0.5,
@@ -165,6 +189,10 @@ export const CONFIG = {
 
     /** Distance within which stationary jitter is suppressed (meters) */
     STATIONARY_DRIFT_RADIUS_M: 15,
+
+    /** Even when stationary & drift-filtered, force a write at least this often (ms).
+     *  Prevents Firebase from going completely stale while the rider is waiting. */
+    STATIONARY_HEARTBEAT_INTERVAL_MS: 30000, // 30 seconds
 
     /** Time without a valid GPS fix before declaring signal lost (ms) */
     SIGNAL_LOST_THRESHOLD_MS: 120000, // 2 minutes
@@ -202,6 +230,36 @@ export type StateChangeCallback = (state: BackgroundLocationState) => void;
 // Store current box ID for the background task
 let currentBoxId: string | null = null;
 
+// AsyncStorage key for persisting the active box ID across JS runtime restarts.
+// When the phone is locked, Android may kill the JS runtime while keeping the native
+// foreground service alive. When a new GPS event arrives, the native service restarts
+// the JS runtime — but currentBoxId would be null, causing the callback to silently
+// drop the update. Persisting it to AsyncStorage solves this.
+const ACTIVE_BOX_ID_KEY = 'parcelSafe:activeBackgroundBoxId';
+
+/** Persist the active box ID so background task callbacks work after JS restart. */
+async function persistBoxId(boxId: string | null): Promise<void> {
+    try {
+        if (boxId) {
+            await AsyncStorage.setItem(ACTIVE_BOX_ID_KEY, boxId);
+        } else {
+            await AsyncStorage.removeItem(ACTIVE_BOX_ID_KEY);
+        }
+    } catch (e) {
+        console.error('[EC-15] Failed to persist boxId:', e);
+    }
+}
+
+/** Restore the active box ID from storage (called when the task fires but currentBoxId is null). */
+async function restoreBoxId(): Promise<string | null> {
+    try {
+        return await AsyncStorage.getItem(ACTIVE_BOX_ID_KEY);
+    } catch (e) {
+        console.error('[EC-15] Failed to restore boxId:', e);
+        return null;
+    }
+}
+
 // ---- Feature 3: Accuracy Filter state ----
 let accuracyRejectCount = 0;
 
@@ -228,7 +286,14 @@ function isStationaryDrift(location: Location.LocationObject): boolean {
             const cosLat = Math.cos(location.coords.latitude * Math.PI / 180);
             const dist = Math.sqrt(dlat * dlat + (dlng * cosLat) * (dlng * cosLat)) * 111320;
             if (dist < CONFIG.STATIONARY_DRIFT_RADIUS_M) {
-                return true; // Suppress — it's jitter
+                // Within drift radius — but don't suppress forever.
+                // Allow a heartbeat write so Firebase stays fresh.
+                const timeSinceLastWrite = now - lastWrittenLocation.timestamp;
+                if (timeSinceLastWrite < CONFIG.STATIONARY_HEARTBEAT_INTERVAL_MS) {
+                    return true; // Suppress — recent write exists, it's just jitter
+                }
+                // Heartbeat due — let this write through
+                return false;
             }
         }
     } else {
@@ -247,8 +312,18 @@ TaskManager.defineTask(CONFIG.TASK_NAME, async ({ data, error }) => {
         return;
     }
 
-    if (!data || !currentBoxId) {
+    if (!data) {
         return;
+    }
+
+    // Restore currentBoxId from AsyncStorage if it was lost (JS runtime restarted
+    // while phone was locked — the native foreground service kept running but the
+    // in-memory variable was wiped)
+    if (!currentBoxId) {
+        currentBoxId = await restoreBoxId();
+        if (!currentBoxId) {
+            return; // No active delivery — nothing to write
+        }
     }
 
     const { locations } = data as { locations: Location.LocationObject[] };
@@ -267,19 +342,48 @@ TaskManager.defineTask(CONFIG.TASK_NAME, async ({ data, error }) => {
         }
         accuracyRejectCount = 0; // Reset on good reading
 
-        // ---- Feature 4: Stationary Drift Prevention ----
-        if (isStationaryDrift(location)) {
-            return; // Suppress phantom movement while rider is waiting
-        }
+        // Feature 4 (Stationary Drift Prevention) — DISABLED.
+        // All GPS readings are written to Firebase in real-time,
+        // regardless of whether the rider is moving or stationary.
 
         try {
-            await offlineQueueService.enqueueLocationUpdate(
-                currentBoxId,
-                location.coords.latitude,
-                location.coords.longitude,
-                location.coords.speed ?? 0,
-                location.coords.heading ?? 0
-            );
+            // CRITICAL: Write directly to Firebase, NOT through offlineQueueService.
+            // offlineQueueService calls NetInfo.fetch() which returns isConnected=false
+            // in Android Doze mode (screen off), even though the device actually has
+            // network. This causes ALL background updates to be queued instead of sent,
+            // and the queue only flushes when the app comes to foreground — which is
+            // exactly the symptom: "location only updates when the app is open."
+            const db = getFirebaseDatabase();
+            const updates: Record<string, any> = {};
+
+            // Pre-increment data bytes for this exact write (~500 bytes payload)
+            cumulativeDataBytes += 500;
+
+            // Write current location
+            updates[`/locations/${currentBoxId}`] = {
+                latitude: location.coords.latitude,
+                longitude: location.coords.longitude,
+                accuracy: location.coords.accuracy ?? null,
+                altitude: location.coords.altitude ?? null,
+                speed: location.coords.speed ?? 0,
+                heading: location.coords.heading ?? 0,
+                timestamp: Date.now(),
+                verified_at: serverTimestamp(),
+                source: 'phone_background',
+            };
+
+            // Write background location heartbeat
+            updates[`/boxes/${currentBoxId}/background_location_status`] = {
+                lastUpdate: serverTimestamp(),
+                source: 'phone_background',
+                accuracy: location.coords.accuracy,
+                signal_lost: false,
+            };
+
+            // Track data bandwidth in real-time alongside location
+            updates[`/hardware/${currentBoxId}/phone_status/data_bytes`] = cumulativeDataBytes;
+
+            await update(ref(db), updates);
 
             // Track last written location for drift prevention
             lastWrittenLocation = {
@@ -291,24 +395,36 @@ TaskManager.defineTask(CONFIG.TASK_NAME, async ({ data, error }) => {
             // Record valid fix time for signal loss detection
             lastValidFixTime = Date.now();
 
-            // Update last location timestamp in Firebase (heartbeat, bypass queue for status)
-            const db = getFirebaseDatabase();
-            const statusRef = ref(db, `boxes/${currentBoxId}/background_location_status`);
-            await set(statusRef, {
-                lastUpdate: serverTimestamp(),
-                source: 'phone_background',
-                accuracy: location.coords.accuracy,
-                signal_lost: false,
-            });
-
             // Write phone network status (rate-limited)
             const phoneStatus = await collectPhoneNetworkStatus(
                 { accuracy: location.coords.accuracy, altitude: location.coords.altitude },
                 'phone_background'
             );
+
+            // Stamp latest cumulative bytes before writing
+            if (phoneStatus) {
+                phoneStatus.data_bytes = cumulativeDataBytes;
+            }
+
             await writePhoneStatusIfDue(currentBoxId, phoneStatus);
+
+            // Persist data bytes to survive app restarts (every ~10 writes)
+            if (Math.random() < 0.1) {
+                AsyncStorage.setItem(MOBILE_DATA_BYTES_KEY, cumulativeDataBytes.toString()).catch(() => { });
+            }
         } catch (e) {
-            console.error('[EC-15] Failed to write background location:', e);
+            // Actual network failure — fall back to offline queue
+            try {
+                await offlineQueueService.enqueueLocationUpdate(
+                    currentBoxId,
+                    location.coords.latitude,
+                    location.coords.longitude,
+                    location.coords.speed ?? 0,
+                    location.coords.heading ?? 0
+                );
+            } catch (queueError) {
+                console.error('[EC-15] Failed to queue background location:', queueError);
+            }
         }
     }
 });
@@ -458,6 +574,7 @@ class BackgroundLocationManager {
 
         this.updateState({ status: 'STARTING' });
         currentBoxId = boxId;
+        await persistBoxId(boxId);
 
         // Check permissions
         const hasPermissions = await this.checkPermissions();
@@ -481,25 +598,27 @@ class BackgroundLocationManager {
             // Check if task is already running
             const isTaskRegistered = await TaskManager.isTaskRegisteredAsync(CONFIG.TASK_NAME);
 
-            if (!isTaskRegistered) {
-                // Explicitly create the channel with PUBLIC lockscreen visibility for Android 10+
-                if (Platform.OS === 'android') {
-                    try {
-                        // expo-location dynamically names its channel: "appId:taskName"
-                        // By creating it FIRST here with MAX importance, we prevent it from defaulting to LOW
-                        const expoLocationChannelId = `${Application.applicationId}:${CONFIG.TASK_NAME}`;
-                        await Notifications.setNotificationChannelAsync(expoLocationChannelId, {
-                            name: 'Live Delivery Tracking',
-                            importance: Notifications.AndroidImportance.MAX,
-                            lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
-                            sound: null,
-                            enableVibrate: false,
-                        });
-                    } catch (e) {
-                        if (__DEV__) console.warn('[EC-15] Failed to set location notification channel:', e);
-                    }
+            // ALWAYS ensure the notification channel exists with correct settings,
+            // even if the task is already registered (channel settings may have been
+            // reset by a system update or OEM battery manager).
+            if (Platform.OS === 'android') {
+                try {
+                    const expoLocationChannelId = `${Application.applicationId}:${CONFIG.TASK_NAME}`;
+                    await Notifications.setNotificationChannelAsync(expoLocationChannelId, {
+                        name: 'Live Delivery Tracking',
+                        importance: Notifications.AndroidImportance.MAX,
+                        lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
+                        bypassDnd: true,
+                        sound: null,
+                        enableVibrate: false,
+                    });
+                } catch (e) {
+                    // Non-fatal: the notification may still work with default channel settings
+                    console.warn('[EC-15] Failed to set location notification channel:', e);
                 }
+            }
 
+            if (!isTaskRegistered) {
                 // Start background location updates (Expo Task Manager)
                 try {
                     await Location.startLocationUpdatesAsync(CONFIG.TASK_NAME, {
@@ -580,6 +699,7 @@ class BackgroundLocationManager {
         }
 
         currentBoxId = null;
+        await persistBoxId(null);
 
         this.updateState({
             status: 'STOPPED',
@@ -666,13 +786,31 @@ class BackgroundLocationManager {
                 accuracy: CONFIG.ACCURACY,
             });
 
-            await offlineQueueService.enqueueLocationUpdate(
-                currentBoxId,
-                location.coords.latitude,
-                location.coords.longitude,
-                location.coords.speed ?? 0,
-                location.coords.heading ?? 0
-            );
+            // Write directly to Firebase — NOT through offlineQueueService.
+            // offlineQueueService breaks in Android Doze mode (same fix as background task).
+            const db = getFirebaseDatabase();
+            const updates: Record<string, any> = {};
+
+            updates[`/locations/${currentBoxId}`] = {
+                latitude: location.coords.latitude,
+                longitude: location.coords.longitude,
+                accuracy: location.coords.accuracy ?? null,
+                altitude: location.coords.altitude ?? null,
+                speed: location.coords.speed ?? 0,
+                heading: location.coords.heading ?? 0,
+                timestamp: Date.now(),
+                verified_at: serverTimestamp(),
+                source: 'phone_foreground',
+            };
+
+            updates[`/boxes/${currentBoxId}/background_location_status`] = {
+                lastUpdate: serverTimestamp(),
+                source: 'phone_foreground',
+                accuracy: location.coords.accuracy,
+                signal_lost: false,
+            };
+
+            await update(ref(db), updates);
 
             this.updateState({
                 lastLocationTimestamp: Date.now(),
@@ -759,8 +897,8 @@ class BackgroundLocationManager {
 
     private handleAppStateChange = async (nextAppState: AppStateStatus) => {
         if (nextAppState === 'active' && this.state.status === 'RUNNING') {
-            // App came to foreground - force an immediate update
-            // Wait for a moment to let the OS stabilize and permissions to be re-verified
+            // App came to foreground — verify the background task is still alive,
+            // force an immediate update, and recover if the OS killed the task.
             setTimeout(async () => {
                 // Double check if we are still active (user didn't just quickly switch away)
                 if (AppState.currentState !== 'active') return;
@@ -772,8 +910,14 @@ class BackgroundLocationManager {
                         status: 'PERMISSION_DENIED',
                         lastError: 'Location permissions revoked while in background',
                     });
-                    // Gracefully stop or alert user
                     return;
+                }
+
+                // CRITICAL: Check if the background task was killed while the phone
+                // was locked and recover it. forceUpdate alone is not enough because
+                // the TaskManager task may no longer be registered.
+                if (currentBoxId) {
+                    await this.checkAndRecover(currentBoxId);
                 }
 
                 await this.forceUpdate();

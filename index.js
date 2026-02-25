@@ -1,5 +1,13 @@
 import { registerRootComponent } from 'expo';
 
+// CRITICAL: TaskManager.defineTask() MUST run at the top level of the entry point.
+// expo-location's native foreground service survives phone lock, but the JS runtime
+// can be killed. When the OS restarts JS to deliver a background location event, this
+// import ensures the task handler is immediately registered — without it, location
+// updates are silently dropped even though the "Tracking your location" notification
+// is still visible on the lock screen.
+import './src/services/backgroundLocationService';
+
 import App from './App';
 
 // ==================== Background FCM Handler ====================
