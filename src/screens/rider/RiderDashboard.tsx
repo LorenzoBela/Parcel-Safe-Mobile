@@ -418,10 +418,16 @@ export default function RiderDashboard() {
                     }
                 }
 
-                // Stop background service when delivery ends
+                // Stop background service when delivery ends — BUT only if
+                // the rider is not paired. If paired, keep tracking regardless
+                // of delivery status (rider should always be trackable when paired).
                 if (activeDelivery.status === 'COMPLETED' || activeDelivery.status === 'CANCELLED') {
-                    console.log('[RiderDashboard] Delivery ended, stopping background location');
-                    stopBackgroundLocation();
+                    if (!isPaired) {
+                        console.log('[RiderDashboard] Delivery ended + not paired, stopping background location');
+                        stopBackgroundLocation();
+                    } else {
+                        console.log('[RiderDashboard] Delivery ended but still paired, keeping background location active');
+                    }
                 }
             }
         } else {
@@ -571,20 +577,37 @@ export default function RiderDashboard() {
         showOemWarning();
     }, [isOnline]);
 
-    // Auto-start monitoring when component mounts or online status changes
+    // ── Tracking activation: responds to pairing changes.
+    //    When paired + online, we MUST start the background location service
+    //    so phone GPS data is written to locations/{boxId} in Firebase.
+    //    activateTracking() alone only controls the redundancy service power state;
+    //    the actual Firebase writes come from the background location service.
+    //    NOTE: We do NOT call stopBackgroundLocation in the !isPaired branch —
+    //    its async stop() can race with start() and wipe currentBoxId. ──
     useEffect(() => {
-        if (boxIdForMonitoring) {
-            startMonitoring(boxIdForMonitoring);
-        }
-
-        // EC-FIX: Ensure tracking is ACTIVE if we are online (even without delivery)
-        // This ensures the rider is discoverable by the matching service.
-        if (isOnline && boxIdForMonitoring) {
-            console.log('[RiderDashboard] Rider is online with paired box - Activating Tracking');
+        if (isOnline && isPaired && pairedBoxId) {
+            console.log('[RiderDashboard] Paired + Online - Starting location tracking for:', pairedBoxId);
+            startMonitoring(pairedBoxId);
             activateTracking();
+
+            // Start the background location service — this is what actually
+            // writes phone GPS to Firebase every 3 seconds.
+            // The service's start() handles deduplication internally:
+            // if already running with same boxId, it returns true immediately.
+            startBackgroundLocation(pairedBoxId);
         } else if (!isOnline) {
             console.log('[RiderDashboard] Rider is offline - Deactivating Tracking');
             deactivateTracking();
+        } else if (!isPaired) {
+            console.log('[RiderDashboard] Not paired - Deactivating redundancy tracking only');
+            deactivateTracking();
+        }
+    }, [isOnline, isPaired, pairedBoxId]);
+
+    // Auto-start monitoring for hardware state (read-only subscriptions)
+    useEffect(() => {
+        if (boxIdForMonitoring) {
+            startMonitoring(boxIdForMonitoring);
         }
 
         // EC-Update: Subscribe to box state for lock status
