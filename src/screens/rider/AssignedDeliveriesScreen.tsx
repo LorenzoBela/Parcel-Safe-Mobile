@@ -151,6 +151,7 @@ export default function AssignedDeliveriesScreen() {
                 reasonDetails: details,
                 riderId: authedUserId ?? 'RIDER_001',
                 riderName: 'Juan Dela Cruz', // Ideally fetch from profile
+                currentStatus: selectedDelivery.status,
             });
 
             if (result.success) {
@@ -200,6 +201,7 @@ export default function AssignedDeliveriesScreen() {
             case 'ARRIVED': return '#03A9F4'; // Light Blue
             case 'COMPLETED': return '#4CAF50'; // Green
             case 'CANCELLED': return '#F44336'; // Red
+            case 'RETURNING': return '#FF9800'; // Orange
             case 'TAMPERED': return '#9C27B0'; // Purple
             default: return '#757575'; // Grey
         }
@@ -213,7 +215,7 @@ export default function AssignedDeliveriesScreen() {
         if (filter === 'All') {
             matchesStatus = true;
         } else if (filter === 'Active') {
-            matchesStatus = ['ASSIGNED', 'PENDING', 'IN_TRANSIT', 'ARRIVED', 'TAMPERED'].includes(item.status);
+            matchesStatus = ['ASSIGNED', 'PENDING', 'IN_TRANSIT', 'ARRIVED', 'TAMPERED', 'RETURNING'].includes(item.status);
         } else if (filter === 'Completed') {
             matchesStatus = item.status === 'COMPLETED';
         } else if (filter === 'Cancelled') {
@@ -240,7 +242,7 @@ export default function AssignedDeliveriesScreen() {
     });
 
     const renderItem = ({ item }) => {
-        const isPickup = !['PICKED_UP', 'IN_TRANSIT', 'ARRIVED', 'COMPLETED'].includes(item.status);
+        const isPickup = !['PICKED_UP', 'IN_TRANSIT', 'ARRIVED', 'COMPLETED', 'RETURNING', 'RETURNED'].includes(item.status);
 
         return (
             <Card style={styles.card} mode="elevated" onPress={() => navigation.navigate('JobDetail', { job: { ...item, id: item.id } })}>

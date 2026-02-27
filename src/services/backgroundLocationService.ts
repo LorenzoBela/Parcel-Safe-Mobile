@@ -675,6 +675,16 @@ class BackgroundLocationManager {
      * Stop background location tracking
      */
     async stop(): Promise<void> {
+        const boxIdToStop = currentBoxId;
+
+        // Clear synchronously to deeply prevent race conditions if start() is called immediately after
+        currentBoxId = null;
+
+        this.updateState({
+            status: 'STOPPED',
+            foregroundServiceActive: false,
+        });
+
         try {
             const isTaskRegistered = await TaskManager.isTaskRegisteredAsync(CONFIG.TASK_NAME);
 
@@ -694,17 +704,11 @@ class BackgroundLocationManager {
             this.unsubscribeBoxGps = null;
         }
 
-        if (currentBoxId) {
-            await this.logServiceEvent(currentBoxId, 'SERVICE_STOPPED');
+        if (boxIdToStop) {
+            await this.logServiceEvent(boxIdToStop, 'SERVICE_STOPPED');
         }
 
-        currentBoxId = null;
         await persistBoxId(null);
-
-        this.updateState({
-            status: 'STOPPED',
-            foregroundServiceActive: false,
-        });
     }
 
     /**

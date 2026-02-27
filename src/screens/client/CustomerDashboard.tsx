@@ -125,7 +125,7 @@ export default function CustomerDashboard() {
                 .from('deliveries')
                 .select('*, rider:rider_id(full_name)')
                 .eq('customer_id', authedUser.userId)
-                .in('status', ['PENDING', 'ASSIGNED', 'IN_TRANSIT', 'ARRIVED'])
+                .in('status', ['PENDING', 'ASSIGNED', 'IN_TRANSIT', 'ARRIVED', 'RETURNING'])
                 .order('created_at', { ascending: false })
                 .limit(1)
                 .single();
@@ -208,11 +208,13 @@ export default function CustomerDashboard() {
 
     const hideModal = () => setModalVisible(false);
 
-    const getStatusIcon = (status) => {
+    const getStatusIcon = (status: string) => {
         switch (status) {
-            case 'Delivered': return { icon: 'check', color: theme.colors.primary, bg: theme.colors.primaryContainer };
-            case 'Tampered': return { icon: 'alert-circle', color: theme.colors.error, bg: theme.colors.errorContainer };
-            case 'Cancelled': return { icon: 'close', color: theme.colors.onSurfaceVariant, bg: theme.colors.surfaceVariant };
+            case 'COMPLETED': return { icon: 'check', color: theme.colors.primary, bg: theme.colors.primaryContainer };
+            case 'RETURNED': return { icon: 'check-all', color: theme.colors.primary, bg: theme.colors.primaryContainer };
+            case 'TAMPERED': return { icon: 'alert-circle', color: theme.colors.error, bg: theme.colors.errorContainer };
+            case 'CANCELLED': return { icon: 'close', color: theme.colors.onSurfaceVariant, bg: theme.colors.surfaceVariant };
+            case 'RETURNING': return { icon: 'keyboard-return', color: theme.colors.error, bg: theme.colors.errorContainer };
             default: return { icon: 'information', color: theme.colors.secondary, bg: theme.colors.secondaryContainer };
         }
     };
@@ -228,6 +230,7 @@ export default function CustomerDashboard() {
             case 'ARRIVED': return 'Arrived';
             case 'COMPLETED': return 'Delivered';
             case 'CANCELLED': return 'Cancelled';
+            case 'RETURNING': return 'Returning';
             default: return status.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
         }
     };

@@ -98,6 +98,7 @@ interface RouteParams {
     dropoffLat?: number;
     dropoffLng?: number;
     dropoffAddress?: string;
+    status?: string;
 }
 
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -289,16 +290,19 @@ export default function ArrivalScreen() {
         return unsubscribe;
     }, [params.deliveryId]);
 
-    const isPickupConfirmed = ['IN_TRANSIT', 'ARRIVED', 'COMPLETED'].includes(deliveryStatus);
+    const isReturning = ['RETURNING', 'TAMPERED'].includes(deliveryStatus);
+    const isPickupConfirmed = ['IN_TRANSIT', 'ARRIVED', 'COMPLETED', 'RETURNING', 'TAMPERED'].includes(deliveryStatus);
 
     // Dynamically switch geofence target when transitioning from pickup to dropoff
     useEffect(() => {
-        if (isPickupConfirmed && params.dropoffLat && params.dropoffLng) {
-            setGeofence(createDefaultGeofence(params.dropoffLat, params.dropoffLng));
+        if (isPickupConfirmed && (params.dropoffLat || params.pickupLat)) {
+            const lat = isReturning ? params.pickupLat : params.dropoffLat;
+            const lng = isReturning ? params.pickupLng : params.dropoffLng;
+            if (lat && lng) setGeofence(createDefaultGeofence(lat, lng));
         } else if (!isPickupConfirmed && params.pickupLat && params.pickupLng) {
             setGeofence(createDefaultGeofence(params.pickupLat, params.pickupLng));
         }
-    }, [isPickupConfirmed, params.pickupLat, params.pickupLng, params.dropoffLat, params.dropoffLng]);
+    }, [isPickupConfirmed, isReturning, params.pickupLat, params.pickupLng, params.dropoffLat, params.dropoffLng]);
 
     // 1. Track PHONE Location (The "Golden Rule")
     useEffect(() => {
@@ -644,6 +648,7 @@ export default function ArrivalScreen() {
                 reasonDetails: details,
                 riderId: riderId || '',
                 riderName: params.riderName,
+                currentStatus: params.status || 'ARRIVED',
             });
 
             if (result.success) {
@@ -654,7 +659,7 @@ export default function ArrivalScreen() {
                     reason: reason,
                     reasonDetails: details,
                     senderName: 'Customer', // Would come from delivery data
-                    pickupAddress: params.targetAddress,
+                    pickupAddress: params.pickupAddress || params.targetAddress,
                 });
             } else {
                 Alert.alert('Cancellation Failed', result.error || 'Unknown error');
@@ -922,9 +927,9 @@ export default function ArrivalScreen() {
                     <DropoffVerification
                         deliveryId={params.deliveryId}
                         boxId={params.boxId}
-                        targetAddress={params.dropoffAddress || params.targetAddress}
-                        recipientName={params.recipientName}
-                        customerPhone={params.customerPhone}
+                        targetAddress={isReturning ? (params.pickupAddress || params.targetAddress) : (params.dropoffAddress || params.targetAddress)}
+                        recipientName={isReturning ? params.senderName : params.recipientName}
+                        customerPhone={isReturning ? params.senderPhone : params.customerPhone}
                         deliveryNotes={params.deliveryNotes}
                         deliveryStatus={deliveryStatus}
                         isInsideGeoFence={isInsideGeoFence}

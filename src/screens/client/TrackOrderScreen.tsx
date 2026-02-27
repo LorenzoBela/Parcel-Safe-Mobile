@@ -76,6 +76,10 @@ function mapStatusToCancellationStatus(status: string | undefined): DeliveryStat
             return DeliveryStatus.DELIVERED;
         case 'CANCELLED':
             return DeliveryStatus.CANCELLED;
+        case 'RETURNING':
+            return DeliveryStatus.RETURNING;
+        case 'RETURNED':
+            return DeliveryStatus.RETURNED;
         default:
             return DeliveryStatus.ASSIGNED;
     }
@@ -215,10 +219,10 @@ export default function TrackOrderScreen() {
         longitude: delivery?.pickup_lng ?? params.pickupLng ?? 0,
     };
 
-    const isPickedUp = ['PICKED_UP', 'IN_TRANSIT'].includes(delivery?.status || '');
+    const isPickedUp = ['PICKED_UP', 'IN_TRANSIT', 'RETURNING'].includes(delivery?.status || '');
 
     // Two-Phase Routing: determine the current route target
-    const routeTarget = isPickedUp ? destination : pickupLocation;
+    const routeTarget = (delivery?.status === 'RETURNING') ? pickupLocation : (isPickedUp ? destination : pickupLocation);
 
     // EC-FIX: Smart Fallback Logic - Prefer the freshest data source
     const useBoxLocation = useMemo(() => {

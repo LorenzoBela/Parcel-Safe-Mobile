@@ -19,6 +19,7 @@ import {
     getPairingRemainingMs,
     formatRemainingTime,
 } from '../../services/boxPairingService';
+import { stopBackgroundLocation } from '../../services/backgroundLocationService';
 
 const SESSION_OPTIONS = [4, 12, 24, 48];
 const PAIRED_BOX_CACHE_KEY_PREFIX = 'parcelSafe:lastPairedBoxId:';
@@ -172,6 +173,7 @@ export default function PairBoxScreen() {
                             setIsPairing(true);
                             await revokePairing(boxIdToUnpair, authedUserId);
                             await AsyncStorage.removeItem(`${PAIRED_BOX_CACHE_KEY_PREFIX}${authedUserId}`);
+                            stopBackgroundLocation();
                             setScannedPayload(null);
                             setScanLocked(false);
                             Alert.alert('Unpaired', `Box ${boxIdToUnpair} is no longer linked to your account.`);

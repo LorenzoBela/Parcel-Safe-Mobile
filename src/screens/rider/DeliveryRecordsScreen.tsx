@@ -25,6 +25,8 @@ const mapStatus = (raw: string): string => {
         case 'PENDING': return 'Pending';
         case 'TAMPERED': return 'Tampered';
         case 'CANCELLED': return 'Cancelled';
+        case 'RETURNING': return 'Returning';
+        case 'RETURNED': return 'Returned';
         default: return raw;
     }
 };
@@ -138,6 +140,8 @@ export default function DeliveryRecordsScreen() {
             case 'Pending': return '#FF9800';
             case 'Cancelled': return '#F44336';
             case 'Tampered': return '#D32F2F';
+            case 'Returning': return '#FF9800'; // Orange
+            case 'Returned': return '#9E9E9E'; // Grey
             default: return '#757575';
         }
     };

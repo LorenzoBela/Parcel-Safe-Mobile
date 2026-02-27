@@ -19,6 +19,8 @@ const mapStatus = (raw: string): string => {
         case 'ARRIVED': return 'In Transit';
         case 'TAMPERED': return 'Tampered';
         case 'CANCELLED': return 'Cancelled';
+        case 'RETURNING': return 'Returning';
+        case 'RETURNED': return 'Returned';
         default: return raw;
     }
 };
@@ -146,6 +148,8 @@ export default function DeliveryLogScreen() {
             case 'Pending': return '#FF9800';
             case 'Cancelled': return '#9E9E9E';
             case 'Tampered': return '#D32F2F';
+            case 'Returning': return '#FF9800';
+            case 'Returned': return '#9E9E9E';
             default: return '#9E9E9E';
         }
     };
@@ -157,6 +161,8 @@ export default function DeliveryLogScreen() {
             case 'Pending': return 'clock-outline';
             case 'Cancelled': return 'close-circle';
             case 'Tampered': return 'alert-circle';
+            case 'Returning': return 'undo';
+            case 'Returned': return 'keyboard-return';
             default: return 'help-circle';
         }
     };

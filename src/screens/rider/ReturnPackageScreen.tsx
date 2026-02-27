@@ -11,7 +11,6 @@ import { Text, Surface, Button, Card, Avatar, useTheme, IconButton, Chip, Progre
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import * as Location from 'expo-location';
-import * as Clipboard from 'expo-clipboard';
 import { markPackageRetrieved, subscribeToCancellation, CancellationState } from '../../services/cancellationService';
 
 interface RouteParams {
@@ -46,7 +45,6 @@ export default function ReturnPackageScreen() {
     const [distance, setDistance] = useState<string>('Calculating...');
     const [riderLocation, setRiderLocation] = useState<Location.LocationObject | null>(null);
     const [cancellationState, setCancellationState] = useState<CancellationState | null>(null);
-    const [otpCopied, setOtpCopied] = useState(false);
 
     // Subscribe to cancellation state to detect when package is retrieved
     useEffect(() => {
@@ -95,13 +93,6 @@ export default function ReturnPackageScreen() {
         const interval = setInterval(fetchLocation, 10000); // Update every 10s
         return () => clearInterval(interval);
     }, [pickupLat, pickupLng, currentStep]);
-
-    const copyOtp = async () => {
-        await Clipboard.setStringAsync(returnOtp);
-        setOtpCopied(true);
-        Alert.alert('Copied!', 'Return OTP copied to clipboard');
-        setTimeout(() => setOtpCopied(false), 3000);
-    };
 
     const openNavigation = () => {
         const url = Platform.select({
@@ -218,7 +209,7 @@ export default function ReturnPackageScreen() {
                         <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
                             {currentStep === 'NAVIGATING' && `${distance} away • Head to return location`}
                             {currentStep === 'ARRIVED' && 'Contact the sender to arrange handover'}
-                            {currentStep === 'AWAITING_PICKUP' && 'Sender will enter OTP on the box'}
+                            {currentStep === 'AWAITING_PICKUP' && 'Sender receives a Return OTP on their app to unlock the box'}
                             {currentStep === 'COMPLETED' && 'Package has been returned successfully'}
                         </Text>
                     </View>
@@ -256,53 +247,7 @@ export default function ReturnPackageScreen() {
                     )}
                 </Surface>
 
-                {/* Return OTP Card */}
-                {currentStep !== 'COMPLETED' && (
-                    <Surface style={[styles.otpCard, { backgroundColor: theme.colors.surface }]} elevation={2}>
-                        <View style={styles.otpHeader}>
-                            <MaterialCommunityIcons name="key-variant" size={24} color={theme.colors.primary} />
-                            <Text variant="titleMedium" style={{ marginLeft: 8, fontWeight: 'bold', color: theme.colors.onSurface }}>
-                                Return OTP for Sender
-                            </Text>
-                        </View>
 
-                        <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant, marginBottom: 12 }}>
-                            The sender needs this code to unlock the box and retrieve their package
-                        </Text>
-
-                        <Surface
-                            style={[
-                                styles.otpDisplay,
-                                {
-                                    backgroundColor: theme.dark ? '#1A237E' : '#E8EAF6',
-                                    borderColor: otpCopied ? theme.colors.primary : 'transparent',
-                                    borderWidth: 2,
-                                }
-                            ]}
-                            elevation={0}
-                        >
-                            <Text
-                                variant="displaySmall"
-                                style={{
-                                    letterSpacing: 8,
-                                    fontWeight: 'bold',
-                                    color: theme.colors.primary,
-                                    fontFamily: 'monospace',
-                                }}
-                            >
-                                {returnOtp}
-                            </Text>
-                        </Surface>
-
-                        <Button
-                            mode="text"
-                            icon={otpCopied ? "check" : "content-copy"}
-                            onPress={copyOtp}
-                        >
-                            {otpCopied ? 'Copied!' : 'Copy OTP'}
-                        </Button>
-                    </Surface>
-                )}
 
                 {/* Tracking ID */}
                 <Surface style={[styles.trackingCard, { backgroundColor: theme.colors.surface }]} elevation={1}>

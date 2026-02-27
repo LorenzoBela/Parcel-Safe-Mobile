@@ -27,6 +27,8 @@ const formatStatus = (status: string): string => {
         case 'COMPLETED': return 'Delivered';
         case 'CANCELLED': return 'Cancelled';
         case 'TAMPERED': return 'Tampered';
+        case 'RETURNING': return 'Returning to Sender';
+        case 'RETURNED': return 'Returned to Sender';
         default: return status.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
     }
 };

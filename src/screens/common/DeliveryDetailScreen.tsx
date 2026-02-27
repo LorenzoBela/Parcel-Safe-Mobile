@@ -142,10 +142,12 @@ export default function DeliveryDetailScreen() {
         return 'N/A';
     }, [deliveryData.distance, deliveryData.distance_text, pickupLat, pickupLng, dropoffLat, dropoffLng]);
 
-    // Mock coordinates for the map (Manila area)
+    const isCancelled = deliveryData.status === 'Cancelled' || deliveryData.status === 'Tampered';
+
+    // Default coordinates for the map center
     const deliveryLocation = {
-        latitude: dropoffLat,
-        longitude: dropoffLng,
+        latitude: isCancelled ? pickupLat : dropoffLat,
+        longitude: isCancelled ? pickupLng : dropoffLng,
         latitudeDelta: 0.01,
         longitudeDelta: 0.01,
     };
@@ -528,8 +530,14 @@ export default function DeliveryDetailScreen() {
                         <View style={styles.detailRow}>
                             <MaterialCommunityIcons name="map-marker" size={24} color={theme.colors.primary} />
                             <View style={styles.detailTextContainer}>
-                                <Text variant="bodyLarge" style={styles.detailLabel}>Dropoff Address</Text>
-                                <Text variant="bodyMedium" style={styles.detailValue}>{deliveryData.dropoffAddress || deliveryData.dropoff_address || deliveryData.address || 'N/A'}</Text>
+                                <Text variant="bodyLarge" style={styles.detailLabel}>
+                                    {deliveryData.status === 'Cancelled' ? 'Return Destination (Pickup Point)' : 'Dropoff Address'}
+                                </Text>
+                                <Text variant="bodyMedium" style={styles.detailValue}>
+                                    {deliveryData.status === 'Cancelled'
+                                        ? (deliveryData.pickupAddress || deliveryData.pickup_address || 'N/A')
+                                        : (deliveryData.dropoffAddress || deliveryData.dropoff_address || deliveryData.address || 'N/A')}
+                                </Text>
                             </View>
                         </View>
 

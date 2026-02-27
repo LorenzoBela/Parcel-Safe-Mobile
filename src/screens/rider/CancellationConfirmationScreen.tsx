@@ -11,7 +11,6 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Text, Surface, Button, Card, Avatar, useTheme, IconButton, Divider } from 'react-native-paper';
 import { useNavigation, useRoute, useFocusEffect } from '@react-navigation/native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import * as Clipboard from 'expo-clipboard';
 import { Alert } from 'react-native';
 import LottieView from 'lottie-react-native';
 import {
@@ -28,6 +27,8 @@ interface RouteParams {
     reasonDetails?: string;
     senderName?: string;
     pickupAddress?: string;
+    pickupLat?: number;
+    pickupLng?: number;
 }
 
 export default function CancellationConfirmationScreen() {
@@ -37,8 +38,7 @@ export default function CancellationConfirmationScreen() {
     const insets = useSafeAreaInsets();
     const params = route.params as RouteParams;
 
-    const [remainingHours, setRemainingHours] = useState(24);
-    const [otpCopied, setOtpCopied] = useState(false);
+    const remainingHours = params.returnOtp === '------' ? 24 : getReturnOtpRemainingHours(Date.now(), Date.now());
 
     const {
         deliveryId = 'TRK-XXXX-XXXX',
@@ -47,32 +47,15 @@ export default function CancellationConfirmationScreen() {
         reasonDetails = '',
         senderName = 'Sender',
         pickupAddress = 'Return to pickup location',
+        pickupLat,
+        pickupLng,
     } = params || {};
-
-    // Calculate remaining OTP validity
-    useEffect(() => {
-        const updateRemaining = () => {
-            const hours = getReturnOtpRemainingHours(Date.now(), Date.now());
-            setRemainingHours(hours > 0 ? hours : 24);
-        };
-
-        updateRemaining();
-        const interval = setInterval(updateRemaining, 60000); // Update every minute
-        return () => clearInterval(interval);
-    }, []);
 
     // Prevent accidental back navigation
     useFocusEffect(
         useCallback(() => {
             const onBackPress = () => {
-                Alert.alert(
-                    'Return to Dashboard?',
-                    'Make sure you have noted down the return OTP before leaving.',
-                    [
-                        { text: 'Stay', style: 'cancel' },
-                        { text: 'Leave', onPress: () => navigation.navigate('RiderDashboard') },
-                    ]
-                );
+                navigation.navigate('RiderDashboard');
                 return true;
             };
 
@@ -81,19 +64,14 @@ export default function CancellationConfirmationScreen() {
         }, [navigation])
     );
 
-    const copyOtp = async () => {
-        await Clipboard.setStringAsync(returnOtp);
-        setOtpCopied(true);
-        Alert.alert('Copied!', 'Return OTP copied to clipboard');
-        setTimeout(() => setOtpCopied(false), 3000);
-    };
-
     const handleStartReturn = () => {
         navigation.navigate('ReturnPackage', {
             deliveryId,
             returnOtp,
             pickupAddress,
             senderName,
+            pickupLat,
+            pickupLng,
         });
     };
 
@@ -136,58 +114,7 @@ export default function CancellationConfirmationScreen() {
                     </Text>
                 </Surface>
 
-                {/* Return OTP Card - Most Important */}
-                <Surface style={[styles.otpCard, { backgroundColor: theme.colors.surface }]} elevation={3}>
-                    <View style={styles.otpHeader}>
-                        <MaterialCommunityIcons name="key-variant" size={24} color={theme.colors.primary} />
-                        <Text variant="titleMedium" style={{ marginLeft: 8, fontWeight: 'bold', color: theme.colors.onSurface }}>
-                            Return Authorization OTP
-                        </Text>
-                    </View>
 
-                    <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant, marginBottom: 16 }}>
-                        Give this code to the sender to retrieve the package from the box
-                    </Text>
-
-                    <TouchableOpacity onPress={copyOtp} activeOpacity={0.7}>
-                        <Surface
-                            style={[
-                                styles.otpDisplay,
-                                {
-                                    backgroundColor: theme.dark ? '#1A237E' : '#E8EAF6',
-                                    borderColor: otpCopied ? theme.colors.primary : 'transparent',
-                                    borderWidth: 2,
-                                }
-                            ]}
-                            elevation={0}
-                        >
-                            <Text
-                                variant="displaySmall"
-                                style={{
-                                    letterSpacing: 8,
-                                    fontWeight: 'bold',
-                                    color: theme.colors.primary,
-                                    fontFamily: 'monospace',
-                                }}
-                            >
-                                {returnOtp}
-                            </Text>
-                            <IconButton
-                                icon={otpCopied ? "check" : "content-copy"}
-                                size={20}
-                                iconColor={theme.colors.primary}
-                                style={styles.copyButton}
-                            />
-                        </Surface>
-                    </TouchableOpacity>
-
-                    <View style={[styles.validityBadge, { backgroundColor: theme.dark ? '#1B5E20' : '#E8F5E9' }]}>
-                        <MaterialCommunityIcons name="clock-outline" size={16} color="#4CAF50" />
-                        <Text variant="labelMedium" style={{ marginLeft: 6, color: '#4CAF50' }}>
-                            Valid for {remainingHours} hours
-                        </Text>
-                    </View>
-                </Surface>
 
                 {/* Next Steps Card */}
                 <Surface style={[styles.stepsCard, { backgroundColor: theme.colors.surface }]} elevation={1}>
@@ -230,7 +157,7 @@ export default function CancellationConfirmationScreen() {
                                 Sender Retrieves Package
                             </Text>
                             <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
-                                The sender enters the Return OTP on the box keypad to unlock
+                                The sender receives the Return OTP on their app to unlock
                             </Text>
                         </View>
                     </View>

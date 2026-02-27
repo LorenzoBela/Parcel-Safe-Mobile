@@ -441,6 +441,7 @@ export default function RiderDashboard() {
     const nextDelivery = useMemo(() => activeDelivery ? {
         id: activeDelivery.id,
         boxId: activeDelivery.assigned_box_id || activeDelivery.box_id, // Ensure boxId is passed
+        status: activeDelivery.status, // Add status
         address: activeDelivery.dropoff_address,
         customer: activeDelivery.recipient_name || activeDelivery.customer?.full_name || 'Customer',
         time: activeDelivery.accepted_at ? formatTimeWithHeuristic(activeDelivery.accepted_at) : (activeDelivery.created_at ? formatTimeWithHeuristic(activeDelivery.created_at) : '--:--'),
@@ -512,7 +513,7 @@ export default function RiderDashboard() {
                 .from('deliveries')
                 .select('*, customer:profiles!deliveries_customer_id_fkey(full_name, phone_number)')
                 .eq('rider_id', riderId)
-                .in('status', ['ASSIGNED', 'PENDING', 'IN_TRANSIT', 'ARRIVED'])
+                .in('status', ['ASSIGNED', 'PENDING', 'IN_TRANSIT', 'ARRIVED', 'RETURNING', 'TAMPERED'])
                 .limit(1);
 
             if (!error && data && data.length > 0) {
@@ -582,8 +583,7 @@ export default function RiderDashboard() {
     //    so phone GPS data is written to locations/{boxId} in Firebase.
     //    activateTracking() alone only controls the redundancy service power state;
     //    the actual Firebase writes come from the background location service.
-    //    NOTE: We do NOT call stopBackgroundLocation in the !isPaired branch —
-    //    its async stop() can race with start() and wipe currentBoxId. ──
+    //    NOTE: Race condition is now fixed in stop(), so we safely call it when unpaired. ──
     useEffect(() => {
         if (isOnline && isPaired && pairedBoxId) {
             console.log('[RiderDashboard] Paired + Online - Starting location tracking for:', pairedBoxId);
@@ -598,9 +598,11 @@ export default function RiderDashboard() {
         } else if (!isOnline) {
             console.log('[RiderDashboard] Rider is offline - Deactivating Tracking');
             deactivateTracking();
+            stopBackgroundLocation();
         } else if (!isPaired) {
-            console.log('[RiderDashboard] Not paired - Deactivating redundancy tracking only');
+            console.log('[RiderDashboard] Not paired - Deactivating redundancy tracking and background location');
             deactivateTracking();
+            stopBackgroundLocation();
         }
     }, [isOnline, isPaired, pairedBoxId]);
 
@@ -1022,6 +1024,7 @@ export default function RiderDashboard() {
                 reasonDetails: details,
                 riderId: riderId || getAuth().currentUser?.uid || '', // EC-Fix: Fallback to Firebase Auth
                 riderName: riderName || 'Rider',
+                currentStatus: nextDelivery.status,
             });
 
             if (result.success) {
@@ -1805,29 +1808,54 @@ export default function RiderDashboard() {
                                 </View>
                             </View>
 
-                            {/* Dropoff Section */}
-                            <View style={{ marginBottom: 8 }}>
-                                <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
-                                    <View style={[styles.badge, { backgroundColor: '#FFEBEE', width: 24, height: 24, borderRadius: 12, marginRight: 8 }]}>
-                                        <MaterialCommunityIcons name="map-marker" size={14} color="#F44336" />
+                            {/* Conditional Dropoff/Return Section */}
+                            {['RETURNING', 'TAMPERED'].includes(activeDelivery.status) ? (
+                                <View style={{ marginBottom: 8 }}>
+                                    <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
+                                        <View style={[styles.badge, { backgroundColor: '#FFEBEE', width: 24, height: 24, borderRadius: 12, marginRight: 8 }]}>
+                                            <MaterialCommunityIcons name="keyboard-return" size={14} color="#F44336" />
+                                        </View>
+                                        <Text variant="labelSmall" style={{ color: theme.colors.error, fontWeight: 'bold' }}>RETURN DESTINATION</Text>
                                     </View>
-                                    <Text variant="labelSmall" style={{ color: theme.colors.error, fontWeight: 'bold' }}>DROPOFF</Text>
+                                    <View style={[styles.addressContainer, { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }]}>
+                                        <Text variant="bodyMedium" style={[styles.address, { flex: 1, marginBottom: 0, marginLeft: 0 }]}>
+                                            {nextDelivery.pickupAddress || 'Pickup Address'}
+                                        </Text>
+                                        <IconButton
+                                            icon="navigation"
+                                            mode="contained"
+                                            containerColor={theme.colors.errorContainer}
+                                            iconColor={theme.colors.error}
+                                            size={20}
+                                            onPress={() => handleNavigate('PICKUP')}
+                                            style={{ margin: 0, marginLeft: 8 }}
+                                        />
+                                    </View>
                                 </View>
-                                <View style={[styles.addressContainer, { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }]}>
-                                    <Text variant="bodyMedium" style={[styles.address, { flex: 1, marginBottom: 0, marginLeft: 0 }]}>
-                                        {nextDelivery.address}
-                                    </Text>
-                                    <IconButton
-                                        icon="navigation"
-                                        mode="contained"
-                                        containerColor={theme.colors.errorContainer}
-                                        iconColor={theme.colors.error}
-                                        size={20}
-                                        onPress={() => handleNavigate('DROPOFF')}
-                                        style={{ margin: 0, marginLeft: 8 }}
-                                    />
+                            ) : (
+                                <View style={{ marginBottom: 8 }}>
+                                    <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
+                                        <View style={[styles.badge, { backgroundColor: '#FFEBEE', width: 24, height: 24, borderRadius: 12, marginRight: 8 }]}>
+                                            <MaterialCommunityIcons name="map-marker" size={14} color="#F44336" />
+                                        </View>
+                                        <Text variant="labelSmall" style={{ color: theme.colors.error, fontWeight: 'bold' }}>DROPOFF</Text>
+                                    </View>
+                                    <View style={[styles.addressContainer, { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }]}>
+                                        <Text variant="bodyMedium" style={[styles.address, { flex: 1, marginBottom: 0, marginLeft: 0 }]}>
+                                            {nextDelivery.address}
+                                        </Text>
+                                        <IconButton
+                                            icon="navigation"
+                                            mode="contained"
+                                            containerColor={theme.colors.errorContainer}
+                                            iconColor={theme.colors.error}
+                                            size={20}
+                                            onPress={() => handleNavigate('DROPOFF')}
+                                            style={{ margin: 0, marginLeft: 8 }}
+                                        />
+                                    </View>
                                 </View>
-                            </View>
+                            )}
 
 
                             <View style={styles.jobMeta}>
@@ -1857,7 +1885,13 @@ export default function RiderDashboard() {
                                         senderPhone: (nextDelivery as any).sender_phone || (activeDelivery as any)?.sender_phone,
                                         recipientName: (nextDelivery as any).recipient_name || (activeDelivery as any)?.recipient_name,
                                         deliveryNotes: (nextDelivery as any).delivery_notes || (activeDelivery as any)?.delivery_notes,
-                                        riderName: riderName
+                                        riderName: riderName,
+                                        pickupAddress: nextDelivery.pickupAddress,
+                                        pickupLat: nextDelivery.pickupLat,
+                                        pickupLng: nextDelivery.pickupLng,
+                                        dropoffAddress: nextDelivery.address,
+                                        dropoffLat: nextDelivery.dropoffLat,
+                                        dropoffLng: nextDelivery.dropoffLng,
                                     });
                                 }}
                                 buttonColor={theme.colors.primary}
@@ -1876,14 +1910,16 @@ export default function RiderDashboard() {
                                 View Job Details
                             </Button>
 
-                            <Button
-                                mode="text"
-                                style={{ width: '100%', borderRadius: 8 }}
-                                onPress={() => setShowCancelModal(true)}
-                                textColor={theme.colors.error}
-                            >
-                                Cancel Delivery
-                            </Button>
+                            {!['RETURNING', 'CANCELLED', 'TAMPERED'].includes(activeDelivery.status) && (
+                                <Button
+                                    mode="text"
+                                    style={{ width: '100%', borderRadius: 8 }}
+                                    onPress={() => setShowCancelModal(true)}
+                                    textColor={theme.colors.error}
+                                >
+                                    Cancel Delivery
+                                </Button>
+                            )}
                         </Card.Content>
                     </Card>
                 ) : (

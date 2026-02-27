@@ -52,6 +52,7 @@ export interface CancellationRequest {
   reasonDetails?: string;
   riderId: string;
   riderName?: string;
+  currentStatus?: string;
 }
 
 export interface CancellationResult {
@@ -202,28 +203,29 @@ export async function requestCancellation(
       sent: false,
     });
 
-    // 4. Update delivery status to CANCELLED (Firebase)
-    // IMPORTANT: This ensures the rider is no longer "Active" on this delivery technically, 
-    // although they still need to process the return.
-    // The UI should handle "Return Pending" via checking `cancellations/` or local state if possible,
-    // but for data consistency, the delivery is Cancelled.
+    // Determine if the order was already picked up
+    const isPickedUp = request.currentStatus && ['PICKED_UP', 'IN_TRANSIT', 'ARRIVED'].includes(request.currentStatus.toUpperCase());
+    const newStatus = isPickedUp ? 'RETURNING' : 'CANCELLED';
+
+    // 4. Update delivery status (Firebase)
+    // IMPORTANT: If picked up, it goes to RETURNING. Otherwise, CANCELLED.
     const deliveryRef = ref(database, `deliveries/${request.deliveryId}/status`);
-    await set(deliveryRef, 'CANCELLED');
+    await set(deliveryRef, newStatus);
 
     // 5. Sync to Supabase
     if (supabase) {
       const { error } = await supabase
         .from('deliveries')
         .update({
-          status: 'CANCELLED',
+          status: newStatus,
           updated_at: new Date().toISOString()
         })
         .eq('id', request.deliveryId);
 
       if (error) {
-        console.error('[EC-32] Failed to sync cancellation to Supabase:', error);
+        console.error(`[EC-32] Failed to sync ${newStatus} to Supabase:`, error);
       } else {
-        console.log('[EC-32] Synced cancellation to Supabase:', request.deliveryId);
+        console.log(`[EC-32] Synced ${newStatus} to Supabase:`, request.deliveryId);
       }
     }
 
@@ -282,6 +284,27 @@ export async function markPackageRetrieved(
     const boxRef = ref(database, `boxes/${boxId}/delivery_context`);
     await set(boxRef, null);
 
+    // Update status to RETURNED in Firebase
+    const deliveryRef = ref(database, `deliveries/${deliveryId}/status`);
+    await set(deliveryRef, 'RETURNED');
+
+    // Update status to RETURNED in Supabase
+    if (supabase) {
+      const { error } = await supabase
+        .from('deliveries')
+        .update({
+          status: 'RETURNED',
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', deliveryId);
+
+      if (error) {
+        console.error('[EC-32] Failed to sync RETURNED to Supabase:', error);
+      } else {
+        console.log('[EC-32] Synced RETURNED to Supabase:', deliveryId);
+      }
+    }
+
     return true;
   } catch (error) {
     console.error('[EC-32] Mark retrieved failed:', error);
@@ -301,6 +324,8 @@ export enum DeliveryStatus {
   ARRIVED = 'ARRIVED',       // Rider at destination
   DELIVERED = 'DELIVERED',   // Handover complete
   CANCELLED = 'CANCELLED',   // Already cancelled
+  RETURNING = 'RETURNING',   // returning to sender
+  RETURNED = 'RETURNED',     // returned to sender
 }
 
 /**

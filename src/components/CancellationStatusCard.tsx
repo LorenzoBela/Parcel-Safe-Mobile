@@ -142,17 +142,11 @@ export default function CancellationStatusCard({
                     ) : (
                         <View style={styles.riderOtpInfo}>
                             <Text variant="titleSmall" style={{ fontWeight: 'bold', marginBottom: 8, color: theme.colors.onSurface }}>
-                                Return OTP for Sender
+                                Package Return Instructions
                             </Text>
                             <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant, marginBottom: 12 }}>
-                                Give this code to the sender when you arrive at the pickup location.
+                                Please return the package to the pickup location. The sender will receive a Return OTP to unlock the box once you arrive.
                             </Text>
-
-                            <ReturnOtpDisplay
-                                otp={cancellation.returnOtp}
-                                issuedAt={cancellation.returnOtpIssuedAt}
-                                compact
-                            />
 
                             {onNavigateToReturn && (
                                 <Button
