@@ -181,7 +181,7 @@ $robocopyArgs = @(
     $SOURCE_DIR,
     $DEST_DIR,
     "/MIR", "/R:2", "/W:3", "/MT:8",
-    "/XD", "node_modules", "android", "android\build", "android\app\build", "android\app\.cxx", "android\.gradle", ".expo", ".git",
+    "/XD", "node_modules", "android", "android\build", "android\app\build", "android\app\.cxx", "android\.gradle", ".expo", ".git", "APK",
     "/XF", "*.log", "*.lock", ".DS_Store",
     "/NFL", "/NDL", "/NP", "/NS", "/NC", "/BYTES"
 )
@@ -697,14 +697,38 @@ if ($overallExit -eq 0) {
     $foundApks = @()
     foreach ($pattern in $apkSearchPaths) {
         $apks = Get-ChildItem -Path $pattern -ErrorAction SilentlyContinue
-        if ($apks) { $foundApks += $apks }
+        if ($apks) {
+            foreach ($apk in $apks) {
+                if ($apk.Name -eq "production.apk") {
+                    $foundApks += $apk
+                    continue
+                }
+                
+                $newName = "production.apk"
+                try {
+                    $renamedApk = Rename-Item -Path $apk.FullName -NewName $newName -PassThru -Force
+                    $foundApks += $renamedApk
+                } catch {
+                    Write-Host "[WARN] Failed to rename $($apk.Name) to $newName" -ForegroundColor DarkYellow
+                    $foundApks += $apk
+                }
+            }
+        }
     }
+
     if ($foundApks.Count -gt 0) {
-        Write-Host "`nGenerated Release Artifacts:" -ForegroundColor Green
+        $CENTRAL_APK_DIR = "C:\Dev\TopBox\mobile\APK"
+        if (-not (Test-Path $CENTRAL_APK_DIR)) {
+            New-Item -ItemType Directory -Path $CENTRAL_APK_DIR -Force | Out-Null
+        }
+        Write-Host "`nGenerated Release Artifacts (Saved to $CENTRAL_APK_DIR):" -ForegroundColor Green
         foreach ($apk in $foundApks) {
+            $centralPath = Join-Path $CENTRAL_APK_DIR $apk.Name
+            Copy-Item -Path $apk.FullName -Destination $centralPath -Force -ErrorAction SilentlyContinue
+            
             $sizeInMB = [math]::Round($apk.Length / 1MB, 2)
             Write-Host "  - $($apk.Name) ($sizeInMB MB)" -ForegroundColor Gray
-            Write-Host "    Path: $($apk.FullName)" -ForegroundColor DarkGray
+            Write-Host "    Original: $($apk.FullName)" -ForegroundColor DarkGray
         }
     }
 

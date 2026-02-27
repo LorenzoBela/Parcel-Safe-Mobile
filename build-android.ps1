@@ -145,6 +145,24 @@ function Invoke-SmartCleanup {
         }
     }
     
+    # Restore APKs from the backup dir
+    $BACKUP_DIR = "C:\Users\Lorenzo Bela\Downloads\Thesis 24-25 Smart Top Box\mobile\apk_backup"
+    if (Test-Path $BACKUP_DIR) {
+        Write-Host "  Restoring previous APK outputs from backup..." -ForegroundColor Gray
+        $restoredFiles = Get-ChildItem -Path $BACKUP_DIR -Filter "*.apk"
+        foreach ($file in $restoredFiles) {
+            if ($file.Name.Contains("release") -or $file.Name -eq "production.apk") {
+                $targetFileDir = Join-Path $ProjectPath "android\app\build\outputs\apk\release\"
+            } else {
+                $targetFileDir = Join-Path $ProjectPath "android\app\build\outputs\apk\debug\"
+            }
+            if (-not (Test-Path $targetFileDir)) {
+                New-Item -ItemType Directory -Path $targetFileDir -Force | Out-Null
+            }
+            Copy-Item -Path $file.FullName -Destination $targetFileDir -Force -ErrorAction SilentlyContinue
+        }
+    }
+
     Write-Host "[OK] Cleaned $cleaned build artifact folders" -ForegroundColor Green
 }
 #endregion
@@ -165,6 +183,22 @@ if (-not (Test-Path $DEST_DIR)) {
     New-Item -ItemType Directory -Path $DEST_DIR -Force | Out-Null
 }
 
+$BACKUP_DIR = Join-Path $SOURCE_DIR "apk_backup"
+if (-not (Test-Path $BACKUP_DIR)) {
+    New-Item -ItemType Directory -Path $BACKUP_DIR -Force | Out-Null
+}
+Write-Host "  Backing up previously built APKs to $BACKUP_DIR..." -ForegroundColor Gray
+$apkOutputs = @(
+    "$DEST_DIR\android\app\build\outputs\apk\debug\*.apk",
+    "$DEST_DIR\android\app\build\outputs\apk\release\*.apk"
+)
+
+foreach ($pattern in $apkOutputs) {
+    if (Test-Path $pattern) {
+        Copy-Item -Path $pattern -Destination $BACKUP_DIR -Force -ErrorAction SilentlyContinue 
+    }
+}
+
 # Use robocopy to mirror directories (excludes node_modules and build artifacts for efficiency)
 $robocopyArgs = @(
     $SOURCE_DIR,
@@ -176,6 +210,7 @@ $robocopyArgs = @(
     "/XD",               # Exclude directories
     "node_modules",
     "android",
+    "APK",
     "android\build",
     "android\app\build",
     "android\app\.cxx",
@@ -1439,6 +1474,62 @@ Write-AgentLog -HypothesisId "H3" -Message "pre-build context" -Data @{
 }
 #endregion
 
+# Phase 1: Build the APK via Gradle (exits cleanly after building)
+Write-Host "`nPhase 1: Building debug APK via Gradle..." -ForegroundColor Yellow
+Set-Location $ANDROID_DIR
+.\gradlew.bat assembleDebug --stacktrace
+$gradleExitCode = $LASTEXITCODE
+Set-Location $PROJECT_ROOT
+
+if ($gradleExitCode -eq 0) {
+    Write-Host "[OK] Gradle assembleDebug succeeded!" -ForegroundColor Green
+
+    # Save APK to central folder BEFORE launching expo (which blocks on metro)
+    $apkSearchPaths = @(
+        "$ANDROID_DIR\app\build\outputs\apk\debug\*.apk"
+    )
+    $foundApks = @()
+    foreach ($pattern in $apkSearchPaths) {
+        $apks = Get-ChildItem -Path $pattern -ErrorAction SilentlyContinue
+        if ($apks) {
+            foreach ($apk in $apks) {
+                if ($apk.Name -eq "development.apk") {
+                    $foundApks += $apk
+                    continue
+                }
+                $newName = "development.apk"
+                try {
+                    $renamedApk = Rename-Item -Path $apk.FullName -NewName $newName -PassThru -Force
+                    $foundApks += $renamedApk
+                } catch {
+                    Write-Host "[WARN] Failed to rename $($apk.Name) to $newName" -ForegroundColor DarkYellow
+                    $foundApks += $apk
+                }
+            }
+        }
+    }
+
+    if ($foundApks.Count -gt 0) {
+        $CENTRAL_APK_DIR = "C:\Dev\TopBox\mobile\APK"
+        if (-not (Test-Path $CENTRAL_APK_DIR)) {
+            New-Item -ItemType Directory -Path $CENTRAL_APK_DIR -Force | Out-Null
+        }
+        Write-Host "`nGenerated APKs (Saved to $CENTRAL_APK_DIR):" -ForegroundColor Green
+        foreach ($apk in $foundApks) {
+            $centralPath = Join-Path $CENTRAL_APK_DIR $apk.Name
+            Copy-Item -Path $apk.FullName -Destination $centralPath -Force -ErrorAction SilentlyContinue
+            $sizeInMB = [math]::Round($apk.Length / 1MB, 2)
+            Write-Host "  - $($apk.Name) ($sizeInMB MB)" -ForegroundColor Gray
+            Write-Host "    Saved to: $centralPath" -ForegroundColor DarkGray
+        }
+    }
+} else {
+    Write-Host "[ERROR] Gradle assembleDebug failed with exit code $gradleExitCode" -ForegroundColor Red
+    exit $gradleExitCode
+}
+
+# Phase 2: Install on device and launch dev client (this blocks on metro bundler)
+Write-Host "`nPhase 2: Installing and launching on device..." -ForegroundColor Yellow
 npx expo run:android
 $expoExitCode = $LASTEXITCODE
 #region agent log
@@ -1530,29 +1621,6 @@ if ($expoExitCode -eq 0) {
         Write-Host "[WARN] Failed to save last known good build snapshot" -ForegroundColor DarkYellow
     }
     
-    # Check for APK output
-    $apkSearchPaths = @(
-        "$ANDROID_DIR\app\build\outputs\apk\debug\*.apk",
-        "$ANDROID_DIR\app\build\outputs\apk\release\*.apk"
-    )
-    
-    $foundApks = @()
-    foreach ($pattern in $apkSearchPaths) {
-        $apks = Get-ChildItem -Path $pattern -ErrorAction SilentlyContinue
-        if ($apks) {
-            $foundApks += $apks
-        }
-    }
-    
-    if ($foundApks.Count -gt 0) {
-        Write-Host "`nGenerated APKs:" -ForegroundColor Green
-        foreach ($apk in $foundApks) {
-            $sizeInMB = [math]::Round($apk.Length / 1MB, 2)
-            Write-Host "  - $($apk.Name) ($sizeInMB MB)" -ForegroundColor Gray
-            Write-Host "    Path: $($apk.FullName)" -ForegroundColor DarkGray
-        }
-    }
-    
     # Verify critical configuration is still in place
     Write-Host "`nVerifying build configuration..." -ForegroundColor Yellow
     $gradleProps = Join-Path $ANDROID_DIR "gradle.properties"
@@ -1565,12 +1633,5 @@ if ($expoExitCode -eq 0) {
         }
     }
     
-} else {
-    Write-Host "`n[ERROR] Build failed with exit code $expoExitCode" -ForegroundColor Red
-    Write-Host "`nTroubleshooting tips:" -ForegroundColor Yellow
-    Write-Host "  1. Check if all NDK/SDK components are installed" -ForegroundColor Gray
-    Write-Host "  2. Verify JDK version is compatible (11, 17, or 21)" -ForegroundColor Gray
-    Write-Host "  3. Try running: .\gradlew clean in android\ folder" -ForegroundColor Gray
-    Write-Host "  4. Check build logs above for specific error messages" -ForegroundColor Gray
-    exit $expoExitCode
 }
+
