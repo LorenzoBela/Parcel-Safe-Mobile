@@ -25,7 +25,7 @@ import { backgroundLocationService } from './backgroundLocationService';
 
 const CONFIG = {
     /** Time before box heartbeat is considered stale (ms) */
-    HEARTBEAT_STALE_THRESHOLD: 15000,
+    HEARTBEAT_STALE_THRESHOLD: 30000,
 
     /** Phone GPS update interval when in fallback mode (ms) */
     PHONE_GPS_INTERVAL: 8000,

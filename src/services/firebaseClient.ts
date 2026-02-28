@@ -5,17 +5,24 @@
  * and box connectivity monitoring.
  */
 
-import { initializeApp, getApps, FirebaseApp } from '@firebase/app';
 import {
+    FirebaseApp,
+    initializeApp,
+    getApps
+} from 'firebase/app';
+import {
+    Database,
     getDatabase,
     ref,
     onValue,
-    off,
     set,
+    get,
+    update,
     serverTimestamp,
-    Database,
+    off,
     DatabaseReference
-} from '@firebase/database';
+} from 'firebase/database';
+import { consolidateLocation } from './locationUtils';
 import { initializeAuth, getAuth, Auth } from '@firebase/auth';
 // @ts-ignore - This export exists at runtime for React Native
 import { getReactNativePersistence } from 'firebase/auth';
@@ -152,13 +159,21 @@ export type HardwareByBoxId = Record<string, HardwareDiagnostics>;
 
 // ==================== Location Functions ====================
 
+// Global cache for latest locations per box to enable smooth consolidation
+const latestLocationsCache: Record<string, { box: LocationData | null, phone: LocationData | null }> = {};
+
 /**
  * Subscribe to live location updates for a specific box
+ * Uses consolidateLocation internally to smooth out overlapping phone and box coordinates.
  */
 export function subscribeToLocation(
     boxId: string,
     callback: (location: LocationData | null) => void
 ): () => void {
+    if (!latestLocationsCache[boxId]) {
+        latestLocationsCache[boxId] = { box: null, phone: null };
+    }
+
     const db = getFirebaseDatabase();
     const locationRef = ref(db, `locations/${boxId}`);
 
@@ -172,11 +187,23 @@ export function subscribeToLocation(
         // EC-Fix: Normalize lat/lng (legacy/mobile) to latitude/longitude
         const data: LocationData = {
             ...rawData,
-            latitude: rawData.latitude ?? rawData.lat,
-            longitude: rawData.longitude ?? rawData.lng,
+            latitude: Number(rawData.latitude ?? rawData.lat),
+            longitude: Number(rawData.longitude ?? rawData.lng),
+            source: rawData.source || 'box',
         };
 
-        callback(data);
+        if (data.source === 'box') {
+            latestLocationsCache[boxId].box = data;
+        } else {
+            latestLocationsCache[boxId].phone = data;
+        }
+
+        const consolidated = consolidateLocation(
+            latestLocationsCache[boxId].box,
+            latestLocationsCache[boxId].phone
+        );
+
+        callback(consolidated || data);
     });
 
     return () => off(locationRef);
