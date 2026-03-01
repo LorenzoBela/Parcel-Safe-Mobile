@@ -23,17 +23,22 @@ import {
     CONFIG as WaitConfig,
 } from '../../services/customerNotHomeService';
 
+// Geofence utilities (extracted from removed addressUpdateService)
 import {
     checkGeofence,
     createDefaultGeofence,
-    expandGeofence,
-    createAddressUpdateRequest,
-    validateAddressUpdateRequest,
-    submitAddressUpdate,
     calculateDistanceMeters,
     GeofenceConfig,
-    CONFIG as GeoConfig,
-} from '../../services/addressUpdateService';
+} from '../../utils/geoUtils';
+
+// Grace Period & No-Show
+import {
+    isGracePeriodExpired,
+    formatGracePeriodRemaining,
+    markNoShow,
+    writeGracePeriodToFirebase,
+    GRACE_PERIOD_MS,
+} from '../../services/pickupLockService';
 
 import {
     startBackgroundLocation,
@@ -144,10 +149,11 @@ export default function ArrivalScreen() {
     const [arrivalPhotoUri, setArrivalPhotoUri] = useState<string | null>(null);
     const [isLoading, setIsLoading] = useState(false);
 
-    // EC-12: Address Update State
-    const [showAddressModal, setShowAddressModal] = useState(false);
-    const [newAddress, setNewAddress] = useState('');
-    const [addressReason, setAddressReason] = useState('');
+    // Grace Period & No-Show State
+    const [arrivedAt, setArrivedAt] = useState<number | null>(null);
+    const [gracePeriodDisplay, setGracePeriodDisplay] = useState<string>('10:00');
+    const [gracePeriodExpired, setGracePeriodExpired] = useState(false);
+    const [noShowLoading, setNoShowLoading] = useState(false);
 
     // EC-04: OTP Lockout State
     const [lockoutState, setLockoutState] = useState<LockoutState | null>(null);
@@ -265,6 +271,14 @@ export default function ArrivalScreen() {
                 return;
             }
             setDeliveryStatus(delivery.status);
+
+            // Track arrived_at timestamp for grace period
+            if (delivery.status === 'ARRIVED' && delivery.arrived_at && !arrivedAt) {
+                const ts = typeof delivery.arrived_at === 'number'
+                    ? delivery.arrived_at
+                    : new Date(delivery.arrived_at).getTime();
+                setArrivedAt(ts);
+            }
         });
 
         // Fetch OTP from Supabase (source of truth for OTP)
@@ -292,6 +306,61 @@ export default function ArrivalScreen() {
 
     const isReturning = ['RETURNING', 'TAMPERED'].includes(deliveryStatus);
     const isPickupConfirmed = ['IN_TRANSIT', 'ARRIVED', 'COMPLETED', 'RETURNING', 'TAMPERED'].includes(deliveryStatus);
+
+    // ━━━ Grace Period Timer Effect ━━━
+    useEffect(() => {
+        if (deliveryStatus !== 'ARRIVED' || !arrivedAt) return;
+
+        // Write grace period to Firebase once for admin visibility
+        import('../../services/firebaseClient').then(({ getFirebaseDatabase }) => {
+            writeGracePeriodToFirebase(getFirebaseDatabase(), params.deliveryId, arrivedAt).catch(() => { });
+        });
+
+        const interval = setInterval(() => {
+            const formatted = formatGracePeriodRemaining(arrivedAt);
+            setGracePeriodDisplay(formatted);
+            setGracePeriodExpired(isGracePeriodExpired(arrivedAt));
+        }, 1000);
+
+        return () => clearInterval(interval);
+    }, [deliveryStatus, arrivedAt, params.deliveryId]);
+
+    // ━━━ No-Show Handler ━━━
+    const handleMarkNoShow = async () => {
+        if (!arrivedAt || !riderId) return;
+
+        if (!isGracePeriodExpired(arrivedAt)) {
+            Alert.alert('Grace Period Active', 'You must wait for the full grace period before marking a no-show.');
+            return;
+        }
+
+        Alert.alert(
+            'Confirm No-Show',
+            'This will cancel the delivery and apply a penalty to the customer. This action cannot be undone.',
+            [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                    text: 'Confirm No-Show',
+                    style: 'destructive',
+                    onPress: async () => {
+                        setNoShowLoading(true);
+                        const result = await markNoShow(params.deliveryId, riderId);
+                        setNoShowLoading(false);
+
+                        if (result.success) {
+                            Alert.alert(
+                                '✅ No-Show Confirmed',
+                                'The delivery has been cancelled. You are now available for new orders.',
+                                [{ text: 'OK', onPress: () => navigation.goBack() }]
+                            );
+                        } else {
+                            Alert.alert('Error', result.error || 'Failed to mark no-show. Please try again.');
+                        }
+                    },
+                },
+            ]
+        );
+    };
 
     // Dynamically switch geofence target when transitioning from pickup to dropoff
     useEffect(() => {
@@ -599,43 +668,7 @@ export default function ArrivalScreen() {
         bleOtpService.stopScan();
     };
 
-    // EC-12: Submit address update
-    const handleAddressUpdate = async () => {
-        const request = createAddressUpdateRequest(
-            params.deliveryId,
-            'RIDER',
-            {
-                address: params.targetAddress,
-                latitude: params.targetLat,
-                longitude: params.targetLng,
-            },
-            {
-                address: newAddress,
-                latitude: currentPosition.lat,
-                longitude: currentPosition.lng,
-            },
-            addressReason
-        );
 
-        const validation = validateAddressUpdateRequest(request);
-        if (!validation.isValid) {
-            Alert.alert('Invalid Request', validation.errors.join('\n'));
-            return;
-        }
-
-        setIsLoading(true);
-        const success = await submitAddressUpdate(request);
-        setIsLoading(false);
-
-        if (success) {
-            Alert.alert('Success', 'Address update request submitted. Awaiting approval.');
-            setShowAddressModal(false);
-            setNewAddress('');
-            setAddressReason('');
-        } else {
-            Alert.alert('Error', 'Failed to submit address update.');
-        }
-    };
 
     // EC-32: Handle Cancellation Submit
     const handleCancellationSubmit = async (reason: CancellationReason, details: string) => {
@@ -920,6 +953,58 @@ export default function ArrivalScreen() {
                 </View>
             )}
 
+            {/* Grace Period Countdown Card */}
+            {deliveryStatus === 'ARRIVED' && arrivedAt && (
+                <Card style={[
+                    styles.gracePeriodCard,
+                    gracePeriodExpired ? styles.gracePeriodExpired : styles.gracePeriodActive
+                ]}>
+                    <Card.Content>
+                        <View style={styles.gracePeriodHeader}>
+                            <Text style={styles.gracePeriodIcon}>
+                                {gracePeriodExpired ? '⏰' : '⏳'}
+                            </Text>
+                            <View style={{ flex: 1 }}>
+                                <Text style={styles.gracePeriodTitle}>
+                                    {gracePeriodExpired ? 'Grace Period Expired' : 'Grace Period Active'}
+                                </Text>
+                                <Text style={styles.gracePeriodSubtext}>
+                                    {gracePeriodExpired
+                                        ? 'Customer did not appear. You may mark as No-Show.'
+                                        : 'Waiting for customer to arrive at location...'}
+                                </Text>
+                            </View>
+                            <View style={styles.gracePeriodTimerBox}>
+                                <Text style={[
+                                    styles.gracePeriodTimer,
+                                    gracePeriodExpired && { color: '#dc2626' }
+                                ]}>
+                                    {gracePeriodDisplay}
+                                </Text>
+                                <Text style={styles.gracePeriodTimerLabel}>
+                                    {gracePeriodExpired ? 'EXPIRED' : 'remaining'}
+                                </Text>
+                            </View>
+                        </View>
+
+                        {gracePeriodExpired && (
+                            <Button
+                                mode="contained"
+                                onPress={handleMarkNoShow}
+                                loading={noShowLoading}
+                                disabled={noShowLoading}
+                                buttonColor="#dc2626"
+                                textColor="white"
+                                style={{ marginTop: 12, borderRadius: 8 }}
+                                icon="account-cancel"
+                            >
+                                Mark as Customer No-Show
+                            </Button>
+                        )}
+                    </Card.Content>
+                </Card>
+            )}
+
             {(waitTimerState.status === 'WAITING' || waitTimerState.status === 'EXPIRED') ? (
                 renderWaitingUI()
             ) : (
@@ -938,7 +1023,7 @@ export default function ArrivalScreen() {
                         isBoxInside={isBoxInside}
                         isBoxOffline={isBoxOffline}
                         onDeliveryCompleted={() => navigation.goBack()}
-                        onShowAddressModal={() => setShowAddressModal(true)}
+
                         onNavigate={handleNavigate}
                         onShowBleModal={handleBleTransfer}
                         onShowCancelModal={() => setShowCancelModal(true)}
@@ -964,7 +1049,7 @@ export default function ArrivalScreen() {
                             // The Firebase listener will pick up the 'IN_TRANSIT' status change
                             // and automatically switch to DropoffVerification. No navigation needed.
                         }}
-                        onShowAddressModal={() => setShowAddressModal(true)}
+
                         onNavigate={handleNavigate}
                     />
                 )
@@ -1019,52 +1104,7 @@ export default function ArrivalScreen() {
                 </Modal>
             </Portal>
 
-            {/* EC-12: Address Update Modal */}
-            <Portal>
-                <Modal
-                    visible={showAddressModal}
-                    onDismiss={() => setShowAddressModal(false)}
-                    contentContainerStyle={styles.modal}
-                >
-                    <Text variant="titleLarge" style={styles.modalTitle}>
-                        Update Delivery Address
-                    </Text>
-                    <Text style={styles.modalSubtext}>
-                        Current: {params.targetAddress}
-                    </Text>
 
-                    <TextInput
-                        label="Correct Address"
-                        value={newAddress}
-                        onChangeText={setNewAddress}
-                        mode="outlined"
-                        style={styles.input}
-                        multiline
-                    />
-
-                    <TextInput
-                        label="Reason for Update"
-                        value={addressReason}
-                        onChangeText={setAddressReason}
-                        mode="outlined"
-                        style={styles.input}
-                        placeholder="e.g., Wrong building number"
-                    />
-
-                    <View style={styles.modalActions}>
-                        <Button onPress={() => setShowAddressModal(false)}>
-                            Cancel
-                        </Button>
-                        <Button
-                            mode="contained"
-                            onPress={handleAddressUpdate}
-                            loading={isLoading}
-                        >
-                            Submit Update
-                        </Button>
-                    </View>
-                </Modal>
-            </Portal>
 
             {/* EC-32: Cancellation Modal */}
             <CancellationModal
@@ -1398,4 +1438,61 @@ const styles = StyleSheet.create({
     tamperBanner: { backgroundColor: '#DC2626', marginBottom: 12, borderRadius: 12 },
     tamperTitle: { color: 'white', fontWeight: 'bold', fontSize: 14 },
     tamperText: { color: 'rgba(255,255,255,0.9)', fontSize: 12 },
+
+    // Grace Period Card
+    gracePeriodCard: {
+        marginBottom: 16,
+        borderRadius: 12,
+        borderWidth: 2,
+        elevation: 2,
+    },
+    gracePeriodActive: {
+        borderColor: '#3b82f6',
+        backgroundColor: '#EFF6FF',
+    },
+    gracePeriodExpired: {
+        borderColor: '#dc2626',
+        backgroundColor: '#FEF2F2',
+    },
+    gracePeriodHeader: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 12,
+    },
+    gracePeriodIcon: {
+        fontSize: 32,
+    },
+    gracePeriodTitle: {
+        fontSize: 14,
+        fontWeight: 'bold',
+        color: '#1a1a1a',
+        marginBottom: 2,
+    },
+    gracePeriodSubtext: {
+        fontSize: 12,
+        color: '#6b7280',
+    },
+    gracePeriodTimerBox: {
+        alignItems: 'center',
+        backgroundColor: 'white',
+        paddingHorizontal: 12,
+        paddingVertical: 6,
+        borderRadius: 8,
+        borderWidth: 1,
+        borderColor: '#e5e7eb',
+        minWidth: 70,
+    },
+    gracePeriodTimer: {
+        fontSize: 20,
+        fontWeight: 'bold',
+        fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
+        color: '#1d4ed8',
+    },
+    gracePeriodTimerLabel: {
+        fontSize: 9,
+        fontWeight: '700',
+        color: '#9ca3af',
+        letterSpacing: 0.5,
+        textTransform: 'uppercase',
+    },
 });

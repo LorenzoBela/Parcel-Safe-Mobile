@@ -23,7 +23,7 @@ interface DropoffVerificationProps {
     isBoxOffline: boolean;
 
     onDeliveryCompleted: () => void;
-    onShowAddressModal: () => void;
+
     onNavigate: () => void;
 
     // Props for modals
@@ -47,7 +47,7 @@ export default function DropoffVerification({
     isBoxInside,
     isBoxOffline,
     onDeliveryCompleted,
-    onShowAddressModal,
+
     onNavigate,
     onShowBleModal,
     onShowCancelModal,
@@ -278,7 +278,6 @@ export default function DropoffVerification({
                             ) : null}
                         </View>
                         <View style={styles.navActions}>
-                            <IconButton icon="map-marker-question" size={20} onPress={onShowAddressModal} />
                             <IconButton icon="navigation" mode="contained" containerColor="#E3F2FD" iconColor="#1976D2" size={24} onPress={onNavigate} />
                         </View>
                     </View>

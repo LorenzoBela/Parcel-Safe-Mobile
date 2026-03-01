@@ -23,7 +23,7 @@ interface PickupVerificationProps {
     isBoxOffline: boolean;
 
     onPickupConfirmed: () => void;
-    onShowAddressModal: () => void;
+
     onNavigate: () => void;
 }
 
@@ -42,7 +42,7 @@ export default function PickupVerification({
     isBoxInside,
     isBoxOffline,
     onPickupConfirmed,
-    onShowAddressModal,
+
     onNavigate,
 }: PickupVerificationProps) {
     const [isLoading, setIsLoading] = useState(false);
@@ -179,7 +179,6 @@ export default function PickupVerification({
                             ) : null}
                         </View>
                         <View style={styles.navActions}>
-                            <IconButton icon="map-marker-question" size={20} onPress={onShowAddressModal} />
                             <IconButton icon="navigation" mode="contained" containerColor="#E3F2FD" iconColor="#1976D2" size={24} onPress={onNavigate} />
                         </View>
                     </View>

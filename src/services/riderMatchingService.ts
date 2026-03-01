@@ -97,6 +97,8 @@ export interface DeliveryRecord {
     recipient_name?: string;
     sender_name?: string;
     sender_phone?: string;
+    arrived_at?: number | string;
+    cancellation_reason?: string;
 }
 
 export interface RiderLiveLocation {

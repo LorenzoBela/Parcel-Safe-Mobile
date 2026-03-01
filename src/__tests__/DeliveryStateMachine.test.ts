@@ -25,7 +25,7 @@ const VALID_TRANSITIONS: Record<DeliveryStatus, DeliveryStatus[]> = {
     PENDING: ['ASSIGNED', 'CANCELLED', 'EXPIRED'],
     ASSIGNED: ['IN_TRANSIT', 'CANCELLED'],
     IN_TRANSIT: ['ARRIVED', 'CANCELLED', 'TAMPERED'],
-    ARRIVED: ['COMPLETED', 'RETURNED', 'ATTEMPTED'],
+    ARRIVED: ['COMPLETED', 'RETURNED', 'ATTEMPTED', 'CANCELLED'],
     ATTEMPTED: ['ARRIVED', 'CANCELLED'], // Admin reset or customer gives up
     COMPLETED: [], // Terminal state
     CANCELLED: [], // Terminal state

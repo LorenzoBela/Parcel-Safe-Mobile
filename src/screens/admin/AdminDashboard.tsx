@@ -330,6 +330,22 @@ export default function AdminDashboard() {
                     >
                         Pair QR
                     </Button>
+                    <Button
+                        mode="contained"
+                        icon="bell-ring"
+                        style={[styles.quickLinkBtn, { backgroundColor: '#9C27B0' }]}
+                        onPress={async () => {
+                            try {
+                                const baseUrl = process.env.EXPO_PUBLIC_TRACKING_WEB_BASE_URL || process.env.EXPO_PUBLIC_API_URL || 'https://parcel-safe.vercel.app';
+                                await fetch(`${baseUrl}/api/notifications/promo`, { method: 'POST' });
+                                Alert.alert('Sent', 'Test push notification triggered! Check your notifications/lockscreen. (App must be backgrounded for banner)');
+                            } catch (e: any) {
+                                Alert.alert('Error', `Failed: ${e.message}`);
+                            }
+                        }}
+                    >
+                        Push Test
+                    </Button>
                 </ScrollView>
 
                 {/* EC-03: Override Delivery Modal */}

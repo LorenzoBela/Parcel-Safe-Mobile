@@ -297,14 +297,10 @@ jest.mock('../../../services/customerNotHomeService', () => ({
     CONFIG: {},
 }));
 
-jest.mock('../../../services/addressUpdateService', () => ({
+jest.mock('../../../utils/geoUtils', () => ({
     checkGeofence: jest.fn(() => ({ isInside: true, distanceMeters: 10 })),
     createDefaultGeofence: jest.fn(() => ({ radiusMeters: 50 })),
-    expandGeofence: jest.fn((geo: any) => geo),
-    createAddressUpdateRequest: jest.fn(() => ({})),
-    validateAddressUpdateRequest: jest.fn(() => ({ valid: true })),
-    submitAddressUpdate: jest.fn(() => Promise.resolve()),
-    CONFIG: {},
+    calculateDistanceMeters: jest.fn(() => 10),
 }));
 
 jest.mock('expo-clipboard', () => ({
