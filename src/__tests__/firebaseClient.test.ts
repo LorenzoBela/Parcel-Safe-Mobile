@@ -162,7 +162,7 @@ describe('firebaseClient', () => {
         test('writes phone GPS location to Firebase', async () => {
             await writePhoneLocation('BOX_001', 14.6042, 121.0246, 5.5, 180);
 
-            expect(ref).toHaveBeenCalledWith(expect.anything(), 'locations/BOX_001');
+            expect(ref).toHaveBeenCalledWith(expect.anything(), 'locations/BOX_001/phone');
             expect(set).toHaveBeenCalled();
 
             expect(lastSetCall).not.toBeNull();

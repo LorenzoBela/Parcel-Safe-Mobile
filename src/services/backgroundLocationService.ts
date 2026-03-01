@@ -304,6 +304,7 @@ function isStationaryDrift(location: Location.LocationObject): boolean {
 
 // ---- Feature 7: Signal Loss Recovery state ----
 let lastValidFixTime = Date.now();
+let lastBackgroundTaskUpdateTimestamp: number | null = null;
 
 // Define the background task (expo-task-manager)
 TaskManager.defineTask(CONFIG.TASK_NAME, async ({ data, error }) => {
@@ -322,8 +323,10 @@ TaskManager.defineTask(CONFIG.TASK_NAME, async ({ data, error }) => {
     if (!currentBoxId) {
         currentBoxId = await restoreBoxId();
         if (!currentBoxId) {
+            console.warn('[EC-15] Task fired but no boxId in memory or AsyncStorage — dropping update');
             return; // No active delivery — nothing to write
         }
+        console.log('[EC-15] boxId restored from AsyncStorage:', currentBoxId);
     }
 
     const { locations } = data as { locations: Location.LocationObject[] };
@@ -333,14 +336,14 @@ TaskManager.defineTask(CONFIG.TASK_NAME, async ({ data, error }) => {
 
         // ---- Feature 3: Accuracy Filter ----
         const accuracy = location.coords.accuracy ?? 999;
-        if (accuracy > CONFIG.ACCURACY_REJECT_THRESHOLD_M) {
+        console.log(`[EC-15] Task fired | box=${currentBoxId} | acc=${accuracy.toFixed(0)}m | lat=${location.coords.latitude.toFixed(5)} lng=${location.coords.longitude.toFixed(5)}`);
+        const isLowAccuracy = accuracy > CONFIG.ACCURACY_REJECT_THRESHOLD_M;
+        if (isLowAccuracy) {
             accuracyRejectCount++;
-            if (__DEV__ || accuracyRejectCount % 5 === 0) {
-                console.log(`[EC-15] GPS rejected: accuracy ${accuracy.toFixed(0)}m > ${CONFIG.ACCURACY_REJECT_THRESHOLD_M}m (${accuracyRejectCount} total)`);
-            }
-            return; // Don't write noisy data to Firebase
+            console.warn(`[EC-15] GPS LOW ACCURACY: ${accuracy.toFixed(0)}m > ${CONFIG.ACCURACY_REJECT_THRESHOLD_M}m (${accuracyRejectCount} total) — writing anyway to avoid stale tracking`);
+        } else {
+            accuracyRejectCount = 0; // Reset on good reading
         }
-        accuracyRejectCount = 0; // Reset on good reading
 
         // Feature 4 (Stationary Drift Prevention) — DISABLED.
         // All GPS readings are written to Firebase in real-time,
@@ -360,7 +363,7 @@ TaskManager.defineTask(CONFIG.TASK_NAME, async ({ data, error }) => {
             cumulativeDataBytes += 500;
 
             // Write current location
-            updates[`/locations/${currentBoxId}`] = {
+            updates[`/locations/${currentBoxId}/phone`] = {
                 latitude: location.coords.latitude,
                 longitude: location.coords.longitude,
                 accuracy: location.coords.accuracy ?? null,
@@ -370,6 +373,7 @@ TaskManager.defineTask(CONFIG.TASK_NAME, async ({ data, error }) => {
                 timestamp: Date.now(),
                 verified_at: serverTimestamp(),
                 source: 'phone_background',
+                gps_degraded: isLowAccuracy,
             };
 
             // Write background location heartbeat
@@ -378,12 +382,14 @@ TaskManager.defineTask(CONFIG.TASK_NAME, async ({ data, error }) => {
                 source: 'phone_background',
                 accuracy: location.coords.accuracy,
                 signal_lost: false,
+                gps_degraded: isLowAccuracy,
             };
 
             // Track data bandwidth in real-time alongside location
             updates[`/hardware/${currentBoxId}/phone_status/data_bytes`] = cumulativeDataBytes;
 
             await update(ref(db), updates);
+            console.log(`[EC-15] ✓ Firebase write OK | box=${currentBoxId} | lat=${location.coords.latitude.toFixed(5)} lng=${location.coords.longitude.toFixed(5)} | acc=${accuracy.toFixed(0)}m`);
 
             // Track last written location for drift prevention
             lastWrittenLocation = {
@@ -394,6 +400,7 @@ TaskManager.defineTask(CONFIG.TASK_NAME, async ({ data, error }) => {
 
             // Record valid fix time for signal loss detection
             lastValidFixTime = Date.now();
+            lastBackgroundTaskUpdateTimestamp = Date.now();
 
             // Write phone network status (rate-limited)
             const phoneStatus = await collectPhoneNetworkStatus(
@@ -414,6 +421,7 @@ TaskManager.defineTask(CONFIG.TASK_NAME, async ({ data, error }) => {
             }
         } catch (e) {
             // Actual network failure — fall back to offline queue
+            console.error('[EC-15] ✗ Firebase write FAILED (will queue):', e);
             try {
                 await offlineQueueService.enqueueLocationUpdate(
                     currentBoxId,
@@ -422,6 +430,7 @@ TaskManager.defineTask(CONFIG.TASK_NAME, async ({ data, error }) => {
                     location.coords.speed ?? 0,
                     location.coords.heading ?? 0
                 );
+                console.warn('[EC-15] Location queued for later — will send when app reopens');
             } catch (queueError) {
                 console.error('[EC-15] Failed to queue background location:', queueError);
             }
@@ -446,6 +455,9 @@ class BackgroundLocationManager {
     private healthCheckInterval: NodeJS.Timeout | null = null;
     private appStateSubscription: any = null;
     private unsubscribeBoxGps: (() => void) | null = null;
+    private foregroundWatchSubscription: Location.LocationSubscription | null = null;
+    private foregroundHeartbeatInterval: NodeJS.Timeout | null = null;
+    private isForegroundHeartbeatInFlight = false;
     private currentPhase: TrackingPhase = 'TRANSIT';
 
     // ==================== Public API ====================
@@ -567,8 +579,14 @@ class BackgroundLocationManager {
      * Start background location tracking
      */
     async start(boxId: string): Promise<boolean> {
-        if (this.state.status === 'RUNNING') {
-            if (currentBoxId === boxId) return true;
+        console.log(`[EC-15] start() called | boxId=${boxId} | status=${this.state.status} | currentBoxId=${currentBoxId}`);
+
+        if (this.state.status === 'RUNNING' || this.state.status === 'STARTING') {
+            if (currentBoxId === boxId) {
+                console.log('[EC-15] start() early-return: already RUNNING/STARTING with same boxId');
+                return true;
+            }
+            console.log('[EC-15] start() different boxId — stopping existing service first');
             await this.stop();
         }
 
@@ -577,10 +595,13 @@ class BackgroundLocationManager {
         await persistBoxId(boxId);
 
         // Check permissions
+        console.log('[EC-15] Checking location permissions...');
         const hasPermissions = await this.checkPermissions();
         if (!hasPermissions) {
+            console.warn('[EC-15] Permissions not granted, requesting...');
             const granted = await this.requestPermissions();
             if (!granted) {
+                console.error('[EC-15] Location permissions DENIED — cannot start service');
                 this.updateState({
                     status: 'PERMISSION_DENIED',
                     lastError: 'Location permissions not granted',
@@ -588,6 +609,7 @@ class BackgroundLocationManager {
                 return false;
             }
         }
+        console.log('[EC-15] Permissions OK');
 
         // NEW RULE: Defeat aggressive Chinese OEM task killers
         if (Platform.OS === 'android') {
@@ -618,33 +640,45 @@ class BackgroundLocationManager {
                 }
             }
 
-            if (!isTaskRegistered) {
-                // Start background location updates (Expo Task Manager)
+            // Always stop + restart to kill any zombie task from a prior session.
+            // If isTaskRegistered=true and we skip restart, the old task still runs
+            // with currentBoxId=null in JS memory — it silently drops every update
+            // and nothing reaches Firebase ("logged but not sending" bug).
+            if (isTaskRegistered) {
+                console.log('[EC-15] Task already registered — stopping zombie before restart');
                 try {
-                    await Location.startLocationUpdatesAsync(CONFIG.TASK_NAME, {
-                        accuracy: CONFIG.ACCURACY,
-                        timeInterval: CONFIG.LOCATION_INTERVAL_MS,
-                        distanceInterval: CONFIG.DISTANCE_FILTER_M,
-                        deferredUpdatesInterval: CONFIG.DEFERRED_UPDATES_INTERVAL_MS,
-                        deferredUpdatesDistance: CONFIG.DEFERRED_UPDATES_DISTANCE_M,
-                        foregroundService: {
-                            notificationTitle: CONFIG.NOTIFICATION_TITLE,
-                            notificationBody: CONFIG.NOTIFICATION_BODY,
-                            notificationColor: '#0066FF',
-                        },
-                        // iOS specific
-                        activityType: Location.ActivityType.AutomotiveNavigation,
-                        showsBackgroundLocationIndicator: true,
-                        pausesUpdatesAutomatically: false,
-                    });
-                } catch (locationError) {
-                    if (__DEV__) console.error('[EC-15] Android 14 FGS start error:', locationError);
-                    this.updateState({
-                        status: 'ERROR',
-                        lastError: `Android 14 service blocked: ${locationError}`,
-                    });
-                    return false;
+                    await Location.stopLocationUpdatesAsync(CONFIG.TASK_NAME);
+                } catch (stopErr) {
+                    console.warn('[EC-15] Could not stop existing task (continuing):', stopErr);
                 }
+            }
+
+            // Start background location updates (Expo Task Manager)
+            try {
+                await Location.startLocationUpdatesAsync(CONFIG.TASK_NAME, {
+                    accuracy: CONFIG.ACCURACY,
+                    timeInterval: CONFIG.LOCATION_INTERVAL_MS,
+                    distanceInterval: CONFIG.DISTANCE_FILTER_M,
+                    deferredUpdatesInterval: CONFIG.DEFERRED_UPDATES_INTERVAL_MS,
+                    deferredUpdatesDistance: CONFIG.DEFERRED_UPDATES_DISTANCE_M,
+                    foregroundService: {
+                        notificationTitle: CONFIG.NOTIFICATION_TITLE,
+                        notificationBody: CONFIG.NOTIFICATION_BODY,
+                        notificationColor: '#0066FF',
+                    },
+                    // iOS specific
+                    activityType: Location.ActivityType.AutomotiveNavigation,
+                    showsBackgroundLocationIndicator: true,
+                    pausesUpdatesAutomatically: false,
+                });
+                console.log('[EC-15] startLocationUpdatesAsync succeeded for boxId:', boxId);
+            } catch (locationError) {
+                console.error('[EC-15] Android 14 FGS start error:', locationError);
+                this.updateState({
+                    status: 'ERROR',
+                    lastError: `Android 14 service blocked: ${locationError}`,
+                });
+                return false;
             }
 
             this.updateState({
@@ -657,6 +691,10 @@ class BackgroundLocationManager {
             this.startHealthCheck();
             this.subscribeToAppState();
             this.subscribeToBoxGpsStatus(boxId);
+            if (AppState.currentState === 'active') {
+                await this.startForegroundWatcher();
+                this.startForegroundHeartbeat();
+            }
 
             // Log to Firebase
             await this.logServiceEvent(boxId, 'SERVICE_STARTED');
@@ -698,6 +736,8 @@ class BackgroundLocationManager {
         // Clean up
         this.stopHealthCheck();
         this.unsubscribeFromAppState();
+        this.stopForegroundWatcher();
+        this.stopForegroundHeartbeat();
 
         if (this.unsubscribeBoxGps) {
             this.unsubscribeBoxGps();
@@ -768,7 +808,8 @@ class BackgroundLocationManager {
             }
 
             // Check if task is registered but not producing output (zombie state)
-            const timeSinceUpdate = Date.now() - (this.state.lastLocationTimestamp ?? 0);
+            const effectiveLastUpdate = lastBackgroundTaskUpdateTimestamp ?? this.state.lastLocationTimestamp;
+            const timeSinceUpdate = effectiveLastUpdate ? Date.now() - effectiveLastUpdate : Number.MAX_SAFE_INTEGER;
             if (timeSinceUpdate > 180000) { // 3 minutes — stale zombie
                 console.warn(`[EC-15] Background task stale (${Math.round(timeSinceUpdate / 1000)}s). Restarting...`);
                 await this.stop();
@@ -795,7 +836,7 @@ class BackgroundLocationManager {
             const db = getFirebaseDatabase();
             const updates: Record<string, any> = {};
 
-            updates[`/locations/${currentBoxId}`] = {
+            updates[`/locations/${currentBoxId}/phone`] = {
                 latitude: location.coords.latitude,
                 longitude: location.coords.longitude,
                 accuracy: location.coords.accuracy ?? null,
@@ -815,6 +856,7 @@ class BackgroundLocationManager {
             };
 
             await update(ref(db), updates);
+            lastBackgroundTaskUpdateTimestamp = Date.now();
 
             this.updateState({
                 lastLocationTimestamp: Date.now(),
@@ -842,7 +884,7 @@ class BackgroundLocationManager {
     private startHealthCheck(): void {
         this.healthCheckInterval = setInterval(async () => {
             const now = Date.now();
-            const lastUpdate = this.state.lastLocationTimestamp;
+            const lastUpdate = lastBackgroundTaskUpdateTimestamp ?? this.state.lastLocationTimestamp;
 
             if (lastUpdate && (now - lastUpdate) > CONFIG.LOCATION_STALE_THRESHOLD_MS) {
                 // Location is stale - check if box GPS is available as fallback
@@ -901,6 +943,16 @@ class BackgroundLocationManager {
 
     private handleAppStateChange = async (nextAppState: AppStateStatus) => {
         if (nextAppState === 'active' && this.state.status === 'RUNNING') {
+            await this.startForegroundWatcher();
+            this.startForegroundHeartbeat();
+        }
+
+        if (nextAppState !== 'active') {
+            this.stopForegroundWatcher();
+            this.stopForegroundHeartbeat();
+        }
+
+        if (nextAppState === 'active' && this.state.status === 'RUNNING') {
             // App came to foreground — verify the background task is still alive,
             // force an immediate update, and recover if the OS killed the task.
             setTimeout(async () => {
@@ -929,6 +981,119 @@ class BackgroundLocationManager {
         }
     };
 
+    private async startForegroundWatcher(): Promise<void> {
+        if (this.foregroundWatchSubscription || !currentBoxId || this.state.status !== 'RUNNING') return;
+
+        try {
+            this.foregroundWatchSubscription = await Location.watchPositionAsync(
+                {
+                    accuracy: CONFIG.ACCURACY,
+                    timeInterval: CONFIG.LOCATION_INTERVAL_MS,
+                    distanceInterval: CONFIG.DISTANCE_FILTER_M,
+                },
+                async (location) => {
+                    if (!currentBoxId || this.state.status !== 'RUNNING') return;
+
+                    const accuracy = location.coords.accuracy ?? 999;
+                    const isLowAccuracy = accuracy > CONFIG.ACCURACY_REJECT_THRESHOLD_M;
+
+                    try {
+                        const db = getFirebaseDatabase();
+                        const updates: Record<string, any> = {};
+
+                        cumulativeDataBytes += 500;
+
+                        updates[`/locations/${currentBoxId}/phone`] = {
+                            latitude: location.coords.latitude,
+                            longitude: location.coords.longitude,
+                            accuracy: location.coords.accuracy ?? null,
+                            altitude: location.coords.altitude ?? null,
+                            speed: location.coords.speed ?? 0,
+                            heading: location.coords.heading ?? 0,
+                            timestamp: Date.now(),
+                            verified_at: serverTimestamp(),
+                            source: 'phone_foreground',
+                            gps_degraded: isLowAccuracy,
+                        };
+
+                        updates[`/boxes/${currentBoxId}/background_location_status`] = {
+                            lastUpdate: serverTimestamp(),
+                            source: 'phone_foreground',
+                            accuracy: location.coords.accuracy,
+                            signal_lost: false,
+                            gps_degraded: isLowAccuracy,
+                        };
+
+                        updates[`/hardware/${currentBoxId}/phone_status/data_bytes`] = cumulativeDataBytes;
+
+                        await update(ref(db), updates);
+
+                        const now = Date.now();
+                        lastBackgroundTaskUpdateTimestamp = now;
+                        this.updateState({
+                            lastLocationTimestamp: now,
+                            totalUpdatesCount: this.state.totalUpdatesCount + 1,
+                        });
+
+                        lastWrittenLocation = {
+                            lat: location.coords.latitude,
+                            lng: location.coords.longitude,
+                            timestamp: now,
+                        };
+                        lastValidFixTime = now;
+
+                        const phoneStatus = await collectPhoneNetworkStatus(
+                            { accuracy: location.coords.accuracy, altitude: location.coords.altitude },
+                            'phone_foreground'
+                        );
+                        if (phoneStatus) {
+                            phoneStatus.data_bytes = cumulativeDataBytes;
+                        }
+                        await writePhoneStatusIfDue(currentBoxId, phoneStatus);
+                    } catch (error) {
+                        console.error('[EC-15] Foreground watcher write failed:', error);
+                    }
+                }
+            );
+        } catch (error) {
+            console.error('[EC-15] Failed to start foreground location watcher:', error);
+        }
+    }
+
+    private stopForegroundWatcher(): void {
+        if (this.foregroundWatchSubscription) {
+            this.foregroundWatchSubscription.remove();
+            this.foregroundWatchSubscription = null;
+        }
+    }
+
+    private startForegroundHeartbeat(): void {
+        if (this.foregroundHeartbeatInterval || this.state.status !== 'RUNNING') return;
+
+        this.foregroundHeartbeatInterval = setInterval(async () => {
+            if (this.isForegroundHeartbeatInFlight) return;
+            if (AppState.currentState !== 'active') return;
+            if (!currentBoxId || this.state.status !== 'RUNNING') return;
+
+            this.isForegroundHeartbeatInFlight = true;
+            try {
+                await this.forceUpdate();
+            } catch (error) {
+                console.error('[EC-15] Foreground heartbeat forceUpdate failed:', error);
+            } finally {
+                this.isForegroundHeartbeatInFlight = false;
+            }
+        }, CONFIG.LOCATION_INTERVAL_MS);
+    }
+
+    private stopForegroundHeartbeat(): void {
+        if (this.foregroundHeartbeatInterval) {
+            clearInterval(this.foregroundHeartbeatInterval);
+            this.foregroundHeartbeatInterval = null;
+        }
+        this.isForegroundHeartbeatInFlight = false;
+    }
+
     private subscribeToBoxGpsStatus(boxId: string): void {
         const db = getFirebaseDatabase();
         const boxGpsRef = ref(db, `locations/${boxId}`);
@@ -937,8 +1102,10 @@ class BackgroundLocationManager {
 
         onValue(boxGpsRef, (snapshot) => {
             const data = snapshot.val();
-            if (data && data.source === 'box') {
-                const timestamp = data.server_timestamp || data.timestamp;
+            // Handle split-path structure { box, phone } or legacy flat object
+            const boxData = data?.box ?? (data?.source === 'box' ? data : null);
+            if (boxData) {
+                const timestamp = boxData.server_timestamp || boxData.timestamp;
                 const isRecent = timestamp && (Date.now() - timestamp) < CONFIG.LOCATION_STALE_THRESHOLD_MS;
 
                 this.updateState({ boxGpsAvailable: isRecent });

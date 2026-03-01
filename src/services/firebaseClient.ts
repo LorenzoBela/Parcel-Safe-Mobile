@@ -23,6 +23,7 @@ import {
     DatabaseReference
 } from 'firebase/database';
 import { consolidateLocation } from './locationUtils';
+import type { LocationData, LocationsByBoxId } from '../types';
 import { initializeAuth, getAuth, Auth } from '@firebase/auth';
 // @ts-ignore - This export exists at runtime for React Native
 import { getReactNativePersistence } from 'firebase/auth';
@@ -105,18 +106,10 @@ export function getFirebaseAuth(): Auth {
 }
 
 // ==================== Types ====================
-
-export interface LocationData {
-    latitude: number;
-    longitude: number;
-    timestamp: number;
-    server_timestamp?: number;
-    speed?: number;
-    heading?: number;
-    source: 'box' | 'phone';
-}
-
-export type LocationsByBoxId = Record<string, LocationData>;
+// LocationData and LocationsByBoxId live in src/types.ts to avoid a circular
+// dependency with locationUtils.ts (which also imports them).
+// Re-export so existing consumers (screens, hooks, tests) need no changes.
+export type { LocationData, LocationsByBoxId };
 
 export interface BoxState {
     status: 'SLEEP' | 'STANDBY' | 'ACTIVE' | 'ARRIVED' | 'UNLOCKING' | 'LOCKED';
@@ -184,18 +177,38 @@ export function subscribeToLocation(
             return;
         }
 
-        // EC-Fix: Normalize lat/lng (legacy/mobile) to latitude/longitude
-        const data: LocationData = {
-            ...rawData,
-            latitude: Number(rawData.latitude ?? rawData.lat),
-            longitude: Number(rawData.longitude ?? rawData.lng),
-            source: rawData.source || 'box',
-        };
-
-        if (data.source === 'box') {
-            latestLocationsCache[boxId].box = data;
-        } else {
-            latestLocationsCache[boxId].phone = data;
+        if (rawData.box != null || rawData.phone != null) {
+            // New split-path structure: { box: { latitude, ... }, phone: { latitude, ... } }
+            // Both sub-trees arrive in one snapshot — no overwriting possible.
+            if (rawData.box) {
+                latestLocationsCache[boxId].box = {
+                    ...rawData.box,
+                    latitude: Number(rawData.box.latitude ?? rawData.box.lat),
+                    longitude: Number(rawData.box.longitude ?? rawData.box.lng),
+                    source: rawData.box.source || 'box',
+                } as LocationData;
+            }
+            if (rawData.phone) {
+                latestLocationsCache[boxId].phone = {
+                    ...rawData.phone,
+                    latitude: Number(rawData.phone.latitude ?? rawData.phone.lat),
+                    longitude: Number(rawData.phone.longitude ?? rawData.phone.lng),
+                    source: rawData.phone.source || 'phone_background',
+                } as LocationData;
+            }
+        } else if (rawData.latitude != null) {
+            // Legacy flat structure from old firmware — route by source field
+            const data: LocationData = {
+                ...rawData,
+                latitude: Number(rawData.latitude ?? rawData.lat),
+                longitude: Number(rawData.longitude ?? rawData.lng),
+                source: rawData.source || 'box',
+            };
+            if (data.source === 'box') {
+                latestLocationsCache[boxId].box = data;
+            } else {
+                latestLocationsCache[boxId].phone = data;
+            }
         }
 
         const consolidated = consolidateLocation(
@@ -203,7 +216,7 @@ export function subscribeToLocation(
             latestLocationsCache[boxId].phone
         );
 
-        callback(consolidated || data);
+        callback(consolidated ?? latestLocationsCache[boxId].box ?? latestLocationsCache[boxId].phone);
     });
 
     return () => off(locationRef);
@@ -212,8 +225,11 @@ export function subscribeToLocation(
 /**
  * Subscribe to live location updates for all boxes.
  *
- * RTDB shape expected:
- * locations/{boxId} => LocationData
+ * RTDB shape (new): locations/{boxId}/box  and  locations/{boxId}/phone
+ * RTDB shape (legacy): locations/{boxId} => flat LocationData
+ *
+ * Returns a normalized Record<boxId, LocationData> in both cases so callers
+ * can read .latitude / .longitude without caring about the internal structure.
  */
 export function subscribeToAllLocations(
     callback: (locations: LocationsByBoxId | null) => void
@@ -223,7 +239,41 @@ export function subscribeToAllLocations(
 
     onValue(locationsRef, (snapshot) => {
         const data = snapshot.val();
-        callback((data ?? null) as LocationsByBoxId | null);
+        if (!data) {
+            callback(null);
+            return;
+        }
+
+        const normalized: LocationsByBoxId = {};
+        for (const [boxId, entry] of Object.entries<any>(data)) {
+            if (entry.box != null || entry.phone != null) {
+                // New split-path structure — consolidate to get best position
+                const boxLoc = entry.box ? {
+                    ...entry.box,
+                    latitude: Number(entry.box.latitude ?? entry.box.lat),
+                    longitude: Number(entry.box.longitude ?? entry.box.lng),
+                    source: entry.box.source || 'box',
+                } as LocationData : null;
+                const phoneLoc = entry.phone ? {
+                    ...entry.phone,
+                    latitude: Number(entry.phone.latitude ?? entry.phone.lat),
+                    longitude: Number(entry.phone.longitude ?? entry.phone.lng),
+                    source: entry.phone.source || 'phone_background',
+                } as LocationData : null;
+                const best = consolidateLocation(boxLoc, phoneLoc) ?? boxLoc ?? phoneLoc;
+                if (best) normalized[boxId] = best;
+            } else if (entry.latitude != null) {
+                // Legacy flat structure
+                normalized[boxId] = {
+                    ...entry,
+                    latitude: Number(entry.latitude ?? entry.lat),
+                    longitude: Number(entry.longitude ?? entry.lng),
+                    source: entry.source || 'box',
+                } as LocationData;
+            }
+        }
+
+        callback(Object.keys(normalized).length > 0 ? normalized : null);
     });
 
     return () => off(locationsRef);
@@ -240,7 +290,7 @@ export async function writePhoneLocation(
     heading?: number
 ): Promise<void> {
     const db = getFirebaseDatabase();
-    const locationRef = ref(db, `locations/${boxId}`);
+    const locationRef = ref(db, `locations/${boxId}/phone`);
 
     const locationData: LocationData = {
         latitude,

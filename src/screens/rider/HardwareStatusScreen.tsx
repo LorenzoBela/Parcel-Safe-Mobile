@@ -25,9 +25,6 @@ import {
     subscribeToRiderPairing,
 } from '../../services/boxPairingService';
 import useAuthStore from '../../store/authStore';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-
-const PAIRED_BOX_CACHE_KEY_PREFIX = 'parcelSafe:lastPairedBoxId:';
 
 interface HardwareStatusScreenProps {
     route?: {
@@ -41,13 +38,12 @@ interface HardwareStatusScreenProps {
 
 export default function HardwareStatusScreen({ route, navigation }: HardwareStatusScreenProps) {
     const [pairingState, setPairingState] = useState<BoxPairingState | null>(null);
-    const [cachedBoxId, setCachedBoxId] = useState<string | null>(null);
     const authedUserId = useAuthStore((state: any) => state.user?.userId) as string | undefined;
     const riderId = authedUserId;
-    const boxId = route?.params?.boxId ?? pairingState?.box_id ?? cachedBoxId;
+    const isPaired = isPairingActive(pairingState);
+    const boxId = isPaired ? (pairingState?.box_id ?? route?.params?.boxId ?? null) : null;
     const deliveryId = route?.params?.deliveryId;
     const [refreshing, setRefreshing] = useState(false);
-    const isPaired = isPairingActive(pairingState);
 
     // EC-90: Power State
     const [powerState, setPowerState] = useState<PowerState | null>(null);
@@ -70,7 +66,7 @@ export default function HardwareStatusScreen({ route, navigation }: HardwareStat
         dismissAlert,
         acknowledgeReboot,
         refresh,
-    } = useHardwareStatus(boxId || 'BOX_001', deliveryId);
+    } = useHardwareStatus(boxId, deliveryId);
 
     // EC-90: Subscribe to Power State
     useEffect(() => {
@@ -89,15 +85,8 @@ export default function HardwareStatusScreen({ route, navigation }: HardwareStat
     useEffect(() => {
         if (!riderId) return;
 
-        AsyncStorage.getItem(`${PAIRED_BOX_CACHE_KEY_PREFIX}${riderId}`)
-            .then((value) => setCachedBoxId(value || null))
-            .catch(() => setCachedBoxId(null));
-
         const unsubscribe = subscribeToRiderPairing(riderId, (state) => {
-            setPairingState(state);
-            if (state?.box_id) {
-                AsyncStorage.setItem(`${PAIRED_BOX_CACHE_KEY_PREFIX}${riderId}`, state.box_id).catch(() => undefined);
-            }
+            setPairingState(isPairingActive(state) ? state : null);
         });
         return unsubscribe;
     }, [riderId]);

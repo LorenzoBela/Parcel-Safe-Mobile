@@ -962,7 +962,11 @@ export async function getInitialBoxLocation(
 
         if (!snapshot.exists()) return null;
 
-        const data = snapshot.val();
+        const raw = snapshot.val();
+        // Normalize split-path { box, phone } vs legacy flat object
+        const data = raw.box ?? (raw.latitude != null ? raw : (raw.lat != null ? raw : null));
+        if (!data) return null;
+
         const lat = data.lat ?? data.latitude;
         const lng = data.lng ?? data.longitude;
         if (typeof lat !== 'number' || typeof lng !== 'number') return null;
@@ -970,8 +974,8 @@ export async function getInitialBoxLocation(
         return {
             lat,
             lng,
-            heading: data.heading,
-            lastUpdated: data.last_updated || data.timestamp || Date.now(),
+            heading: data?.heading,
+            lastUpdated: data?.last_updated || data?.timestamp || Date.now(),
         };
     } catch (error) {
         console.warn('[RiderMatching] Failed to fetch initial box location:', error);
@@ -1221,10 +1225,12 @@ export function subscribeToBoxLocation(
             return;
         }
 
-        const data = snapshot.val();
+        const raw = snapshot.val();
+        // Normalize split-path { box, phone } vs legacy flat object
+        const data = raw?.box ?? (raw?.latitude != null ? raw : (raw?.lat != null ? raw : null));
         // Normalize: hardware writes latitude/longitude, but interface expects lat/lng
-        const lat = data.lat ?? data.latitude;
-        const lng = data.lng ?? data.longitude;
+        const lat = data?.lat ?? data?.latitude;
+        const lng = data?.lng ?? data?.longitude;
         if (typeof lat !== 'number' || typeof lng !== 'number') {
             callback(null);
             return;
@@ -1233,8 +1239,8 @@ export function subscribeToBoxLocation(
         callback({
             lat,
             lng,
-            heading: data.heading,
-            lastUpdated: data.last_updated || data.timestamp || Date.now(),
+            heading: data?.heading,
+            lastUpdated: data?.last_updated || data?.timestamp || Date.now(),
         });
     });
 

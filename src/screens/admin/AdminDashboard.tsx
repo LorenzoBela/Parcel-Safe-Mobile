@@ -13,6 +13,7 @@ import { BoxPairingState, isPairingActive, subscribeToRiderPairing } from '../..
 import * as Location from 'expo-location';
 import { fetchWeather, WeatherData } from '../../services/weatherService';
 import { NetworkStatusBanner } from '../../components';
+import { HardwareByBoxId, subscribeToAllHardware } from '../../services/firebaseClient';
 
 function formatRemainingMs(ms: number): string {
     if (!Number.isFinite(ms) || ms <= 0) return '0m';
@@ -22,6 +23,22 @@ function formatRemainingMs(ms: number): string {
     if (hours <= 0) return `${minutes}m`;
     return `${hours}h ${minutes}m`;
 }
+
+function deriveHardwareStatus(hw: HardwareByBoxId[string] | null): string {
+    if (!hw) return 'OFFLINE';
+    if (hw.tamper?.detected || hw.tamper?.lockdown) return 'TAMPER';
+    if (typeof hw.status === 'string' && hw.status.length > 0) return hw.status.toUpperCase();
+    if (hw.gps_fix) return 'ACTIVE';
+    if (hw.connection) return 'STANDBY';
+    return 'IDLE';
+}
+
+type StatCardProps = {
+    label: string;
+    value: string;
+    icon: string;
+    color: string;
+};
 
 export default function AdminDashboard() {
     const navigation = useNavigation<any>();
@@ -37,6 +54,7 @@ export default function AdminDashboard() {
     const [pairMode, setPairMode] = useState<'ONE_TIME' | 'SESSION'>('SESSION');
     const [sessionHours, setSessionHours] = useState(24);
     const [pairToken, setPairToken] = useState('');
+    const [hardwareSnapshot, setHardwareSnapshot] = useState<HardwareByBoxId | null>(null);
     const qrRef = useRef<any>(null);
 
     const authedUserId = useAuthStore((state: any) => state.user?.userId) as string | undefined;
@@ -134,6 +152,13 @@ export default function AdminDashboard() {
         return () => clearInterval(timer);
     }, []);
 
+    useEffect(() => {
+        const unsubscribe = subscribeToAllHardware((hardware) => {
+            setHardwareSnapshot(hardware);
+        });
+        return unsubscribe;
+    }, []);
+
     // EC-03: Handle manual delivery completion
     const handleOverrideDelivery = async () => {
         if (!trackingInput.trim()) {
@@ -202,14 +227,43 @@ export default function AdminDashboard() {
         })();
     }, []);
 
+    const hardwareSummary = useMemo(() => {
+        const entries = Object.values(hardwareSnapshot ?? {});
+        const total = entries.length;
+
+        let tamper = 0;
+        let active = 0;
+        let offline = 0;
+        let gpsLocked = 0;
+        let lte = 0;
+        let wifi = 0;
+
+        entries.forEach((hw) => {
+            const status = deriveHardwareStatus(hw);
+            const hasTamper = Boolean(hw?.tamper?.detected || hw?.tamper?.lockdown);
+            const conn = (hw?.connection || '').toUpperCase();
+
+            if (hasTamper) tamper += 1;
+            if (status === 'ACTIVE' || status === 'IN_TRANSIT') active += 1;
+            if (status === 'OFFLINE') offline += 1;
+            if (hw?.gps_fix) gpsLocked += 1;
+            if (conn.includes('LTE')) lte += 1;
+            if (conn.includes('WIFI')) wifi += 1;
+        });
+
+        const online = Math.max(total - offline, 0);
+
+        return { total, tamper, active, offline, online, gpsLocked, lte, wifi };
+    }, [hardwareSnapshot]);
+
     const stats = [
-        { label: 'Total Deliveries', value: '--', icon: 'truck-check', color: '#4CAF50' },
-        { label: 'Tamper Events', value: '--', icon: 'alert-circle', color: '#F44336' },
-        { label: 'Active Riders', value: '--', icon: 'motorbike', color: '#2196F3' },
-        { label: 'Open Cases', value: '--', icon: 'folder-open', color: '#FF9800' },
+        { label: 'Tracked Boxes', value: String(hardwareSummary.total), icon: 'package-variant-closed', color: '#4CAF50' },
+        { label: 'Tamper Alerts', value: String(hardwareSummary.tamper), icon: 'alert-circle', color: '#F44336' },
+        { label: 'Active Movement', value: String(hardwareSummary.active), icon: 'truck-fast', color: '#2196F3' },
+        { label: 'Offline Boxes', value: String(hardwareSummary.offline), icon: 'wifi-off', color: '#FF9800' },
     ];
 
-    const StatCard = ({ label, value, icon, color }) => (
+    const StatCard = ({ label, value, icon, color }: StatCardProps) => (
         <Surface style={styles.statCard} elevation={2}>
             <View style={[styles.statIcon, { backgroundColor: color + '20' }]}>
                 <MaterialCommunityIcons name={icon} size={24} color={color} />
@@ -247,6 +301,39 @@ export default function AdminDashboard() {
 
                 {/* Network connectivity status */}
                 <NetworkStatusBanner />
+
+                <Card style={styles.liveTrackingCard}>
+                    <Card.Content>
+                        <View style={styles.liveTrackingHeader}>
+                            <View style={{ flex: 1 }}>
+                                <Text variant="titleMedium" style={{ fontWeight: 'bold' }}>
+                                    Live Hardware Tracking
+                                </Text>
+                                <Text variant="bodySmall" style={{ color: '#666', marginTop: 2 }}>
+                                    Realtime fleet telemetry from Firebase
+                                </Text>
+                            </View>
+                            <Button mode="contained" icon="map" compact onPress={() => navigation.navigate('GlobalMap')}>
+                                Open Map
+                            </Button>
+                        </View>
+
+                        <View style={styles.liveTrackingChipRow}>
+                            <Chip compact icon="check-decagram" style={styles.liveChip}>
+                                Online {hardwareSummary.online}
+                            </Chip>
+                            <Chip compact icon="crosshairs-gps" style={styles.liveChip}>
+                                GPS Lock {hardwareSummary.gpsLocked}
+                            </Chip>
+                            <Chip compact icon="antenna" style={styles.liveChip}>
+                                LTE {hardwareSummary.lte}
+                            </Chip>
+                            <Chip compact icon="wifi" style={styles.liveChip}>
+                                WiFi {hardwareSummary.wifi}
+                            </Chip>
+                        </View>
+                    </Card.Content>
+                </Card>
 
                 <Surface style={styles.pairingBanner} elevation={1}>
                     <View style={{ flex: 1 }}>
@@ -567,6 +654,26 @@ const styles = StyleSheet.create({
         borderRadius: 12,
         marginBottom: 16,
         backgroundColor: 'white',
+    },
+    liveTrackingCard: {
+        marginBottom: 16,
+        backgroundColor: 'white',
+        borderRadius: 12,
+    },
+    liveTrackingHeader: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: 12,
+        marginBottom: 10,
+    },
+    liveTrackingChipRow: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        gap: 8,
+    },
+    liveChip: {
+        backgroundColor: '#F4F6FA',
     },
     headerBackground: {
         backgroundColor: '#F44336',

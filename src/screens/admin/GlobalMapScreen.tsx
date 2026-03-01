@@ -1,7 +1,11 @@
-import React, { useEffect, useMemo, useState, useRef } from 'react';
-import { View, StyleSheet, Dimensions, ScrollView, TouchableOpacity } from 'react-native';
-import { Card, Text, IconButton, Chip } from 'react-native-paper';
+import React, { useEffect, useMemo, useState, useRef, useCallback } from 'react';
+import {
+    View, StyleSheet, Dimensions, ScrollView, TouchableOpacity,
+    Animated, TextInput as RNTextInput, Platform, Easing,
+} from 'react-native';
+import { Text, Surface, Card, Chip, IconButton } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import * as Haptics from 'expo-haptics';
 import MapboxGL from '../../components/map/MapboxWrapper';
 import {
     HardwareByBoxId,
@@ -10,6 +14,22 @@ import {
     subscribeToAllHardware,
     subscribeToAllLocations,
 } from '../../services/firebaseClient';
+
+// ==================== Constants ====================
+
+const { width: SCREEN_WIDTH } = Dimensions.get('window');
+const DEFAULT_CENTER: [number, number] = [121.0244, 14.5547];
+const ANIMATION_DURATION = 1000;
+
+const STATUS_PRIORITY: Record<string, number> = {
+    TAMPER: 0,
+    IN_TRANSIT: 1,
+    ACTIVE: 2,
+    ARRIVED: 3,
+    STANDBY: 4,
+    IDLE: 5,
+    OFFLINE: 6,
+};
 
 // ==================== Types ====================
 
@@ -21,7 +41,6 @@ type BoxMarker = {
     status: string;
     gpsSource?: string;
     timestamp?: number;
-    // Diagnostics fields from hardware node
     connection?: string;
     rssi?: number;
     csq?: number;
@@ -31,7 +50,6 @@ type BoxMarker = {
     dataBytes?: number;
 };
 
-// Animation Types
 type AnimationState = {
     current: [number, number];
     target: [number, number];
@@ -39,12 +57,36 @@ type AnimationState = {
     start: [number, number];
 };
 
-const DEFAULT_CENTER: [number, number] = [121.0244, 14.5547]; // Manila
-const ANIMATION_DURATION = 1000;
+type FleetFilter = 'ALL' | 'TAMPER' | 'ACTIVE' | 'OFFLINE';
 
 // ==================== Helpers ====================
 
-/** Convert CSQ (0-31) to a 0–4 bar level for display */
+function getStatusColor(status: string, alert: boolean): string {
+    if (alert) return '#F44336';
+    switch (status) {
+        case 'IN_TRANSIT':
+        case 'ACTIVE': return '#2196F3';
+        case 'ARRIVED': return '#FF9800';
+        case 'IDLE':
+        case 'STANDBY': return '#4CAF50';
+        case 'OFFLINE': return '#607D8B';
+        default: return '#9E9E9E';
+    }
+}
+
+function getStatusIcon(status: string, alert: boolean): string {
+    if (alert) return 'shield-alert';
+    switch (status) {
+        case 'IN_TRANSIT': return 'truck-fast';
+        case 'ACTIVE': return 'package-variant-closed';
+        case 'ARRIVED': return 'map-marker-check';
+        case 'IDLE': return 'package-variant';
+        case 'STANDBY': return 'clock-outline';
+        case 'OFFLINE': return 'wifi-off';
+        default: return 'help-circle-outline';
+    }
+}
+
 function getSignalBars(csq?: number): number {
     if (csq == null || csq === 99 || csq <= 0) return 0;
     if (csq <= 5) return 1;
@@ -53,7 +95,16 @@ function getSignalBars(csq?: number): number {
     return 4;
 }
 
-/** Pick the right signal-bars icon name */
+function getSignalColor(bars: number): string {
+    switch (bars) {
+        case 0: return '#607D8B';
+        case 1: return '#F44336';
+        case 2: return '#FF9800';
+        case 3: return '#66BB6A';
+        default: return '#2E7D32';
+    }
+}
+
 function getSignalIcon(bars: number): string {
     switch (bars) {
         case 0: return 'signal-off';
@@ -64,18 +115,6 @@ function getSignalIcon(bars: number): string {
     }
 }
 
-/** Get a tint color for signal quality */
-function getSignalColor(bars: number): string {
-    switch (bars) {
-        case 0: return '#9E9E9E';
-        case 1: return '#F44336';
-        case 2: return '#FF9800';
-        case 3: return '#4CAF50';
-        default: return '#2E7D32';
-    }
-}
-
-/** Format byte count as human-readable (KB / MB) */
 function formatDataBytes(bytes?: number): string {
     if (bytes == null || !Number.isFinite(bytes) || bytes < 0) return '—';
     if (bytes < 1024) return `${bytes} B`;
@@ -83,33 +122,25 @@ function formatDataBytes(bytes?: number): string {
     return `${(bytes / 1048576).toFixed(2)} MB`;
 }
 
-/** Derive a meaningful status when the firmware doesn't send one */
 function deriveStatus(hw: HardwareDiagnostics | null): string {
     if (!hw) return 'OFFLINE';
-    // If firmware sent an explicit status, use it
     if (typeof hw.status === 'string' && hw.status.length > 0) return hw.status;
-    // Derive from connection + GPS state
     if (hw.gps_fix) return 'ACTIVE';
     if (hw.connection) return 'STANDBY';
     return 'IDLE';
 }
 
-/** Format a timestamp as relative "X ago" or absolute fallback */
 function formatTimeAgo(timestamp?: number): string {
     if (!timestamp || !Number.isFinite(timestamp)) return '—';
-    // Device sends millis() which resets on reboot — detect invalid epoch
     if (timestamp < 1600000000000) {
-        // millis() value — show as uptime instead
         const totalSec = Math.floor(timestamp / 1000);
         if (totalSec < 60) return `${totalSec}s uptime`;
         const mins = Math.floor(totalSec / 60);
         if (mins < 60) return `${mins}m uptime`;
         const hours = Math.floor(mins / 60);
-        const remMins = mins % 60;
-        return `${hours}h ${remMins}m uptime`;
+        return `${hours}h ${mins % 60}m uptime`;
     }
-    const now = Date.now();
-    const diffMs = now - timestamp;
+    const diffMs = Date.now() - timestamp;
     if (diffMs < 0) return 'just now';
     const diffSec = Math.floor(diffMs / 1000);
     if (diffSec < 60) return `${diffSec}s ago`;
@@ -124,6 +155,84 @@ function formatTimeAgo(timestamp?: number): string {
     }
 }
 
+function formatCoord(val: number, isLat: boolean): string {
+    if (!Number.isFinite(val)) return '—';
+    const abs = Math.abs(val);
+    const dir = isLat ? (val >= 0 ? 'N' : 'S') : (val >= 0 ? 'E' : 'W');
+    return `${abs.toFixed(5)}° ${dir}`;
+}
+
+// ==================== Sub-components ====================
+
+/** Animated pulsing live indicator dot */
+function LivePulseDot({ color }: { color: string }) {
+    const pulse = useRef(new Animated.Value(1)).current;
+    useEffect(() => {
+        const anim = Animated.loop(
+            Animated.sequence([
+                Animated.timing(pulse, { toValue: 1.7, duration: 700, easing: Easing.out(Easing.quad), useNativeDriver: true }),
+                Animated.timing(pulse, { toValue: 1, duration: 700, easing: Easing.in(Easing.quad), useNativeDriver: true }),
+            ]),
+        );
+        anim.start();
+        return () => anim.stop();
+    }, [pulse]);
+    return (
+        <View style={{ width: 18, height: 18, alignItems: 'center', justifyContent: 'center' }}>
+            <Animated.View style={{
+                position: 'absolute', width: 14, height: 14, borderRadius: 7,
+                backgroundColor: color + '40', transform: [{ scale: pulse }],
+            }} />
+            <View style={{ width: 9, height: 9, borderRadius: 5, backgroundColor: color }} />
+        </View>
+    );
+}
+
+/** Visual 4-bar signal strength */
+function SignalBars({ bars, color }: { bars: number; color: string }) {
+    const heights = [4, 7, 10, 13];
+    return (
+        <View style={{ flexDirection: 'row', alignItems: 'flex-end', gap: 2, height: 14 }}>
+            {heights.map((h, i) => (
+                <View key={i} style={{
+                    width: 3, height: h, borderRadius: 1.5,
+                    backgroundColor: i < bars ? color : '#E0E0E0',
+                }} />
+            ))}
+        </View>
+    );
+}
+
+/** Single diagnostics metric tile */
+function DiagTile({ icon, label, value, valueColor, children }: {
+    icon: string; label: string; value?: string;
+    valueColor?: string; children?: React.ReactNode;
+}) {
+    return (
+        <View style={diagStyles.tile}>
+            <View style={diagStyles.tileIconWrap}>
+                <MaterialCommunityIcons name={icon as any} size={14} color={valueColor ?? '#78909C'} />
+            </View>
+            <Text style={diagStyles.tileLabel}>{label}</Text>
+            {children ?? (
+                <Text style={[diagStyles.tileValue, valueColor ? { color: valueColor } : undefined]} numberOfLines={1}>
+                    {value ?? '—'}
+                </Text>
+            )}
+        </View>
+    );
+}
+
+const diagStyles = StyleSheet.create({
+    tile: { width: '33.33%', paddingVertical: 8, paddingHorizontal: 4, alignItems: 'center' },
+    tileIconWrap: {
+        width: 26, height: 26, borderRadius: 13,
+        backgroundColor: '#F0F4FF', alignItems: 'center', justifyContent: 'center', marginBottom: 3,
+    },
+    tileLabel: { fontSize: 9, color: '#90A4AE', textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 2 },
+    tileValue: { fontSize: 12, fontWeight: '700', color: '#263238' },
+});
+
 // ==================== Component ====================
 
 export default function GlobalMapScreen() {
@@ -134,6 +243,7 @@ export default function GlobalMapScreen() {
 
     const [selectedBoxId, setSelectedBoxId] = useState<string | null>(null);
     const [listVisible, setListVisible] = useState(false);
+    const [fleetFilter, setFleetFilter] = useState<FleetFilter>('ALL');
 
     const [cameraCenter, setCameraCenter] = useState<[number, number]>(DEFAULT_CENTER);
     const [cameraZoom, setCameraZoom] = useState<number>(12);
@@ -195,20 +305,41 @@ export default function GlobalMapScreen() {
     }, [locationsByBox, hardwareByBox]);
 
     const tamperAlertCount = useMemo(() => activeBoxes.filter((b) => b.alert).length, [activeBoxes]);
+    const activeMoveCount = useMemo(
+        () => activeBoxes.filter((b) => b.status === 'ACTIVE' || b.status === 'IN_TRANSIT').length,
+        [activeBoxes],
+    );
+    const offlineCount = useMemo(
+        () => activeBoxes.filter((b) => b.status === 'OFFLINE').length,
+        [activeBoxes],
+    );
+
+    const filteredBoxes = useMemo(() => {
+        switch (fleetFilter) {
+            case 'TAMPER':
+                return activeBoxes.filter((b) => b.alert);
+            case 'ACTIVE':
+                return activeBoxes.filter((b) => b.status === 'ACTIVE' || b.status === 'IN_TRANSIT');
+            case 'OFFLINE':
+                return activeBoxes.filter((b) => b.status === 'OFFLINE');
+            default:
+                return activeBoxes;
+        }
+    }, [activeBoxes, fleetFilter]);
 
     // Initial center
     useEffect(() => {
-        if (activeBoxes.length === 0) return;
+        if (filteredBoxes.length === 0) return;
         if (cameraCenter[0] === DEFAULT_CENTER[0] && cameraCenter[1] === DEFAULT_CENTER[1]) {
-            setCameraCenter([activeBoxes[0].lng, activeBoxes[0].lat]);
+            setCameraCenter([filteredBoxes[0].lng, filteredBoxes[0].lat]);
             setCameraZoom(13);
         }
-    }, [activeBoxes, cameraCenter]);
+    }, [filteredBoxes, cameraCenter]);
 
     // Animation Loop
     useEffect(() => {
         const updateAnimationTargets = () => {
-            activeBoxes.forEach(box => {
+            filteredBoxes.forEach(box => {
                 const target: [number, number] = [box.lng, box.lat];
                 let state = animationStates.current.get(box.id);
 
@@ -247,8 +378,8 @@ export default function GlobalMapScreen() {
 
             // 1. Interpolate
             for (const [id, state] of animationStates.current.entries()) {
-                // Check if box still exists in activeBoxes (handle removal)
-                const box = activeBoxes.find(b => b.id === id);
+                // Check if box still exists in filteredBoxes (handle removal)
+                const box = filteredBoxes.find(b => b.id === id);
                 if (!box) {
                     idsToRemove.push(id);
                     continue;
@@ -310,12 +441,19 @@ export default function GlobalMapScreen() {
         return () => {
             if (animationFrameId.current) cancelAnimationFrame(animationFrameId.current);
         };
-    }, [activeBoxes, selectedBoxId]); // Re-run when list changes or selection changes (to update styling props)
+    }, [filteredBoxes, selectedBoxId]); // Re-run when list changes or selection changes (to update styling props)
 
     const selectedBox = useMemo(() => {
         if (!selectedBoxId) return null;
         return activeBoxes.find((b) => b.id === selectedBoxId) ?? null;
     }, [selectedBoxId, activeBoxes]);
+
+    const recenterToFleet = useCallback(() => {
+        const target = filteredBoxes[0] ?? activeBoxes[0];
+        if (!target) return;
+        setCameraCenter([target.lng, target.lat]);
+        setCameraZoom(13);
+    }, [filteredBoxes, activeBoxes]);
 
     const getStatusColor = (status: string, alert: boolean) => {
         if (alert) return '#F44336';
@@ -347,10 +485,11 @@ export default function GlobalMapScreen() {
     const renderDiagnosticsCard = () => {
         if (!selectedBox) {
             return (
-                <Card style={styles.infoCard}>
-                    <Card.Content>
-                        <Text variant="bodySmall" style={{ color: '#666' }}>
-                            Tap a marker to view live diagnostics
+                <Card style={styles.infoCardHint}>
+                    <Card.Content style={styles.infoHintContent}>
+                        <MaterialCommunityIcons name="gesture-tap" size={14} color="#64748B" />
+                        <Text variant="bodySmall" style={{ color: '#64748B' }}>
+                            Tap a marker for diagnostics
                         </Text>
                     </Card.Content>
                 </Card>
@@ -365,9 +504,8 @@ export default function GlobalMapScreen() {
 
         return (
             <Card style={styles.infoCard}>
-                <Card.Content>
-                    {/* Header row */}
-                    <View style={styles.diagHeader}>
+                <Card.Content style={styles.diagCompactContent}>
+                    <View style={styles.diagHeaderCompact}>
                         <Text variant="titleSmall" style={{ fontWeight: 'bold', flex: 1 }}>
                             {selectedBox.id}
                         </Text>
@@ -379,89 +517,22 @@ export default function GlobalMapScreen() {
                             {displayStatus}
                         </Chip>
                     </View>
-
-                    {/* Diagnostics grid */}
-                    <View style={styles.diagGrid}>
-                        {/* Connection */}
-                        <View style={styles.diagItem}>
-                            <MaterialCommunityIcons
-                                name={selectedBox.connection === 'WiFi' ? 'wifi' : 'antenna'}
-                                size={16}
-                                color="#3F51B5"
-                            />
-                            <Text style={styles.diagLabel}>Connection</Text>
-                            <Text style={styles.diagValue}>
-                                {selectedBox.connection ?? '—'}
-                            </Text>
+                    <View style={styles.diagPillRow}>
+                        <View style={styles.diagPill}>
+                            <MaterialCommunityIcons name={selectedBox.connection === 'WiFi' ? 'wifi' : 'antenna'} size={14} color="#3F51B5" />
+                            <Text style={styles.diagPillText}>{selectedBox.connection ?? '—'}</Text>
                         </View>
-
-                        {/* Signal Strength */}
-                        <View style={styles.diagItem}>
-                            <MaterialCommunityIcons
-                                name={sigIcon as any}
-                                size={16}
-                                color={sigColor}
-                            />
-                            <Text style={styles.diagLabel}>Signal</Text>
-                            <Text style={[styles.diagValue, { color: sigColor }]}>
-                                {selectedBox.rssi != null ? `${selectedBox.rssi} dBm` : '—'}
-                            </Text>
+                        <View style={styles.diagPill}>
+                            <MaterialCommunityIcons name={sigIcon as any} size={14} color={sigColor} />
+                            <Text style={[styles.diagPillText, { color: sigColor }]}>{selectedBox.rssi != null ? `${selectedBox.rssi} dBm` : '—'}</Text>
                         </View>
-
-                        {/* Operator */}
-                        <View style={styles.diagItem}>
-                            <MaterialCommunityIcons name="cellphone-wireless" size={16} color="#607D8B" />
-                            <Text style={styles.diagLabel}>Operator</Text>
-                            <Text style={styles.diagValue} numberOfLines={1}>
-                                {selectedBox.op ?? '—'}
-                            </Text>
+                        <View style={styles.diagPill}>
+                            <MaterialCommunityIcons name={selectedBox.gpsFix ? 'crosshairs-gps' : 'crosshairs-off'} size={14} color={selectedBox.gpsFix ? '#16A34A' : '#DC2626'} />
+                            <Text style={styles.diagPillText}>{selectedBox.gpsFix ? 'GPS Fix' : 'No Fix'}</Text>
                         </View>
-
-                        {/* GPS Fix */}
-                        <View style={styles.diagItem}>
-                            <MaterialCommunityIcons
-                                name={selectedBox.gpsFix ? 'crosshairs-gps' : 'crosshairs-off'}
-                                size={16}
-                                color={selectedBox.gpsFix ? '#4CAF50' : '#F44336'}
-                            />
-                            <Text style={styles.diagLabel}>GPS Fix</Text>
-                            <Text
-                                style={[
-                                    styles.diagValue,
-                                    { color: selectedBox.gpsFix ? '#4CAF50' : '#F44336' },
-                                ]}
-                            >
-                                {selectedBox.gpsFix != null
-                                    ? selectedBox.gpsFix ? 'Yes' : 'No'
-                                    : '—'}
-                            </Text>
-                        </View>
-
-                        {/* GPS Source */}
-                        <View style={styles.diagItem}>
-                            <MaterialCommunityIcons name="satellite-uplink" size={16} color="#795548" />
-                            <Text style={styles.diagLabel}>GPS Src</Text>
-                            <Text style={styles.diagValue}>
-                                {selectedBox.gpsSource ?? '—'}
-                            </Text>
-                        </View>
-
-                        {/* Data Consumed */}
-                        <View style={styles.diagItem}>
-                            <MaterialCommunityIcons name="cloud-upload-outline" size={16} color="#3F51B5" />
-                            <Text style={styles.diagLabel}>Data Out</Text>
-                            <Text style={styles.diagValue}>
-                                {formatDataBytes(selectedBox.dataBytes)}
-                            </Text>
-                        </View>
-
-                        {/* Last Update */}
-                        <View style={styles.diagItem}>
-                            <MaterialCommunityIcons name="clock-outline" size={16} color="#FF9800" />
-                            <Text style={styles.diagLabel}>Updated</Text>
-                            <Text style={styles.diagValue}>
-                                {formatTimeAgo(selectedBox.lastUpdated || selectedBox.timestamp)}
-                            </Text>
+                        <View style={styles.diagPill}>
+                            <MaterialCommunityIcons name="clock-outline" size={14} color="#F59E0B" />
+                            <Text style={styles.diagPillText}>{formatTimeAgo(selectedBox.lastUpdated || selectedBox.timestamp)}</Text>
                         </View>
                     </View>
                 </Card.Content>
@@ -518,25 +589,57 @@ export default function GlobalMapScreen() {
 
             {/* Top summary banner */}
             <View style={styles.overlayTop}>
-                <Card>
-                    <Card.Content style={styles.topCardContent}>
+                <Card style={styles.topCard}>
+                    <Card.Content style={styles.topHudContent}>
+                        <LivePulseDot color="#22C55E" />
                         <View style={{ flex: 1 }}>
-                            <Text variant="titleMedium">Active Fleet: {activeBoxes.length}</Text>
-                            <Text variant="bodySmall" style={{ color: 'red' }}>
-                                {tamperAlertCount} Tamper Alert{tamperAlertCount === 1 ? '' : 's'} Active
+                            <Text variant="titleSmall" style={{ fontWeight: '800' }}>Live Fleet</Text>
+                            <Text variant="labelSmall" style={{ color: '#64748B' }}>
+                                {filteredBoxes.length}/{activeBoxes.length} boxes visible
                             </Text>
                         </View>
-                        <IconButton
-                            icon={listVisible ? 'chevron-down' : 'format-list-bulleted'}
-                            size={24}
-                            onPress={() => setListVisible((v) => !v)}
-                        />
+                        <View style={styles.topHudStats}>
+                            <Text style={styles.topHudStatDanger}>T {tamperAlertCount}</Text>
+                            <Text style={styles.topHudStat}>A {activeMoveCount}</Text>
+                            <Text style={styles.topHudStat}>O {offlineCount}</Text>
+                        </View>
+                    </Card.Content>
+                </Card>
+
+                <Card style={styles.filterCard}>
+                    <Card.Content style={styles.filterRow}>
+                        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterScrollContent}>
+                            {(['ALL', 'TAMPER', 'ACTIVE', 'OFFLINE'] as FleetFilter[]).map((filterKey) => (
+                                <Chip
+                                    key={filterKey}
+                                    compact
+                                    selected={fleetFilter === filterKey}
+                                    onPress={() => {
+                                        setFleetFilter(filterKey);
+                                        Haptics.selectionAsync().catch(() => undefined);
+                                    }}
+                                    style={[styles.filterChip, fleetFilter === filterKey ? styles.filterChipSelected : null]}
+                                    textStyle={fleetFilter === filterKey ? styles.filterChipTextSelected : undefined}
+                                >
+                                    {filterKey}
+                                </Chip>
+                            ))}
+                        </ScrollView>
+
+                        <View style={styles.filterActions}>
+                            <IconButton icon="crosshairs-gps" size={20} onPress={recenterToFleet} />
+                            <IconButton
+                                icon={listVisible ? 'chevron-down' : 'format-list-bulleted'}
+                                size={20}
+                                onPress={() => setListVisible((v) => !v)}
+                            />
+                        </View>
                     </Card.Content>
                 </Card>
             </View>
 
             {/* Diagnostics info panel */}
-            <View style={styles.overlayInfo}>
+            <View style={[styles.overlayInfo, listVisible ? styles.overlayInfoRaised : null]}>
                 {renderDiagnosticsCard()}
             </View>
 
@@ -545,12 +648,12 @@ export default function GlobalMapScreen() {
                 <View style={styles.listPanel}>
                     <View style={styles.listHeader}>
                         <Text variant="titleMedium" style={{ flex: 1 }}>
-                            All Boxes ({activeBoxes.length})
+                            Box Feed • {fleetFilter} ({filteredBoxes.length})
                         </Text>
                         <IconButton icon="close" size={20} onPress={() => setListVisible(false)} />
                     </View>
                     <ScrollView style={styles.listScroll}>
-                        {activeBoxes.map((box) => {
+                        {filteredBoxes.map((box) => {
                             const isSelected = selectedBoxId === box.id;
                             const color = getStatusColor(box.status, box.alert);
                             const bars = getSignalBars(box.csq);
@@ -632,9 +735,9 @@ export default function GlobalMapScreen() {
                             );
                         })}
 
-                        {activeBoxes.length === 0 ? (
+                        {filteredBoxes.length === 0 ? (
                             <View style={{ padding: 20, alignItems: 'center' }}>
-                                <Text variant="bodySmall" style={{ color: '#999' }}>No active boxes detected</Text>
+                                <Text variant="bodySmall" style={{ color: '#999' }}>No boxes match this filter</Text>
                             </View>
                         ) : null}
                     </ScrollView>
@@ -673,24 +776,141 @@ const styles = StyleSheet.create({
     },
     overlayTop: {
         position: 'absolute',
-        top: 50,
-        left: 20,
-        right: 20,
+        top: 44,
+        left: 10,
+        right: 10,
+    },
+    topCard: {
+        borderRadius: 12,
+        elevation: 3,
+        backgroundColor: 'white',
+        marginBottom: 6,
+    },
+    topHudContent: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingVertical: 8,
+        paddingHorizontal: 10,
+        gap: 8,
+    },
+    topHudStats: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+    },
+    topHudStat: {
+        fontSize: 12,
+        fontWeight: '700',
+        color: '#334155',
+    },
+    topHudStatDanger: {
+        fontSize: 12,
+        fontWeight: '800',
+        color: '#DC2626',
+    },
+    liveHeaderRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+    },
+    liveChipBadge: {
+        backgroundColor: '#EEF2FF',
+    },
+    kpiRow: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        gap: 8,
+        marginTop: 8,
+    },
+    kpiChip: {
+        backgroundColor: '#F3F4F6',
+    },
+    filterCard: {
+        borderRadius: 12,
+        backgroundColor: 'white',
+        elevation: 2,
+    },
+    filterRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingVertical: 2,
+        paddingHorizontal: 6,
+    },
+    filterScrollContent: {
+        paddingRight: 8,
+        gap: 6,
+    },
+    filterChip: {
+        backgroundColor: '#F8FAFC',
+    },
+    filterChipSelected: {
+        backgroundColor: '#1D4ED8',
+    },
+    filterChipTextSelected: {
+        color: '#FFFFFF',
+        fontWeight: '700',
+    },
+    filterActions: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        marginLeft: 'auto',
     },
     overlayInfo: {
         position: 'absolute',
-        top: 130,
-        left: 12,
-        right: 12,
+        bottom: 14,
+        left: 10,
+        right: 10,
+    },
+    overlayInfoRaised: {
+        bottom: 300,
     },
     infoCard: {
-        borderRadius: 14,
-        elevation: 4,
+        borderRadius: 12,
+        elevation: 3,
+    },
+    infoCardHint: {
+        borderRadius: 999,
+        elevation: 1,
+        alignSelf: 'center',
+    },
+    infoHintContent: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+        paddingVertical: 4,
     },
     topCardContent: {
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'space-between',
+    },
+    diagCompactContent: {
+        paddingVertical: 8,
+        paddingHorizontal: 10,
+    },
+    diagHeaderCompact: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        marginBottom: 8,
+    },
+    diagPillRow: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        gap: 6,
+    },
+    diagPill: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 4,
+        backgroundColor: '#F8FAFC',
+        borderRadius: 999,
+        paddingHorizontal: 8,
+        paddingVertical: 4,
+    },
+    diagPillText: {
+        fontSize: 11,
+        color: '#334155',
+        fontWeight: '600',
     },
     // Diagnostics panel
     diagHeader: {
@@ -728,7 +948,7 @@ const styles = StyleSheet.create({
         bottom: 0,
         left: 0,
         right: 0,
-        maxHeight: 320,
+        maxHeight: 280,
         backgroundColor: 'white',
         borderTopLeftRadius: 20,
         borderTopRightRadius: 20,

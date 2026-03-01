@@ -179,7 +179,7 @@ class OfflineQueueService {
                 // But for "current location", we just want the latest.
                 // We will send them sequentially or just send the batch if your backend supports history.
                 // Assuming standard "location" node:
-                updates[`/locations/${item.boxId}`] = {
+                updates[`/locations/${item.boxId}/phone`] = {
                     latitude: item.latitude,
                     longitude: item.longitude,
                     speed: item.speed,
@@ -228,7 +228,7 @@ class OfflineQueueService {
         const db = getFirebaseDatabase();
         const updates: any = {};
 
-        updates[`/locations/${data.boxId}`] = {
+        updates[`/locations/${data.boxId}/phone`] = {
             latitude: data.latitude,
             longitude: data.longitude,
             speed: data.speed,

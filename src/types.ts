@@ -1,3 +1,19 @@
+export interface LocationData {
+    latitude: number;
+    longitude: number;
+    timestamp: number;
+    server_timestamp?: number;
+    speed?: number;
+    heading?: number;
+    /** Horizontal accuracy in metres (from phone OS location API or derived from box HDOP) */
+    accuracy?: number;
+    /** Horizontal Dilution of Precision from box hardware GNSS (lower = better, < 2 is excellent) */
+    hdop?: number;
+    source: 'box' | 'phone';
+}
+
+export type LocationsByBoxId = Record<string, LocationData>;
+
 export type RootStackParamList = {
   Login: undefined;
   Register: undefined;

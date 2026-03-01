@@ -153,11 +153,13 @@ export async function reportTheft(
 
         // Get current location if available
         const locationRef = ref(db, `locations/${boxId}`);
-        const currentLocation = await new Promise<any>((resolve) => {
+        const rawSnap = await new Promise<any>((resolve) => {
             onValue(locationRef, (snapshot) => {
                 resolve(snapshot.val());
             }, { onlyOnce: true });
         });
+        // Normalize split-path structure { box, phone } vs legacy flat object
+        const currentLocation = rawSnap?.box ?? (rawSnap?.latitude != null ? rawSnap : null);
 
         await set(theftRef, {
             state: 'STOLEN',
@@ -198,7 +200,10 @@ export function subscribeToBoxLocation(
     const locationRef = ref(db, `locations/${boxId}`);
 
     const unsubscribe = onValue(locationRef, (snapshot) => {
-        const data = snapshot.val();
+        const raw = snapshot.val();
+        if (!raw) { callback(null); return; }
+        // Normalize split-path { box, phone } vs legacy flat
+        const data = raw.box ?? (raw.latitude != null ? raw : null);
         if (data) {
             callback({
                 lat: data.latitude,

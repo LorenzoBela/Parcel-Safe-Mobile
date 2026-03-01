@@ -16,7 +16,7 @@ import MapboxGL, { isMapboxNativeAvailable, MapFallback } from '../../components
 import AnimatedRiderMarker from '../../components/map/AnimatedRiderMarker';
 import LottieView from 'lottie-react-native';
 import { useLocationRedundancy, getStatusMessage, getStatusColor } from '../../hooks/useLocationRedundancy';
-import { subscribeToBattery, BatteryState, subscribeToTamper, TamperState, subscribeToLocation, LocationData, subscribeToKeypad, KeypadState, subscribeToHinge, HingeState, subscribeToBoxState, BoxState, updateBoxState } from '../../services/firebaseClient';
+import { subscribeToBattery, BatteryState, subscribeToTamper, TamperState, subscribeToLocation, LocationData, subscribeToKeypad, KeypadState, subscribeToHinge, HingeState, subscribeToBoxState, BoxState, updateBoxState, writePhoneLocation } from '../../services/firebaseClient';
 import { offlineCache, PendingSync } from '../../services/offlineCache';
 import { NetworkStatusBanner } from '../../components';
 import { isSpeedAnomaly, isClockSyncRequired, canAddToPhotoQueue, isGpsStale, SAFETY_CONSTANTS } from '../../services/SafetyLogic';
@@ -118,11 +118,8 @@ import {
 import { subscribeToPower, PowerState, isSolenoidBlockedByVoltage } from '../../services/firebaseClient';
 import useAuthStore from '../../store/authStore';
 import { fetchWeather, weatherBackgroundImages, WeatherData } from '../../services/weatherService';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getAuth } from 'firebase/auth'; // EC-Fix: Fallback auth
 import { supabase } from '../../services/supabaseClient'; // EC-Fix: Session restoration
-
-const PAIRED_BOX_CACHE_KEY_PREFIX = 'parcelSafe:lastPairedBoxId:';
 
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -189,6 +186,7 @@ export default function RiderDashboard() {
         isBoxOnline,
         phoneGpsActive,
         startMonitoring,
+        stopMonitoring,
         activateTracking,
         deactivateTracking,
         gpsHealth, // EC-84
@@ -197,6 +195,9 @@ export default function RiderDashboard() {
 
     // EC-FIX: Local phone location state for fallback
     const [localPhoneLocation, setLocalPhoneLocation] = useState<Location.LocationObject | null>(null);
+    // Ref so the foreground watcher callback can access the current boxId without a stale closure
+    const activeBoxIdRef = useRef<string | null>(null);
+    const lastForegroundWriteRef = useRef<number>(0);
 
     // EC-FIX: Continuous Phone GPS Watchdog (Foreground)
     // This ensures we always have the REAL phone location available, even if the
@@ -217,7 +218,26 @@ export default function RiderDashboard() {
                         (location) => {
                             setLocalPhoneLocation(location);
 
-                            // Debug logging to help identify why "QC" is showing
+                            // Direct Firebase write — bulletproof fallback in case the
+                            // background service task isn't firing (zombie/permission issue).
+                            // Rate-limited to once per 3s to match background service interval.
+                            const boxId = activeBoxIdRef.current;
+                            const now = Date.now();
+                            if (boxId && now - lastForegroundWriteRef.current >= 3000) {
+                                lastForegroundWriteRef.current = now;
+                                writePhoneLocation(
+                                    boxId,
+                                    location.coords.latitude,
+                                    location.coords.longitude,
+                                    location.coords.speed ?? 0,
+                                    location.coords.heading ?? 0
+                                ).then(() => {
+                                    if (__DEV__) console.log(`[RiderDashboard] ✓ Foreground write OK | box=${boxId} | lat=${location.coords.latitude.toFixed(5)} lng=${location.coords.longitude.toFixed(5)}`);
+                                }).catch((err) => {
+                                    console.warn('[RiderDashboard] ✗ Foreground Firebase write failed:', err);
+                                });
+                            }
+
                             if (__DEV__) {
                                 console.log('[RiderDashboard] Phone Location Update:', {
                                     lat: location.coords.latitude,
@@ -316,7 +336,6 @@ export default function RiderDashboard() {
     const riderPhone = authedUser?.phone || undefined;
     const [pushToken, setPushToken] = useState<string | null>(null);
     const [pairingState, setPairingState] = useState<BoxPairingState | null>(null);
-    const [cachedBoxId, setCachedBoxId] = useState<string | null>(null);
 
     // EC-32: Cancellation State
     const [showCancelModal, setShowCancelModal] = useState(false);
@@ -338,18 +357,12 @@ export default function RiderDashboard() {
     const isPaired = isPairingActive(pairingState);
     const pairedBoxId = pairingState?.box_id;
     const pairingModeLabel = pairingState?.mode === 'ONE_TIME' ? 'One-time' : 'Session';
-    const boxIdForMonitoring = pairedBoxId ?? cachedBoxId;
+    const boxIdForMonitoring = pairedBoxId ?? null;
 
-    // Load last paired box id for cross-screen persistence.
+    // Keep the ref in sync so the foreground watcher callback can access current boxId
     useEffect(() => {
-        if (!riderId) {
-            setCachedBoxId(null);
-            return;
-        }
-        AsyncStorage.getItem(`${PAIRED_BOX_CACHE_KEY_PREFIX}${riderId}`)
-            .then((value) => setCachedBoxId(value || null))
-            .catch(() => setCachedBoxId(null));
-    }, [riderId]);
+        activeBoxIdRef.current = (isPaired && isOnline && pairedBoxId) ? pairedBoxId : null;
+    }, [isPaired, isOnline, pairedBoxId]);
 
     // EC-Fix: Auto-restore session if authStore is empty but Firebase Auth is active
     // This prevents "Rider ID Required" errors after reloading the app
@@ -585,30 +598,42 @@ export default function RiderDashboard() {
     //    the actual Firebase writes come from the background location service.
     //    NOTE: Race condition is now fixed in stop(), so we safely call it when unpaired. ──
     useEffect(() => {
-        if (isOnline && isPaired && pairedBoxId) {
-            console.log('[RiderDashboard] Paired + Online - Starting location tracking for:', pairedBoxId);
-            startMonitoring(pairedBoxId);
+        const activeDeliveryBoxId = activeDelivery?.assigned_box_id || activeDelivery?.box_id;
+        const hasActiveDeliveryTracking = Boolean(
+            activeDeliveryBoxId
+            && activeDelivery?.status
+            && activeDelivery.status !== 'COMPLETED'
+            && activeDelivery.status !== 'CANCELLED'
+        );
+
+        const trackingBoxId = (isPaired && pairedBoxId) ? pairedBoxId : activeDeliveryBoxId;
+
+        if (isOnline && trackingBoxId && ((isPaired && pairedBoxId) || hasActiveDeliveryTracking)) {
+            console.log('[RiderDashboard] Online tracking active for box:', trackingBoxId);
+            startMonitoring(trackingBoxId);
             activateTracking();
 
             // Start the background location service — this is what actually
             // writes phone GPS to Firebase every 3 seconds.
             // The service's start() handles deduplication internally:
             // if already running with same boxId, it returns true immediately.
-            startBackgroundLocation(pairedBoxId);
+            startBackgroundLocation(trackingBoxId);
         } else if (!isOnline) {
             console.log('[RiderDashboard] Rider is offline - Deactivating Tracking');
             deactivateTracking();
+            stopMonitoring();
             stopBackgroundLocation();
-        } else if (!isPaired) {
-            console.log('[RiderDashboard] Not paired - Deactivating redundancy tracking and background location');
+        } else if (!isPaired && !hasActiveDeliveryTracking) {
+            console.log('[RiderDashboard] Not paired and no active delivery - stopping tracking/background location');
             deactivateTracking();
+            stopMonitoring();
             stopBackgroundLocation();
         }
-    }, [isOnline, isPaired, pairedBoxId]);
+    }, [isOnline, isPaired, pairedBoxId, activeDelivery?.id, activeDelivery?.status, activeDelivery?.assigned_box_id, activeDelivery?.box_id]);
 
     // Auto-start monitoring for hardware state (read-only subscriptions)
     useEffect(() => {
-        if (boxIdForMonitoring) {
+        if (boxIdForMonitoring && isPaired) {
             startMonitoring(boxIdForMonitoring);
         }
 
@@ -724,7 +749,7 @@ export default function RiderDashboard() {
             unsubscribeKeypad();
             unsubscribeHinge();
         };
-    }, [boxIdForMonitoring]);
+    }, [boxIdForMonitoring, isPaired]);
 
     // EC-01/EC-06: Check for pending syncs periodically
     useEffect(() => {
@@ -803,7 +828,7 @@ export default function RiderDashboard() {
         // Cleanup
         return () => {
             unsubscribeRequests();
-            notificationListener.remove();
+            notificationListener?.remove?.();
             // NOTE: We do NOT removeRiderFromOnline here. 
             // We only remove if isOnline becomes false (handled at start of effect)
             // or if unmounting (handled by onDisconnect in service typically, or we could add a sturdy cleanup).
@@ -852,11 +877,7 @@ export default function RiderDashboard() {
     useEffect(() => {
         if (!riderId) return;
         const unsubscribe = subscribeToRiderPairing(riderId, (state) => {
-            setPairingState(state);
-            // Keep cache warm even if pairing is only available via rider-scoped node.
-            if (state?.box_id) {
-                AsyncStorage.setItem(`${PAIRED_BOX_CACHE_KEY_PREFIX}${riderId}`, state.box_id).catch(() => undefined);
-            }
+            setPairingState(isPairingActive(state) ? state : null);
         });
         return unsubscribe;
     }, [riderId]);
