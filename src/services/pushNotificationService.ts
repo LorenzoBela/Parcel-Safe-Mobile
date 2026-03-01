@@ -91,11 +91,14 @@ function ensureNotificationHandler(): void {
     }
 }
 
-// Notification channel for Android (required for Android 8+)
+// Notification channels for Android (required for Android 8+)
 export const NOTIFICATION_CHANNELS = {
     INCOMING_ORDER: 'incoming-order',
     DELIVERY_STATUS: 'delivery-status',
     ONGOING_DELIVERY: 'ongoing-delivery',
+    SECURITY_ALERTS: 'security-alerts',
+    CANCELLATION: 'cancellation',
+    PROMOTIONS: 'promotions',
 };
 
 /**
@@ -140,6 +143,33 @@ export async function setupNotificationChannels(): Promise<void> {
             importance: Notifications.AndroidImportance.LOW,
             sound: null,
         });
+
+        // Security alerts channel (tamper, theft, geofence)
+        await Notifications.setNotificationChannelAsync(NOTIFICATION_CHANNELS.SECURITY_ALERTS, {
+            name: 'Security Alerts',
+            importance: Notifications.AndroidImportance.MAX,
+            vibrationPattern: [0, 500, 250, 500],
+            lightColor: '#FF0000',
+            sound: 'default',
+            enableVibrate: true,
+            showBadge: true,
+        });
+
+        // Cancellation channel
+        await Notifications.setNotificationChannelAsync(NOTIFICATION_CHANNELS.CANCELLATION, {
+            name: 'Order Cancellations',
+            importance: Notifications.AndroidImportance.HIGH,
+            sound: 'default',
+            enableVibrate: true,
+        });
+
+        // Promotions channel (low priority, no vibration)
+        await Notifications.setNotificationChannelAsync(NOTIFICATION_CHANNELS.PROMOTIONS, {
+            name: 'Promotions & Offers',
+            importance: Notifications.AndroidImportance.LOW,
+            sound: null,
+            enableVibrate: false,
+        });
     } catch (error) {
         console.warn('Failed to setup notification channels:', error);
         nativeNotificationsAvailable = false;
@@ -174,6 +204,9 @@ export async function registerForPushNotifications(): Promise<string | null> {
         // Save token to AsyncStorage
         await AsyncStorage.setItem('fcm_token', fcmToken);
 
+        // Register token to server-side devices table
+        await registerTokenWithServer(fcmToken);
+
         // Also get Expo push token if available (for backup)
         try {
             if (Notifications) {
@@ -186,11 +219,123 @@ export async function registerForPushNotifications(): Promise<string | null> {
             console.log('Expo push token not available:', expoError);
         }
 
+        // Setup FCM background message handler
+        setupFCMBackgroundHandler();
+
         return fcmToken;
     } catch (error) {
         console.warn('Failed to register for push notifications:', error);
         nativeNotificationsAvailable = false;
         return 'SIMULATED_TOKEN_DEV';
+    }
+}
+
+/**
+ * Register FCM token with the server-side devices table.
+ * This enables the server to send push notifications to this device.
+ */
+async function registerTokenWithServer(fcmToken: string): Promise<void> {
+    try {
+        const { data: { user } } = await supabase.auth.getUser();
+        if (!user) {
+            console.warn('[FCM] No authenticated user, skipping server registration');
+            return;
+        }
+
+        // Get the API base URL from environment
+        const apiBaseUrl = process.env.EXPO_PUBLIC_TRACKING_WEB_BASE_URL || process.env.EXPO_PUBLIC_API_URL;
+        if (!apiBaseUrl) {
+            console.warn('[FCM] No API base URL configured, skipping server registration');
+            return;
+        }
+
+        const response = await fetch(`${apiBaseUrl}/api/notifications/register`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                userId: user.id,
+                fcmToken,
+                platform: Platform.OS, // 'android' or 'ios'
+            }),
+        });
+
+        if (response.ok) {
+            console.log('[FCM] Token registered with server');
+        } else {
+            console.warn('[FCM] Server token registration failed:', response.status);
+        }
+    } catch (error) {
+        console.warn('[FCM] Failed to register token with server:', error);
+    }
+}
+
+/**
+ * Setup FCM background message handler.
+ * Fires when a data message arrives while the app is in background/killed.
+ */
+function setupFCMBackgroundHandler(): void {
+    if (!messaging) return;
+
+    try {
+        messaging().setBackgroundMessageHandler(async (remoteMessage: any) => {
+            console.log('[FCM] Background message:', remoteMessage);
+
+            // FCM data messages need to be shown as local notifications
+            const data = remoteMessage.data || {};
+            const title = remoteMessage.notification?.title || data.title || 'Parcel Safe';
+            const body = remoteMessage.notification?.body || data.body || 'You have a new notification.';
+            const channelId = data.channelId || NOTIFICATION_CHANNELS.DELIVERY_STATUS;
+
+            if (checkNotificationsAvailable()) {
+                await Notifications.scheduleNotificationAsync({
+                    content: {
+                        title,
+                        body,
+                        data,
+                        sound: 'default',
+                    },
+                    trigger: { channelId },
+                });
+            }
+        });
+    } catch (error) {
+        console.warn('[FCM] Failed to set background handler:', error);
+    }
+}
+
+/**
+ * Setup FCM foreground message handler.
+ * Shows a local notification when a push arrives while app is open.
+ */
+export function setupFCMForegroundHandler(): () => void {
+    if (!messaging) return () => { };
+
+    try {
+        const unsubscribe = messaging().onMessage(async (remoteMessage: any) => {
+            console.log('[FCM] Foreground message:', remoteMessage);
+
+            const data = remoteMessage.data || {};
+            const title = remoteMessage.notification?.title || data.title || 'Parcel Safe';
+            const body = remoteMessage.notification?.body || data.body || 'You have a new notification.';
+            const channelId = data.channelId || NOTIFICATION_CHANNELS.DELIVERY_STATUS;
+
+            if (checkNotificationsAvailable()) {
+                await Notifications.scheduleNotificationAsync({
+                    content: {
+                        title,
+                        body,
+                        data,
+                        sound: 'default',
+                    },
+                    trigger: { channelId },
+                });
+            }
+        });
+
+        return unsubscribe;
+    } catch (error) {
+        console.warn('[FCM] Failed to set foreground handler:', error);
+        return () => { };
     }
 }
 
