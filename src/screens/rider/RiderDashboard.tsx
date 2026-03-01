@@ -73,6 +73,15 @@ const formatTimeWithHeuristic = (timeStr: string) => {
     }
     return phTime.format('h:mm A');
 };
+
+const sanitizeBoxId = (value: unknown): string | null => {
+    if (typeof value !== 'string') return null;
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    const lowered = trimmed.toLowerCase();
+    if (lowered === 'null' || lowered === 'undefined' || lowered === 'unknown_box') return null;
+    return trimmed;
+};
 import {
     subscribeToRiderRequests,
     acceptOrder,
@@ -355,9 +364,9 @@ export default function RiderDashboard() {
     const [hasActiveDelivery, setHasActiveDelivery] = useState(false);
 
     const isPaired = isPairingActive(pairingState);
-    const pairedBoxId = pairingState?.box_id;
+    const pairedBoxId = sanitizeBoxId(pairingState?.box_id);
     const pairingModeLabel = pairingState?.mode === 'ONE_TIME' ? 'One-time' : 'Session';
-    const boxIdForMonitoring = pairedBoxId ?? null;
+    const boxIdForMonitoring = pairedBoxId;
 
     // Keep the ref in sync so the foreground watcher callback can access current boxId
     useEffect(() => {
@@ -411,7 +420,7 @@ export default function RiderDashboard() {
     // Moved here to ensure activeDelivery is defined
     useEffect(() => {
         if (activeDelivery) {
-            const boxId = activeDelivery.assigned_box_id || activeDelivery.box_id;
+            const boxId = sanitizeBoxId(activeDelivery.assigned_box_id || activeDelivery.box_id);
             if (boxId) {
                 console.log('[RiderDashboard] Starting monitoring for box:', boxId);
                 startMonitoring(boxId);
@@ -453,7 +462,7 @@ export default function RiderDashboard() {
     // Dynamic delivery state — populated from real sources when available
     const nextDelivery = useMemo(() => activeDelivery ? {
         id: activeDelivery.id,
-        boxId: activeDelivery.assigned_box_id || activeDelivery.box_id, // Ensure boxId is passed
+        boxId: sanitizeBoxId(activeDelivery.assigned_box_id || activeDelivery.box_id) || 'UNKNOWN_BOX',
         status: activeDelivery.status, // Add status
         address: activeDelivery.dropoff_address,
         customer: activeDelivery.recipient_name || activeDelivery.customer?.full_name || 'Customer',
@@ -554,7 +563,7 @@ export default function RiderDashboard() {
     useEffect(() => {
         const handleAppStateChange = (nextState: import('react-native').AppStateStatus) => {
             if (nextState === 'active' && activeDelivery) {
-                const boxId = activeDelivery.assigned_box_id || activeDelivery.box_id;
+                const boxId = sanitizeBoxId(activeDelivery.assigned_box_id || activeDelivery.box_id);
                 if (boxId) {
                     checkAndRecoverBackgroundLocation(boxId);
                 }
@@ -598,7 +607,7 @@ export default function RiderDashboard() {
     //    the actual Firebase writes come from the background location service.
     //    NOTE: Race condition is now fixed in stop(), so we safely call it when unpaired. ──
     useEffect(() => {
-        const activeDeliveryBoxId = activeDelivery?.assigned_box_id || activeDelivery?.box_id;
+        const activeDeliveryBoxId = sanitizeBoxId(activeDelivery?.assigned_box_id || activeDelivery?.box_id);
         const hasActiveDeliveryTracking = Boolean(
             activeDeliveryBoxId
             && activeDelivery?.status

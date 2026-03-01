@@ -31,6 +31,7 @@ interface DropoffVerificationProps {
     onShowCancelModal: () => void;
     onShowCustomerNotHome: () => void;
     isWaitTimerActive: boolean;
+    canAutoArrive: boolean;
 }
 
 export default function DropoffVerification({
@@ -52,7 +53,8 @@ export default function DropoffVerification({
     onShowBleModal,
     onShowCancelModal,
     onShowCustomerNotHome,
-    isWaitTimerActive
+    isWaitTimerActive,
+    canAutoArrive,
 }: DropoffVerificationProps) {
     const [isLoading, setIsLoading] = useState(false);
     const [fallbackPhotoUri, setFallbackPhotoUri] = useState<string | null>(null);
@@ -64,7 +66,7 @@ export default function DropoffVerification({
 
     // Auto-arrive logic
     useEffect(() => {
-        if (isInsideGeoFence && deliveryStatus === 'IN_TRANSIT') {
+        if (canAutoArrive && isInsideGeoFence && deliveryStatus === 'IN_TRANSIT') {
             // Automatically mark as ARRIVED when entering geofence
             const autoArrive = async () => {
                 await updateDeliveryStatus(deliveryId, 'ARRIVED', {
@@ -73,12 +75,24 @@ export default function DropoffVerification({
             };
             autoArrive();
         }
-    }, [isInsideGeoFence, deliveryStatus, deliveryId]);
+    }, [canAutoArrive, isInsideGeoFence, deliveryStatus, deliveryId]);
+
+    const canProcessOtpSignals =
+        canAutoArrive &&
+        isInsideGeoFence &&
+        (deliveryStatus === 'ARRIVED' || deliveryStatus === 'COMPLETED');
+
+    useEffect(() => {
+        if (!canProcessOtpSignals) {
+            setBoxOtpValidated(false);
+            setHardwareSuccess(false);
+        }
+    }, [canProcessOtpSignals]);
 
     // Monitor box state for OTP validation
     useEffect(() => {
         const unsubscribeBox = subscribeToBoxState(boxId, (state) => {
-            if (state?.status === 'UNLOCKING' || state?.status === 'ACTIVE') {
+            if (canProcessOtpSignals && (state?.status === 'UNLOCKING' || state?.status === 'ACTIVE')) {
                 // Box confirmed OTP was entered correctly — this is the security gate
                 setBoxOtpValidated(true);
             }
@@ -86,7 +100,7 @@ export default function DropoffVerification({
 
         // Monitor delivery proof for hardware camera success
         const unsubscribeProof = subscribeToDeliveryProof(deliveryId, (proof) => {
-            if (proof && proof.proof_photo_url) {
+            if (canProcessOtpSignals && proof && proof.proof_photo_url) {
                 setHardwareSuccess(true);
                 setBoxOtpValidated(true); // proof_photo_url implies box validated OTP
             }
@@ -104,7 +118,7 @@ export default function DropoffVerification({
             unsubscribeProof();
             unsubscribeCamera();
         };
-    }, [boxId, deliveryId]);
+    }, [boxId, deliveryId, canProcessOtpSignals]);
 
     const handleCaptureFallbackPhoto = async () => {
         try {

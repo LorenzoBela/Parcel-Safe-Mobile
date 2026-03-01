@@ -230,6 +230,15 @@ export type StateChangeCallback = (state: BackgroundLocationState) => void;
 // Store current box ID for the background task
 let currentBoxId: string | null = null;
 
+function sanitizeBoxId(value: unknown): string | null {
+    if (typeof value !== 'string') return null;
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    const lowered = trimmed.toLowerCase();
+    if (lowered === 'null' || lowered === 'undefined' || lowered === 'unknown_box') return null;
+    return trimmed;
+}
+
 // AsyncStorage key for persisting the active box ID across JS runtime restarts.
 // When the phone is locked, Android may kill the JS runtime while keeping the native
 // foreground service alive. When a new GPS event arrives, the native service restarts
@@ -240,8 +249,9 @@ const ACTIVE_BOX_ID_KEY = 'parcelSafe:activeBackgroundBoxId';
 /** Persist the active box ID so background task callbacks work after JS restart. */
 async function persistBoxId(boxId: string | null): Promise<void> {
     try {
-        if (boxId) {
-            await AsyncStorage.setItem(ACTIVE_BOX_ID_KEY, boxId);
+        const sanitized = sanitizeBoxId(boxId);
+        if (sanitized) {
+            await AsyncStorage.setItem(ACTIVE_BOX_ID_KEY, sanitized);
         } else {
             await AsyncStorage.removeItem(ACTIVE_BOX_ID_KEY);
         }
@@ -253,7 +263,12 @@ async function persistBoxId(boxId: string | null): Promise<void> {
 /** Restore the active box ID from storage (called when the task fires but currentBoxId is null). */
 async function restoreBoxId(): Promise<string | null> {
     try {
-        return await AsyncStorage.getItem(ACTIVE_BOX_ID_KEY);
+        const restored = await AsyncStorage.getItem(ACTIVE_BOX_ID_KEY);
+        const sanitized = sanitizeBoxId(restored);
+        if (!sanitized && restored) {
+            await AsyncStorage.removeItem(ACTIVE_BOX_ID_KEY);
+        }
+        return sanitized;
     } catch (e) {
         console.error('[EC-15] Failed to restore boxId:', e);
         return null;
@@ -320,7 +335,7 @@ TaskManager.defineTask(CONFIG.TASK_NAME, async ({ data, error }) => {
     // Restore currentBoxId from AsyncStorage if it was lost (JS runtime restarted
     // while phone was locked — the native foreground service kept running but the
     // in-memory variable was wiped)
-    if (!currentBoxId) {
+    if (!sanitizeBoxId(currentBoxId)) {
         currentBoxId = await restoreBoxId();
         if (!currentBoxId) {
             console.warn('[EC-15] Task fired but no boxId in memory or AsyncStorage — dropping update');
@@ -579,10 +594,20 @@ class BackgroundLocationManager {
      * Start background location tracking
      */
     async start(boxId: string): Promise<boolean> {
+        const sanitizedBoxId = sanitizeBoxId(boxId);
         console.log(`[EC-15] start() called | boxId=${boxId} | status=${this.state.status} | currentBoxId=${currentBoxId}`);
 
+        if (!sanitizedBoxId) {
+            console.warn('[EC-15] Refusing to start background tracking with invalid boxId:', boxId);
+            this.updateState({
+                status: 'ERROR',
+                lastError: 'Invalid boxId for background tracking',
+            });
+            return false;
+        }
+
         if (this.state.status === 'RUNNING' || this.state.status === 'STARTING') {
-            if (currentBoxId === boxId) {
+            if (currentBoxId === sanitizedBoxId) {
                 console.log('[EC-15] start() early-return: already RUNNING/STARTING with same boxId');
                 return true;
             }
@@ -591,8 +616,8 @@ class BackgroundLocationManager {
         }
 
         this.updateState({ status: 'STARTING' });
-        currentBoxId = boxId;
-        await persistBoxId(boxId);
+        currentBoxId = sanitizedBoxId;
+        await persistBoxId(sanitizedBoxId);
 
         // Check permissions
         console.log('[EC-15] Checking location permissions...');
@@ -671,7 +696,7 @@ class BackgroundLocationManager {
                     showsBackgroundLocationIndicator: true,
                     pausesUpdatesAutomatically: false,
                 });
-                console.log('[EC-15] startLocationUpdatesAsync succeeded for boxId:', boxId);
+                console.log('[EC-15] startLocationUpdatesAsync succeeded for boxId:', sanitizedBoxId);
             } catch (locationError) {
                 console.error('[EC-15] Android 14 FGS start error:', locationError);
                 this.updateState({
@@ -690,14 +715,14 @@ class BackgroundLocationManager {
             // Start monitoring
             this.startHealthCheck();
             this.subscribeToAppState();
-            this.subscribeToBoxGpsStatus(boxId);
+            this.subscribeToBoxGpsStatus(sanitizedBoxId);
             if (AppState.currentState === 'active') {
                 await this.startForegroundWatcher();
                 this.startForegroundHeartbeat();
             }
 
             // Log to Firebase
-            await this.logServiceEvent(boxId, 'SERVICE_STARTED');
+            await this.logServiceEvent(sanitizedBoxId, 'SERVICE_STARTED');
 
             return true;
         } catch (error) {
@@ -798,12 +823,18 @@ class BackgroundLocationManager {
      * Call this from AppState 'active' handler when user reopens the app.
      */
     async checkAndRecover(boxId: string): Promise<void> {
+        const sanitizedBoxId = sanitizeBoxId(boxId);
+        if (!sanitizedBoxId) {
+            console.warn('[EC-15] checkAndRecover skipped due to invalid boxId:', boxId);
+            return;
+        }
+
         try {
             const isTaskRegistered = await TaskManager.isTaskRegisteredAsync(CONFIG.TASK_NAME);
 
             if (!isTaskRegistered) {
                 console.warn('[EC-15] Background task was killed by OS! Restarting...');
-                await this.start(boxId);
+                await this.start(sanitizedBoxId);
                 return;
             }
 
@@ -813,7 +844,7 @@ class BackgroundLocationManager {
             if (timeSinceUpdate > 180000) { // 3 minutes — stale zombie
                 console.warn(`[EC-15] Background task stale (${Math.round(timeSinceUpdate / 1000)}s). Restarting...`);
                 await this.stop();
-                await this.start(boxId);
+                await this.start(sanitizedBoxId);
             }
         } catch (error) {
             console.error('[EC-15] checkAndRecover failed:', error);
@@ -824,7 +855,8 @@ class BackgroundLocationManager {
      * Force location update (when app comes to foreground)
      */
     async forceUpdate(): Promise<void> {
-        if (!currentBoxId || this.state.status !== 'RUNNING') return;
+        const sanitizedCurrentBoxId = sanitizeBoxId(currentBoxId);
+        if (!sanitizedCurrentBoxId || this.state.status !== 'RUNNING') return;
 
         try {
             const location = await Location.getCurrentPositionAsync({
@@ -836,7 +868,7 @@ class BackgroundLocationManager {
             const db = getFirebaseDatabase();
             const updates: Record<string, any> = {};
 
-            updates[`/locations/${currentBoxId}/phone`] = {
+            updates[`/locations/${sanitizedCurrentBoxId}/phone`] = {
                 latitude: location.coords.latitude,
                 longitude: location.coords.longitude,
                 accuracy: location.coords.accuracy ?? null,
@@ -848,7 +880,7 @@ class BackgroundLocationManager {
                 source: 'phone_foreground',
             };
 
-            updates[`/boxes/${currentBoxId}/background_location_status`] = {
+            updates[`/boxes/${sanitizedCurrentBoxId}/background_location_status`] = {
                 lastUpdate: serverTimestamp(),
                 source: 'phone_foreground',
                 accuracy: location.coords.accuracy,
@@ -868,7 +900,7 @@ class BackgroundLocationManager {
                 { accuracy: location.coords.accuracy, altitude: location.coords.altitude },
                 'phone_foreground'
             );
-            await writePhoneStatusIfDue(currentBoxId, phoneStatus);
+            await writePhoneStatusIfDue(sanitizedCurrentBoxId, phoneStatus);
         } catch (error) {
             console.error('[EC-15] Force update failed:', error);
         }
@@ -896,10 +928,11 @@ class BackgroundLocationManager {
 
             // ---- Feature 7: Signal Loss Detection ----
             const timeSinceValidFix = now - lastValidFixTime;
-            if (timeSinceValidFix > CONFIG.SIGNAL_LOST_THRESHOLD_MS && currentBoxId) {
+            const sanitizedCurrentBoxId = sanitizeBoxId(currentBoxId);
+            if (timeSinceValidFix > CONFIG.SIGNAL_LOST_THRESHOLD_MS && sanitizedCurrentBoxId) {
                 try {
                     const db = getFirebaseDatabase();
-                    const statusRef = ref(db, `boxes/${currentBoxId}/background_location_status`);
+                    const statusRef = ref(db, `boxes/${sanitizedCurrentBoxId}/background_location_status`);
                     await set(statusRef, {
                         lastUpdate: serverTimestamp(),
                         source: 'phone_background',
@@ -916,8 +949,9 @@ class BackgroundLocationManager {
             const isTaskRegistered = await TaskManager.isTaskRegisteredAsync(CONFIG.TASK_NAME);
             if (this.state.status === 'RUNNING' && !isTaskRegistered) {
                 console.warn('[EC-15] Task was killed, restarting...');
-                if (currentBoxId) {
-                    await this.start(currentBoxId);
+                const sanitizedCurrentBoxId = sanitizeBoxId(currentBoxId);
+                if (sanitizedCurrentBoxId) {
+                    await this.start(sanitizedCurrentBoxId);
                 }
             }
         }, CONFIG.HEALTH_CHECK_INTERVAL_MS);
@@ -982,7 +1016,8 @@ class BackgroundLocationManager {
     };
 
     private async startForegroundWatcher(): Promise<void> {
-        if (this.foregroundWatchSubscription || !currentBoxId || this.state.status !== 'RUNNING') return;
+        const sanitizedCurrentBoxId = sanitizeBoxId(currentBoxId);
+        if (this.foregroundWatchSubscription || !sanitizedCurrentBoxId || this.state.status !== 'RUNNING') return;
 
         try {
             this.foregroundWatchSubscription = await Location.watchPositionAsync(
@@ -992,7 +1027,8 @@ class BackgroundLocationManager {
                     distanceInterval: CONFIG.DISTANCE_FILTER_M,
                 },
                 async (location) => {
-                    if (!currentBoxId || this.state.status !== 'RUNNING') return;
+                    const sanitizedCurrentBoxId = sanitizeBoxId(currentBoxId);
+                    if (!sanitizedCurrentBoxId || this.state.status !== 'RUNNING') return;
 
                     const accuracy = location.coords.accuracy ?? 999;
                     const isLowAccuracy = accuracy > CONFIG.ACCURACY_REJECT_THRESHOLD_M;
@@ -1003,7 +1039,7 @@ class BackgroundLocationManager {
 
                         cumulativeDataBytes += 500;
 
-                        updates[`/locations/${currentBoxId}/phone`] = {
+                        updates[`/locations/${sanitizedCurrentBoxId}/phone`] = {
                             latitude: location.coords.latitude,
                             longitude: location.coords.longitude,
                             accuracy: location.coords.accuracy ?? null,
@@ -1016,7 +1052,7 @@ class BackgroundLocationManager {
                             gps_degraded: isLowAccuracy,
                         };
 
-                        updates[`/boxes/${currentBoxId}/background_location_status`] = {
+                        updates[`/boxes/${sanitizedCurrentBoxId}/background_location_status`] = {
                             lastUpdate: serverTimestamp(),
                             source: 'phone_foreground',
                             accuracy: location.coords.accuracy,
@@ -1024,7 +1060,7 @@ class BackgroundLocationManager {
                             gps_degraded: isLowAccuracy,
                         };
 
-                        updates[`/hardware/${currentBoxId}/phone_status/data_bytes`] = cumulativeDataBytes;
+                        updates[`/hardware/${sanitizedCurrentBoxId}/phone_status/data_bytes`] = cumulativeDataBytes;
 
                         await update(ref(db), updates);
 
@@ -1049,7 +1085,7 @@ class BackgroundLocationManager {
                         if (phoneStatus) {
                             phoneStatus.data_bytes = cumulativeDataBytes;
                         }
-                        await writePhoneStatusIfDue(currentBoxId, phoneStatus);
+                        await writePhoneStatusIfDue(sanitizedCurrentBoxId, phoneStatus);
                     } catch (error) {
                         console.error('[EC-15] Foreground watcher write failed:', error);
                     }

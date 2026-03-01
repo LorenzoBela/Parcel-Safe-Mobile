@@ -528,8 +528,16 @@ export async function acceptOrder(
         const bookingRef = ref(db, `/pending_bookings/${bookingId}`);
         const acceptedAt = Date.now();
 
+        const normalizedBoxId = typeof metadata?.boxId === 'string' ? metadata.boxId.trim() : '';
+        const hasValidBoxId = Boolean(
+            normalizedBoxId
+            && normalizedBoxId.toLowerCase() !== 'null'
+            && normalizedBoxId.toLowerCase() !== 'undefined'
+            && normalizedBoxId.toLowerCase() !== 'unknown_box'
+        );
+
         // GUARDRAIL: Box ID is required for delivery security
-        if (!metadata?.boxId) {
+        if (!hasValidBoxId) {
             console.warn('[RiderMatching] Attempted to accept order without paired boxId');
             return false;
         }
@@ -607,7 +615,7 @@ export async function acceptOrder(
             rider_name: metadata?.riderName || '',
             rider_phone: metadata?.riderPhone || '',
             customer_id: booking.customer_id,
-            box_id: metadata?.boxId || '',
+            box_id: normalizedBoxId,
             pickup_lat: booking.pickup_lat,
             pickup_lng: booking.pickup_lng,
             pickup_address: booking.pickup_address,
@@ -647,20 +655,20 @@ export async function acceptOrder(
 
                 // Validate box_id FK: only include if box exists in Supabase
                 let safeBoxId: string | null = null;
-                if (metadata?.boxId) {
+                if (normalizedBoxId) {
                     const { data: boxExists } = await supabase
                         .from('smart_boxes')
                         .select('id')
-                        .eq('id', metadata.boxId)
+                        .eq('id', normalizedBoxId)
                         .maybeSingle();
                     if (boxExists) {
-                        safeBoxId = metadata.boxId;
+                        safeBoxId = normalizedBoxId;
                     } else {
                         // Try by hardware_mac_address
                         const { data: boxByMac } = await supabase
                             .from('smart_boxes')
                             .select('id')
-                            .eq('hardware_mac_address', metadata.boxId)
+                            .eq('hardware_mac_address', normalizedBoxId)
                             .maybeSingle();
                         safeBoxId = boxByMac?.id || null;
                     }

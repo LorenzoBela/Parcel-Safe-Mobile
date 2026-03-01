@@ -147,6 +147,53 @@ function Invoke-SmartCleanup {
 # Define source and destination paths
 $SOURCE_DIR = "C:\Users\Lorenzo Bela\Downloads\Thesis 24-25 Smart Top Box\mobile"
 $DEST_DIR = "C:\Dev\TopBox\mobile"
+$OTA_CHANNEL = "thesis"
+$EAS_PROFILE = "production"
+
+function Ensure-OtaChannelInAppJson {
+    param(
+        [string]$AppJsonPath,
+        [string]$ChannelName
+    )
+
+    if (-not (Test-Path $AppJsonPath)) {
+        Write-Host "[ERROR] app.json not found at $AppJsonPath" -ForegroundColor Red
+        exit 1
+    }
+
+    try {
+        $config = Get-Content -Path $AppJsonPath -Raw | ConvertFrom-Json
+
+        if (-not $config.expo) {
+            Write-Host "[ERROR] Invalid app.json: missing top-level 'expo' object" -ForegroundColor Red
+            exit 1
+        }
+
+        if (-not $config.expo.updates) {
+            $config.expo | Add-Member -NotePropertyName updates -NotePropertyValue ([pscustomobject]@{})
+        }
+
+        if (-not $config.expo.updates.requestHeaders) {
+            $config.expo.updates | Add-Member -NotePropertyName requestHeaders -NotePropertyValue ([pscustomobject]@{})
+        }
+
+        $currentChannel = $config.expo.updates.requestHeaders."expo-channel-name"
+        if ($null -eq $currentChannel) {
+            $config.expo.updates.requestHeaders | Add-Member -NotePropertyName "expo-channel-name" -NotePropertyValue $ChannelName
+            $config | ConvertTo-Json -Depth 100 | Set-Content -Path $AppJsonPath -Encoding UTF8
+            Write-Host "[OK] Added updates.requestHeaders.expo-channel-name='$ChannelName' to app.json" -ForegroundColor Green
+        } elseif ($currentChannel -ne $ChannelName) {
+            $config.expo.updates.requestHeaders."expo-channel-name" = $ChannelName
+            $config | ConvertTo-Json -Depth 100 | Set-Content -Path $AppJsonPath -Encoding UTF8
+            Write-Host "[OK] Updated updates.requestHeaders.expo-channel-name to '$ChannelName' in app.json" -ForegroundColor Green
+        } else {
+            Write-Host "[OK] app.json already targets OTA channel '$ChannelName'" -ForegroundColor Green
+        }
+    } catch {
+        Write-Host "[ERROR] Failed to enforce OTA channel in app.json: $_" -ForegroundColor Red
+        exit 1
+    }
+}
 
 # Step 0: Ensure Keystore Exists
 Write-Host "`nStep 0: Generating Keystore..." -ForegroundColor Yellow
@@ -199,6 +246,13 @@ if ($robocopyExitCode -ge 8) {
 Set-Location $DEST_DIR
 Write-Host "[OK] Switched to build directory: $DEST_DIR" -ForegroundColor Green
 Write-Host ""
+
+Write-Host "`nStep 0.2: Enforcing OTA channel configuration..." -ForegroundColor Yellow
+$appJsonPath = Join-Path $DEST_DIR "app.json"
+Ensure-OtaChannelInAppJson -AppJsonPath $appJsonPath -ChannelName $OTA_CHANNEL
+$env:EAS_BUILD_PROFILE = $EAS_PROFILE
+Write-Host "[OK] EAS build profile set to: $env:EAS_BUILD_PROFILE" -ForegroundColor Green
+Write-Host "[OK] OTA channel locked to: $OTA_CHANNEL" -ForegroundColor Green
 
 Write-Host "`nStep 1: Checking Windows long path support..." -ForegroundColor Yellow
 try {
@@ -638,6 +692,10 @@ $allChecksPass = (Test-FileContains -Path $expoCmakeCheck -Pattern 'c\+\+_shared
 
 $screensCmakeCheck = Join-Path $PROJECT_ROOT "node_modules\react-native-screens\android\CMakeLists.txt"
 $allChecksPass = (Test-FileContains -Path $screensCmakeCheck -Pattern 'c\+\+_shared' -Label 'react-native-screens: c++_shared linked') -and $allChecksPass
+
+$androidManifestPath = Join-Path $ANDROID_DIR "app\src\main\AndroidManifest.xml"
+$allChecksPass = (Test-FileContains -Path $androidManifestPath -Pattern 'expo\.modules\.updates\.UPDATES_CONFIGURATION_REQUEST_HEADERS_KEY' -Label 'AndroidManifest: updates request headers meta-data') -and $allChecksPass
+$allChecksPass = (Test-FileContains -Path $androidManifestPath -Pattern "expo-channel-name.*$([regex]::Escape($OTA_CHANNEL))" -Label "AndroidManifest: OTA channel is '$OTA_CHANNEL'") -and $allChecksPass
 
 if (-not $allChecksPass) {
     Write-Host "`n[ERROR] Critical build patches are missing. Build will likely fail." -ForegroundColor Red

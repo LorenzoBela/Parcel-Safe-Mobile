@@ -139,6 +139,7 @@ export default function ArrivalScreen() {
     const [geofence, setGeofence] = useState<GeofenceConfig>(
         createDefaultGeofence(params.targetLat, params.targetLng)
     );
+    const [geofenceTarget, setGeofenceTarget] = useState<'pickup' | 'dropoff' | 'return_pickup'>('pickup');
     const [distanceMeters, setDistanceMeters] = useState<number | null>(null);
 
     // EC-11: Customer Not Home State
@@ -306,6 +307,8 @@ export default function ArrivalScreen() {
 
     const isReturning = ['RETURNING', 'TAMPERED'].includes(deliveryStatus);
     const isPickupConfirmed = ['IN_TRANSIT', 'ARRIVED', 'COMPLETED', 'RETURNING', 'TAMPERED'].includes(deliveryStatus);
+    const hasPickupCoords = Number.isFinite(params.pickupLat) && Number.isFinite(params.pickupLng);
+    const hasDropoffCoords = Number.isFinite(params.dropoffLat) && Number.isFinite(params.dropoffLng);
 
     // ━━━ Grace Period Timer Effect ━━━
     useEffect(() => {
@@ -364,14 +367,30 @@ export default function ArrivalScreen() {
 
     // Dynamically switch geofence target when transitioning from pickup to dropoff
     useEffect(() => {
-        if (isPickupConfirmed && (params.dropoffLat || params.pickupLat)) {
-            const lat = isReturning ? params.pickupLat : params.dropoffLat;
-            const lng = isReturning ? params.pickupLng : params.dropoffLng;
-            if (lat && lng) setGeofence(createDefaultGeofence(lat, lng));
-        } else if (!isPickupConfirmed && params.pickupLat && params.pickupLng) {
-            setGeofence(createDefaultGeofence(params.pickupLat, params.pickupLng));
+        if (isPickupConfirmed && isReturning && hasPickupCoords) {
+            setGeofence(createDefaultGeofence(params.pickupLat as number, params.pickupLng as number));
+            setGeofenceTarget('return_pickup');
+            return;
         }
-    }, [isPickupConfirmed, isReturning, params.pickupLat, params.pickupLng, params.dropoffLat, params.dropoffLng]);
+
+        if (isPickupConfirmed && !isReturning && hasDropoffCoords) {
+            setGeofence(createDefaultGeofence(params.dropoffLat as number, params.dropoffLng as number));
+            setGeofenceTarget('dropoff');
+            return;
+        }
+
+        if (!isPickupConfirmed && hasPickupCoords) {
+            setGeofence(createDefaultGeofence(params.pickupLat as number, params.pickupLng as number));
+            setGeofenceTarget('pickup');
+            return;
+        }
+
+        // If target coords are invalid/missing, fail safe to avoid accidental ARRIVED at wrong location.
+        setGeofenceTarget('pickup');
+        setIsInsideGeoFence(false);
+        setIsPhoneInside(false);
+        setIsBoxInside(false);
+    }, [isPickupConfirmed, isReturning, hasPickupCoords, hasDropoffCoords, params.pickupLat, params.pickupLng, params.dropoffLat, params.dropoffLng]);
 
     // 1. Track PHONE Location (The "Golden Rule")
     useEffect(() => {
@@ -1029,6 +1048,7 @@ export default function ArrivalScreen() {
                         onShowCancelModal={() => setShowCancelModal(true)}
                         onShowCustomerNotHome={handleCustomerNotHome}
                         isWaitTimerActive={false}
+                        canAutoArrive={geofenceTarget !== 'pickup'}
                     />
                 ) : (
                     <PickupVerification

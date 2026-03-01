@@ -11,6 +11,15 @@ import { update } from 'firebase/database';
 const QUEUE_STORAGE_KEY = 'offline_location_queue';
 const MAX_QUEUE_SIZE = 100; // Prevent unlimited growth
 
+function sanitizeBoxId(value: unknown): string | null {
+    if (typeof value !== 'string') return null;
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    const lowered = trimmed.toLowerCase();
+    if (lowered === 'null' || lowered === 'undefined' || lowered === 'unknown_box') return null;
+    return trimmed;
+}
+
 export interface QueuedLocation {
     latitude: number;
     longitude: number;
@@ -82,6 +91,12 @@ class OfflineQueueService {
         speed: number,
         heading: number
     ): Promise<void> {
+        const sanitizedBoxId = sanitizeBoxId(boxId);
+        if (!sanitizedBoxId) {
+            console.warn('[OfflineQueue] Dropping location update with invalid boxId:', boxId);
+            return;
+        }
+
         const netState = await NetInfo.fetch();
         const isConnected = netState.isConnected && netState.isInternetReachable;
 
@@ -110,7 +125,7 @@ class OfflineQueueService {
         }
 
         const locationData: QueuedLocation = {
-            boxId,
+            boxId: sanitizedBoxId,
             latitude,
             longitude,
             speed,
@@ -171,6 +186,11 @@ class OfflineQueueService {
             const updates: any = {};
 
             batch.forEach((item) => {
+                const sanitizedBoxId = sanitizeBoxId(item.boxId);
+                if (!sanitizedBoxId) {
+                    return;
+                }
+
                 // We overwrite the "current" location with the LATEST one ultimately
                 // But we might want to log history points if we had a "history" path
                 // For now, let's just make sure the latest one wins in the final state
@@ -179,7 +199,7 @@ class OfflineQueueService {
                 // But for "current location", we just want the latest.
                 // We will send them sequentially or just send the batch if your backend supports history.
                 // Assuming standard "location" node:
-                updates[`/locations/${item.boxId}/phone`] = {
+                updates[`/locations/${sanitizedBoxId}/phone`] = {
                     latitude: item.latitude,
                     longitude: item.longitude,
                     speed: item.speed,
@@ -191,7 +211,7 @@ class OfflineQueueService {
 
                 // Include phone network status from the buffered data
                 if (item.networkStatus) {
-                    updates[`/hardware/${item.boxId}/phone_status`] = {
+                    updates[`/hardware/${sanitizedBoxId}/phone_status`] = {
                         ...item.networkStatus,
                         source: 'phone_buffered',
                         timestamp: item.timestamp,
@@ -225,10 +245,16 @@ class OfflineQueueService {
      * Direct Firebase write
      */
     private async sendToFirebase(data: QueuedLocation): Promise<void> {
+        const sanitizedBoxId = sanitizeBoxId(data.boxId);
+        if (!sanitizedBoxId) {
+            console.warn('[OfflineQueue] Dropping direct send with invalid boxId:', data.boxId);
+            return;
+        }
+
         const db = getFirebaseDatabase();
         const updates: any = {};
 
-        updates[`/locations/${data.boxId}/phone`] = {
+        updates[`/locations/${sanitizedBoxId}/phone`] = {
             latitude: data.latitude,
             longitude: data.longitude,
             speed: data.speed,
@@ -240,7 +266,7 @@ class OfflineQueueService {
 
         // Include phone network status from the location update
         if (data.networkStatus) {
-            updates[`/hardware/${data.boxId}/phone_status`] = {
+            updates[`/hardware/${sanitizedBoxId}/phone_status`] = {
                 ...data.networkStatus,
                 source: 'phone_background',
                 timestamp: data.timestamp,

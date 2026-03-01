@@ -219,7 +219,7 @@ export default function TrackOrderScreen() {
         longitude: delivery?.pickup_lng ?? params.pickupLng ?? 0,
     };
 
-    const isPickedUp = ['PICKED_UP', 'IN_TRANSIT', 'RETURNING'].includes(delivery?.status || '');
+    const isPickedUp = ['PICKED_UP', 'IN_TRANSIT', 'ARRIVED', 'COMPLETED', 'RETURNING'].includes(delivery?.status || '');
 
     // Two-Phase Routing: determine the current route target
     const routeTarget = (delivery?.status === 'RETURNING') ? pickupLocation : (isPickedUp ? destination : pickupLocation);

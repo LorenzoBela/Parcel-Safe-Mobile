@@ -25,6 +25,7 @@ export default function OTPScreen() {
 
     const [otpCode, setOtpCode] = useState('');
     const [boxStatus, setBoxStatus] = useState<string>('UNKNOWN');
+    const [deliveryStatus, setDeliveryStatus] = useState<string>('UNKNOWN');
     const [displayStatus, setDisplayStatus] = useState<'OK' | 'DEGRADED' | 'FAILED'>('OK');
     const [showBleModal, setShowBleModal] = useState(false);
     const [isRegenerating, setIsRegenerating] = useState(false);
@@ -50,9 +51,7 @@ export default function OTPScreen() {
         // Subscribe to Box State (Status only — OTP comes from Supabase)
         const unsubscribe = subscribeToBoxState(boxId, (state) => {
             if (state) {
-                if (state.status === 'ARRIVED') {
-                    setBoxStatus('ARRIVED');
-                }
+                setBoxStatus(state.status || 'UNKNOWN');
             }
         });
         return () => unsubscribe();
@@ -70,15 +69,18 @@ export default function OTPScreen() {
             const data = snapshot.val();
             if (!data) return;
 
-            if (data.status === 'ARRIVED' || data.status === 'COMPLETED') {
+            const liveDeliveryStatus = data.status || 'UNKNOWN';
+            setDeliveryStatus(liveDeliveryStatus);
+
+            if (liveDeliveryStatus === 'ARRIVED' || liveDeliveryStatus === 'COMPLETED') {
                 setBoxStatus('ARRIVED');
             }
 
             // Real-time OTP sync: pick up OTP changes from Firebase
             // (written by web or mobile regeneration)
-            if (data.otp_code) {
+            if ((liveDeliveryStatus === 'ARRIVED' || liveDeliveryStatus === 'COMPLETED') && data.otp_code) {
                 setOtpCode(data.otp_code);
-            } else if (data.status === 'ARRIVED' || data.status === 'COMPLETED') {
+            } else if (liveDeliveryStatus === 'ARRIVED' || liveDeliveryStatus === 'COMPLETED') {
                 // Fallback: fetch from Supabase if Firebase doesn't have it
                 await fetchOtpFromSupabase();
             }
@@ -158,7 +160,7 @@ export default function OTPScreen() {
         );
     }, [deliveryId]);
 
-    const isArrived = boxStatus === 'ARRIVED';
+    const isArrived = deliveryStatus === 'ARRIVED' || deliveryStatus === 'COMPLETED';
 
     return (
         <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
