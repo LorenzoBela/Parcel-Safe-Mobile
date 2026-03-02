@@ -1,0 +1,45 @@
+diff --git a/node_modules/expo-task-manager/android/src/main/java/expo/modules/taskManager/TaskService.java b/node_modules/expo-task-manager/android/src/main/java/expo/modules/taskManager/TaskService.java
+index 2b6c2fa..cb13119 100644
+--- a/node_modules/expo-task-manager/android/src/main/java/expo/modules/taskManager/TaskService.java
++++ b/node_modules/expo-task-manager/android/src/main/java/expo/modules/taskManager/TaskService.java
+@@ -583,7 +583,11 @@ public class TaskService implements SingletonModule, TaskServiceInterface {
+   }
+ 
+   private void removeAppFromConfig(String appScopeKey) {
+-    getSharedPreferences().edit().remove(appScopeKey).apply();
++    // Guard against null SharedPreferences (Android 14 startup race condition)
++    SharedPreferences prefs = getSharedPreferences();
++    if (prefs != null) {
++      prefs.edit().remove(appScopeKey).apply();
++    }
+   }
+ 
+   /**
+diff --git a/node_modules/expo-task-manager/android/src/main/java/expo/modules/taskManager/repository/TasksPersistence.java b/node_modules/expo-task-manager/android/src/main/java/expo/modules/taskManager/repository/TasksPersistence.java
+index a872533..f8c05f4 100644
+--- a/node_modules/expo-task-manager/android/src/main/java/expo/modules/taskManager/repository/TasksPersistence.java
++++ b/node_modules/expo-task-manager/android/src/main/java/expo/modules/taskManager/repository/TasksPersistence.java
+@@ -16,6 +16,9 @@ import expo.modules.interfaces.taskManager.TaskInterface;
+ public class TasksPersistence {
+ 
+   public void clearTaskPersistence(SharedPreferences preferences, String but) {
++    if (preferences == null) {
++      return;
++    }
+     Map<String, ?> map = preferences.getAll();
+     for(String key: map.keySet()) {
+       if(!but.equals(key)) {
+@@ -56,6 +59,13 @@ public class TasksPersistence {
+   public Map<String, TasksAndEventsRepository.AppConfig> readPersistedTasks(SharedPreferences preferences) {
+     Map<String, TasksAndEventsRepository.AppConfig> result = new HashMap<>();
+ 
++    // Android 14: Context.getSharedPreferences() can return null briefly during startup
++    // (WeakReference to context was GC'd, or SharedPreferences not yet initialised).
++    // Guard here to prevent NullPointerException that crashes expo-location startLocationUpdatesAsync.
++    if (preferences == null) {
++      return result;
++    }
++
+     Map<String, ?> appScopeKeyToAppConfigsMap = preferences.getAll();
+ 
+     for (Map.Entry<String, ?> appScopeKeyToConfig : appScopeKeyToAppConfigsMap.entrySet()) {

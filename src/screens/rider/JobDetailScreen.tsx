@@ -56,11 +56,16 @@ export default function JobDetailScreen() {
 
     /** Calculate total delivery time from timestamps */
     const getTotalDeliveryTime = (): string => {
-        const startTime = jobData.acceptedAt || jobData.pickedUpAt || jobData.pickupTime;
+        // Cancelled or returned deliveries have no meaningful total time
+        if (['CANCELLED', 'RETURNING', 'RETURNED'].includes(jobData.status)) {
+            return 'N/A';
+        }
+        const startTime = jobData.acceptedAt || jobData.pickedUpAt;
         const endTime = jobData.deliveredAt;
         if (!startTime || !endTime) {
-            // If delivery not yet finished, show elapsed since start
-            if (startTime) {
+            // Only show ongoing for truly active statuses
+            const activeStatuses = ['ASSIGNED', 'PENDING', 'IN_TRANSIT', 'ARRIVED', 'PICKED_UP'];
+            if (startTime && activeStatuses.includes(jobData.status)) {
                 const elapsed = dayjs().diff(dayjs(startTime), 'minute');
                 if (elapsed < 1) return 'Just started';
                 if (elapsed >= 60) return `${Math.floor(elapsed / 60)}h ${elapsed % 60}m (ongoing)`;
@@ -421,14 +426,16 @@ export default function JobDetailScreen() {
                 >
                     Back
                 </Button>
-                <Button
-                    mode="contained"
-                    onPress={handleStartTrip}
-                    style={{ flex: 2 }}
-                    icon="navigation"
-                >
-                    Start Trip
-                </Button>
+                {!['CANCELLED', 'COMPLETED', 'RETURNING', 'RETURNED'].includes(jobData.status) && (
+                    <Button
+                        mode="contained"
+                        onPress={handleStartTrip}
+                        style={{ flex: 2 }}
+                        icon="navigation"
+                    >
+                        Start Trip
+                    </Button>
+                )}
             </Surface>
         </View >
     );

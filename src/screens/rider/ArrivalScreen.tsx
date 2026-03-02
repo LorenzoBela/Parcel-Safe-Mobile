@@ -307,12 +307,16 @@ export default function ArrivalScreen() {
 
     const isReturning = ['RETURNING', 'TAMPERED'].includes(deliveryStatus);
     const isPickupConfirmed = ['IN_TRANSIT', 'ARRIVED', 'COMPLETED', 'RETURNING', 'TAMPERED'].includes(deliveryStatus);
+    const isDropoffPhase = geofenceTarget !== 'pickup';
     const hasPickupCoords = Number.isFinite(params.pickupLat) && Number.isFinite(params.pickupLng);
     const hasDropoffCoords = Number.isFinite(params.dropoffLat) && Number.isFinite(params.dropoffLng);
 
     // ━━━ Grace Period Timer Effect ━━━
+    // Only starts when rider is physically inside the DROPOFF geofence.
+    // isInsideGeoFence at this point references the dropoff zone (geofenceTarget === 'dropoff')
+    // so the timer never ticks while the rider is still at the pickup location.
     useEffect(() => {
-        if (deliveryStatus !== 'ARRIVED' || !arrivedAt) return;
+        if (!isDropoffPhase || !isInsideGeoFence || deliveryStatus !== 'ARRIVED' || !arrivedAt) return;
 
         // Write grace period to Firebase once for admin visibility
         import('../../services/firebaseClient').then(({ getFirebaseDatabase }) => {
@@ -326,7 +330,15 @@ export default function ArrivalScreen() {
         }, 1000);
 
         return () => clearInterval(interval);
-    }, [deliveryStatus, arrivedAt, params.deliveryId]);
+    }, [isDropoffPhase, isInsideGeoFence, deliveryStatus, arrivedAt, params.deliveryId]);
+
+    useEffect(() => {
+        if (!isDropoffPhase) {
+            setArrivedAt(null);
+            setGracePeriodDisplay('10:00');
+            setGracePeriodExpired(false);
+        }
+    }, [isDropoffPhase]);
 
     // ━━━ No-Show Handler ━━━
     const handleMarkNoShow = async () => {
@@ -370,12 +382,22 @@ export default function ArrivalScreen() {
         if (isPickupConfirmed && isReturning && hasPickupCoords) {
             setGeofence(createDefaultGeofence(params.pickupLat as number, params.pickupLng as number));
             setGeofenceTarget('return_pickup');
+            // Reset stale inside-state so the old pickup check doesn't bleed into the new geofence
+            setIsInsideGeoFence(false);
+            setIsPhoneInside(false);
+            setIsBoxInside(false);
             return;
         }
 
         if (isPickupConfirmed && !isReturning && hasDropoffCoords) {
             setGeofence(createDefaultGeofence(params.dropoffLat as number, params.dropoffLng as number));
             setGeofenceTarget('dropoff');
+            // Reset stale inside-state — rider is still at pickup, not dropoff yet.
+            // Without this reset, DropoffVerification's auto-arrive fires immediately
+            // because isInsideGeoFence is still true from the last pickup-geofence check.
+            setIsInsideGeoFence(false);
+            setIsPhoneInside(false);
+            setIsBoxInside(false);
             return;
         }
 
@@ -973,7 +995,7 @@ export default function ArrivalScreen() {
             )}
 
             {/* Grace Period Countdown Card */}
-            {deliveryStatus === 'ARRIVED' && arrivedAt && (
+            {isDropoffPhase && deliveryStatus === 'ARRIVED' && arrivedAt && (
                 <Card style={[
                     styles.gracePeriodCard,
                     gracePeriodExpired ? styles.gracePeriodExpired : styles.gracePeriodActive

@@ -43,6 +43,30 @@ type MapboxSuggestion = {
     coordinates?: [number, number];
 };
 
+const normalizePhoneInput = (value: string) => {
+    let digits = value.replace(/\D/g, '');
+
+    if (!digits) return '';
+
+    if (digits.startsWith('63')) {
+        digits = `0${digits.slice(2)}`;
+    }
+
+    if (!digits.startsWith('09')) {
+        if (digits.startsWith('9')) {
+            digits = `0${digits}`;
+        } else if (digits.startsWith('0')) {
+            digits = `09${digits.slice(2)}`;
+        } else {
+            digits = `09${digits}`;
+        }
+    }
+
+    return digits.slice(0, 11);
+};
+
+const isValidPhoneNumber = (value: string) => /^09\d{9}$/.test(value.trim());
+
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 export default function BookServiceScreen() {
@@ -667,6 +691,65 @@ export default function BookServiceScreen() {
         fetchNearbyNodesGoogle(coords.latitude, coords.longitude);
     };
 
+    const handleSaveSuggestion = async (item: MapboxSuggestion) => {
+        if (!userId) {
+            Alert.alert('Sign In Required', 'Please sign in to save addresses.');
+            return;
+        }
+
+        let coords: { latitude: number; longitude: number } | null = null;
+
+        if (item.coordinates && item.coordinates.length >= 2) {
+            coords = { longitude: item.coordinates[0], latitude: item.coordinates[1] };
+        } else {
+            try {
+                const url = `https://places.googleapis.com/v1/places/${item.id}?fields=location`;
+                const response = await fetch(url, {
+                    headers: {
+                        'X-Goog-Api-Key': GOOGLE_MAPS_TOKEN
+                    }
+                });
+                const data = await response.json();
+
+                if (data.location) {
+                    coords = {
+                        longitude: data.location.longitude,
+                        latitude: data.location.latitude
+                    };
+                }
+            } catch (error) {
+                console.error('Failed to retrieve place coordinates for save', error);
+            }
+        }
+
+        const existingIndex = savedAddresses.findIndex((addr: any) => addr.id === item.id || addr.address === (item.address || item.name));
+
+        const savedAddressEntry = {
+            id: item.id || Date.now().toString(),
+            label: item.name || 'Saved Place',
+            address: item.address || item.name,
+            ...(coords && { latitude: coords.latitude, longitude: coords.longitude })
+        };
+
+        const nextSavedAddresses = existingIndex >= 0
+            ? savedAddresses.map((addr: any, index: number) => index === existingIndex ? { ...addr, ...savedAddressEntry } : addr)
+            : [savedAddressEntry, ...savedAddresses];
+
+        const { error } = await supabase!
+            .from('profiles')
+            .update({ saved_addresses: nextSavedAddresses })
+            .eq('id', userId);
+
+        if (error) {
+            Alert.alert('Save Failed', 'Unable to save this address right now.');
+            return;
+        }
+
+        setSavedAddresses(nextSavedAddresses);
+        setActiveTab('saved');
+        Alert.alert('Saved', 'Address has been added to your saved addresses.');
+    };
+
     const calculateRoute = async () => {
         if (!pickupCoords || !dropoffCoords || !MAPBOX_TOKEN) {
             setRouteData(null);
@@ -741,6 +824,11 @@ export default function BookServiceScreen() {
 
         if (!senderName.trim() || !senderPhone.trim() || !recipientName.trim() || !recipientPhone.trim()) {
             Alert.alert('Missing Details', 'Please fill in all contact names and phones before booking.');
+            return;
+        }
+
+        if (!isValidPhoneNumber(senderPhone) || !isValidPhoneNumber(recipientPhone)) {
+            Alert.alert('Invalid Phone Number', 'Phone numbers must start with 09 and be exactly 11 digits.');
             return;
         }
 
@@ -858,7 +946,7 @@ export default function BookServiceScreen() {
                             <Text variant="titleSmall" style={styles.sectionTitle}>Pickup Contact</Text>
                             <View style={styles.inputRow}>
                                 <TextInput mode="flat" placeholder="Sender Name" value={senderName} onChangeText={setSenderName} style={styles.modernInput} activeUnderlineColor="#000" underlineColor="#E0E0E0" />
-                                <TextInput mode="flat" placeholder="Phone Number" value={senderPhone} onChangeText={setSenderPhone} keyboardType="phone-pad" style={styles.modernInput} activeUnderlineColor="#000" underlineColor="#E0E0E0" />
+                                <TextInput mode="flat" placeholder="09XXXXXXXXX" value={senderPhone} onChangeText={(value) => setSenderPhone(normalizePhoneInput(value))} keyboardType="phone-pad" style={styles.modernInput} activeUnderlineColor="#000" underlineColor="#E0E0E0" maxLength={11} />
                             </View>
                         </View>
 
@@ -866,7 +954,7 @@ export default function BookServiceScreen() {
                             <Text variant="titleSmall" style={styles.sectionTitle}>Drop-off Contact</Text>
                             <View style={styles.inputRow}>
                                 <TextInput mode="flat" placeholder="Recipient Name" value={recipientName} onChangeText={setRecipientName} style={styles.modernInput} activeUnderlineColor="#000" underlineColor="#E0E0E0" />
-                                <TextInput mode="flat" placeholder="Phone Number" value={recipientPhone} onChangeText={setRecipientPhone} keyboardType="phone-pad" style={styles.modernInput} activeUnderlineColor="#000" underlineColor="#E0E0E0" />
+                                <TextInput mode="flat" placeholder="09XXXXXXXXX" value={recipientPhone} onChangeText={(value) => setRecipientPhone(normalizePhoneInput(value))} keyboardType="phone-pad" style={styles.modernInput} activeUnderlineColor="#000" underlineColor="#E0E0E0" maxLength={11} />
                             </View>
                         </View>
 
@@ -1091,24 +1179,9 @@ export default function BookServiceScreen() {
                     </View>
 
                     <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false} contentContainerStyle={{ padding: 20 }}>
-                        {(!isSearching && suggestions.length === 0 && (!routeData || activeQuery.length === 0)) ? (
-                            <View style={{ flexDirection: 'row', marginBottom: 20, gap: 10 }}>
-                                <TouchableOpacity
-                                    style={activeTab === 'suggested' ? styles.pillButtonActive : styles.pillButton}
-                                    onPress={() => setActiveTab('suggested')}
-                                >
-                                    <Text style={activeTab === 'suggested' ? styles.pillTextActive : styles.pillText}>Suggested</Text>
-                                </TouchableOpacity>
-                                <TouchableOpacity
-                                    style={activeTab === 'saved' ? styles.pillButtonActive : styles.pillButton}
-                                    onPress={() => setActiveTab('saved')}
-                                >
-                                    <Text style={activeTab === 'saved' ? styles.pillTextActive : styles.pillText}>Saved</Text>
-                                </TouchableOpacity>
-                            </View>
-                        ) : null}
 
-                        {routeData && !isSearching && suggestions.length === 0 && pickupCoords && dropoffCoords ? (
+                        {/* Always show fare card when route data is ready — regardless of search/suggestions state */}
+                        {routeData && pickupCoords && dropoffCoords ? (
                             <View style={{ marginBottom: 24 }}>
                                 <Card style={{ backgroundColor: theme.colors.surface, borderRadius: 16 }} elevation={2}>
                                     <Card.Content>
@@ -1132,9 +1205,37 @@ export default function BookServiceScreen() {
                                     </Card.Content>
                                 </Card>
                             </View>
+                        ) : loadingRoute && pickupCoords && dropoffCoords ? (
+                            <View style={{ marginBottom: 24 }}>
+                                <Card style={{ backgroundColor: theme.colors.surface, borderRadius: 16 }} elevation={2}>
+                                    <Card.Content>
+                                        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 12 }}>
+                                            <ActivityIndicator size="small" color={theme.colors.primary} />
+                                            <Text variant="bodyMedium" style={{ marginLeft: 10, color: theme.colors.onSurfaceVariant }}>Calculating fare...</Text>
+                                        </View>
+                                    </Card.Content>
+                                </Card>
+                            </View>
                         ) : null}
 
-                        {activeTab === 'suggested' && !isSearching && suggestions.length === 0 && (!routeData || activeQuery.length === 0) && (
+                        {(!isSearching && suggestions.length === 0 && !routeData && !loadingRoute) ? (
+                            <View style={{ flexDirection: 'row', marginBottom: 20, gap: 10 }}>
+                                <TouchableOpacity
+                                    style={activeTab === 'suggested' ? styles.pillButtonActive : styles.pillButton}
+                                    onPress={() => setActiveTab('suggested')}
+                                >
+                                    <Text style={activeTab === 'suggested' ? styles.pillTextActive : styles.pillText}>Suggested</Text>
+                                </TouchableOpacity>
+                                <TouchableOpacity
+                                    style={activeTab === 'saved' ? styles.pillButtonActive : styles.pillButton}
+                                    onPress={() => setActiveTab('saved')}
+                                >
+                                    <Text style={activeTab === 'saved' ? styles.pillTextActive : styles.pillText}>Saved</Text>
+                                </TouchableOpacity>
+                            </View>
+                        ) : null}
+
+                        {activeTab === 'suggested' && !isSearching && suggestions.length === 0 && !routeData && !loadingRoute && (
                             <View style={{ alignItems: 'center', marginTop: 40, marginBottom: 40 }}>
                                 <MaterialCommunityIcons name="map-marker-star" size={80} color={theme.colors.surfaceVariant} />
                                 <Text variant="titleMedium" style={{ fontWeight: 'bold', marginTop: 16 }}>No suggestions yet</Text>
@@ -1144,7 +1245,7 @@ export default function BookServiceScreen() {
                             </View>
                         )}
 
-                        {activeTab === 'saved' && !isSearching && suggestions.length === 0 && savedAddresses.length === 0 && (!routeData || activeQuery.length === 0) && (
+                        {activeTab === 'saved' && !isSearching && suggestions.length === 0 && savedAddresses.length === 0 && !routeData && !loadingRoute && (
                             <View style={{ alignItems: 'center', marginTop: 40, marginBottom: 40 }}>
                                 <MaterialCommunityIcons name="bookmark-outline" size={80} color={theme.colors.surfaceVariant} />
                                 <Text variant="titleMedium" style={{ fontWeight: 'bold', marginTop: 16 }}>No saved addresses yet</Text>
@@ -1154,7 +1255,7 @@ export default function BookServiceScreen() {
                             </View>
                         )}
 
-                        {activeTab === 'saved' && !isSearching && suggestions.length === 0 && savedAddresses.length > 0 && (!routeData || activeQuery.length === 0) && (
+                        {activeTab === 'saved' && !isSearching && suggestions.length === 0 && savedAddresses.length > 0 && !routeData && !loadingRoute && (
                             <View>
                                 {savedAddresses.map((addr: any) => (
                                     <TouchableOpacity
@@ -1208,8 +1309,9 @@ export default function BookServiceScreen() {
                                         </Text>
                                     ) : null}
                                 </View>
-                                <MaterialCommunityIcons name="bookmark-outline" size={20} color="#9e9e9e" style={{ marginRight: 8 }} />
-                                <MaterialCommunityIcons name="dots-vertical" size={20} color="#9e9e9e" />
+                                <TouchableOpacity onPress={() => handleSaveSuggestion(item)} style={{ padding: 4 }}>
+                                    <MaterialCommunityIcons name="bookmark-outline" size={20} color="#9e9e9e" />
+                                </TouchableOpacity>
                             </TouchableOpacity>
                         ))}
 

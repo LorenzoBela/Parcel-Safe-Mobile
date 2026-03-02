@@ -39,6 +39,9 @@ const CONFIG = {
     /** How long HDOP must remain healthy before phone GPS is deactivated (ms).
      *  Prevents rapid on/off cycling in marginal signal areas. */
     GPS_HEALTH_RECOVERY_DEBOUNCE: 15000,
+
+    /** Backoff window before retrying failed background service startup (ms). */
+    PHONE_GPS_START_RETRY_BACKOFF_MS: 30000,
 };
 
 // ==================== Types ====================
@@ -87,6 +90,9 @@ class LocationRedundancyManager {
     private lastSourceSwitchTime: number = 0;
     private phoneGpsSessionToken: number = 0;
     private gpsHealthRecoveryTimer: ReturnType<typeof setTimeout> | null = null;
+    private phoneGpsStartRetryBlockedUntil: number = 0;
+    private phoneGpsStartInFlight = false;
+    private foregroundFallbackActive = false;
 
     // ==================== Public API ====================
 
@@ -319,6 +325,17 @@ class LocationRedundancyManager {
         const now = Date.now();
         const lastHeartbeat = this.state.lastBoxHeartbeat;
 
+        // If we're running foreground-only fallback, periodically retry upgrading
+        // to background service after backoff expires.
+        if (
+            this.state.powerState === 'ACTIVE'
+            && this.foregroundFallbackActive
+            && !this.phoneGpsStartInFlight
+            && now >= this.phoneGpsStartRetryBlockedUntil
+        ) {
+            this.startPhoneGpsFallback();
+        }
+
         if (!lastHeartbeat) {
             // No heartbeat received yet
             if (this.state.powerState === 'ACTIVE' && !this.state.phoneGpsActive) {
@@ -343,7 +360,14 @@ class LocationRedundancyManager {
     }
 
     private async startPhoneGpsFallback(): Promise<void> {
-        if (this.state.phoneGpsActive) return; // Already active
+        if (this.state.phoneGpsActive && !this.foregroundFallbackActive) return; // Already active with background service
+
+        if (this.phoneGpsStartInFlight) return;
+
+        const now = Date.now();
+        if (this.phoneGpsStartRetryBlockedUntil > now) {
+            return;
+        }
 
         if (!this.boxId) {
             console.warn('[Redundancy] Cannot start phone GPS without boxId');
@@ -353,16 +377,74 @@ class LocationRedundancyManager {
         console.log('[Redundancy] activating phone GPS fallback (Background Service)');
 
         // EC-15: Use BackgroundLocationService for robust tracking
-        const success = await backgroundLocationService.start(this.boxId);
+        this.phoneGpsStartInFlight = true;
+        let success = false;
+        try {
+            success = await backgroundLocationService.start(this.boxId);
+        } finally {
+            this.phoneGpsStartInFlight = false;
+        }
 
         if (success) {
+            this.phoneGpsStartRetryBlockedUntil = 0;
+            this.foregroundFallbackActive = false;
+            if (this.phoneGpsWatchId) {
+                this.phoneGpsWatchId.remove();
+                this.phoneGpsWatchId = null;
+            }
             this.updateState({
                 phoneGpsActive: true,
                 source: 'phone',
             });
         } else {
-            console.error('[Redundancy] Failed to start background location service');
-            this.updateState({ source: 'none' });
+            this.phoneGpsStartRetryBlockedUntil = Date.now() + CONFIG.PHONE_GPS_START_RETRY_BACKOFF_MS;
+            console.warn('[Redundancy] Background service unavailable. Falling back to foreground GPS watch.');
+
+            const watcherStarted = await this.startForegroundPhoneGpsWatch();
+            if (watcherStarted) {
+                this.foregroundFallbackActive = true;
+                this.updateState({
+                    phoneGpsActive: true,
+                    source: 'phone',
+                });
+            } else {
+                console.error('[Redundancy] Failed to start any phone GPS fallback');
+                this.updateState({ source: 'none' });
+            }
+        }
+    }
+
+    private async startForegroundPhoneGpsWatch(): Promise<boolean> {
+        if (this.phoneGpsWatchId) {
+            return true;
+        }
+
+        try {
+            const { status } = await Location.getForegroundPermissionsAsync();
+            if (status !== 'granted') {
+                const requested = await Location.requestForegroundPermissionsAsync();
+                if (requested.status !== 'granted') {
+                    return false;
+                }
+            }
+
+            const sessionToken = ++this.phoneGpsSessionToken;
+            this.phoneGpsWatchId = await Location.watchPositionAsync(
+                {
+                    accuracy: Location.Accuracy.BestForNavigation,
+                    timeInterval: CONFIG.PHONE_GPS_INTERVAL,
+                    distanceInterval: 0,
+                },
+                async (location) => {
+                    if (sessionToken !== this.phoneGpsSessionToken) return;
+                    await this.handlePhoneLocationUpdate(location);
+                }
+            );
+
+            return true;
+        } catch (error) {
+            console.error('[Redundancy] Failed to start foreground GPS watch:', error);
+            return false;
         }
     }
 
@@ -394,6 +476,7 @@ class LocationRedundancyManager {
     private stopPhoneGps(): void {
         // Cancel any pending startPhoneGpsFallback() run.
         this.phoneGpsSessionToken++;
+        this.foregroundFallbackActive = false;
 
         if (this.phoneGpsWatchId) {
             this.phoneGpsWatchId.remove();

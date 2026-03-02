@@ -6,7 +6,20 @@ import { registerRootComponent } from 'expo';
 // import ensures the task handler is immediately registered — without it, location
 // updates are silently dropped even though the "Tracking your location" notification
 // is still visible on the lock screen.
-import './src/services/backgroundLocationService';
+let hasLoadedBackgroundLocationTask = false;
+const loadBackgroundLocationTask = () => {
+    if (hasLoadedBackgroundLocationTask) return true;
+    try {
+        require('./src/services/backgroundLocationService');
+        hasLoadedBackgroundLocationTask = true;
+        return true;
+    } catch (error) {
+        if (__DEV__) console.log('[Index] backgroundLocationService not ready during early init, will retry');
+        return false;
+    }
+};
+
+loadBackgroundLocationTask();
 
 import App from './App';
 
@@ -52,7 +65,10 @@ const initializeNativeHandlers = () => {
 };
 
 // Initialize after a microtask tick to not block bundle execution
-queueMicrotask(initializeNativeHandlers);
+queueMicrotask(() => {
+    loadBackgroundLocationTask();
+    initializeNativeHandlers();
+});
 
 // registerRootComponent calls AppRegistry.registerComponent('main', () => App);
 // It also ensures that whether you load the app in Expo Go or in a native build,

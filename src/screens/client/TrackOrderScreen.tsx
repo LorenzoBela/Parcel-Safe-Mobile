@@ -1215,7 +1215,8 @@ export default function TrackOrderScreen() {
                                     Share Tracking Link
                                 </Button>
 
-                                {!cancellation && (
+                {/* OTP is only relevant once rider has arrived at the drop-off location */}
+                {!cancellation && delivery?.status === 'ARRIVED' && (
                                     <Button
                                         mode="contained"
                                         style={styles.viewOtpBtn}

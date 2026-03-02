@@ -203,16 +203,11 @@ export default function DeliveryDetailScreen() {
                     const route = data.routes[0];
                     setRouteGeometry(route.geometry);
 
-                    // Extract distance if missing (convert meters to km)
+                    // Always use fresh Mapbox driving distance (overrides stored value)
                     if (route.distance !== undefined) {
                         const distKm = (route.distance / 1000).toFixed(1) + ' km';
-                        setDeliveryData(prev => {
-                            if ((!prev.distance || prev.distance === 'N/A') && !prev.distance_text) {
-                                console.log('[DeliveryDetail] Calculated distance from route:', distKm);
-                                return { ...prev, distance: distKm };
-                            }
-                            return prev;
-                        });
+                        console.log('[DeliveryDetail] Calculated distance from route:', distKm);
+                        setDeliveryData(prev => ({ ...prev, distance: distKm }));
                     }
                 }
             } catch (error) {

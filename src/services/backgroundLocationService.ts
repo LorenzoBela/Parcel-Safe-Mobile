@@ -12,15 +12,126 @@
 
 import * as Location from 'expo-location';
 import * as TaskManager from 'expo-task-manager';
-import * as Battery from 'expo-battery';
 import * as IntentLauncher from 'expo-intent-launcher';
 import * as Application from 'expo-application';
-import * as Notifications from 'expo-notifications';
 import { Platform, AppState, AppStateStatus, Alert, PermissionsAndroid } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getFirebaseDatabase, ref, set, serverTimestamp, onValue, off } from './firebaseClient';
 import { update } from 'firebase/database';
 import { offlineQueueService } from './offlineQueueService';
+
+// Native RTDB — preferred for lock-screen/background reliability on Android.
+// Falls back to Firebase JS SDK when unavailable.
+let nativeDatabase: any = null;
+let nativeDatabaseFactory: any = null;
+try {
+    const nativeDbModule = require('@react-native-firebase/database');
+    const factory = nativeDbModule?.default ?? nativeDbModule;
+    if (typeof factory === 'function') {
+        nativeDatabaseFactory = factory;
+        nativeDatabase = factory();
+    }
+} catch (error) {
+    if (__DEV__) console.log('[EC-15] Native RTDB not available, using Firebase JS SDK');
+}
+
+let Notifications: any = null;
+try {
+    Notifications = require('expo-notifications');
+} catch (error) {
+    if (__DEV__) console.log('[EC-15] expo-notifications not available during early runtime init');
+}
+
+let Battery: any = null;
+try {
+    Battery = require('expo-battery');
+} catch (error) {
+    if (__DEV__) console.log('[EC-15] expo-battery not available during early runtime init');
+}
+
+function normalizeFirebasePath(path: string): string {
+    return path.replace(/^\/+/, '');
+}
+
+function getTimestampSentinel(): any {
+    return nativeDatabaseFactory?.ServerValue?.TIMESTAMP ?? serverTimestamp();
+}
+
+async function writePathValue(path: string, value: any): Promise<void> {
+    const normalizedPath = normalizeFirebasePath(path);
+
+    if (nativeDatabase) {
+        await nativeDatabase.ref(normalizedPath).set(value);
+        return;
+    }
+
+    const db = getFirebaseDatabase();
+    await set(ref(db, normalizedPath), value);
+}
+
+async function writeMultiPathUpdates(updatesMap: Record<string, any>): Promise<void> {
+    if (nativeDatabase) {
+        const normalizedUpdates: Record<string, any> = {};
+        Object.entries(updatesMap).forEach(([path, value]) => {
+            normalizedUpdates[normalizeFirebasePath(path)] = value;
+        });
+        await nativeDatabase.ref('/').update(normalizedUpdates);
+        return;
+    }
+
+    const db = getFirebaseDatabase();
+    await update(ref(db), updatesMap);
+}
+
+const BACKGROUND_STATUS_WARN_INTERVAL_MS = 60_000;
+let lastBackgroundStatusWarnAt = 0;
+let backgroundStatusUseBoxesPath = true;
+
+function warnBackgroundStatusOncePerInterval(message: string, error?: unknown): void {
+    const now = Date.now();
+    if (now - lastBackgroundStatusWarnAt < BACKGROUND_STATUS_WARN_INTERVAL_MS) return;
+    lastBackgroundStatusWarnAt = now;
+
+    if (error !== undefined) {
+        console.warn(message, error);
+    } else {
+        console.warn(message);
+    }
+}
+
+async function writeBackgroundStatusBestEffort(boxId: string, status: Record<string, any>): Promise<void> {
+    const boxesPath = `boxes/${boxId}/background_location_status`;
+    const hardwarePath = `hardware/${boxId}/background_location_status`;
+
+    if (!backgroundStatusUseBoxesPath) {
+        try {
+            await writePathValue(hardwarePath, status);
+        } catch (fallbackError) {
+            warnBackgroundStatusOncePerInterval('[EC-15] Background status fallback write failed (non-fatal):', fallbackError);
+        }
+        return;
+    }
+
+    try {
+        await writePathValue(boxesPath, status);
+    } catch (error) {
+        const message = String((error as any)?.message ?? error ?? '');
+        const isPermissionDenied = /permission-denied/i.test(message);
+
+        if (isPermissionDenied) {
+            backgroundStatusUseBoxesPath = false;
+            warnBackgroundStatusOncePerInterval('[EC-15] /boxes background status denied; switching to /hardware fallback');
+            try {
+                await writePathValue(hardwarePath, status);
+            } catch (fallbackError) {
+                warnBackgroundStatusOncePerInterval('[EC-15] Background status fallback write failed (non-fatal):', fallbackError);
+            }
+            return;
+        }
+
+        warnBackgroundStatusOncePerInterval('[EC-15] Background status write skipped (non-fatal):', error);
+    }
+}
 
 // NetInfo — conditionally imported to prevent startup crashes
 let NetInfo: any = null;
@@ -131,9 +242,7 @@ async function writePhoneStatusIfDue(
     if (now - lastPhoneStatusWriteTime < PHONE_STATUS_WRITE_INTERVAL_MS) return;
 
     try {
-        const db = getFirebaseDatabase();
-        const phoneStatusRef = ref(db, `hardware/${boxId}/phone_status`);
-        await set(phoneStatusRef, status);
+        await writePathValue(`hardware/${boxId}/phone_status`, status);
         lastPhoneStatusWriteTime = now;
 
         if (__DEV__) console.log('[EC-15] Phone status written:', status.connection, status.cellular_generation);
@@ -197,6 +306,9 @@ export const CONFIG = {
     /** Time without a valid GPS fix before declaring signal lost (ms) */
     SIGNAL_LOST_THRESHOLD_MS: 120000, // 2 minutes
 };
+
+const ANDROID_FGS_RETRY_BACKOFF_MS = 30000; // 30 s — short enough to recover quickly after the OS reinitialises SharedPreferences
+const ANDROID_FGS_SHARED_PREFS_NPE_REGEX = /SharedPreferences\.getAll\(\).*null object reference/i;
 
 // ==================== Types ====================
 
@@ -371,8 +483,8 @@ TaskManager.defineTask(CONFIG.TASK_NAME, async ({ data, error }) => {
             // network. This causes ALL background updates to be queued instead of sent,
             // and the queue only flushes when the app comes to foreground — which is
             // exactly the symptom: "location only updates when the app is open."
-            const db = getFirebaseDatabase();
             const updates: Record<string, any> = {};
+            const timestampSentinel = getTimestampSentinel();
 
             // Pre-increment data bytes for this exact write (~500 bytes payload)
             cumulativeDataBytes += 500;
@@ -386,24 +498,22 @@ TaskManager.defineTask(CONFIG.TASK_NAME, async ({ data, error }) => {
                 speed: location.coords.speed ?? 0,
                 heading: location.coords.heading ?? 0,
                 timestamp: Date.now(),
-                verified_at: serverTimestamp(),
+                verified_at: timestampSentinel,
                 source: 'phone_background',
-                gps_degraded: isLowAccuracy,
-            };
-
-            // Write background location heartbeat
-            updates[`/boxes/${currentBoxId}/background_location_status`] = {
-                lastUpdate: serverTimestamp(),
-                source: 'phone_background',
-                accuracy: location.coords.accuracy,
-                signal_lost: false,
                 gps_degraded: isLowAccuracy,
             };
 
             // Track data bandwidth in real-time alongside location
             updates[`/hardware/${currentBoxId}/phone_status/data_bytes`] = cumulativeDataBytes;
 
-            await update(ref(db), updates);
+            await writeMultiPathUpdates(updates);
+            await writeBackgroundStatusBestEffort(currentBoxId, {
+                lastUpdate: timestampSentinel,
+                source: 'phone_background',
+                accuracy: location.coords.accuracy,
+                signal_lost: false,
+                gps_degraded: isLowAccuracy,
+            });
             console.log(`[EC-15] ✓ Firebase write OK | box=${currentBoxId} | lat=${location.coords.latitude.toFixed(5)} lng=${location.coords.longitude.toFixed(5)} | acc=${accuracy.toFixed(0)}m`);
 
             // Track last written location for drift prevention
@@ -474,6 +584,8 @@ class BackgroundLocationManager {
     private foregroundHeartbeatInterval: NodeJS.Timeout | null = null;
     private isForegroundHeartbeatInFlight = false;
     private currentPhase: TrackingPhase = 'TRANSIT';
+    private nativeStartBlockedUntil = 0;
+    private nativeStartBlockReason: string | null = null;
 
     // ==================== Public API ====================
 
@@ -554,6 +666,7 @@ class BackgroundLocationManager {
      */
     private async requestBatteryOptimizationExemption(): Promise<void> {
         try {
+            if (!Battery?.isBatteryOptimizationEnabledAsync) return;
             const isOptimized = await Battery.isBatteryOptimizationEnabledAsync();
             if (isOptimized) {
                 // We use a Promise to pause execution until the user responds to the alert
@@ -594,8 +707,35 @@ class BackgroundLocationManager {
      * Start background location tracking
      */
     async start(boxId: string): Promise<boolean> {
+        const now = Date.now();
         const sanitizedBoxId = sanitizeBoxId(boxId);
         console.log(`[EC-15] start() called | boxId=${boxId} | status=${this.state.status} | currentBoxId=${currentBoxId}`);
+
+        // ── GUARD 1: already running/starting for the SAME box ────────────────
+        // Must come before the backoff check so that redundancy re-calls during
+        // the backoff window are told "already running" and don't stack extra
+        // foreground GPS watchers on top.
+        if (sanitizedBoxId && currentBoxId === sanitizedBoxId &&
+            (this.state.status === 'RUNNING' || this.state.status === 'STARTING')) {
+            console.log('[EC-15] start() early-return: already RUNNING/STARTING with same boxId');
+            return true;
+        }
+
+        // ── GUARD 2: backoff window (native Android BGS crashed recently) ─────
+        if (Platform.OS === 'android' && this.nativeStartBlockedUntil > now) {
+            const retryInMs = this.nativeStartBlockedUntil - now;
+            const retryInSec = Math.ceil(retryInMs / 1000);
+            const blockReason = this.nativeStartBlockReason ?? 'Native Android foreground-service crash backoff active';
+            console.warn(`[EC-15] Start blocked for ${retryInSec}s after native crash. Skipping restart attempt.`);
+            // Do NOT flip status to ERROR if we are already in foreground-only mode.
+            if (this.state.status !== 'RUNNING') {
+                this.updateState({
+                    status: 'ERROR',
+                    lastError: `${blockReason} (retry in ${retryInSec}s)`,
+                });
+            }
+            return false;
+        }
 
         if (!sanitizedBoxId) {
             console.warn('[EC-15] Refusing to start background tracking with invalid boxId:', boxId);
@@ -607,10 +747,7 @@ class BackgroundLocationManager {
         }
 
         if (this.state.status === 'RUNNING' || this.state.status === 'STARTING') {
-            if (currentBoxId === sanitizedBoxId) {
-                console.log('[EC-15] start() early-return: already RUNNING/STARTING with same boxId');
-                return true;
-            }
+            // Different boxId — stop the current session first.
             console.log('[EC-15] start() different boxId — stopping existing service first');
             await this.stop();
         }
@@ -650,15 +787,17 @@ class BackgroundLocationManager {
             // reset by a system update or OEM battery manager).
             if (Platform.OS === 'android') {
                 try {
-                    const expoLocationChannelId = `${Application.applicationId}:${CONFIG.TASK_NAME}`;
-                    await Notifications.setNotificationChannelAsync(expoLocationChannelId, {
-                        name: 'Live Delivery Tracking',
-                        importance: Notifications.AndroidImportance.MAX,
-                        lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
-                        bypassDnd: true,
-                        sound: null,
-                        enableVibrate: false,
-                    });
+                    if (Notifications?.setNotificationChannelAsync) {
+                        const expoLocationChannelId = `${Application.applicationId}:${CONFIG.TASK_NAME}`;
+                        await Notifications.setNotificationChannelAsync(expoLocationChannelId, {
+                            name: 'Live Delivery Tracking',
+                            importance: Notifications.AndroidImportance.MAX,
+                            lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
+                            bypassDnd: true,
+                            sound: null,
+                            enableVibrate: false,
+                        });
+                    }
                 } catch (e) {
                     // Non-fatal: the notification may still work with default channel settings
                     console.warn('[EC-15] Failed to set location notification channel:', e);
@@ -679,31 +818,92 @@ class BackgroundLocationManager {
             }
 
             // Start background location updates (Expo Task Manager)
-            try {
-                await Location.startLocationUpdatesAsync(CONFIG.TASK_NAME, {
-                    accuracy: CONFIG.ACCURACY,
-                    timeInterval: CONFIG.LOCATION_INTERVAL_MS,
-                    distanceInterval: CONFIG.DISTANCE_FILTER_M,
-                    deferredUpdatesInterval: CONFIG.DEFERRED_UPDATES_INTERVAL_MS,
-                    deferredUpdatesDistance: CONFIG.DEFERRED_UPDATES_DISTANCE_M,
-                    foregroundService: {
-                        notificationTitle: CONFIG.NOTIFICATION_TITLE,
-                        notificationBody: CONFIG.NOTIFICATION_BODY,
-                        notificationColor: '#0066FF',
-                    },
-                    // iOS specific
-                    activityType: Location.ActivityType.AutomotiveNavigation,
-                    showsBackgroundLocationIndicator: true,
-                    pausesUpdatesAutomatically: false,
-                });
-                console.log('[EC-15] startLocationUpdatesAsync succeeded for boxId:', sanitizedBoxId);
-            } catch (locationError) {
-                console.error('[EC-15] Android 14 FGS start error:', locationError);
+            // Android 14 has a race condition where SharedPreferences may not be
+            // initialised yet when startLocationUpdatesAsync is first called.
+            // Retry up to 3 times with increasing delays to beat the race.
+            const startOptions = {
+                accuracy: CONFIG.ACCURACY,
+                timeInterval: CONFIG.LOCATION_INTERVAL_MS,
+                distanceInterval: CONFIG.DISTANCE_FILTER_M,
+                deferredUpdatesInterval: CONFIG.DEFERRED_UPDATES_INTERVAL_MS,
+                deferredUpdatesDistance: CONFIG.DEFERRED_UPDATES_DISTANCE_M,
+                foregroundService: {
+                    notificationTitle: CONFIG.NOTIFICATION_TITLE,
+                    notificationBody: CONFIG.NOTIFICATION_BODY,
+                    notificationColor: '#0066FF',
+                },
+                // iOS specific
+                activityType: Location.ActivityType.AutomotiveNavigation,
+                showsBackgroundLocationIndicator: true,
+                pausesUpdatesAutomatically: false,
+            };
+
+            // Delay before first attempt on Android to let SharedPreferences initialise.
+            if (Platform.OS === 'android') {
+                await new Promise(resolve => setTimeout(resolve, 500));
+            }
+
+            const MAX_NATIVE_ATTEMPTS = Platform.OS === 'android' ? 3 : 1;
+            const RETRY_DELAYS_MS = [0, 1500, 3000]; // delay BEFORE attempt #2, #3
+            let lastLocationError: any = null;
+
+            for (let attempt = 1; attempt <= MAX_NATIVE_ATTEMPTS; attempt++) {
+                if (attempt > 1) {
+                    const delay = RETRY_DELAYS_MS[attempt - 1] ?? 2000;
+                    console.warn(`[EC-15] Retrying startLocationUpdatesAsync (attempt ${attempt}/${MAX_NATIVE_ATTEMPTS}) in ${delay}ms…`);
+                    await new Promise(resolve => setTimeout(resolve, delay));
+                }
+                try {
+                    await Location.startLocationUpdatesAsync(CONFIG.TASK_NAME, startOptions);
+                    lastLocationError = null;
+                    console.log(`[EC-15] startLocationUpdatesAsync succeeded (attempt ${attempt}) for boxId:`, sanitizedBoxId);
+                    this.nativeStartBlockedUntil = 0;
+                    this.nativeStartBlockReason = null;
+                    break; // success — exit retry loop
+                } catch (err) {
+                    lastLocationError = err;
+                    const msg = String((err as any)?.message ?? err ?? '');
+                    const isNpe = ANDROID_FGS_SHARED_PREFS_NPE_REGEX.test(msg);
+                    console.warn(`[EC-15] startLocationUpdatesAsync attempt ${attempt}/${MAX_NATIVE_ATTEMPTS} failed${isNpe ? ' (SharedPreferences NPE)' : ''}:`, err);
+                    // If it's not the NPE (i.e. a hard permission or policy error), don't retry
+                    if (!isNpe) break;
+                }
+            }
+
+            if (lastLocationError !== null) {
+                const errorMessage = String((lastLocationError as any)?.message ?? lastLocationError ?? 'Unknown native start error');
+                const isNpe = ANDROID_FGS_SHARED_PREFS_NPE_REGEX.test(errorMessage);
+
+                // All attempts exhausted — enter foreground-only mode so Firebase
+                // keeps receiving data while we wait for the OS to recover.
+                if (isNpe) {
+                    this.nativeStartBlockedUntil = Date.now() + ANDROID_FGS_RETRY_BACKOFF_MS;
+                    this.nativeStartBlockReason = 'Android 14 FGS native crash (SharedPreferences NPE)';
+                }
+
+                console.error('[EC-15] All native BGS start attempts failed:', lastLocationError);
+                console.warn(`[EC-15] Entering foreground-only mode. Will retry native BGS in ${Math.round(ANDROID_FGS_RETRY_BACKOFF_MS / 1000)}s.`);
+
                 this.updateState({
-                    status: 'ERROR',
-                    lastError: `Android 14 service blocked: ${locationError}`,
+                    status: 'RUNNING',
+                    foregroundServiceActive: false,
+                    lastError: isNpe
+                        ? `${this.nativeStartBlockReason}. Foreground-only fallback active; retrying in ${Math.round(ANDROID_FGS_RETRY_BACKOFF_MS / 1000)}s.`
+                        : `Native BGS blocked: ${lastLocationError}. Foreground-only fallback active.`,
                 });
-                return false;
+
+                // Start supporting machinery — the health-check will retry native BGS once
+                // the backoff window expires.
+                this.startHealthCheck();
+                this.subscribeToAppState();
+                this.subscribeToBoxGpsStatus(sanitizedBoxId);
+                if (AppState.currentState === 'active') {
+                    await this.startForegroundWatcher();
+                    this.startForegroundHeartbeat();
+                }
+
+                await this.logServiceEvent(sanitizedBoxId, 'SERVICE_STARTED_FOREGROUND_ONLY');
+                return true; // Return true so Redundancy sees us as running and does NOT stack its own fallback
             }
 
             this.updateState({
@@ -865,8 +1065,8 @@ class BackgroundLocationManager {
 
             // Write directly to Firebase — NOT through offlineQueueService.
             // offlineQueueService breaks in Android Doze mode (same fix as background task).
-            const db = getFirebaseDatabase();
             const updates: Record<string, any> = {};
+            const timestampSentinel = getTimestampSentinel();
 
             updates[`/locations/${sanitizedCurrentBoxId}/phone`] = {
                 latitude: location.coords.latitude,
@@ -876,18 +1076,17 @@ class BackgroundLocationManager {
                 speed: location.coords.speed ?? 0,
                 heading: location.coords.heading ?? 0,
                 timestamp: Date.now(),
-                verified_at: serverTimestamp(),
+                verified_at: timestampSentinel,
                 source: 'phone_foreground',
             };
 
-            updates[`/boxes/${sanitizedCurrentBoxId}/background_location_status`] = {
-                lastUpdate: serverTimestamp(),
+            await writeMultiPathUpdates(updates);
+            await writeBackgroundStatusBestEffort(sanitizedCurrentBoxId, {
+                lastUpdate: timestampSentinel,
                 source: 'phone_foreground',
                 accuracy: location.coords.accuracy,
                 signal_lost: false,
-            };
-
-            await update(ref(db), updates);
+            });
             lastBackgroundTaskUpdateTimestamp = Date.now();
 
             this.updateState({
@@ -931,26 +1130,40 @@ class BackgroundLocationManager {
             const sanitizedCurrentBoxId = sanitizeBoxId(currentBoxId);
             if (timeSinceValidFix > CONFIG.SIGNAL_LOST_THRESHOLD_MS && sanitizedCurrentBoxId) {
                 try {
-                    const db = getFirebaseDatabase();
-                    const statusRef = ref(db, `boxes/${sanitizedCurrentBoxId}/background_location_status`);
-                    await set(statusRef, {
-                        lastUpdate: serverTimestamp(),
+                    await writePathValue(`boxes/${sanitizedCurrentBoxId}/background_location_status`, {
+                        lastUpdate: getTimestampSentinel(),
                         source: 'phone_background',
                         signal_lost: true,
                         last_valid_fix: lastValidFixTime,
                         signal_lost_duration_ms: timeSinceValidFix,
                     });
                 } catch (e) {
-                    console.error('[EC-15] Failed to write signal_lost status:', e);
+                    console.warn('[EC-15] Failed to write signal_lost status (non-fatal):', e);
                 }
             }
 
             // Check if task is still running (heartbeat watchdog)
             const isTaskRegistered = await TaskManager.isTaskRegisteredAsync(CONFIG.TASK_NAME);
             if (this.state.status === 'RUNNING' && !isTaskRegistered) {
-                console.warn('[EC-15] Task was killed, restarting...');
                 const sanitizedCurrentBoxId = sanitizeBoxId(currentBoxId);
-                if (sanitizedCurrentBoxId) {
+                if (!sanitizedCurrentBoxId) return;
+
+                const nativeBlocked = this.nativeStartBlockedUntil > Date.now();
+
+                if (nativeBlocked) {
+                    // Still in backoff window — foreground-only mode is already active.
+                    // Make sure the foreground watcher is running so data keeps flowing.
+                    if (AppState.currentState === 'active' && !this.foregroundWatchSubscription) {
+                        console.warn('[EC-15] Health-check: re-starting foreground watcher during native backoff');
+                        await this.startForegroundWatcher();
+                        this.startForegroundHeartbeat();
+                    }
+                } else {
+                    // Backoff has expired — try to promote to full native BGS.
+                    // Use stop() for a clean teardown (clears all listeners / watchers)
+                    // before restart, to avoid stacking duplicate subscriptions.
+                    console.warn('[EC-15] Backoff cleared. Attempting full native BGS restart...');
+                    await this.stop();
                     await this.start(sanitizedCurrentBoxId);
                 }
             }
@@ -1034,8 +1247,8 @@ class BackgroundLocationManager {
                     const isLowAccuracy = accuracy > CONFIG.ACCURACY_REJECT_THRESHOLD_M;
 
                     try {
-                        const db = getFirebaseDatabase();
                         const updates: Record<string, any> = {};
+                        const timestampSentinel = getTimestampSentinel();
 
                         cumulativeDataBytes += 500;
 
@@ -1047,22 +1260,21 @@ class BackgroundLocationManager {
                             speed: location.coords.speed ?? 0,
                             heading: location.coords.heading ?? 0,
                             timestamp: Date.now(),
-                            verified_at: serverTimestamp(),
+                            verified_at: timestampSentinel,
                             source: 'phone_foreground',
-                            gps_degraded: isLowAccuracy,
-                        };
-
-                        updates[`/boxes/${sanitizedCurrentBoxId}/background_location_status`] = {
-                            lastUpdate: serverTimestamp(),
-                            source: 'phone_foreground',
-                            accuracy: location.coords.accuracy,
-                            signal_lost: false,
                             gps_degraded: isLowAccuracy,
                         };
 
                         updates[`/hardware/${sanitizedCurrentBoxId}/phone_status/data_bytes`] = cumulativeDataBytes;
 
-                        await update(ref(db), updates);
+                        await writeMultiPathUpdates(updates);
+                        await writeBackgroundStatusBestEffort(sanitizedCurrentBoxId, {
+                            lastUpdate: timestampSentinel,
+                            source: 'phone_foreground',
+                            accuracy: location.coords.accuracy,
+                            signal_lost: false,
+                            gps_degraded: isLowAccuracy,
+                        });
 
                         const now = Date.now();
                         lastBackgroundTaskUpdateTimestamp = now;
@@ -1153,15 +1365,21 @@ class BackgroundLocationManager {
 
     private async logServiceEvent(boxId: string, event: string): Promise<void> {
         try {
-            const db = getFirebaseDatabase();
-            const eventRef = ref(db, `boxes/${boxId}/background_service_events/${Date.now()}`);
-            await set(eventRef, {
+            await writePathValue(`boxes/${boxId}/background_service_events/${Date.now()}`, {
                 event,
                 platform: Platform.OS,
-                timestamp: serverTimestamp(),
+                timestamp: getTimestampSentinel(),
             });
         } catch (error) {
-            console.error('[EC-15] Failed to log service event:', error);
+            try {
+                await writePathValue(`hardware/${boxId}/background_service_events/${Date.now()}`, {
+                    event,
+                    platform: Platform.OS,
+                    timestamp: getTimestampSentinel(),
+                });
+            } catch (fallbackError) {
+                console.error('[EC-15] Failed to log service event:', fallbackError);
+            }
         }
     }
 }

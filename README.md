@@ -96,6 +96,15 @@ npx expo run:ios
 ```
 ✅ Background services fully functional
 
+**Install Existing Dev APK (No Rebuild):**
+```powershell
+# Installs latest debug APK produced by build-android.ps1
+.\install-dev-build.ps1
+
+# If no device is connected, auto-start first Android Studio AVD
+.\install-dev-build.ps1 -StartEmulatorIfNeeded
+```
+
 ## 🔔 Background Service Setup
 
 ### Quick Setup

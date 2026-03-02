@@ -8,7 +8,13 @@ import { requestCancellation, CancellationReason } from '../../services/cancella
 import useAuthStore from '../../store/authStore';
 import { supabase } from '../../services/supabaseClient';
 import dayjs from 'dayjs';
+import utc from 'dayjs/plugin/utc';
+import timezone from 'dayjs/plugin/timezone';
 import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/datetimepicker';
+
+dayjs.extend(utc);
+dayjs.extend(timezone);
+const PH_TIMEZONE = 'Asia/Manila';
 
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -79,7 +85,9 @@ export default function AssignedDeliveriesScreen() {
                     snappedDropoffLat: d.snapped_dropoff_lat,
                     snappedDropoffLng: d.snapped_dropoff_lng,
                     date: d.created_at, // Use created_at as base date
-                    time: dayjs(d.created_at).format('h:mm A'),
+                    time: d.duration
+                        ? dayjs.utc(d.created_at).tz(PH_TIMEZONE).add(d.duration, 'second').format('h:mm A')
+                        : dayjs.utc(d.created_at).tz(PH_TIMEZONE).format('h:mm A'),
                     distance: d.distance ? `${d.distance.toFixed(1)} km` : '--',
                     fare: d.estimated_fare ? `₱${d.estimated_fare}` : '--',
                     earnings: d.estimated_fare ? `₱${d.estimated_fare}` : '--',
@@ -309,10 +317,12 @@ export default function AssignedDeliveriesScreen() {
                     </View>
 
                     <View style={{ flexDirection: 'row', marginTop: 4 }}>
-                        <View style={{ flexDirection: 'row', alignItems: 'center', marginRight: 16 }}>
-                            <MaterialCommunityIcons name="clock-outline" size={16} color="#666" />
-                            <Text style={{ marginLeft: 4, color: '#666', fontSize: 12, fontWeight: 'bold' }}>ETA: {item.time || '-- min'}</Text>
-                        </View>
+                        {!['CANCELLED', 'COMPLETED'].includes(item.status) && (
+                            <View style={{ flexDirection: 'row', alignItems: 'center', marginRight: 16 }}>
+                                <MaterialCommunityIcons name="clock-outline" size={16} color="#666" />
+                                <Text style={{ marginLeft: 4, color: '#666', fontSize: 12, fontWeight: 'bold' }}>ETA: {item.time || '--'}</Text>
+                            </View>
+                        )}
                         <View style={{ flexDirection: 'row', alignItems: 'center', marginRight: 16 }}>
                             <MaterialCommunityIcons name="cash" size={16} color="#666" />
                             <Text style={{ marginLeft: 4, color: '#666', fontSize: 12, fontWeight: 'bold' }}>{item.earnings}</Text>
