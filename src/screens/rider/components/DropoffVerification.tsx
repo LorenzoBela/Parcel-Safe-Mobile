@@ -5,7 +5,7 @@ import * as ImagePicker from 'expo-image-picker';
 import SwipeConfirmButton from '../../../components/SwipeConfirmButton';
 import { uploadDeliveryProofPhoto } from '../../../services/proofPhotoService';
 import { updateDeliveryStatus } from '../../../services/riderMatchingService';
-import { subscribeToDeliveryProof, DeliveryProofState, subscribeToBoxState, BoxState, subscribeToCamera, CameraState } from '../../../services/firebaseClient';
+import { subscribeToDeliveryProof, DeliveryProofState, subscribeToBoxState, BoxState, subscribeToCamera, CameraState, subscribeToLockEvents, LockEvent } from '../../../services/firebaseClient';
 
 interface DropoffVerificationProps {
     deliveryId: string;
@@ -64,6 +64,10 @@ export default function DropoffVerification({
     const [boxOtpValidated, setBoxOtpValidated] = useState(false);
     const [cameraFailed, setCameraFailed] = useState(false);
 
+    // ━━━ LOCK EVENTS: Real-time OTP + Face Detection from hardware ━━━
+    const [lockEvent, setLockEvent] = useState<LockEvent | null>(null);
+    const [faceDetected, setFaceDetected] = useState(false);
+
     // Auto-arrive logic
     useEffect(() => {
         if (canAutoArrive && isInsideGeoFence && deliveryStatus === 'IN_TRANSIT') {
@@ -113,10 +117,30 @@ export default function DropoffVerification({
             }
         });
 
+        // ━━━ Monitor lock events for OTP + face detection results ━━━
+        const unsubscribeLockEvents = subscribeToLockEvents(boxId, (event) => {
+            if (!canProcessOtpSignals || !event) return;
+            setLockEvent(event);
+
+            if (event.otp_valid) {
+                setBoxOtpValidated(true);
+            }
+            if (event.face_detected) {
+                setFaceDetected(true);
+            }
+            if (event.unlocked) {
+                // Box confirmed OTP + face + solenoid fired
+                setHardwareSuccess(true);
+                setBoxOtpValidated(true);
+                setFaceDetected(true);
+            }
+        });
+
         return () => {
             unsubscribeBox();
             unsubscribeProof();
             unsubscribeCamera();
+            unsubscribeLockEvents();
         };
     }, [boxId, deliveryId, canProcessOtpSignals]);
 
@@ -192,7 +216,10 @@ export default function DropoffVerification({
     // ━━━ Determine handover card status message ━━━
     const getHandoverStatusMessage = (): { text: string; color: string; bgColor: string } => {
         if (hardwareSuccess) {
-            return { text: '✅ Hardware verification successful. Box unlocked!', color: '#15803d', bgColor: '#DCFCE7' };
+            return { text: '✅ Box unlocked! OTP verified & face detected.', color: '#15803d', bgColor: '#DCFCE7' };
+        }
+        if (boxOtpValidated && !faceDetected && lockEvent?.otp_valid && lockEvent?.face_detected === false) {
+            return { text: '⚠️ OTP correct but NO face detected — box remains locked. Ask customer to stand in front of camera.', color: '#b45309', bgColor: '#FEF3C7' };
         }
         if (boxOtpValidated && cameraFailed && fallbackPhotoUri) {
             return { text: '📸 OTP verified ✓  Fallback photo captured. Ready to complete.', color: '#15803d', bgColor: '#DCFCE7' };
@@ -200,8 +227,14 @@ export default function DropoffVerification({
         if (boxOtpValidated && cameraFailed) {
             return { text: '⚠️ OTP verified ✓  Box camera failed. Please capture a fallback photo.', color: '#b45309', bgColor: '#FEF3C7' };
         }
+        if (boxOtpValidated && faceDetected) {
+            return { text: '🔓 OTP verified & face detected ✓  Finalizing unlock...', color: '#1d4ed8', bgColor: '#DBEAFE' };
+        }
         if (boxOtpValidated) {
-            return { text: '🔓 OTP verified ✓  Waiting for box camera to capture proof photo...', color: '#1d4ed8', bgColor: '#DBEAFE' };
+            return { text: '🔓 OTP verified ✓  Waiting for face detection...', color: '#1d4ed8', bgColor: '#DBEAFE' };
+        }
+        if (lockEvent && !lockEvent.otp_valid) {
+            return { text: '❌ Wrong OTP entered! Customer should try again.', color: '#dc2626', bgColor: '#FEE2E2' };
         }
         return { text: '🔒 Waiting for customer to enter OTP on the box...', color: '#4b5563', bgColor: '#F3F4F6' };
     };
@@ -249,10 +282,17 @@ export default function DropoffVerification({
                         </View>
                         <View style={styles.checkDivider} />
                         <View style={styles.checkItem}>
-                            <View style={[styles.checkCircle, boxOtpValidated ? styles.bgSuccess : styles.bgWarning]}>
-                                <Text style={styles.checkIcon}>{boxOtpValidated ? '✓' : '⏳'}</Text>
+                            <View style={[styles.checkCircle, boxOtpValidated ? styles.bgSuccess : (lockEvent && !lockEvent.otp_valid ? styles.bgError : styles.bgWarning)]}>
+                                <Text style={styles.checkIcon}>{boxOtpValidated ? '✓' : (lockEvent && !lockEvent.otp_valid ? '✗' : '⏳')}</Text>
                             </View>
                             <Text style={styles.checkLabel}>OTP Verified</Text>
+                        </View>
+                        <View style={styles.checkDivider} />
+                        <View style={styles.checkItem}>
+                            <View style={[styles.checkCircle, faceDetected ? styles.bgSuccess : (lockEvent?.otp_valid && !lockEvent?.face_detected ? styles.bgError : styles.bgWarning)]}>
+                                <Text style={styles.checkIcon}>{faceDetected ? '✓' : (lockEvent?.otp_valid && !lockEvent?.face_detected ? '✗' : '⏳')}</Text>
+                            </View>
+                            <Text style={styles.checkLabel}>Face Check</Text>
                         </View>
                     </View>
 

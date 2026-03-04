@@ -899,7 +899,38 @@ export function subscribeToDeliveryProof(
     return () => off(deliveryRef);
 }
 
-// ==================== EC-97: Low-Light Face Detection ====================
+// ==================== Lock Events (OTP + Face Detection from Hardware) ====================
+
+export interface LockEvent {
+    otp_valid: boolean;
+    face_detected: boolean;
+    unlocked: boolean;
+    timestamp: number;
+    device_epoch?: number;
+    timestamp_str?: string;
+}
+
+/**
+ * Subscribe to lock events written by firmware via GPS/LTE proxy.
+ * Path: lock_events/{boxId}/latest
+ *
+ * Fires when the customer enters OTP on the physical keypad and
+ * the system validates OTP + face detection.
+ */
+export function subscribeToLockEvents(
+    boxId: string,
+    callback: (event: LockEvent | null) => void
+): () => void {
+    const db = getFirebaseDatabase();
+    const lockRef = ref(db, `lock_events/${boxId}/latest`);
+
+    const unsubscribe = onValue(lockRef, (snapshot) => {
+        const data = snapshot.val();
+        callback(data as LockEvent | null);
+    });
+
+    return () => off(lockRef);
+}
 
 export type LowLightTier = 'NORMAL' | 'ENHANCED' | 'FLASH' | 'FALLBACK';
 

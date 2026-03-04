@@ -266,10 +266,12 @@ export function subscribeToCancellation(
 
 /**
  * Mark package as retrieved (sender picked up)
+ * Accepts an optional returnPhotoUrl that was uploaded before calling this.
  */
 export async function markPackageRetrieved(
   deliveryId: string,
-  boxId: string
+  boxId: string,
+  returnPhotoUrl?: string,
 ): Promise<boolean> {
   const database = getFirebaseDatabase();
 
@@ -278,6 +280,7 @@ export async function markPackageRetrieved(
     await set(cancellationRef, {
       packageRetrieved: true,
       retrievedAt: serverTimestamp(),
+      ...(returnPhotoUrl ? { returnPhotoUrl } : {}),
     });
 
     // Clear box state
@@ -290,12 +293,17 @@ export async function markPackageRetrieved(
 
     // Update status to RETURNED in Supabase
     if (supabase) {
+      const updatePayload: Record<string, string> = {
+        status: 'RETURNED',
+        updated_at: new Date().toISOString(),
+      };
+      if (returnPhotoUrl) {
+        updatePayload['return_photo_url'] = returnPhotoUrl;
+      }
+
       const { error } = await supabase
         .from('deliveries')
-        .update({
-          status: 'RETURNED',
-          updated_at: new Date().toISOString()
-        })
+        .update(updatePayload)
         .eq('id', deliveryId);
 
       if (error) {

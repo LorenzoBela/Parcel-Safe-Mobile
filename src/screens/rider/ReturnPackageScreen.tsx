@@ -1,17 +1,23 @@
 /**
  * EC-32: Return Package Screen
- * 
+ *
  * Guides the rider through returning a cancelled package to the sender.
- * Shows navigation to pickup location and tracks return progress.
+ * Enforces the full sequential validation chain:
+ *   NAVIGATING → ARRIVED (geofence) → OTP_VERIFY → PHOTO_CAPTURE → UPLOADING → COMPLETED
  */
 
-import React, { useState, useEffect, useCallback } from 'react';
-import { View, StyleSheet, ScrollView, Alert, Linking, Platform } from 'react-native';
-import { Text, Surface, Button, Card, Avatar, useTheme, IconButton, Chip, ProgressBar, Divider } from 'react-native-paper';
+import React, { useState, useEffect } from 'react';
+import {
+    View, StyleSheet, ScrollView, Alert, Linking, Platform,
+    TextInput as RNTextInput,
+} from 'react-native';
+import { Text, Surface, Button, useTheme, Chip, ProgressBar, ActivityIndicator } from 'react-native-paper';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import * as Location from 'expo-location';
+import * as ImagePicker from 'expo-image-picker';
 import { markPackageRetrieved, subscribeToCancellation, CancellationState } from '../../services/cancellationService';
+import { uploadReturnPhoto } from '../../services/proofPhotoService';
 
 interface RouteParams {
     deliveryId: string;
@@ -23,7 +29,19 @@ interface RouteParams {
     boxId?: string;
 }
 
-type ReturnStep = 'NAVIGATING' | 'ARRIVED' | 'AWAITING_PICKUP' | 'COMPLETED';
+type ReturnStep =
+    | 'NAVIGATING'
+    | 'ARRIVED'
+    | 'OTP_VERIFY'
+    | 'PHOTO_CAPTURE'
+    | 'UPLOADING'
+    | 'COMPLETED';
+
+const GEOFENCE_RADIUS_M = 100;
+const STEP_ORDER: ReturnStep[] = [
+    'NAVIGATING', 'ARRIVED', 'OTP_VERIFY', 'PHOTO_CAPTURE', 'UPLOADING', 'COMPLETED',
+];
+const STEP_LABELS = ['Navigate', 'Arrive', 'OTP', 'Photo', 'Upload', 'Done'];
 
 export default function ReturnPackageScreen() {
     const navigation = useNavigation<any>();
@@ -42,11 +60,19 @@ export default function ReturnPackageScreen() {
     } = params || {};
 
     const [currentStep, setCurrentStep] = useState<ReturnStep>('NAVIGATING');
-    const [distance, setDistance] = useState<string>('Calculating...');
-    const [riderLocation, setRiderLocation] = useState<Location.LocationObject | null>(null);
+    const [distanceM, setDistanceM] = useState<number>(Infinity);
+    const [isInsideGeofence, setIsInsideGeofence] = useState(false);
     const [cancellationState, setCancellationState] = useState<CancellationState | null>(null);
 
-    // Subscribe to cancellation state to detect when package is retrieved
+    // OTP verification
+    const [otpInput, setOtpInput] = useState('');
+    const [otpError, setOtpError] = useState('');
+
+    // Photo capture & upload
+    const [photoUri, setPhotoUri] = useState<string | null>(null);
+    const [uploadError, setUploadError] = useState('');
+
+    // Subscribe to cancellation state — handles external completion signals
     useEffect(() => {
         const unsubscribe = subscribeToCancellation(deliveryId, (state) => {
             setCancellationState(state);
@@ -54,118 +80,137 @@ export default function ReturnPackageScreen() {
                 setCurrentStep('COMPLETED');
             }
         });
-
         return () => unsubscribe();
     }, [deliveryId]);
 
-    // Get rider's location and calculate distance
+    // Continuous location tracking with Haversine distance to pickup geofence
     useEffect(() => {
+        let interval: ReturnType<typeof setInterval>;
+
         const fetchLocation = async () => {
             const { status } = await Location.requestForegroundPermissionsAsync();
-            if (status !== 'granted') {
-                setDistance('Location unavailable');
-                return;
-            }
+            if (status !== 'granted') return;
 
             const location = await Location.getCurrentPositionAsync({});
-            setRiderLocation(location);
-
-            // Calculate distance using Haversine
-            const R = 6371; // Earth's radius in km
+            const R = 6371000; // Earth radius in metres
             const dLat = (pickupLat - location.coords.latitude) * Math.PI / 180;
             const dLon = (pickupLng - location.coords.longitude) * Math.PI / 180;
-            const a = Math.sin(dLat / 2) ** 2 +
+            const a =
+                Math.sin(dLat / 2) ** 2 +
                 Math.cos(location.coords.latitude * Math.PI / 180) *
                 Math.cos(pickupLat * Math.PI / 180) *
                 Math.sin(dLon / 2) ** 2;
-            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-            const d = R * c;
-
-            setDistance(d < 1 ? `${Math.round(d * 1000)} m` : `${d.toFixed(1)} km`);
-
-            // Auto-detect arrival (within 100m)
-            if (d < 0.1 && currentStep === 'NAVIGATING') {
-                setCurrentStep('ARRIVED');
-            }
+            const d = R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+            setDistanceM(d);
+            setIsInsideGeofence(d <= GEOFENCE_RADIUS_M);
         };
 
         fetchLocation();
-        const interval = setInterval(fetchLocation, 10000); // Update every 10s
+        interval = setInterval(fetchLocation, 10000);
         return () => clearInterval(interval);
-    }, [pickupLat, pickupLng, currentStep]);
+    }, [pickupLat, pickupLng]);
+
+    const formatDistance = () => {
+        if (distanceM === Infinity) return 'Calculating...';
+        return distanceM < 1000
+            ? `${Math.round(distanceM)} m`
+            : `${(distanceM / 1000).toFixed(1)} km`;
+    };
 
     const openNavigation = () => {
         const url = Platform.select({
             ios: `maps://app?daddr=${pickupLat},${pickupLng}`,
             android: `google.navigation:q=${pickupLat},${pickupLng}`,
         });
-
         if (url) {
-            Linking.canOpenURL(url).then((supported) => {
-                if (supported) {
-                    Linking.openURL(url);
-                } else {
-                    Alert.alert('Error', 'Unable to open navigation app');
-                }
+            Linking.canOpenURL(url).then((ok) => {
+                if (ok) Linking.openURL(url);
+                else Alert.alert('Error', 'Unable to open navigation app');
             });
         }
     };
 
-    const handleArrived = () => {
-        setCurrentStep('AWAITING_PICKUP');
+    // ── Step 1 → 2: Geofence-gated arrival confirmation ────────────────────────
+    const handleConfirmArrival = () => {
+        if (!isInsideGeofence) {
+            Alert.alert(
+                'Not Within Range',
+                `You must be within ${GEOFENCE_RADIUS_M} m of the pickup location to proceed.\n\nCurrent distance: ${formatDistance()}`,
+            );
+            return;
+        }
+        setCurrentStep('OTP_VERIFY');
     };
 
-    const handleMarkComplete = async () => {
-        Alert.alert(
-            'Confirm Package Retrieved',
-            'Has the sender successfully retrieved the package from the box?',
-            [
-                { text: 'Cancel', style: 'cancel' },
-                {
-                    text: 'Yes, Package Retrieved',
-                    onPress: async () => {
-                        const success = await markPackageRetrieved(deliveryId, boxId);
-                        if (success) {
-                            setCurrentStep('COMPLETED');
-                        } else {
-                            Alert.alert('Error', 'Failed to mark as retrieved. Please try again.');
-                        }
-                    },
-                },
-            ]
-        );
+    // ── Step 2 → 3: Sender OTP verification ────────────────────────────────────
+    const handleVerifyOtp = () => {
+        if (otpInput.trim() !== returnOtp.trim()) {
+            setOtpError('Incorrect OTP. Ask the sender to check the code shown on their app or tracking page.');
+            return;
+        }
+        setOtpError('');
+        setCurrentStep('PHOTO_CAPTURE');
     };
 
-    const handleDone = () => {
-        navigation.navigate('RiderDashboard');
-    };
-
-    const getStepProgress = (): number => {
-        switch (currentStep) {
-            case 'NAVIGATING': return 0.25;
-            case 'ARRIVED': return 0.5;
-            case 'AWAITING_PICKUP': return 0.75;
-            case 'COMPLETED': return 1;
-            default: return 0;
+    // ── Step 3: Camera launch for sender face photo ─────────────────────────────
+    const handleCapturePhoto = async () => {
+        const { status } = await ImagePicker.requestCameraPermissionsAsync();
+        if (status !== 'granted') {
+            Alert.alert('Permission Required', 'Camera access is needed to capture the sender photo.');
+            return;
+        }
+        const result = await ImagePicker.launchCameraAsync({
+            mediaTypes: ImagePicker.MediaTypeOptions.Images,
+            allowsEditing: false,
+            quality: 0.8,
+        });
+        if (!result.canceled && result.assets?.[0]?.uri) {
+            setPhotoUri(result.assets[0].uri);
+            setUploadError('');
         }
     };
 
-    const getStepColor = (step: ReturnStep): string => {
-        const stepOrder = ['NAVIGATING', 'ARRIVED', 'AWAITING_PICKUP', 'COMPLETED'];
-        const currentIndex = stepOrder.indexOf(currentStep);
-        const stepIndex = stepOrder.indexOf(step);
+    // ── Step 4 → 5: Upload to Supabase then complete ────────────────────────────
+    const handleUploadAndComplete = async () => {
+        if (!photoUri) {
+            Alert.alert('Photo Required', 'Please capture a photo of the sender first.');
+            return;
+        }
+        setCurrentStep('UPLOADING');
+        setUploadError('');
 
-        if (stepIndex < currentIndex) return theme.colors.primary;
-        if (stepIndex === currentIndex) return theme.colors.primary;
-        return theme.colors.outline;
+        const upload = await uploadReturnPhoto({ deliveryId, boxId, localUri: photoUri });
+        if (!upload.success) {
+            setUploadError(upload.error || 'Upload failed. Please retry.');
+            setCurrentStep('PHOTO_CAPTURE');
+            return;
+        }
+
+        const success = await markPackageRetrieved(deliveryId, boxId, upload.url);
+        if (success) {
+            setCurrentStep('COMPLETED');
+        } else {
+            setUploadError('Failed to complete the return. Please retry.');
+            setCurrentStep('PHOTO_CAPTURE');
+        }
     };
 
+    const handleDone = () => navigation.navigate('RiderDashboard');
+
+    // ── Progress helpers ────────────────────────────────────────────────────────
+    const getStepProgress = () => (STEP_ORDER.indexOf(currentStep) + 1) / STEP_ORDER.length;
+    const stepColor = (step: ReturnStep) =>
+        STEP_ORDER.indexOf(step) <= STEP_ORDER.indexOf(currentStep)
+            ? theme.colors.primary
+            : theme.colors.outline;
+
+    // ── Render ──────────────────────────────────────────────────────────────────
     return (
         <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
             <ScrollView contentContainerStyle={styles.scrollContent}>
 
-                {/* Progress Header */}
-                <Surface style={[styles.progressCard, { backgroundColor: theme.colors.surface }]} elevation={1}>
+                {/* Progress Bar */}
+                <Surface style={[styles.card, { backgroundColor: theme.colors.surface }]} elevation={1}>
                     <Text variant="labelMedium" style={{ color: theme.colors.onSurfaceVariant, marginBottom: 8 }}>
                         RETURN PROGRESS
                     </Text>
@@ -175,14 +220,15 @@ export default function ReturnPackageScreen() {
                         style={{ height: 8, borderRadius: 4 }}
                     />
                     <View style={styles.progressLabels}>
-                        <Text variant="labelSmall" style={{ color: getStepColor('NAVIGATING') }}>Navigate</Text>
-                        <Text variant="labelSmall" style={{ color: getStepColor('ARRIVED') }}>Arrived</Text>
-                        <Text variant="labelSmall" style={{ color: getStepColor('AWAITING_PICKUP') }}>Pickup</Text>
-                        <Text variant="labelSmall" style={{ color: getStepColor('COMPLETED') }}>Done</Text>
+                        {STEP_LABELS.map((label, i) => (
+                            <Text key={label} variant="labelSmall" style={{ color: stepColor(STEP_ORDER[i]) }}>
+                                {label}
+                            </Text>
+                        ))}
                     </View>
                 </Surface>
 
-                {/* Current Status Card */}
+                {/* Status Summary Card */}
                 <Surface
                     style={[
                         styles.statusCard,
@@ -190,7 +236,7 @@ export default function ReturnPackageScreen() {
                             backgroundColor: currentStep === 'COMPLETED'
                                 ? (theme.dark ? '#1B5E20' : '#E8F5E9')
                                 : (theme.dark ? '#E65100' : '#FFF3E0'),
-                        }
+                        },
                     ]}
                     elevation={2}
                 >
@@ -202,67 +248,138 @@ export default function ReturnPackageScreen() {
                     <View style={styles.statusContent}>
                         <Text variant="titleMedium" style={{ fontWeight: 'bold', color: theme.colors.onSurface }}>
                             {currentStep === 'NAVIGATING' && 'Navigating to Pickup'}
-                            {currentStep === 'ARRIVED' && 'Arrived at Pickup'}
-                            {currentStep === 'AWAITING_PICKUP' && 'Awaiting Package Retrieval'}
+                            {currentStep === 'ARRIVED' && 'Confirm Arrival'}
+                            {currentStep === 'OTP_VERIFY' && 'Sender OTP Required'}
+                            {currentStep === 'PHOTO_CAPTURE' && 'Capture Sender Photo'}
+                            {currentStep === 'UPLOADING' && 'Uploading Photo…'}
                             {currentStep === 'COMPLETED' && 'Return Complete!'}
                         </Text>
                         <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
-                            {currentStep === 'NAVIGATING' && `${distance} away • Head to return location`}
-                            {currentStep === 'ARRIVED' && 'Contact the sender to arrange handover'}
-                            {currentStep === 'AWAITING_PICKUP' && 'Sender receives a Return OTP on their app to unlock the box'}
-                            {currentStep === 'COMPLETED' && 'Package has been returned successfully'}
+                            {currentStep === 'NAVIGATING' && `${formatDistance()} away • Head to the original pickup location`}
+                            {currentStep === 'ARRIVED' && (
+                                isInsideGeofence
+                                    ? `Within range (${formatDistance()}) — tap Confirm Arrival`
+                                    : `Still ${formatDistance()} away — must be within ${GEOFENCE_RADIUS_M} m`
+                            )}
+                            {currentStep === 'OTP_VERIFY' && 'Ask the sender to enter the 6-digit Return OTP from their app'}
+                            {currentStep === 'PHOTO_CAPTURE' && 'Capture a clear photo of the sender for identity verification'}
+                            {currentStep === 'UPLOADING' && 'Saving verification photo to secure storage…'}
+                            {currentStep === 'COMPLETED' && 'Package returned successfully. Your job is complete.'}
                         </Text>
                     </View>
                 </Surface>
 
                 {/* Destination Card */}
-                <Surface style={[styles.destinationCard, { backgroundColor: theme.colors.surface }]} elevation={1}>
+                <Surface style={[styles.card, { backgroundColor: theme.colors.surface }]} elevation={1}>
                     <View style={styles.destinationHeader}>
                         <View style={[styles.markerIcon, { backgroundColor: theme.colors.errorContainer }]}>
                             <MaterialCommunityIcons name="map-marker" size={24} color={theme.colors.error} />
                         </View>
                         <View style={{ flex: 1, marginLeft: 12 }}>
-                            <Text variant="labelSmall" style={{ color: theme.colors.onSurfaceVariant }}>
-                                RETURN TO
-                            </Text>
-                            <Text variant="titleMedium" style={{ fontWeight: 'bold', color: theme.colors.onSurface }}>
-                                {senderName}
-                            </Text>
-                            <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
-                                {pickupAddress}
-                            </Text>
+                            <Text variant="labelSmall" style={{ color: theme.colors.onSurfaceVariant }}>RETURN TO</Text>
+                            <Text variant="titleMedium" style={{ fontWeight: 'bold', color: theme.colors.onSurface }}>{senderName}</Text>
+                            <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>{pickupAddress}</Text>
                         </View>
-                        <Chip icon="map-marker-distance" compact>{distance}</Chip>
+                        <Chip icon="map-marker-distance" compact>{formatDistance()}</Chip>
                     </View>
-
                     {currentStep === 'NAVIGATING' && (
-                        <Button
-                            mode="contained"
-                            icon="navigation"
-                            onPress={openNavigation}
-                            style={{ marginTop: 16 }}
-                        >
+                        <Button mode="contained" icon="navigation" onPress={openNavigation} style={{ marginTop: 16 }}>
                             Open Navigation
                         </Button>
                     )}
                 </Surface>
 
+                {/* ── OTP Input (sender enters their Return OTP) ── */}
+                {currentStep === 'OTP_VERIFY' && (
+                    <Surface style={[styles.card, { backgroundColor: theme.colors.surface }]} elevation={1}>
+                        <View style={styles.rowHeader}>
+                            <MaterialCommunityIcons name="lock-check" size={20} color={theme.colors.primary} />
+                            <Text variant="labelLarge" style={{ marginLeft: 8, color: theme.colors.onSurface }}>
+                                Enter Return OTP
+                            </Text>
+                        </View>
+                        <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant, marginBottom: 12 }}>
+                            The sender must open their tracking page or app and enter the 6-digit Return OTP shown there.
+                            Hand your device to the sender to enter the code below.
+                        </Text>
+                        <RNTextInput
+                            style={[
+                                styles.otpInput,
+                                {
+                                    color: theme.colors.onSurface,
+                                    borderColor: otpError ? theme.colors.error : theme.colors.outline,
+                                    backgroundColor: theme.dark ? '#2C2C2C' : '#F5F5F5',
+                                },
+                            ]}
+                            value={otpInput}
+                            onChangeText={(t) => { setOtpInput(t.replace(/[^0-9]/g, '')); setOtpError(''); }}
+                            keyboardType="number-pad"
+                            maxLength={6}
+                            placeholder="------"
+                            placeholderTextColor={theme.colors.onSurfaceVariant}
+                            textAlign="center"
+                        />
+                        {!!otpError && (
+                            <Text variant="bodySmall" style={{ color: theme.colors.error, marginTop: 8 }}>
+                                {otpError}
+                            </Text>
+                        )}
+                    </Surface>
+                )}
 
+                {/* ── Sender Photo Capture ── */}
+                {currentStep === 'PHOTO_CAPTURE' && (
+                    <Surface style={[styles.card, { backgroundColor: theme.colors.surface }]} elevation={1}>
+                        <View style={styles.rowHeader}>
+                            <MaterialCommunityIcons name="camera-account" size={20} color={theme.colors.primary} />
+                            <Text variant="labelLarge" style={{ marginLeft: 8, color: theme.colors.onSurface }}>
+                                Sender Verification Photo
+                            </Text>
+                        </View>
+                        <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant, marginBottom: 12 }}>
+                            Take a clear photo of the sender's face. This is required before the return job can be completed.
+                        </Text>
+                        {photoUri ? (
+                            <View style={styles.photoPreview}>
+                                <MaterialCommunityIcons name="check-circle" size={40} color="#4CAF50" />
+                                <Text variant="bodyMedium" style={{ color: '#4CAF50', marginTop: 8 }}>Photo captured</Text>
+                                <Button mode="outlined" icon="camera-retake" onPress={handleCapturePhoto} style={{ marginTop: 12 }} compact>
+                                    Retake
+                                </Button>
+                            </View>
+                        ) : (
+                            <Button mode="contained" icon="camera" onPress={handleCapturePhoto}>
+                                Open Camera
+                            </Button>
+                        )}
+                        {!!uploadError && (
+                            <Text variant="bodySmall" style={{ color: theme.colors.error, marginTop: 8 }}>
+                                {uploadError}
+                            </Text>
+                        )}
+                    </Surface>
+                )}
+
+                {/* ── Upload Progress ── */}
+                {currentStep === 'UPLOADING' && (
+                    <Surface style={[styles.card, styles.centered, { backgroundColor: theme.colors.surface }]} elevation={1}>
+                        <ActivityIndicator size="large" color={theme.colors.primary} />
+                        <Text variant="bodyMedium" style={{ marginTop: 16, color: theme.colors.onSurfaceVariant }}>
+                            Uploading photo to secure storage…
+                        </Text>
+                    </Surface>
+                )}
 
                 {/* Tracking ID */}
-                <Surface style={[styles.trackingCard, { backgroundColor: theme.colors.surface }]} elevation={1}>
+                <Surface style={[styles.card, { backgroundColor: theme.colors.surface }]} elevation={1}>
                     <View style={styles.trackingRow}>
                         <MaterialCommunityIcons name="package-variant" size={20} color={theme.colors.primary} />
-                        <Text variant="bodyMedium" style={{ marginLeft: 8, color: theme.colors.onSurfaceVariant }}>
-                            Tracking Number:
-                        </Text>
-                        <Text variant="bodyMedium" style={{ fontWeight: 'bold', marginLeft: 8, color: theme.colors.onSurface }}>
-                            {deliveryId}
-                        </Text>
+                        <Text variant="bodyMedium" style={{ marginLeft: 8, color: theme.colors.onSurfaceVariant }}>Tracking Number:</Text>
+                        <Text variant="bodyMedium" style={{ fontWeight: 'bold', marginLeft: 8, color: theme.colors.onSurface }}>{deliveryId}</Text>
                     </View>
                 </Surface>
 
-                {/* Completion Card */}
+                {/* ── Completion Card ── */}
                 {currentStep === 'COMPLETED' && (
                     <Surface style={[styles.completedCard, { backgroundColor: theme.dark ? '#1B5E20' : '#E8F5E9' }]} elevation={2}>
                         <MaterialCommunityIcons name="check-decagram" size={64} color="#4CAF50" />
@@ -282,7 +399,7 @@ export default function ReturnPackageScreen() {
                 {currentStep === 'NAVIGATING' && (
                     <Button
                         mode="contained"
-                        onPress={handleArrived}
+                        onPress={() => setCurrentStep('ARRIVED')}
                         style={{ flex: 1 }}
                         icon="map-marker-check"
                     >
@@ -293,35 +410,48 @@ export default function ReturnPackageScreen() {
                 {currentStep === 'ARRIVED' && (
                     <Button
                         mode="contained"
-                        onPress={handleArrived}
+                        onPress={handleConfirmArrival}
                         style={{ flex: 1 }}
-                        icon="phone"
-                        onPressIn={handleArrived}
-                        onPressOut={() => setCurrentStep('AWAITING_PICKUP')}
+                        icon={isInsideGeofence ? 'map-marker-check' : 'map-marker-off'}
+                        buttonColor={isInsideGeofence ? undefined : theme.colors.error}
                     >
-                        Contact Sender & Wait
+                        {isInsideGeofence ? 'Confirm Arrival' : `Out of Range (${formatDistance()})`}
                     </Button>
                 )}
 
-                {currentStep === 'AWAITING_PICKUP' && (
+                {currentStep === 'OTP_VERIFY' && (
                     <Button
                         mode="contained"
-                        onPress={handleMarkComplete}
+                        onPress={handleVerifyOtp}
                         style={{ flex: 1 }}
-                        buttonColor="#4CAF50"
-                        icon="check-circle"
+                        icon="key-check"
+                        disabled={otpInput.length < 6}
                     >
-                        Package Retrieved
+                        Verify OTP
+                    </Button>
+                )}
+
+                {currentStep === 'PHOTO_CAPTURE' && (
+                    <Button
+                        mode="contained"
+                        onPress={handleUploadAndComplete}
+                        style={{ flex: 1 }}
+                        icon="upload"
+                        disabled={!photoUri}
+                        buttonColor="#4CAF50"
+                    >
+                        Upload &amp; Complete Return
+                    </Button>
+                )}
+
+                {currentStep === 'UPLOADING' && (
+                    <Button mode="contained" disabled style={{ flex: 1 }} loading>
+                        Saving…
                     </Button>
                 )}
 
                 {currentStep === 'COMPLETED' && (
-                    <Button
-                        mode="contained"
-                        onPress={handleDone}
-                        style={{ flex: 1 }}
-                        icon="home"
-                    >
+                    <Button mode="contained" onPress={handleDone} style={{ flex: 1 }} icon="home">
                         Back to Dashboard
                     </Button>
                 )}
@@ -331,14 +461,9 @@ export default function ReturnPackageScreen() {
 }
 
 const styles = StyleSheet.create({
-    container: {
-        flex: 1,
-    },
-    scrollContent: {
-        padding: 16,
-        paddingBottom: 100,
-    },
-    progressCard: {
+    container: { flex: 1 },
+    scrollContent: { padding: 16, paddingBottom: 100 },
+    card: {
         padding: 16,
         borderRadius: 12,
         marginBottom: 16,
@@ -355,19 +480,8 @@ const styles = StyleSheet.create({
         borderRadius: 16,
         marginBottom: 16,
     },
-    statusContent: {
-        marginLeft: 16,
-        flex: 1,
-    },
-    destinationCard: {
-        padding: 16,
-        borderRadius: 12,
-        marginBottom: 16,
-    },
-    destinationHeader: {
-        flexDirection: 'row',
-        alignItems: 'center',
-    },
+    statusContent: { marginLeft: 16, flex: 1 },
+    destinationHeader: { flexDirection: 'row', alignItems: 'center' },
     markerIcon: {
         width: 44,
         height: 44,
@@ -375,35 +489,19 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         justifyContent: 'center',
     },
-    otpCard: {
-        padding: 20,
-        borderRadius: 16,
-        marginBottom: 16,
-        alignItems: 'center',
+    rowHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 8 },
+    otpInput: {
+        height: 56,
+        fontSize: 28,
+        fontWeight: 'bold',
+        letterSpacing: 12,
+        borderWidth: 1,
+        borderRadius: 8,
+        paddingHorizontal: 16,
     },
-    otpHeader: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        alignSelf: 'flex-start',
-        marginBottom: 8,
-    },
-    otpDisplay: {
-        paddingVertical: 20,
-        paddingHorizontal: 32,
-        borderRadius: 12,
-        alignItems: 'center',
-        justifyContent: 'center',
-        marginTop: 8,
-    },
-    trackingCard: {
-        padding: 16,
-        borderRadius: 12,
-        marginBottom: 16,
-    },
-    trackingRow: {
-        flexDirection: 'row',
-        alignItems: 'center',
-    },
+    photoPreview: { alignItems: 'center', paddingVertical: 16 },
+    centered: { alignItems: 'center', padding: 32 },
+    trackingRow: { flexDirection: 'row', alignItems: 'center' },
     completedCard: {
         padding: 32,
         borderRadius: 16,

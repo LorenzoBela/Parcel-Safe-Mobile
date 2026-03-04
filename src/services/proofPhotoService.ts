@@ -289,3 +289,77 @@ export async function uploadPickupPhoto(params: {
         };
     }
 }
+
+/**
+ * Upload a return-verification photo (sender face capture) to Supabase Storage.
+ * Stored under returns/{boxId}/ and mirrored to Firebase + Supabase deliveries table.
+ * Called by ReturnPackageScreen as part of the EC-32 return completion chain.
+ */
+export async function uploadReturnPhoto(params: {
+    deliveryId: string;
+    boxId: string;
+    localUri: string;
+}): Promise<{ success: boolean; url?: string; error?: string }> {
+    const { deliveryId, boxId, localUri } = params;
+
+    try {
+        const compression = await compressImage(localUri);
+        const uploadUri = compression.success ? compression.compressedUri : localUri;
+
+        const base64 = await FileSystem.readAsStringAsync(uploadUri, {
+            encoding: 'base64',
+        });
+        const arrayBuffer = base64ToUint8Array(base64);
+
+        const sessionOk = await syncStorageSession();
+        if (!sessionOk) {
+            console.error('[ProofPhoto] Aborting return photo upload: no authenticated session.');
+            return { success: false, error: 'Authentication session not available. Please sign in and try again.' };
+        }
+        const storage = getStorageClient();
+
+        const fileName = `${deliveryId}_${Date.now()}.jpg`;
+        const objectPath = `returns/${boxId}/${fileName}`;
+
+        const { data, error } = await storage.storage
+            .from(PROOF_PHOTOS_BUCKET)
+            .upload(objectPath, arrayBuffer, {
+                contentType: 'image/jpeg',
+                upsert: false,
+            });
+
+        if (error || !data?.path) {
+            console.error('[ProofPhoto] Return photo upload failed:', error);
+            return { success: false, error: error?.message || 'Upload failed' };
+        }
+
+        const { data: urlData } = storage.storage
+            .from(PROOF_PHOTOS_BUCKET)
+            .getPublicUrl(data.path);
+
+        const url = urlData.publicUrl;
+
+        const db = getFirebaseDatabase();
+        await update(dbRef(db, `/deliveries/${deliveryId}`), {
+            return_photo_url: url,
+            return_photo_uploaded_at: Date.now(),
+            return_photo_storage_path: data.path,
+            return_photo_storage_provider: 'supabase',
+        });
+
+        if (supabase) {
+            await supabase
+                .from('deliveries')
+                .update({ return_photo_url: url })
+                .or(`id.eq.${deliveryId},tracking_number.eq.${deliveryId}`);
+        }
+
+        return { success: true, url };
+    } catch (error) {
+        console.error('[ProofPhoto] Exception during return photo upload:', error);
+        return {
+            success: false,
+            error: error instanceof Error ? error.message : String(error),
+        };
+    }
+}

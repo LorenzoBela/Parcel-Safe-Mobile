@@ -208,6 +208,32 @@ export function subscribeToWaitTimer(
 }
 
 /**
+ * Send push notification to customer that rider has arrived at the pickup point
+ */
+export async function sendPickupArrivalNotification(
+    deliveryId: string,
+    customerPhone: string,
+    riderName: string
+): Promise<boolean> {
+    const db = getFirebaseDatabase();
+    const notificationRef = ref(db, `notifications/${deliveryId}/rider_at_pickup`);
+
+    try {
+        await set(notificationRef, {
+            type: 'RIDER_AT_PICKUP',
+            deliveryId,
+            message: `Your rider ${riderName} has arrived at the pickup point and is collecting your parcel.`,
+            customerPhone,
+            sentAt: serverTimestamp(),
+        });
+        return true;
+    } catch (error) {
+        console.error('[ArrivalNotif] Failed to send pickup arrival notification:', error);
+        return false;
+    }
+}
+
+/**
  * Send push notification to customer that driver is waiting
  */
 export async function sendDriverWaitingNotification(

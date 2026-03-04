@@ -19,6 +19,7 @@ import {
     canInitiateReturn,
     writeWaitTimerToFirebase,
     sendDriverWaitingNotification,
+    sendPickupArrivalNotification,
     WaitTimerState,
     CONFIG as WaitConfig,
 } from '../../services/customerNotHomeService';
@@ -172,6 +173,7 @@ export default function ArrivalScreen() {
     // EC-97: Low-Light State
     const [lowLightState, setLowLightState] = useState<LowLightState | null>(null);
     const tamperDeliveryFlaggedRef = useRef(false);
+    const pickupArrivalNotifSentRef = useRef(false);
 
     // EC-02: BLE Transfer State
     const [showBleModal, setShowBleModal] = useState(false);
@@ -504,6 +506,28 @@ export default function ArrivalScreen() {
             setIsInsideGeoFence(isBoxInside); // Strict check
         }
     }, [isPhoneInside, isBoxInside, isBoxOffline]);
+
+    // 4. Pickup Arrival Notification — fires once when rider first enters pickup geofence
+    useEffect(() => {
+        if (
+            geofenceTarget === 'pickup' &&
+            isInsideGeoFence &&
+            !pickupArrivalNotifSentRef.current &&
+            params.customerPhone &&
+            params.riderName
+        ) {
+            pickupArrivalNotifSentRef.current = true;
+            sendPickupArrivalNotification(
+                params.deliveryId,
+                params.customerPhone,
+                params.riderName
+            ).catch(() => { /* non-blocking */ });
+        }
+        // Reset if rider leaves before confirming pickup (allows re-fire on re-entry)
+        if (geofenceTarget === 'pickup' && !isInsideGeoFence) {
+            pickupArrivalNotifSentRef.current = false;
+        }
+    }, [geofenceTarget, isInsideGeoFence, params.customerPhone, params.riderName, params.deliveryId]);
 
     // EC-04: Lockout countdown timer
     useEffect(() => {
