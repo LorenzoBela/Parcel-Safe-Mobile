@@ -190,6 +190,27 @@ export default function BookServiceScreen() {
     const lastFetchedCoordinate = React.useRef<{ lat: number; lng: number } | null>(null);
     const lastGeocodedCoordinate = React.useRef<{ lat: number; lng: number, address: string } | null>(null);
     const lastHapticNodeId = React.useRef<string | null>(null);
+    // Prevents the auto-open from re-firing every time isMapVisible toggles (back-button loop fix)
+    const hasAutoOpenedForRoute = React.useRef(false);
+
+    // Snaps raw coordinates to the nearest drivable road using the Mapbox Directions API.
+    // Falls back to the original coordinates silently if the API call fails.
+    const snapToNearestRoad = async (lat: number, lng: number): Promise<{ latitude: number; longitude: number }> => {
+        if (!MAPBOX_TOKEN) return { latitude: lat, longitude: lng };
+        try {
+            const res = await fetch(
+                `https://api.mapbox.com/directions/v5/mapbox/driving/${lng},${lat};${lng},${lat}?access_token=${MAPBOX_TOKEN}`
+            );
+            const data = await res.json();
+            if (data.waypoints && data.waypoints.length > 0) {
+                const [snappedLng, snappedLat] = data.waypoints[0].location;
+                return { latitude: snappedLat, longitude: snappedLng };
+            }
+        } catch (err) {
+            console.error('Road snap error', err);
+        }
+        return { latitude: lat, longitude: lng };
+    };
 
     // Helper to reverse geocode using Google (much better exact address resolution)
     const reverseGeocodeGoogle = async (lat: number, lng: number): Promise<string | null> => {
@@ -357,16 +378,19 @@ export default function BookServiceScreen() {
     }, [userId]);
 
     // Suggestion Selection Handler for Saved Addresses
-    const handleSelectSavedAddress = (addr: any) => {
-        const coords = {
+    const handleSelectSavedAddress = async (addr: any) => {
+        const rawCoords = {
             latitude: addr.latitude || 0,
             longitude: addr.longitude || 0,
         };
 
-        if (!coords.latitude || !coords.longitude) {
+        if (!rawCoords.latitude || !rawCoords.longitude) {
             // If saved address lacks coords (old data), maybe run geocode, but for now just skip
             return;
         }
+
+        // Snap to nearest road so the rider has a reachable waypoint
+        const coords = await snapToNearestRoad(rawCoords.latitude, rawCoords.longitude);
 
         cameraRef.current?.setCamera({
             centerCoordinate: [coords.longitude, coords.latitude],
@@ -487,28 +511,33 @@ export default function BookServiceScreen() {
         const isUserInteraction = e?.properties?.isUserInteraction || e?.isUserInteraction;
         if (!isUserInteraction) return;
 
-        const coords = {
+        const rawCoords = {
             latitude: e.geometry.coordinates[1],
             longitude: e.geometry.coordinates[0],
         };
 
         if (activeField === 'pickup') {
-            setPickupCoords(coords);
             setPickupText("Locating...");
         } else {
-            setDropoffCoords(coords);
             setDropoffText("Locating...");
         }
 
-        // Fetch nearby POI nodes around this new location for the map
-        fetchNearbyNodesGoogle(coords.latitude, coords.longitude);
+        // Fetch nearby POI nodes around this new location for the map (runs in background)
+        fetchNearbyNodesGoogle(rawCoords.latitude, rawCoords.longitude);
 
-        // Check for magnetic snapping to nearby dynamic nodes
+        // PRIORITY 1: Snap to the nearest drivable road (same as web) so the rider
+        // always has a reachable waypoint regardless of where the pin was dropped.
+        const snappedRoad = await snapToNearestRoad(rawCoords.latitude, rawCoords.longitude);
+        let finalCoords = snappedRoad;
+        let addressText: string | null = null;
+
+        // PRIORITY 2 (backup): If a known POI node is within 40 m of the raw drop
+        // point, upgrade to its coords+name — they already use Google routingLocations
+        // so they are on-road by definition.
         let snappedNode = null;
-        let minDistance = 40; // 40 meters snapping radius
-
+        let minDistance = 40; // 40 metres snapping radius
         for (const node of nearbyNodes) {
-            const dist = getDistance(coords.latitude, coords.longitude, node.lat, node.lng);
+            const dist = getDistance(rawCoords.latitude, rawCoords.longitude, node.lat, node.lng);
             if (dist < minDistance) {
                 minDistance = dist;
                 snappedNode = node;
@@ -516,9 +545,10 @@ export default function BookServiceScreen() {
         }
 
         if (snappedNode) {
-            coords.latitude = snappedNode.lat;
-            coords.longitude = snappedNode.lng;
+            finalCoords = { latitude: snappedNode.lat, longitude: snappedNode.lng };
+            addressText = snappedNode.name;
 
+            // Animate camera to the snapped POI node
             setTimeout(() => {
                 cameraRef.current?.setCamera({
                     centerCoordinate: [snappedNode.lng, snappedNode.lat],
@@ -527,18 +557,26 @@ export default function BookServiceScreen() {
                 });
             }, 10);
 
-            if (activeField === 'pickup') {
-                setPickupCoords({ latitude: snappedNode.lat, longitude: snappedNode.lng });
-                setPickupText(snappedNode.name);
-            } else {
-                setDropoffCoords({ latitude: snappedNode.lat, longitude: snappedNode.lng });
-                setDropoffText(snappedNode.name);
+            if (lastHapticNodeId.current !== snappedNode.id) {
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                lastHapticNodeId.current = snappedNode.id;
             }
-            return; // Skip reverse geocode since we snapped to a known POI
+        } else {
+            lastHapticNodeId.current = null;
         }
 
-        const poiName = await reverseGeocodeGoogle(coords.latitude, coords.longitude);
-        const addressText = poiName || `${coords.latitude.toFixed(4)}, ${coords.longitude.toFixed(4)}`;
+        // Save the final (road- or POI-snapped) coordinates
+        if (activeField === 'pickup') {
+            setPickupCoords(finalCoords);
+        } else {
+            setDropoffCoords(finalCoords);
+        }
+
+        // Reverse geocode unless a POI already gave us a name
+        if (!addressText) {
+            const poiName = await reverseGeocodeGoogle(finalCoords.latitude, finalCoords.longitude);
+            addressText = poiName || `${finalCoords.latitude.toFixed(4)}, ${finalCoords.longitude.toFixed(4)}`;
+        }
 
         if (activeField === 'pickup') {
             setPickupText(addressText);
@@ -592,11 +630,16 @@ export default function BookServiceScreen() {
             animationMode: 'flyTo',
         });
 
+        // Snap to nearest drivable road so the rider has a reachable waypoint
+        const snappedRoad = await snapToNearestRoad(coords.latitude, coords.longitude);
+        coords.latitude = snappedRoad.latitude;
+        coords.longitude = snappedRoad.longitude;
+
         // Optimistic update - show coordinates first then loading
         let addressText = "Locating...";
 
         if (activeField === 'pickup') {
-            setPickupCoords(coords);
+            setPickupCoords(snappedRoad);
             setPickupText(addressText);
 
             // Auto-focus dropoff after a short delay
@@ -605,7 +648,7 @@ export default function BookServiceScreen() {
                 dropoffInputRef.current?.focus();
             }, 800);
         } else {
-            setDropoffCoords(coords);
+            setDropoffCoords(snappedRoad);
             setDropoffText(addressText);
         }
 
@@ -665,6 +708,10 @@ export default function BookServiceScreen() {
         }
 
         if (!coords) return;
+
+        // Snap to nearest road so the rider can always reach the selected location
+        const snappedRoad = await snapToNearestRoad(coords.latitude, coords.longitude);
+        coords = snappedRoad;
 
         // Animate camera
         cameraRef.current?.setCamera({
@@ -810,6 +857,33 @@ export default function BookServiceScreen() {
     useEffect(() => {
         calculateRoute();
     }, [pickupCoords, dropoffCoords, MAPBOX_TOKEN]);
+
+    // Auto-fit camera to frame the full route when the preview is shown in map view.
+    // Auto-opens the map once when route becomes ready from the search flow (typing addresses).
+    // Uses a ref guard so pressing the back button doesn't re-trigger the open (loop fix).
+    useEffect(() => {
+        if (routeData && pickupCoords && dropoffCoords) {
+            if (!isMapVisible) {
+                // Only auto-open once per route calculation
+                if (!hasAutoOpenedForRoute.current) {
+                    hasAutoOpenedForRoute.current = true;
+                    setIsMapVisible(true);
+                    // fitBounds fires on the next effect run when isMapVisible becomes true
+                }
+                return;
+            }
+            const minLng = Math.min(pickupCoords.longitude, dropoffCoords.longitude);
+            const maxLng = Math.max(pickupCoords.longitude, dropoffCoords.longitude);
+            const minLat = Math.min(pickupCoords.latitude, dropoffCoords.latitude);
+            const maxLat = Math.max(pickupCoords.latitude, dropoffCoords.latitude);
+            cameraRef.current?.fitBounds(
+                [maxLng, maxLat],
+                [minLng, minLat],
+                [80, 60, 320, 60],
+                900
+            );
+        }
+    }, [routeData, isMapVisible]);
 
     const handleConfirm = async () => {
         if (!pickupCoords || !dropoffCoords) {
@@ -1022,7 +1096,9 @@ export default function BookServiceScreen() {
                                 </MapboxGL.PointAnnotation>
                             ))}
 
-                            {pickupCoords && activeField !== 'pickup' && (
+                            {/* Pickup marker — locked (always visible) once route is confirmed,
+                                hidden only while actively dragging to reposition the pickup pin */}
+                            {pickupCoords && (activeField !== 'pickup' || !!routeData) && (
                                 <MapboxGL.PointAnnotation
                                     id="pickup-marker"
                                     coordinate={[pickupCoords.longitude, pickupCoords.latitude]}
@@ -1034,7 +1110,8 @@ export default function BookServiceScreen() {
                                 </MapboxGL.PointAnnotation>
                             )}
 
-                            {dropoffCoords && activeField !== 'dropoff' && (
+                            {/* Dropoff marker — same locking logic */}
+                            {dropoffCoords && (activeField !== 'dropoff' || !!routeData) && (
                                 <MapboxGL.PointAnnotation
                                     id="dropoff-marker"
                                     coordinate={[dropoffCoords.longitude, dropoffCoords.latitude]}
@@ -1067,13 +1144,18 @@ export default function BookServiceScreen() {
                         </View>
                     )}
 
-                    <View style={styles.fixedCenterMarker} pointerEvents="none">
-                        <MaterialCommunityIcons
-                            name="map-marker"
-                            size={40}
-                            color={activeField === 'pickup' ? "green" : "red"}
-                        />
-                    </View>
+                    {/* Fixed center crosshair — shown whenever there is no confirmed route.
+                        Disappears when route preview is active; reappears immediately when
+                        Edit Pickup / Edit Dropoff is pressed (those clear routeData). */}
+                    {!routeData && (
+                        <View style={styles.fixedCenterMarker} pointerEvents="none">
+                            <MaterialCommunityIcons
+                                name="map-marker"
+                                size={40}
+                                color={activeField === 'pickup' ? "green" : "red"}
+                            />
+                        </View>
+                    )}
 
                     <TouchableOpacity style={[styles.backButton, { backgroundColor: theme.colors.surface, top: 10 + insets.top }]} onPress={() => setIsMapVisible(false)}>
                         <MaterialCommunityIcons name="arrow-left" size={24} color={theme.colors.onSurface} />
@@ -1086,19 +1168,126 @@ export default function BookServiceScreen() {
                         <MaterialCommunityIcons name="crosshairs-gps" size={24} color={theme.colors.primary} />
                     </TouchableOpacity>
 
-                    <View style={[styles.bottomMapActionPanel, { bottom: 20 + insets.bottom }]}>
-                        <View style={{ backgroundColor: 'white', padding: 16, borderRadius: 16, elevation: 4, shadowColor: '#000', shadowOpacity: 0.1, shadowRadius: 4, shadowOffset: { width: 0, height: 2 }, marginBottom: 12 }}>
-                            <Text variant="labelMedium" style={{ color: '#757575', marginBottom: 4 }}>
-                                {activeField === 'pickup' ? 'SELECT PICKUP LOCATION' : 'SELECT DROPOFF LOCATION'}
-                            </Text>
-                            <Text variant="titleMedium" style={{ fontWeight: 'bold', color: '#424242' }} numberOfLines={2}>
-                                {activeField === 'pickup' ? (pickupText || 'Locating...') : (dropoffText || 'Locating...')}
-                            </Text>
+                    {/* --- BOTTOM PANEL --- */}
+                    {routeData && pickupCoords && dropoffCoords ? (
+                        // Route Preview Panel (both pins confirmed)
+                        <View style={[styles.bottomMapActionPanel, { bottom: 20 + insets.bottom }]}>
+                            {routeData ? (
+                                <View style={{ backgroundColor: 'white', padding: 16, borderRadius: 16, elevation: 6, shadowColor: '#000', shadowOpacity: 0.12, shadowRadius: 8, shadowOffset: { width: 0, height: -2 } }}>
+                                    {/* Header label */}
+                                    <Text style={{ fontSize: 11, color: '#9e9e9e', fontWeight: '700', letterSpacing: 0.8, marginBottom: 10 }}>ROUTE PREVIEW</Text>
+
+                                    {/* Pickup row */}
+                                    <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
+                                        <MaterialCommunityIcons name="map-marker" size={18} color="#10b981" style={{ width: 24 }} />
+                                        <Text numberOfLines={1} style={{ flex: 1, color: '#424242', fontSize: 13 }}>{pickupText || 'Pickup'}</Text>
+                                    </View>
+
+                                    {/* Connector */}
+                                    <View style={{ width: 2, height: 10, backgroundColor: '#E0E0E0', marginLeft: 11, marginBottom: 4 }} />
+
+                                    {/* Dropoff row */}
+                                    <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 14 }}>
+                                        <MaterialCommunityIcons name="map-marker" size={18} color="#f43f5e" style={{ width: 24 }} />
+                                        <Text numberOfLines={1} style={{ flex: 1, color: '#424242', fontSize: 13 }}>{dropoffText || 'Dropoff'}</Text>
+                                    </View>
+
+                                    {/* Stats row */}
+                                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', backgroundColor: '#f5f5f5', borderRadius: 10, padding: 10, marginBottom: 14 }}>
+                                        <View style={{ alignItems: 'center', flex: 1 }}>
+                                            <Text style={{ fontSize: 11, color: '#9e9e9e', marginBottom: 2 }}>Distance</Text>
+                                            <Text style={{ fontSize: 14, fontWeight: '700', color: '#212121' }}>{routeData.distance.toFixed(1)} km</Text>
+                                        </View>
+                                        <View style={{ width: 1, backgroundColor: '#E0E0E0' }} />
+                                        <View style={{ alignItems: 'center', flex: 1 }}>
+                                            <Text style={{ fontSize: 11, color: '#9e9e9e', marginBottom: 2 }}>Est. Time</Text>
+                                            <Text style={{ fontSize: 14, fontWeight: '700', color: '#212121' }}>{Math.round(routeData.duration)} min</Text>
+                                        </View>
+                                        <View style={{ width: 1, backgroundColor: '#E0E0E0' }} />
+                                        <View style={{ alignItems: 'center', flex: 1 }}>
+                                            <Text style={{ fontSize: 11, color: '#9e9e9e', marginBottom: 2 }}>Fare</Text>
+                                            <Text style={{ fontSize: 14, fontWeight: '700', color: '#212121' }}>₱{routeData.cost}</Text>
+                                        </View>
+                                    </View>
+
+                                    {/* Action buttons */}
+                                    {/* Row 1: per-pin edit buttons */}
+                                    <View style={{ flexDirection: 'row', gap: 8, marginBottom: 8 }}>
+                                        <TouchableOpacity
+                                            style={{ flex: 1, borderRadius: 8, borderWidth: 1.5, borderColor: '#10b981', paddingVertical: 9, alignItems: 'center', flexDirection: 'row', justifyContent: 'center', gap: 4 }}
+                                            onPress={() => {
+                                                setActiveField('pickup');
+                                                setRouteData(null); // immediately restore crosshair + single-pin panel
+                                                hasAutoOpenedForRoute.current = false; // allow auto-open for the recalculated route
+                                                // Fly camera back to the current pickup pin so user can reposition it
+                                                if (pickupCoords) {
+                                                    cameraRef.current?.setCamera({
+                                                        centerCoordinate: [pickupCoords.longitude, pickupCoords.latitude],
+                                                        zoomLevel: 16,
+                                                        animationDuration: 600,
+                                                        animationMode: 'flyTo',
+                                                    });
+                                                }
+                                            }}
+                                        >
+                                            <MaterialCommunityIcons name="map-marker" size={15} color="#10b981" />
+                                            <Text style={{ color: '#10b981', fontWeight: '700', fontSize: 13 }}>Edit Pickup</Text>
+                                        </TouchableOpacity>
+                                        <TouchableOpacity
+                                            style={{ flex: 1, borderRadius: 8, borderWidth: 1.5, borderColor: '#f43f5e', paddingVertical: 9, alignItems: 'center', flexDirection: 'row', justifyContent: 'center', gap: 4 }}
+                                            onPress={() => {
+                                                setActiveField('dropoff');
+                                                setRouteData(null); // immediately restore crosshair + single-pin panel
+                                                hasAutoOpenedForRoute.current = false; // allow auto-open for the recalculated route
+                                                // Fly camera back to the current dropoff pin so user can reposition it
+                                                if (dropoffCoords) {
+                                                    cameraRef.current?.setCamera({
+                                                        centerCoordinate: [dropoffCoords.longitude, dropoffCoords.latitude],
+                                                        zoomLevel: 16,
+                                                        animationDuration: 600,
+                                                        animationMode: 'flyTo',
+                                                    });
+                                                }
+                                            }}
+                                        >
+                                            <MaterialCommunityIcons name="map-marker" size={15} color="#f43f5e" />
+                                            <Text style={{ color: '#f43f5e', fontWeight: '700', fontSize: 13 }}>Edit Dropoff</Text>
+                                        </TouchableOpacity>
+                                    </View>
+                                    {/* Row 2: confirm */}
+                                    <TouchableOpacity
+                                        style={{ borderRadius: 8, backgroundColor: '#000', paddingVertical: 11, alignItems: 'center' }}
+                                        onPress={() => { setIsMapVisible(false); setBookingStep('contacts'); }}
+                                    >
+                                        <Text style={{ color: '#FFF', fontWeight: '700', fontSize: 14 }}>Looks Good  →</Text>
+                                    </TouchableOpacity>
+                                </View>
+                            ) : (
+                                // Calculating state
+                                <View style={{ backgroundColor: 'white', padding: 16, borderRadius: 16, elevation: 4, shadowColor: '#000', shadowOpacity: 0.1, shadowRadius: 4, shadowOffset: { width: 0, height: 2 } }}>
+                                    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 10 }}>
+                                        <ActivityIndicator size="small" color="#000" />
+                                        <Text style={{ marginLeft: 10, color: '#757575', fontSize: 14 }}>Calculating route...</Text>
+                                    </View>
+                                </View>
+                            )}
                         </View>
-                        <Button mode="contained" onPress={() => setIsMapVisible(false)} style={{ borderRadius: 8, backgroundColor: '#000' }} textColor="#FFF" contentStyle={{ paddingVertical: 8 }}>
-                            Confirm Location
-                        </Button>
-                    </View>
+                    ) : (
+                        // Single-pin selection panel (original)
+                        <View style={[styles.bottomMapActionPanel, { bottom: 20 + insets.bottom }]}>
+                            <View style={{ backgroundColor: 'white', padding: 16, borderRadius: 16, elevation: 4, shadowColor: '#000', shadowOpacity: 0.1, shadowRadius: 4, shadowOffset: { width: 0, height: 2 }, marginBottom: 12 }}>
+                                <Text variant="labelMedium" style={{ color: '#757575', marginBottom: 4 }}>
+                                    {activeField === 'pickup' ? 'SELECT PICKUP LOCATION' : 'SELECT DROPOFF LOCATION'}
+                                </Text>
+                                <Text variant="titleMedium" style={{ fontWeight: 'bold', color: '#424242' }} numberOfLines={2}>
+                                    {activeField === 'pickup' ? (pickupText || 'Locating...') : (dropoffText || 'Locating...')}
+                                </Text>
+                            </View>
+                            <Button mode="contained" onPress={() => setIsMapVisible(false)} style={{ borderRadius: 8, backgroundColor: '#000' }} textColor="#FFF" contentStyle={{ paddingVertical: 8 }}>
+                                Confirm Location
+                            </Button>
+                        </View>
+                    )}
                 </View>
             ) : (
                 // --- SEARCH VIEW ---

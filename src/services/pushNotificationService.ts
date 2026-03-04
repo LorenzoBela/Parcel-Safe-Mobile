@@ -330,6 +330,14 @@ export function setupFCMForegroundHandler(): () => void {
                     trigger: { channelId },
                 });
             }
+
+            // When customer receives ORDER_ACCEPTED foreground push, schedule 2-hr reminder
+            if (data.type === 'ORDER_ACCEPTED') {
+                await scheduleDeliveryReminderNotification(
+                    data.riderName || 'Your rider',
+                    data.deliveryId
+                );
+            }
         });
 
         return unsubscribe;
@@ -549,6 +557,70 @@ export async function cancelOngoingNotification(): Promise<void> {
 export async function cancelAllNotifications(): Promise<void> {
     await Notifications.cancelAllScheduledNotificationsAsync();
     ongoingNotificationId = null;
+}
+
+/** Storage key used to track the currently pending 2-hour reminder per delivery */
+const REMINDER_NOTIF_KEY = 'delivery_reminder_notif_id';
+
+/**
+ * Schedule a local "delivery soon" reminder for 2 hours from now.
+ * Fires even if the app is killed — the OS owns the alarm.
+ * Call this on both the customer and rider devices when an order is accepted.
+ *
+ * @param riderName  Rider display name (shown in the notification body)
+ * @param deliveryId Used to cancel the reminder if the order is cancelled early
+ */
+export async function scheduleDeliveryReminderNotification(
+    riderName: string,
+    deliveryId?: string
+): Promise<void> {
+    if (!checkNotificationsAvailable()) {
+        console.log('[DEV] 2-hour reminder scheduled (simulated)');
+        return;
+    }
+
+    try {
+        // Cancel any existing reminder first (avoid double-scheduling on retry)
+        const existingId = await AsyncStorage.getItem(REMINDER_NOTIF_KEY);
+        if (existingId) {
+            try { await Notifications.cancelScheduledNotificationAsync(existingId); } catch { /* ignore */ }
+        }
+
+        const notifId = await Notifications.scheduleNotificationAsync({
+            content: {
+                title: '📦 Delivery Reminder',
+                body: `${riderName || 'Your rider'} is on the way — your parcel should arrive soon!`,
+                data: { type: 'DELIVERY_REMINDER', deliveryId: deliveryId || '' },
+                sound: 'default',
+                channelId: NOTIFICATION_CHANNELS.DELIVERY_STATUS,
+            },
+            trigger: {
+                seconds: 2 * 60 * 60, // 2 hours
+                channelId: NOTIFICATION_CHANNELS.DELIVERY_STATUS,
+            } as any,
+        });
+
+        await AsyncStorage.setItem(REMINDER_NOTIF_KEY, notifId);
+        console.log('[Notification] 2-hour delivery reminder scheduled:', notifId);
+    } catch (error) {
+        console.warn('[Notification] Failed to schedule 2-hour reminder:', error);
+    }
+}
+
+/**
+ * Cancel the previously scheduled 2-hour delivery reminder (e.g. on cancellation).
+ */
+export async function cancelDeliveryReminderNotification(): Promise<void> {
+    try {
+        const notifId = await AsyncStorage.getItem(REMINDER_NOTIF_KEY);
+        if (notifId) {
+            await Notifications.cancelScheduledNotificationAsync(notifId);
+            await AsyncStorage.removeItem(REMINDER_NOTIF_KEY);
+            console.log('[Notification] 2-hour delivery reminder cancelled');
+        }
+    } catch (error) {
+        console.warn('[Notification] Failed to cancel 2-hour reminder:', error);
+    }
 }
 
 // Delivery status types

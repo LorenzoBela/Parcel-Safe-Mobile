@@ -14,6 +14,7 @@
 import { Platform, AppState, AppStateStatus, Linking, Alert } from 'react-native';
 import * as Notifications from 'expo-notifications';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { scheduleDeliveryReminderNotification } from './pushNotificationService';
 
 // Native modules - conditionally imported to prevent startup crashes
 let NetInfo: any = null;
@@ -213,10 +214,21 @@ function setupFCMHandlers(): void {
 export async function handleBackgroundMessage(remoteMessage: any): Promise<void> {
     if (__DEV__) console.log('[BackgroundService] Background FCM message');
 
-    if (remoteMessage.data?.type === 'order') {
+    const data = remoteMessage.data || {};
+
+    if (data.type === 'order') {
         // Process order even when app is in background/killed
-        await emitEvent('order_received', remoteMessage.data);
-        await showOrderNotification(remoteMessage.data);
+        await emitEvent('order_received', data);
+        await showOrderNotification(data);
+    }
+
+    // When the customer receives an ORDER_ACCEPTED push (rider accepted their booking),
+    // schedule a local 2-hour reminder so they know delivery is inbound.
+    if (data.type === 'ORDER_ACCEPTED') {
+        await scheduleDeliveryReminderNotification(
+            data.riderName || 'Your rider',
+            data.deliveryId
+        );
     }
 }
 

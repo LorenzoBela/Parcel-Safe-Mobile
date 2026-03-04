@@ -25,6 +25,8 @@ import {
     subscribeToLockHealth, // EC-96
     LockHealthState, // EC-96
     reportBoxStolen,
+    subscribeToLocation,
+    LocationData,
 } from '../../services/firebaseClient';
 import { updateDeliveryStatus } from '../../services/riderMatchingService';
 import { subscribeToAdminOverride, AdminOverrideState, getOverrideNotificationMessage } from '../../services/adminOverrideService';
@@ -90,12 +92,59 @@ export default function BoxControlsScreen() {
     // EC-96: Lock Health (Thermal)
     const [lockHealth, setLockHealth] = useState<LockHealthState | null>(null);
 
-    // Telemetry State (now enhanced with real data)
+    // GPS location from Firebase (box sub-path, written by GPS_LTE firmware)
+    const [locationData, setLocationData] = useState<LocationData | null>(null);
+
+    // Extended hardware diagnostics — fields written by GPS_LTE_Firebase_Test firmware
+    const [hwDiag, setHwDiag] = useState<{
+        gps_fix?: boolean;
+        op?: string;           // Carrier name e.g. "Globe Philippines"
+        csq?: number;          // Raw CSQ 0-31
+        uptime_ms?: number;    // millis() since boot
+        connection?: string;   // "LTE"
+        data_bytes?: number;   // Bytes sent to Firebase
+        time_synced?: boolean;
+        last_updated_str?: string; // ISO timestamp string "2026-03-04T10:00:00+08:00"
+    } | null>(null);
+
+    // Resolve RSSI to a human-readable quality label.
+    // Firmware returns -999 when modem is off or CSQ is 0/99 (unknown).
+    const getRssiQuality = (rssi?: number): string => {
+        if (rssi == null || rssi <= -999) return 'No Signal';
+        if (rssi >= -70) return 'Excellent';
+        if (rssi >= -85) return 'Good';
+        if (rssi >= -100) return 'Fair';
+        return 'Weak';
+    };
+
+    // True if rssi is a valid measured value (not null/undefined/-999)
+    const hasValidRssi = (rssi?: number): boolean =>
+        rssi != null && rssi > -999;
+
+    // Resolve CSQ (0-31, 99=unknown) to 0-100% quality
+    const getCsqPercent = (csq?: number): number => {
+        if (!csq || csq === 99) return 0;
+        return Math.round((Math.min(csq, 31) / 31) * 100);
+    };
+
+    // Telemetry State — real data from firmware
+    // NOTE: firmware writes `last_updated` (server timestamp ms), NOT `last_heartbeat`.
+    //       `last_heartbeat` is only written by the mobile app's updateBoxState().
+    const rawBoxState = boxState as any;
+    const firmwareTimestamp: number | undefined =
+        rawBoxState?.last_updated ?? boxState?.last_heartbeat;
     const telemetry = {
         voltage: batteryState ? `${batteryState.voltage.toFixed(1)}V` : '-- V',
-        temp: boxState?.temp ? `${boxState.temp}°C` : '--°C',
-        signal: boxState?.rssi ? `${boxState.rssi} dBm` : '-- dBm',
-        sync: boxState?.last_heartbeat ? dayjs(boxState.last_heartbeat).format('h:mm A') : '--'
+        // gps_fix is a JSON boolean written by the firmware under hardware/{boxId}
+        gps: hwDiag?.gps_fix === true ? 'Fixed' : hwDiag?.gps_fix === false ? 'No Fix' : '--',
+        // rssi is a dBm integer; -999 means modem offline / CSQ unknown
+        signal: hasValidRssi(boxState?.rssi) ? `${boxState!.rssi} dBm` : '-- dBm',
+        // last_updated is the Firebase server timestamp set by the firmware PUT
+        sync: firmwareTimestamp
+            ? dayjs(firmwareTimestamp).format('h:mm A')
+            : hwDiag?.last_updated_str
+                ? dayjs(hwDiag.last_updated_str).format('h:mm A')
+                : '--'
     };
 
     const isPaired = isPairingActive(pairingState);
@@ -114,6 +163,29 @@ export default function BoxControlsScreen() {
     useEffect(() => {
         const unsubscribeBoxState = subscribeToBoxState(boxId, (state) => {
             setBoxState(state);
+            // Extract GPS_LTE_Firebase_Test firmware fields from the hardware node.
+            // The firmware writes these via PUT /hardware/{boxId}.json every 5 s.
+            if (state) {
+                const raw = state as any;
+                setHwDiag(prev => ({
+                    ...prev,            // keep previous values if new snapshot is partial
+                    // gps_fix: boolean (true = fix acquired, false = searching)
+                    ...(raw.gps_fix !== undefined && { gps_fix: raw.gps_fix }),
+                    ...(raw.op !== undefined && { op: raw.op }),
+                    ...(raw.csq !== undefined && { csq: raw.csq }),
+                    ...(raw.uptime_ms !== undefined && { uptime_ms: raw.uptime_ms }),
+                    ...(raw.connection !== undefined && { connection: raw.connection }),
+                    ...(raw.data_bytes !== undefined && { data_bytes: raw.data_bytes }),
+                    ...(raw.time_synced !== undefined && { time_synced: raw.time_synced }),
+                    // last_updated_str is the human-readable ISO timestamp from firmware
+                    ...(raw.last_updated_str !== undefined && { last_updated_str: raw.last_updated_str }),
+                }));
+            }
+        });
+
+        // GPS/LTE board writes box coordinates to locations/{boxId}/box
+        const unsubscribeLocation = subscribeToLocation(boxId, (loc) => {
+            if (loc) setLocationData(loc);
         });
         addLog("Control Panel accessed", "info");
         addLog("Telemetry stream connected", "success");
@@ -208,6 +280,7 @@ export default function BoxControlsScreen() {
             unsubscribePower();
             unsubscribeFaceAuth();
             unsubscribeLockHealth();
+            unsubscribeLocation();
         };
     }, [boxId]);
 
@@ -325,18 +398,24 @@ export default function BoxControlsScreen() {
     const handleReboot = () => {
         Alert.alert(
             "Reboot System",
-            "This will restart the smart box. Connection will be lost for 30 seconds.",
+            "This sends a reboot command to the GPS/LTE board via Firebase. The box will go offline for ~30 seconds while the modem restarts.",
             [
                 { text: "Cancel", style: "cancel" },
                 {
-                    text: "Reboot",
+                    text: "Send Reboot",
                     onPress: () => {
                         setRebooting(true);
-                        addLog("System Reboot Initiated...", "warning");
+                        addLog("Reboot command sent to hardware...", "warning");
+                        import('../../services/firebaseClient').then(({ updateBoxState }) => {
+                            // Write reboot_requested flag — GPS_LTE firmware polls hardware/{boxId}/reboot_requested
+                            (updateBoxState as any)(boxId, { reboot_requested: true, reboot_ts: Date.now() });
+                            addLog("Waiting for reconnect (~30s)...", "info");
+                        });
+                        // Clear rebooting state after firmware expected reconnect window
                         setTimeout(() => {
                             setRebooting(false);
-                            addLog("System Online. All systems nominal.", "success");
-                        }, 3000);
+                            addLog("Reconnect window elapsed. Check LTE/GPS status above.", "success");
+                        }, 30000);
                     }
                 }
             ]
@@ -661,16 +740,16 @@ export default function BoxControlsScreen() {
                         color={isPaired ? getBatteryColor() : '#BDBDBD'}
                     />
                     <TelemetryItem
-                        icon="thermometer"
-                        label="Temp"
-                        value={isPaired ? telemetry.temp : '--°C'}
-                        color={isPaired ? "#FF9800" : '#BDBDBD'}
+                        icon={isPaired ? (hwDiag?.gps_fix ? 'satellite-variant' : 'satellite-variant-outline') : 'satellite-variant-outline'}
+                        label="GPS Fix"
+                        value={isPaired ? telemetry.gps : '--'}
+                        color={isPaired ? (hwDiag?.gps_fix ? '#4CAF50' : '#F44336') : '#BDBDBD'}
                     />
                     <TelemetryItem
-                        icon="wifi"
-                        label="Signal"
+                        icon={isPaired ? (hasValidRssi(boxState?.rssi) && boxState!.rssi! >= -85 ? 'signal-4g' : 'signal') : 'signal-off'}
+                        label="LTE Signal"
                         value={isPaired ? telemetry.signal : '-- dBm'}
-                        color={isPaired ? "#4CAF50" : '#BDBDBD'}
+                        color={isPaired ? (hasValidRssi(boxState?.rssi) && boxState!.rssi! >= -85 ? '#4CAF50' : '#FF9800') : '#BDBDBD'}
                     />
                     <TelemetryItem
                         icon="sync"
@@ -793,6 +872,188 @@ export default function BoxControlsScreen() {
                         >
                             Report Box Stolen/Missing
                         </Button>
+                    </Card.Content>
+                </Card>
+
+                {/* Hardware Diagnostics — driven by real firmware data */}
+                <Text variant="titleMedium" style={styles.sectionTitle}>Hardware Diagnostics</Text>
+                <Card style={[styles.controlsCard, { marginBottom: 24 }]}>
+                    <Card.Content>
+
+                        {/* LTE Module (GPS_LTE_Firebase_Test) */}
+                        <View style={styles.diagRow}>
+                            <View style={[styles.iconContainer, { backgroundColor: '#E3F2FD' }]}>
+                                <MaterialCommunityIcons name="antenna" size={22} color="#2196F3" />
+                            </View>
+                            <View style={styles.diagInfo}>
+                                <Text variant="titleSmall" style={{ fontWeight: 'bold' }}>LTE Module (A7670E)</Text>
+                                <Text variant="bodySmall" style={{ color: '#666' }}>
+                                    {isPaired
+                                        ? `${hwDiag?.op || 'Unknown carrier'} • CSQ: ${hwDiag?.csq ?? '--'}/31 (${getCsqPercent(hwDiag?.csq)}%)`
+                                        : 'Requires pairing'}
+                                </Text>
+                            </View>
+                            <View style={[styles.diagBadge, {
+                                backgroundColor: isPaired && boxState?.rssi ? '#E3F2FD' : '#F5F5F5'
+                            }]}>
+                                <Text style={[
+                                    styles.diagBadgeText,
+                                    { color: isPaired && boxState?.rssi ? '#2196F3' : '#9E9E9E' }
+                                ]}>
+                                    {isPaired ? getRssiQuality(boxState?.rssi) : '--'}
+                                </Text>
+                            </View>
+                        </View>
+
+                        <Divider style={styles.divider} />
+
+                        {/* GPS (GPS_LTE_Firebase_Test) */}
+                        <View style={styles.diagRow}>
+                            <View style={[styles.iconContainer, {
+                                backgroundColor: isPaired ? (hwDiag?.gps_fix ? '#E8F5E9' : '#FFEBEE') : '#F5F5F5'
+                            }]}>
+                                <MaterialCommunityIcons
+                                    name="satellite-uplink"
+                                    size={22}
+                                    color={isPaired ? (hwDiag?.gps_fix ? '#4CAF50' : '#F44336') : '#BDBDBD'}
+                                />
+                            </View>
+                            <View style={styles.diagInfo}>
+                                <Text variant="titleSmall" style={{ fontWeight: 'bold' }}>GPS / GNSS</Text>
+                                <Text variant="bodySmall" style={{ color: '#666' }}>
+                                    {isPaired
+                                        ? (locationData
+                                            ? `${locationData.latitude?.toFixed(5)}, ${locationData.longitude?.toFixed(5)}`
+                                            : (hwDiag?.gps_fix ? 'Fix acquired, awaiting coords...' : 'Searching for satellites...'))
+                                        : 'Requires pairing'}
+                                </Text>
+                            </View>
+                            <View style={[styles.diagBadge, {
+                                backgroundColor: isPaired ? (hwDiag?.gps_fix ? '#E8F5E9' : '#FFEBEE') : '#F5F5F5'
+                            }]}>
+                                <Text style={[
+                                    styles.diagBadgeText,
+                                    { color: isPaired ? (hwDiag?.gps_fix ? '#4CAF50' : '#F44336') : '#9E9E9E' }
+                                ]}>
+                                    {isPaired ? (hwDiag?.gps_fix ? 'FIXED' : 'SEARCHING') : '--'}
+                                </Text>
+                            </View>
+                        </View>
+
+                        <Divider style={styles.divider} />
+
+                        {/* ESP32-CAM (ESP32CAM_OV3660_Supabase_R3_Test) */}
+                        <View style={styles.diagRow}>
+                            <View style={[styles.iconContainer, {
+                                backgroundColor: faceAuthStatus === 'SEARCHING' ? '#FFF3E0'
+                                    : faceAuthStatus === 'AUTHENTICATED' ? '#E8F5E9'
+                                    : '#F3E5F5'
+                            }]}>
+                                <MaterialCommunityIcons
+                                    name="camera-iris"
+                                    size={22}
+                                    color={faceAuthStatus === 'SEARCHING' ? '#FF9800'
+                                        : faceAuthStatus === 'AUTHENTICATED' ? '#4CAF50'
+                                        : '#673AB7'}
+                                />
+                            </View>
+                            <View style={styles.diagInfo}>
+                                <Text variant="titleSmall" style={{ fontWeight: 'bold' }}>ESP32-CAM (OV3660)</Text>
+                                <Text variant="bodySmall" style={{ color: '#666' }}>
+                                    {faceAuthStatus === 'SEARCHING' ? 'Person-detect scan in progress...'
+                                        : faceAuthStatus === 'AUTHENTICATED' ? 'Person authenticated — solenoid triggered'
+                                        : faceAuthStatus === 'TIMEOUT_REMOVE_HELMET' ? 'Blocked — helmet/occlusion detected'
+                                        : faceAuthStatus === 'FAILED_USE_OTP' ? 'No face match — fall back to OTP'
+                                        : 'Idle — continuous person-detect running'}
+                                </Text>
+                            </View>
+                            <View style={[styles.diagBadge, {
+                                backgroundColor: faceAuthStatus === 'SEARCHING' ? '#FFF3E0'
+                                    : faceAuthStatus === 'AUTHENTICATED' ? '#E8F5E9'
+                                    : '#F3E5F5'
+                            }]}>
+                                <Text style={[
+                                    styles.diagBadgeText,
+                                    {
+                                        color: faceAuthStatus === 'SEARCHING' ? '#FF9800'
+                                            : faceAuthStatus === 'AUTHENTICATED' ? '#4CAF50'
+                                            : '#673AB7'
+                                    }
+                                ]}>
+                                    {faceAuthStatus === 'IDLE' ? 'READY' : faceAuthStatus}
+                                </Text>
+                            </View>
+                        </View>
+
+                        <Divider style={styles.divider} />
+
+                        {/* Keypad Tester (Tester.ino) */}
+                        <View style={styles.diagRow}>
+                            <View style={[styles.iconContainer, {
+                                backgroundColor: lockoutState?.active ? '#FFEBEE'
+                                    : otpStatus?.otp_expired ? '#FFF8E1'
+                                    : '#E8F5E9'
+                            }]}>
+                                <MaterialCommunityIcons
+                                    name="dialpad"
+                                    size={22}
+                                    color={lockoutState?.active ? '#D32F2F'
+                                        : otpStatus?.otp_expired ? '#FF9800'
+                                        : '#4CAF50'}
+                                />
+                            </View>
+                            <View style={styles.diagInfo}>
+                                <Text variant="titleSmall" style={{ fontWeight: 'bold' }}>Keypad Tester</Text>
+                                <Text variant="bodySmall" style={{ color: '#666' }}>
+                                    {lockoutState?.active
+                                        ? `LOCKOUT: ${lockoutState.attempt_count} failed — clears in ${lockoutCountdown}`
+                                        : otpStatus?.otp_expired
+                                        ? 'OTP expired — new code required'
+                                        : activeOtpCode
+                                        ? `Active OTP: ${'●'.repeat(activeOtpCode.length)} (${activeOtpCode.length} digits)`
+                                        : 'Waiting for OTP assignment'}
+                                </Text>
+                            </View>
+                            <View style={[styles.diagBadge, {
+                                backgroundColor: lockoutState?.active ? '#FFEBEE'
+                                    : otpStatus?.otp_expired ? '#FFF8E1'
+                                    : '#E8F5E9'
+                            }]}>
+                                <Text style={[
+                                    styles.diagBadgeText,
+                                    {
+                                        color: lockoutState?.active ? '#D32F2F'
+                                            : otpStatus?.otp_expired ? '#E65100'
+                                            : '#388E3C'
+                                    }
+                                ]}>
+                                    {lockoutState?.active ? 'LOCKOUT' : otpStatus?.otp_expired ? 'EXPIRED' : 'READY'}
+                                </Text>
+                            </View>
+                        </View>
+
+                        <Divider style={styles.divider} />
+
+                        {/* System Uptime & Data Usage */}
+                        <View style={styles.diagRow}>
+                            <View style={[styles.iconContainer, { backgroundColor: '#F3E5F5' }]}>
+                                <MaterialCommunityIcons name="timer-outline" size={22} color="#9C27B0" />
+                            </View>
+                            <View style={styles.diagInfo}>
+                                <Text variant="titleSmall" style={{ fontWeight: 'bold' }}>Device Health</Text>
+                                <Text variant="bodySmall" style={{ color: '#666' }}>
+                                    {hwDiag?.uptime_ms
+                                        ? `Up ${Math.floor(hwDiag.uptime_ms / 3600000)}h ${Math.floor((hwDiag.uptime_ms % 3600000) / 60000)}m${hwDiag.time_synced ? ' • NTP ✓' : ' • Clock not synced'}`
+                                        : isPaired ? 'Uptime not reported yet' : 'Requires pairing'}
+                                </Text>
+                            </View>
+                            <View style={[styles.diagBadge, { backgroundColor: '#F3E5F5' }]}>
+                                <Text style={[styles.diagBadgeText, { color: '#9C27B0' }]}>
+                                    {hwDiag?.data_bytes ? `${(hwDiag.data_bytes / 1024).toFixed(1)} KB` : '--'}
+                                </Text>
+                            </View>
+                        </View>
+
                     </Card.Content>
                 </Card>
 
@@ -1167,6 +1428,27 @@ const styles = StyleSheet.create({
         padding: 12,
         borderRadius: 8,
         marginBottom: 8,
+    },
+    // Hardware Diagnostics
+    diagRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingVertical: 8,
+    },
+    diagInfo: {
+        flex: 1,
+        marginLeft: 12,
+    },
+    diagBadge: {
+        paddingHorizontal: 8,
+        paddingVertical: 4,
+        borderRadius: 6,
+        minWidth: 64,
+        alignItems: 'center',
+    },
+    diagBadgeText: {
+        fontSize: 11,
+        fontWeight: 'bold',
     },
     modalFooter: {
         flexDirection: 'row',

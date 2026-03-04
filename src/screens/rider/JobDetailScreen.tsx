@@ -54,6 +54,16 @@ export default function JobDetailScreen() {
     const [routeDurationMin, setRouteDurationMin] = useState<string | null>(null);
     const cameraRef = useRef<any>(null);
 
+    // Tick every minute so the ongoing elapsed time stays live
+    const [, setTick] = useState(0);
+    useEffect(() => {
+        const activeStatuses = ['ASSIGNED', 'PENDING', 'IN_TRANSIT', 'ARRIVED', 'PICKED_UP'];
+        const isOngoing = !jobData.deliveredAt && activeStatuses.includes(jobData.status);
+        if (!isOngoing) return;
+        const interval = setInterval(() => setTick(t => t + 1), 60_000);
+        return () => clearInterval(interval);
+    }, [jobData.status, jobData.deliveredAt]);
+
     /** Calculate total delivery time from timestamps */
     const getTotalDeliveryTime = (): string => {
         // Cancelled or returned deliveries have no meaningful total time
@@ -62,18 +72,24 @@ export default function JobDetailScreen() {
         }
         const startTime = jobData.acceptedAt || jobData.pickedUpAt;
         const endTime = jobData.deliveredAt;
+
+        // Parse a timestamp correctly: ISO strings stored by the server are UTC.
+        // Using dayjs.utc() prevents the device locale from adding a false offset.
+        const parseTS = (ts: string | number) =>
+            typeof ts === 'number' ? dayjs(ts) : dayjs.utc(ts);
+
         if (!startTime || !endTime) {
             // Only show ongoing for truly active statuses
             const activeStatuses = ['ASSIGNED', 'PENDING', 'IN_TRANSIT', 'ARRIVED', 'PICKED_UP'];
             if (startTime && activeStatuses.includes(jobData.status)) {
-                const elapsed = dayjs().diff(dayjs(startTime), 'minute');
+                const elapsed = dayjs().diff(parseTS(startTime), 'minute');
                 if (elapsed < 1) return 'Just started';
                 if (elapsed >= 60) return `${Math.floor(elapsed / 60)}h ${elapsed % 60}m (ongoing)`;
                 return `${elapsed} min (ongoing)`;
             }
             return 'N/A';
         }
-        const totalMin = dayjs(endTime).diff(dayjs(startTime), 'minute');
+        const totalMin = parseTS(endTime).diff(parseTS(startTime), 'minute');
         if (totalMin < 1) return '< 1 min';
         if (totalMin >= 60) return `${Math.floor(totalMin / 60)}h ${totalMin % 60}m`;
         return `${totalMin} min`;

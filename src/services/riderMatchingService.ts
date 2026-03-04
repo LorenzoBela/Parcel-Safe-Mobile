@@ -7,11 +7,52 @@
 
 import { getFirebaseDatabase } from './firebaseClient';
 import { ref, get, set, update, remove, onValue, off, onDisconnect, runTransaction } from 'firebase/database';
-import { showIncomingOrderNotification } from './pushNotificationService';
+import { showIncomingOrderNotification, cancelDeliveryReminderNotification } from './pushNotificationService';
 import statusUpdateService from './statusUpdateService';
 import { supabase } from './supabaseClient';
 
 import { generateShareToken, generateOTP } from '../utils/tokenUtils';
+
+/** Base URL for the Parcel Safe web API (used to dispatch server-side FCM notifications) */
+const API_BASE_URL = process.env.EXPO_PUBLIC_TRACKING_WEB_BASE_URL || 'https://parcel-safe.vercel.app';
+
+/** Map a delivery status to the NotificationType expected by /api/notifications/send */
+const STATUS_TO_NOTIFICATION_TYPE: Record<string, string> = {
+    ASSIGNED:   'ORDER_ACCEPTED',
+    IN_TRANSIT: 'PARCEL_PICKED_UP',
+    ARRIVED:    'RIDER_ARRIVED',
+    COMPLETED:  'DELIVERY_COMPLETED',
+    CANCELLED:  'ORDER_CANCELLED_BY_RIDER',
+};
+
+/**
+ * Fire-and-forget: tell the server to send an FCM push notification
+ * to the relevant delivery parties via Firebase Admin SDK.
+ * Non-fatal — never throws.
+ */
+async function dispatchStatusNotification(
+    deliveryId: string,
+    status: string,
+    context?: Record<string, string>
+): Promise<void> {
+    const type = STATUS_TO_NOTIFICATION_TYPE[status];
+    if (!type) return; // no notification for this status
+    try {
+        await fetch(`${API_BASE_URL}/api/notifications/send`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                type,
+                deliveryId,
+                includeCustomer: true,
+                includeRider: status === 'COMPLETED',
+                context: context || {},
+            }),
+        });
+    } catch (err) {
+        console.warn('[Notification] dispatchStatusNotification failed (non-fatal):', err);
+    }
+}
 
 // Search radius in kilometers (as per user requirement)
 export const SEARCH_RADIUS_KM = 3;
@@ -742,6 +783,11 @@ export async function acceptOrder(
             }
         }
 
+        // Fire ORDER_ACCEPTED push notification to the customer
+        await dispatchStatusNotification(bookingId, 'ASSIGNED', {
+            riderName: metadata?.riderName || 'Your rider',
+        });
+
         return true;
     } catch (error) {
         console.error(`[Booking] Error accepting order ${bookingId}:`, error);
@@ -1003,6 +1049,14 @@ export async function updateDeliveryStatus(
             updated_at: Date.now(),
             ...(additionalFields || {}),
         });
+
+        // Fire FCM push notification for key status transitions (non-blocking)
+        dispatchStatusNotification(deliveryId, status).catch(() => { /* ignore */ });
+
+        // Cancel 2-hour reminder when delivery finalizes
+        if (status === 'COMPLETED' || status === 'CANCELLED') {
+            cancelDeliveryReminderNotification().catch(() => { /* ignore */ });
+        }
 
         // Sync status to Supabase (Source of Truth)
         if (supabase) {

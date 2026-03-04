@@ -69,7 +69,7 @@ import { bleOtpService, BleBoxDevice } from '../../services/bleOtpService';
 
 // EC-32: Cancellation Service
 import CancellationModal from '../../components/modals/CancellationModal';
-import { requestCancellation, CancellationReason } from '../../services/cancellationService';
+import { requestCancellation, CancellationReason, subscribeToCancellation, CancellationState } from '../../services/cancellationService';
 import ReassignmentAlertModal from '../../components/ReassignmentAlertModal';
 import {
     subscribeToReassignment,
@@ -183,6 +183,7 @@ export default function ArrivalScreen() {
     // EC-32: Cancellation State
     const [showCancelModal, setShowCancelModal] = useState(false);
     const [cancelLoading, setCancelLoading] = useState(false);
+    const [returnCancellationState, setReturnCancellationState] = useState<CancellationState | null>(null);
 
     // EC-78: Delivery Reassignment State
     const [reassignmentState, setReassignmentState] = useState<ReassignmentState | null>(null);
@@ -267,6 +268,14 @@ export default function ArrivalScreen() {
     }, [params.boxId, params.deliveryId]);
 
     const [deliveryOtp, setDeliveryOtp] = useState<string | null>(null);
+
+    // Subscribe to cancellation state so we can resume return process if rider comes back
+    useEffect(() => {
+        const unsubscribe = subscribeToCancellation(params.deliveryId, (state) => {
+            setReturnCancellationState(state);
+        });
+        return () => unsubscribe();
+    }, [params.deliveryId]);
 
     useEffect(() => {
         const unsubscribe = subscribeToDelivery(params.deliveryId, (delivery) => {
@@ -758,6 +767,8 @@ export default function ArrivalScreen() {
                     reasonDetails: details,
                     senderName: 'Customer', // Would come from delivery data
                     pickupAddress: params.pickupAddress || params.targetAddress,
+                    pickupLat: params.pickupLat,
+                    pickupLng: params.pickupLng,
                 });
             } else {
                 Alert.alert('Cancellation Failed', result.error || 'Unknown error');
@@ -861,26 +872,44 @@ export default function ArrivalScreen() {
     );
 
     const handleNavigate = () => {
-        // Check for valid coordinates (not null/undefined and not 0,0)
-        const hasCoords = params?.targetLat && params?.targetLng && (params.targetLat !== 0 || params.targetLng !== 0);
+        // Resolve target coords based on the current geofence phase
+        let navLat: number | undefined;
+        let navLng: number | undefined;
+        let navAddress: string | undefined;
+
+        if (geofenceTarget === 'dropoff') {
+            navLat = params?.dropoffLat;
+            navLng = params?.dropoffLng;
+            navAddress = params?.dropoffAddress || params?.targetAddress;
+        } else if (geofenceTarget === 'return_pickup') {
+            navLat = params?.pickupLat;
+            navLng = params?.pickupLng;
+            navAddress = params?.pickupAddress || params?.targetAddress;
+        } else {
+            // pickup phase — use pickupLat/Lng if available, fall back to targetLat/Lng
+            navLat = params?.pickupLat || params?.targetLat;
+            navLng = params?.pickupLng || params?.targetLng;
+            navAddress = params?.pickupAddress || params?.targetAddress;
+        }
+
+        const hasCoords = navLat && navLng && (navLat !== 0 || navLng !== 0);
 
         if (hasCoords) {
-            const latLng = `${params!.targetLat},${params!.targetLng}`;
-            const label = params?.targetAddress || 'Destination';
+            const latLng = `${navLat},${navLng}`;
+            const label = navAddress || 'Destination';
 
-            // EC-FIX: Use precise coordinates in prefix AND query
             const url = Platform.select({
                 ios: `maps:?ll=${latLng}&q=${label}`,
                 android: `geo:${latLng}?q=${latLng}(${label})`
             });
             if (url) Linking.openURL(url);
         } else {
-            // Fallback if coordinates missing
-            if (params?.targetAddress) {
+            // Fallback to address string if coordinates missing
+            if (navAddress) {
                 const scheme = Platform.select({ ios: 'maps:0,0?q=', android: 'geo:0,0?q=' });
                 const url = Platform.select({
-                    ios: `${scheme}${params.targetAddress}`,
-                    android: `${scheme}${params.targetAddress}`
+                    ios: `${scheme}${navAddress}`,
+                    android: `${scheme}${navAddress}`
                 });
                 if (url) Linking.openURL(url);
             }
@@ -1074,12 +1103,72 @@ export default function ArrivalScreen() {
                 renderWaitingUI()
             ) : (
                 isPickupConfirmed ? (
+                    isReturning ? (
+                        // ── EC-32: Return Journey Card ──────────────────────────────────────────
+                        <Card style={{ margin: 16, borderRadius: 12 }} elevation={2}>
+                            <Card.Content>
+                                <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>
+                                    <Text variant="titleMedium" style={{ fontWeight: 'bold', flex: 1 }}>Return Journey</Text>
+                                    <Text style={{ fontSize: 24 }}>↩️</Text>
+                                </View>
+                                <Text variant="bodySmall" style={{ color: '#666', marginBottom: 4 }}>Return destination</Text>
+                                <Text variant="bodyMedium" style={{ fontWeight: '600', marginBottom: 16 }}>
+                                    {params.pickupAddress || params.targetAddress}
+                                </Text>
+                                {distanceMeters !== null && (
+                                    <Text variant="bodySmall" style={{ color: '#888', marginBottom: 16 }}>
+                                        {distanceMeters < 1000
+                                            ? `${Math.round(distanceMeters)} m away`
+                                            : `${(distanceMeters / 1000).toFixed(1)} km away`}
+                                    </Text>
+                                )}
+                                <Button
+                                    mode="outlined"
+                                    icon="navigation"
+                                    onPress={handleNavigate}
+                                    style={{ marginBottom: 12, borderRadius: 8 }}
+                                >
+                                    Navigate to Pickup
+                                </Button>
+                                <Button
+                                    mode="contained"
+                                    icon="package-variant-closed"
+                                    onPress={() => {
+                                        if (returnCancellationState?.returnOtp) {
+                                            navigation.navigate('ReturnPackage', {
+                                                deliveryId: params.deliveryId,
+                                                returnOtp: returnCancellationState.returnOtp,
+                                                pickupAddress: params.pickupAddress || params.targetAddress,
+                                                senderName: params.senderName || 'Sender',
+                                                pickupLat: params.pickupLat,
+                                                pickupLng: params.pickupLng,
+                                                boxId: params.boxId,
+                                            });
+                                        } else {
+                                            navigation.navigate('CancellationConfirmation', {
+                                                deliveryId: params.deliveryId,
+                                                returnOtp: '------',
+                                                reason: CancellationReason.OTHER,
+                                                senderName: params.senderName || 'Sender',
+                                                pickupAddress: params.pickupAddress || params.targetAddress,
+                                                pickupLat: params.pickupLat,
+                                                pickupLng: params.pickupLng,
+                                            });
+                                        }
+                                    }}
+                                    style={{ borderRadius: 8 }}
+                                >
+                                    Continue Return Process
+                                </Button>
+                            </Card.Content>
+                        </Card>
+                    ) : (
                     <DropoffVerification
                         deliveryId={params.deliveryId}
                         boxId={params.boxId}
-                        targetAddress={isReturning ? (params.pickupAddress || params.targetAddress) : (params.dropoffAddress || params.targetAddress)}
-                        recipientName={isReturning ? params.senderName : params.recipientName}
-                        customerPhone={isReturning ? params.senderPhone : params.customerPhone}
+                        targetAddress={params.dropoffAddress || params.targetAddress}
+                        recipientName={params.recipientName}
+                        customerPhone={params.customerPhone}
                         deliveryNotes={params.deliveryNotes}
                         deliveryStatus={deliveryStatus}
                         isInsideGeoFence={isInsideGeoFence}
@@ -1096,6 +1185,7 @@ export default function ArrivalScreen() {
                         isWaitTimerActive={false}
                         canAutoArrive={geofenceTarget !== 'pickup'}
                     />
+                    )
                 ) : (
                     <PickupVerification
                         deliveryId={params.deliveryId}

@@ -2,14 +2,13 @@
  * EC-32: Return Package Screen
  *
  * Guides the rider through returning a cancelled package to the sender.
- * Enforces the full sequential validation chain:
- *   NAVIGATING → ARRIVED (geofence) → OTP_VERIFY → PHOTO_CAPTURE → UPLOADING → COMPLETED
+ * Flow: NAVIGATING → ARRIVED (geofence) → PHOTO_CAPTURE → UPLOADING → COMPLETED
+ * The Return OTP is entered by the sender on the physical box — not on this screen.
  */
 
 import React, { useState, useEffect } from 'react';
 import {
     View, StyleSheet, ScrollView, Alert, Linking, Platform,
-    TextInput as RNTextInput,
 } from 'react-native';
 import { Text, Surface, Button, useTheme, Chip, ProgressBar, ActivityIndicator } from 'react-native-paper';
 import { useNavigation, useRoute } from '@react-navigation/native';
@@ -18,6 +17,13 @@ import * as Location from 'expo-location';
 import * as ImagePicker from 'expo-image-picker';
 import { markPackageRetrieved, subscribeToCancellation, CancellationState } from '../../services/cancellationService';
 import { uploadReturnPhoto } from '../../services/proofPhotoService';
+import {
+    subscribeToDeliveryProof,
+    subscribeToCamera,
+    subscribeToLockEvents,
+    subscribeToBoxState,
+    LockEvent,
+} from '../../services/firebaseClient';
 
 interface RouteParams {
     deliveryId: string;
@@ -32,16 +38,15 @@ interface RouteParams {
 type ReturnStep =
     | 'NAVIGATING'
     | 'ARRIVED'
-    | 'OTP_VERIFY'
     | 'PHOTO_CAPTURE'
     | 'UPLOADING'
     | 'COMPLETED';
 
 const GEOFENCE_RADIUS_M = 100;
 const STEP_ORDER: ReturnStep[] = [
-    'NAVIGATING', 'ARRIVED', 'OTP_VERIFY', 'PHOTO_CAPTURE', 'UPLOADING', 'COMPLETED',
+    'NAVIGATING', 'ARRIVED', 'PHOTO_CAPTURE', 'UPLOADING', 'COMPLETED',
 ];
-const STEP_LABELS = ['Navigate', 'Arrive', 'OTP', 'Photo', 'Upload', 'Done'];
+const STEP_LABELS = ['Navigate', 'Arrive', 'Photo', 'Upload', 'Done'];
 
 export default function ReturnPackageScreen() {
     const navigation = useNavigation<any>();
@@ -51,7 +56,6 @@ export default function ReturnPackageScreen() {
 
     const {
         deliveryId = 'TRK-XXXX-XXXX',
-        returnOtp = '------',
         pickupAddress = 'Unknown Address',
         senderName = 'Sender',
         pickupLat = 14.5995,
@@ -64,11 +68,14 @@ export default function ReturnPackageScreen() {
     const [isInsideGeofence, setIsInsideGeofence] = useState(false);
     const [cancellationState, setCancellationState] = useState<CancellationState | null>(null);
 
-    // OTP verification
-    const [otpInput, setOtpInput] = useState('');
-    const [otpError, setOtpError] = useState('');
+    // ── Hardware box state (primary photo source) ──
+    const [hardwareSuccess, setHardwareSuccess] = useState(false);
+    const [cameraFailed, setCameraFailed] = useState(false);
+    const [boxOtpValidated, setBoxOtpValidated] = useState(false);
+    const [faceDetected, setFaceDetected] = useState(false);
+    const [lockEvent, setLockEvent] = useState<LockEvent | null>(null);
 
-    // Photo capture & upload
+    // Photo capture & upload (fallback only)
     const [photoUri, setPhotoUri] = useState<string | null>(null);
     const [uploadError, setUploadError] = useState('');
 
@@ -82,6 +89,66 @@ export default function ReturnPackageScreen() {
         });
         return () => unsubscribe();
     }, [deliveryId]);
+
+    // ── Subscribe to box hardware once rider has arrived ───────────────────────────
+    // Primary: box captures sender face automatically.
+    // Fallback: phone camera only if box camera reports FAILED.
+    useEffect(() => {
+        if (currentStep !== 'PHOTO_CAPTURE') return;
+
+        const unsubscribeBox = subscribeToBoxState(boxId, (state) => {
+            if (state?.status === 'UNLOCKING' || state?.status === 'ACTIVE') {
+                setBoxOtpValidated(true);
+            }
+        });
+
+        const unsubscribeProof = subscribeToDeliveryProof(deliveryId, (proof) => {
+            if (proof?.proof_photo_url) {
+                setHardwareSuccess(true);
+                setBoxOtpValidated(true);
+            }
+        });
+
+        const unsubscribeCamera = subscribeToCamera(boxId, (camState) => {
+            if (camState?.status === 'FAILED' || camState?.status === 'HARDWARE_ERROR') {
+                setCameraFailed(true);
+            }
+        });
+
+        const unsubscribeLock = subscribeToLockEvents(boxId, (event) => {
+            if (!event) return;
+            setLockEvent(event);
+            if (event.otp_valid) setBoxOtpValidated(true);
+            if (event.face_detected) setFaceDetected(true);
+            if (event.unlocked) {
+                setHardwareSuccess(true);
+                setBoxOtpValidated(true);
+                setFaceDetected(true);
+            }
+        });
+
+        return () => {
+            unsubscribeBox();
+            unsubscribeProof();
+            unsubscribeCamera();
+            unsubscribeLock();
+        };
+    }, [currentStep, boxId, deliveryId]);
+
+    // Auto-complete when hardware succeeds (box captured photo + solenoid fired)
+    useEffect(() => {
+        if (hardwareSuccess && currentStep === 'PHOTO_CAPTURE') {
+            setCurrentStep('UPLOADING');
+            markPackageRetrieved(deliveryId, boxId).then((ok) => {
+                if (ok) {
+                    setCurrentStep('COMPLETED');
+                } else {
+                    setUploadError('Hardware capture succeeded but failed to save. Please use fallback.');
+                    setCurrentStep('PHOTO_CAPTURE');
+                }
+            });
+        }
+    }, [hardwareSuccess]);
 
     // Continuous location tracking with Haversine distance to pickup geofence
     useEffect(() => {
@@ -139,20 +206,10 @@ export default function ReturnPackageScreen() {
             );
             return;
         }
-        setCurrentStep('OTP_VERIFY');
-    };
-
-    // ── Step 2 → 3: Sender OTP verification ────────────────────────────────────
-    const handleVerifyOtp = () => {
-        if (otpInput.trim() !== returnOtp.trim()) {
-            setOtpError('Incorrect OTP. Ask the sender to check the code shown on their app or tracking page.');
-            return;
-        }
-        setOtpError('');
         setCurrentStep('PHOTO_CAPTURE');
     };
 
-    // ── Step 3: Camera launch for sender face photo ─────────────────────────────
+    // ── Step 2: Fallback phone camera (only when box camera failed) ────────────────
     const handleCapturePhoto = async () => {
         const { status } = await ImagePicker.requestCameraPermissionsAsync();
         if (status !== 'granted') {
@@ -170,10 +227,10 @@ export default function ReturnPackageScreen() {
         }
     };
 
-    // ── Step 4 → 5: Upload to Supabase then complete ────────────────────────────
+    // ── Fallback: upload phone photo then complete ──────────────────────────────────
     const handleUploadAndComplete = async () => {
         if (!photoUri) {
-            Alert.alert('Photo Required', 'Please capture a photo of the sender first.');
+            Alert.alert('Photo Required', 'Please capture a fallback photo first.');
             return;
         }
         setCurrentStep('UPLOADING');
@@ -249,7 +306,6 @@ export default function ReturnPackageScreen() {
                         <Text variant="titleMedium" style={{ fontWeight: 'bold', color: theme.colors.onSurface }}>
                             {currentStep === 'NAVIGATING' && 'Navigating to Pickup'}
                             {currentStep === 'ARRIVED' && 'Confirm Arrival'}
-                            {currentStep === 'OTP_VERIFY' && 'Sender OTP Required'}
                             {currentStep === 'PHOTO_CAPTURE' && 'Capture Sender Photo'}
                             {currentStep === 'UPLOADING' && 'Uploading Photo…'}
                             {currentStep === 'COMPLETED' && 'Return Complete!'}
@@ -261,8 +317,19 @@ export default function ReturnPackageScreen() {
                                     ? `Within range (${formatDistance()}) — tap Confirm Arrival`
                                     : `Still ${formatDistance()} away — must be within ${GEOFENCE_RADIUS_M} m`
                             )}
-                            {currentStep === 'OTP_VERIFY' && 'Ask the sender to enter the 6-digit Return OTP from their app'}
-                            {currentStep === 'PHOTO_CAPTURE' && 'Capture a clear photo of the sender for identity verification'}
+                        {currentStep === 'PHOTO_CAPTURE' && (
+                            hardwareSuccess
+                                ? 'Box captured sender photo ✔  Completing return…'
+                                : cameraFailed
+                                    ? 'Box camera failed — use phone camera as fallback'
+                                    : boxOtpValidated && faceDetected
+                                        ? 'OTP verified & face detected ✔  Finalising…'
+                                    : boxOtpValidated
+                                        ? 'OTP verified ✔  Waiting for face detection…'
+                                    : lockEvent && !lockEvent.otp_valid
+                                        ? '❌ Wrong OTP — ask sender to check their code and retry'
+                                        : 'Waiting for sender to enter Return OTP on the box…'
+                        )}
                             {currentStep === 'UPLOADING' && 'Saving verification photo to secure storage…'}
                             {currentStep === 'COMPLETED' && 'Package returned successfully. Your job is complete.'}
                         </Text>
@@ -289,69 +356,65 @@ export default function ReturnPackageScreen() {
                     )}
                 </Surface>
 
-                {/* ── OTP Input (sender enters their Return OTP) ── */}
-                {currentStep === 'OTP_VERIFY' && (
-                    <Surface style={[styles.card, { backgroundColor: theme.colors.surface }]} elevation={1}>
-                        <View style={styles.rowHeader}>
-                            <MaterialCommunityIcons name="lock-check" size={20} color={theme.colors.primary} />
-                            <Text variant="labelLarge" style={{ marginLeft: 8, color: theme.colors.onSurface }}>
-                                Enter Return OTP
-                            </Text>
-                        </View>
-                        <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant, marginBottom: 12 }}>
-                            The sender must open their tracking page or app and enter the 6-digit Return OTP shown there.
-                            Hand your device to the sender to enter the code below.
-                        </Text>
-                        <RNTextInput
-                            style={[
-                                styles.otpInput,
-                                {
-                                    color: theme.colors.onSurface,
-                                    borderColor: otpError ? theme.colors.error : theme.colors.outline,
-                                    backgroundColor: theme.dark ? '#2C2C2C' : '#F5F5F5',
-                                },
-                            ]}
-                            value={otpInput}
-                            onChangeText={(t) => { setOtpInput(t.replace(/[^0-9]/g, '')); setOtpError(''); }}
-                            keyboardType="number-pad"
-                            maxLength={6}
-                            placeholder="------"
-                            placeholderTextColor={theme.colors.onSurfaceVariant}
-                            textAlign="center"
-                        />
-                        {!!otpError && (
-                            <Text variant="bodySmall" style={{ color: theme.colors.error, marginTop: 8 }}>
-                                {otpError}
-                            </Text>
-                        )}
-                    </Surface>
-                )}
-
-                {/* ── Sender Photo Capture ── */}
+                {/* ── Box Verification / Fallback Photo Card ── */}
                 {currentStep === 'PHOTO_CAPTURE' && (
                     <Surface style={[styles.card, { backgroundColor: theme.colors.surface }]} elevation={1}>
                         <View style={styles.rowHeader}>
-                            <MaterialCommunityIcons name="camera-account" size={20} color={theme.colors.primary} />
+                            <MaterialCommunityIcons
+                                name={hardwareSuccess ? 'check-circle' : cameraFailed ? 'camera-off' : 'cctv'}
+                                size={20}
+                                color={hardwareSuccess ? '#4CAF50' : cameraFailed ? theme.colors.error : theme.colors.primary}
+                            />
                             <Text variant="labelLarge" style={{ marginLeft: 8, color: theme.colors.onSurface }}>
-                                Sender Verification Photo
+                                {cameraFailed ? 'Fallback Photo Required' : 'Box Camera Verification'}
                             </Text>
                         </View>
-                        <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant, marginBottom: 12 }}>
-                            Take a clear photo of the sender's face. This is required before the return job can be completed.
-                        </Text>
-                        {photoUri ? (
-                            <View style={styles.photoPreview}>
-                                <MaterialCommunityIcons name="check-circle" size={40} color="#4CAF50" />
-                                <Text variant="bodyMedium" style={{ color: '#4CAF50', marginTop: 8 }}>Photo captured</Text>
-                                <Button mode="outlined" icon="camera-retake" onPress={handleCapturePhoto} style={{ marginTop: 12 }} compact>
-                                    Retake
-                                </Button>
+
+                        {/* Hardware status indicator */}
+                        {!cameraFailed && (
+                            <View style={[
+                                styles.statusBanner,
+                                { backgroundColor: hardwareSuccess ? '#DCFCE7' : boxOtpValidated ? '#DBEAFE' : '#F3F4F6' },
+                            ]}>
+                                <Text style={{
+                                    color: hardwareSuccess ? '#15803d' : boxOtpValidated ? '#1d4ed8' : '#4b5563',
+                                    fontSize: 13,
+                                }}>
+                                    {hardwareSuccess
+                                        ? '✅ Box unlocked — sender photo captured automatically'
+                                        : boxOtpValidated && faceDetected
+                                            ? '🔓 OTP verified & face detected ✔  Finalising…'
+                                        : boxOtpValidated
+                                            ? '🔓 OTP verified ✔  Waiting for face detection…'
+                                        : lockEvent && !lockEvent?.otp_valid
+                                            ? '❌ Wrong OTP — ask sender to check their code'
+                                            : '🔒 Waiting for sender to enter Return OTP on the box…'}
+                                </Text>
                             </View>
-                        ) : (
-                            <Button mode="contained" icon="camera" onPress={handleCapturePhoto}>
-                                Open Camera
-                            </Button>
                         )}
+
+                        {/* Fallback: only shown when box camera failed */}
+                        {cameraFailed && (
+                            <>
+                                <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant, marginBottom: 12 }}>
+                                    The box camera failed. Use your phone to capture a photo of the sender as proof.
+                                </Text>
+                                {photoUri ? (
+                                    <View style={styles.photoPreview}>
+                                        <MaterialCommunityIcons name="check-circle" size={40} color="#4CAF50" />
+                                        <Text variant="bodyMedium" style={{ color: '#4CAF50', marginTop: 8 }}>Fallback photo captured</Text>
+                                        <Button mode="outlined" icon="camera-retake" onPress={handleCapturePhoto} style={{ marginTop: 12 }} compact>
+                                            Retake
+                                        </Button>
+                                    </View>
+                                ) : (
+                                    <Button mode="contained" icon="camera" onPress={handleCapturePhoto}>
+                                        Capture Fallback Photo
+                                    </Button>
+                                )}
+                            </>
+                        )}
+
                         {!!uploadError && (
                             <Text variant="bodySmall" style={{ color: theme.colors.error, marginTop: 8 }}>
                                 {uploadError}
@@ -375,8 +438,15 @@ export default function ReturnPackageScreen() {
                     <View style={styles.trackingRow}>
                         <MaterialCommunityIcons name="package-variant" size={20} color={theme.colors.primary} />
                         <Text variant="bodyMedium" style={{ marginLeft: 8, color: theme.colors.onSurfaceVariant }}>Tracking Number:</Text>
-                        <Text variant="bodyMedium" style={{ fontWeight: 'bold', marginLeft: 8, color: theme.colors.onSurface }}>{deliveryId}</Text>
                     </View>
+                    <Text
+                        variant="bodyMedium"
+                        numberOfLines={1}
+                        ellipsizeMode="middle"
+                        style={{ fontWeight: 'bold', marginTop: 4, color: theme.colors.onSurface }}
+                    >
+                        {deliveryId}
+                    </Text>
                 </Surface>
 
                 {/* ── Completion Card ── */}
@@ -399,11 +469,12 @@ export default function ReturnPackageScreen() {
                 {currentStep === 'NAVIGATING' && (
                     <Button
                         mode="contained"
-                        onPress={() => setCurrentStep('ARRIVED')}
+                        onPress={handleConfirmArrival}
                         style={{ flex: 1 }}
-                        icon="map-marker-check"
+                        icon={isInsideGeofence ? 'map-marker-check' : 'map-marker-off'}
+                        buttonColor={isInsideGeofence ? undefined : theme.colors.error}
                     >
-                        I've Arrived
+                        {isInsideGeofence ? "I've Arrived" : `Out of Range (${formatDistance()})`}
                     </Button>
                 )}
 
@@ -419,28 +490,15 @@ export default function ReturnPackageScreen() {
                     </Button>
                 )}
 
-                {currentStep === 'OTP_VERIFY' && (
-                    <Button
-                        mode="contained"
-                        onPress={handleVerifyOtp}
-                        style={{ flex: 1 }}
-                        icon="key-check"
-                        disabled={otpInput.length < 6}
-                    >
-                        Verify OTP
-                    </Button>
-                )}
-
-                {currentStep === 'PHOTO_CAPTURE' && (
+                {currentStep === 'PHOTO_CAPTURE' && cameraFailed && photoUri && (
                     <Button
                         mode="contained"
                         onPress={handleUploadAndComplete}
                         style={{ flex: 1 }}
                         icon="upload"
-                        disabled={!photoUri}
                         buttonColor="#4CAF50"
                     >
-                        Upload &amp; Complete Return
+                        Upload Fallback &amp; Complete
                     </Button>
                 )}
 
@@ -490,14 +548,10 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
     },
     rowHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 8 },
-    otpInput: {
-        height: 56,
-        fontSize: 28,
-        fontWeight: 'bold',
-        letterSpacing: 12,
-        borderWidth: 1,
+    statusBanner: {
         borderRadius: 8,
-        paddingHorizontal: 16,
+        padding: 12,
+        marginBottom: 8,
     },
     photoPreview: { alignItems: 'center', paddingVertical: 16 },
     centered: { alignItems: 'center', padding: 32 },

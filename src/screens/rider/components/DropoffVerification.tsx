@@ -256,43 +256,52 @@ export default function DropoffVerification({
                         </Text>
                         {distanceMeters !== null && (
                             <View style={styles.distanceBadge}>
-                                <Text style={styles.distanceText}>{distanceMeters}m away</Text>
+                                <Text style={styles.distanceText}>
+                                    {distanceMeters > 999
+                                        ? `${(distanceMeters / 1000).toFixed(1)} km away`
+                                        : `${distanceMeters}m away`}
+                                </Text>
                             </View>
                         )}
                     </View>
 
                     <View style={styles.checksContainer}>
-                        <View style={styles.checkItem}>
-                            <View style={[styles.checkCircle, isPhoneInside ? styles.bgSuccess : styles.bgError]}>
-                                <Text style={styles.checkIcon}>{isPhoneInside ? '✓' : '✗'}</Text>
+                        {/* Row 1: Phone GPS + Smart Box */}
+                        <View style={styles.checksRow}>
+                            <View style={styles.checkItem}>
+                                <View style={[styles.checkCircle, isPhoneInside ? styles.bgSuccess : styles.bgError]}>
+                                    <Text style={styles.checkIcon}>{isPhoneInside ? '✓' : '✗'}</Text>
+                                </View>
+                                <Text style={styles.checkLabel}>Phone GPS</Text>
                             </View>
-                            <Text style={styles.checkLabel}>Phone GPS</Text>
+                            <View style={styles.checkDivider} />
+                            <View style={styles.checkItem}>
+                                <View style={[
+                                    styles.checkCircle,
+                                    isBoxOffline ? styles.bgWarning : (isBoxInside ? styles.bgSuccess : styles.bgError)
+                                ]}>
+                                    <Text style={styles.checkIcon}>
+                                        {isBoxOffline ? '?' : (isBoxInside ? '✓' : '✗')}
+                                    </Text>
+                                </View>
+                                <Text style={styles.checkLabel}>{isBoxOffline ? 'Box Offline' : 'Smart Box'}</Text>
+                            </View>
                         </View>
-                        <View style={styles.checkDivider} />
-                        <View style={styles.checkItem}>
-                            <View style={[
-                                styles.checkCircle,
-                                isBoxOffline ? styles.bgWarning : (isBoxInside ? styles.bgSuccess : styles.bgError)
-                            ]}>
-                                <Text style={styles.checkIcon}>
-                                    {isBoxOffline ? '?' : (isBoxInside ? '✓' : '✗')}
-                                </Text>
+                        {/* Row 2: OTP Verified + Face Check */}
+                        <View style={styles.checksRow}>
+                            <View style={styles.checkItem}>
+                                <View style={[styles.checkCircle, boxOtpValidated ? styles.bgSuccess : (lockEvent && !lockEvent.otp_valid ? styles.bgError : styles.bgWarning)]}>
+                                    <Text style={styles.checkIcon}>{boxOtpValidated ? '✓' : (lockEvent && !lockEvent.otp_valid ? '✗' : '⏳')}</Text>
+                                </View>
+                                <Text style={styles.checkLabel}>OTP Verified</Text>
                             </View>
-                            <Text style={styles.checkLabel}>{isBoxOffline ? 'Box Offline' : 'Smart Box'}</Text>
-                        </View>
-                        <View style={styles.checkDivider} />
-                        <View style={styles.checkItem}>
-                            <View style={[styles.checkCircle, boxOtpValidated ? styles.bgSuccess : (lockEvent && !lockEvent.otp_valid ? styles.bgError : styles.bgWarning)]}>
-                                <Text style={styles.checkIcon}>{boxOtpValidated ? '✓' : (lockEvent && !lockEvent.otp_valid ? '✗' : '⏳')}</Text>
+                            <View style={styles.checkDivider} />
+                            <View style={styles.checkItem}>
+                                <View style={[styles.checkCircle, faceDetected ? styles.bgSuccess : (lockEvent?.otp_valid && !lockEvent?.face_detected ? styles.bgError : styles.bgWarning)]}>
+                                    <Text style={styles.checkIcon}>{faceDetected ? '✓' : (lockEvent?.otp_valid && !lockEvent?.face_detected ? '✗' : '⏳')}</Text>
+                                </View>
+                                <Text style={styles.checkLabel}>Face Check</Text>
                             </View>
-                            <Text style={styles.checkLabel}>OTP Verified</Text>
-                        </View>
-                        <View style={styles.checkDivider} />
-                        <View style={styles.checkItem}>
-                            <View style={[styles.checkCircle, faceDetected ? styles.bgSuccess : (lockEvent?.otp_valid && !lockEvent?.face_detected ? styles.bgError : styles.bgWarning)]}>
-                                <Text style={styles.checkIcon}>{faceDetected ? '✓' : (lockEvent?.otp_valid && !lockEvent?.face_detected ? '✗' : '⏳')}</Text>
-                            </View>
-                            <Text style={styles.checkLabel}>Face Check</Text>
                         </View>
                     </View>
 
@@ -431,7 +440,8 @@ const styles = StyleSheet.create({
     statusHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
     distanceBadge: { backgroundColor: '#F3F4F6', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12 },
     distanceText: { fontSize: 12, fontWeight: 'bold', color: '#4B5563' },
-    checksContainer: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginBottom: 20 },
+    checksContainer: { marginBottom: 20 },
+    checksRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginBottom: 8 },
     checkItem: { alignItems: 'center', width: 90 },
     checkCircle: {
         width: 48, height: 48, borderRadius: 24, alignItems: 'center', justifyContent: 'center',

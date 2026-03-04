@@ -352,7 +352,9 @@ export async function updateBoxState(
     const db = getFirebaseDatabase();
     const stateRef = ref(db, `hardware/${boxId}`);
 
-    await set(stateRef, {
+    // Use update() instead of set() so firmware-written fields (gps_fix, rssi,
+    // csq, op, last_updated, etc.) are preserved when the app patches status.
+    await update(stateRef, {
         ...state,
         last_heartbeat: serverTimestamp(),
     });
@@ -496,7 +498,7 @@ export async function assignOtpToBox(
     const db = getFirebaseDatabase();
     const hardwareRef = ref(db, `hardware/${boxId}`);
 
-    await set(hardwareRef, {
+    await update(hardwareRef, {
         ...assignment,
         otp_issued_at: serverTimestamp(), // EC-07: Server timestamp for accuracy
         last_heartbeat: serverTimestamp(),
@@ -523,7 +525,7 @@ export async function regenerateOtp(
     const db = getFirebaseDatabase();
     const hardwareRef = ref(db, `hardware/${boxId}`);
 
-    await set(hardwareRef, {
+    await update(hardwareRef, {
         otp_code: newOtpCode,
         otp_issued_at: serverTimestamp(),
         delivery_id: deliveryId,
@@ -618,7 +620,7 @@ export async function assignOtpWithCollisionCheck(
             const hardwareRef = ref(db, `hardware/${boxId}`);
             const timestamp = Date.now();
 
-            await set(hardwareRef, {
+            await update(hardwareRef, {
                 delivery_id: deliveryId,
                 otp_code: otpCode,
                 otp_issued_at: serverTimestamp(),
@@ -1132,8 +1134,8 @@ export async function assignDeliveryWithIdempotency(
     const issuedAt = Date.now();
     const idempotencyKey = generateIdempotencyKey(deliveryId, otpCode, issuedAt);
 
-    // Set with idempotency data
-    await set(hardwareRef, {
+    // Update with idempotency data (use update() to preserve firmware fields)
+    await update(hardwareRef, {
         delivery_id: deliveryId,
         otp_code: otpCode,
         otp_issued_at: serverTimestamp(),

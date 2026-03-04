@@ -109,7 +109,12 @@ export default function CancellationConfirmationScreen() {
                             Tracking Number
                         </Text>
                     </View>
-                    <Text variant="titleMedium" style={{ fontWeight: 'bold', marginTop: 4, color: theme.colors.onSurface }}>
+                    <Text
+                        variant="titleMedium"
+                        numberOfLines={1}
+                        ellipsizeMode="middle"
+                        style={{ fontWeight: 'bold', marginTop: 4, color: theme.colors.onSurface }}
+                    >
                         {deliveryId}
                     </Text>
                 </Surface>

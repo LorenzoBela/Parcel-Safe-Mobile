@@ -16,6 +16,25 @@ dayjs.extend(utc);
 dayjs.extend(timezone);
 const PH_TIMEZONE = 'Asia/Manila';
 
+// Copied from RiderDashboard — fixes double-shifted timestamps from Supabase
+const formatTimeWithHeuristic = (timeStr: string) => {
+    if (!timeStr || timeStr === '--:--') return '--:--';
+    if (timeStr.startsWith('T') && timeStr.includes(':')) {
+        const cleanTime = timeStr.substring(1).split('.')[0];
+        const dummyDate = dayjs(`2000-01-01T${cleanTime}`);
+        if (dummyDate.isValid()) return dummyDate.format('h:mm A');
+        return cleanTime;
+    }
+    const d = dayjs(timeStr);
+    if (!d.isValid()) return timeStr;
+    let phTime = d.tz(PH_TIMEZONE);
+    const now = dayjs().tz(PH_TIMEZONE);
+    if (phTime.diff(now, 'hour') > 2) {
+        phTime = phTime.subtract(8, 'hour');
+    }
+    return phTime.format('h:mm A');
+};
+
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 export default function AssignedDeliveriesScreen() {
@@ -24,7 +43,7 @@ export default function AssignedDeliveriesScreen() {
     const insets = useSafeAreaInsets();
     const [searchQuery, setSearchQuery] = useState('');
 
-    const [filter, setFilter] = useState('All'); // All, Active, Completed, Cancelled
+    const [filter, setFilter] = useState('All'); // All, ASSIGNED, PENDING, IN_TRANSIT, ARRIVED, RETURNING, TAMPERED, COMPLETED, CANCELLED
     const [dateFilter, setDateFilter] = useState('All'); // All, Today, Tomorrow, Week, Custom
     const [showFilters, setShowFilters] = useState(false); // Collapsible filter state
 
@@ -84,14 +103,35 @@ export default function AssignedDeliveriesScreen() {
                     snappedPickupLng: d.snapped_pickup_lng,
                     snappedDropoffLat: d.snapped_dropoff_lat,
                     snappedDropoffLng: d.snapped_dropoff_lng,
-                    date: d.created_at, // Use created_at as base date
-                    time: d.duration
-                        ? dayjs.utc(d.created_at).tz(PH_TIMEZONE).add(d.duration, 'second').format('h:mm A')
-                        : dayjs.utc(d.created_at).tz(PH_TIMEZONE).format('h:mm A'),
+                    date: d.created_at,
+                    time: d.accepted_at
+                        ? formatTimeWithHeuristic(d.accepted_at)
+                        : (d.created_at ? formatTimeWithHeuristic(d.created_at) : '--:--'),
                     distance: d.distance ? `${d.distance.toFixed(1)} km` : '--',
                     fare: d.estimated_fare ? `₱${d.estimated_fare}` : '--',
                     earnings: d.estimated_fare ? `₱${d.estimated_fare}` : '--',
-                    estimatedTime: d.duration ? `${Math.round(d.duration / 60)} min` : '-- min',
+                    estimatedTime: (() => {
+                        // Mirror TrackingClient: compute durationSec from DB or estimate from distance
+                        const durationSec: number | null = d.duration
+                            ? d.duration
+                            : d.distance
+                                ? Math.round((d.distance / 30) * 3600) // 30 km/h average
+                                : null;
+                        if (!durationSec) return '-- min';
+                        const mins = Math.round(durationSec / 60);
+                        const display = mins >= 60
+                            ? `${Math.floor(mins / 60)}h ${mins % 60}m`
+                            : `${mins} min`;
+                        // Arrival clock time: now + durationSec (same as TrackingClient's etaArrivalTime)
+                        const arrival = new Date(Date.now() + durationSec * 1000);
+                        const arrivalStr = arrival.toLocaleTimeString('en-US', {
+                            timeZone: 'Asia/Manila',
+                            hour: 'numeric',
+                            minute: '2-digit',
+                            hour12: true,
+                        });
+                        return `${d.duration ? '' : '~'}${display} (Arrives ~${arrivalStr})`;
+                    })(),
                     boxId: d.assigned_box_id || d.box_id,
                     pickupTime: d.created_at,
                     dropoffTime: d.accepted_at || d.created_at,
@@ -222,12 +262,8 @@ export default function AssignedDeliveriesScreen() {
         let matchesStatus = true;
         if (filter === 'All') {
             matchesStatus = true;
-        } else if (filter === 'Active') {
-            matchesStatus = ['ASSIGNED', 'PENDING', 'IN_TRANSIT', 'ARRIVED', 'TAMPERED', 'RETURNING'].includes(item.status);
-        } else if (filter === 'Completed') {
-            matchesStatus = item.status === 'COMPLETED';
-        } else if (filter === 'Cancelled') {
-            matchesStatus = item.status === 'CANCELLED';
+        } else {
+            matchesStatus = item.status === filter;
         }
 
         let matchesDate = true;
@@ -320,7 +356,7 @@ export default function AssignedDeliveriesScreen() {
                         {!['CANCELLED', 'COMPLETED'].includes(item.status) && (
                             <View style={{ flexDirection: 'row', alignItems: 'center', marginRight: 16 }}>
                                 <MaterialCommunityIcons name="clock-outline" size={16} color="#666" />
-                                <Text style={{ marginLeft: 4, color: '#666', fontSize: 12, fontWeight: 'bold' }}>ETA: {item.time || '--'}</Text>
+                                <Text style={{ marginLeft: 4, color: '#666', fontSize: 12, fontWeight: 'bold' }}>ETA: {item.estimatedTime || '-- min'}</Text>
                             </View>
                         )}
                         <View style={{ flexDirection: 'row', alignItems: 'center', marginRight: 16 }}>
@@ -331,7 +367,7 @@ export default function AssignedDeliveriesScreen() {
                 </Card.Content>
 
                 <Card.Actions style={[styles.cardActions, { flexDirection: 'column', paddingHorizontal: 16, paddingBottom: 16 }]}>
-                    {['ASSIGNED', 'PENDING', 'IN_TRANSIT', 'ARRIVED'].includes(item.status) && (
+                    {['ASSIGNED', 'PENDING', 'IN_TRANSIT', 'ARRIVED', 'RETURNING', 'TAMPERED'].includes(item.status) && (
                         <Button
                             mode="contained"
                             style={{ width: '100%', borderRadius: 8, marginBottom: 8 }}
@@ -363,18 +399,34 @@ export default function AssignedDeliveriesScreen() {
                             buttonColor={theme.colors.primary}
                             icon="navigation"
                         >
-                            {['PICKED_UP', 'IN_TRANSIT', 'ARRIVED'].includes(item.status) ? 'Resume Trip' : 'Start Trip'}
+                            {['IN_TRANSIT', 'ARRIVED', 'RETURNING', 'TAMPERED'].includes(item.status) ? 'Resume Trip' : 'Start Trip'}
                         </Button>
                     )}
 
                     <View style={{ flexDirection: 'row', width: '100%', gap: 8 }}>
-                        {item.phone !== 'N/A' && (
+                        {(item.senderPhone || (item.phone && item.phone !== 'N/A')) && (
                             <Button
                                 mode="outlined"
-                                onPress={() => Linking.openURL(`tel:${item.phone}`)}
                                 icon="phone"
                                 style={{ flex: 1, borderColor: theme.colors.primary }}
                                 textColor={theme.colors.primary}
+                                onPress={() => {
+                                    const options: { text: string; onPress: () => void }[] = [];
+                                    if (item.senderPhone) {
+                                        options.push({
+                                            text: `Sender${item.senderName ? ` (${item.senderName})` : ''}`,
+                                            onPress: () => Linking.openURL(`tel:${item.senderPhone}`),
+                                        });
+                                    }
+                                    if (item.phone && item.phone !== 'N/A') {
+                                        options.push({
+                                            text: `Recipient${item.recipientName ? ` (${item.recipientName})` : ''}`,
+                                            onPress: () => Linking.openURL(`tel:${item.phone}`),
+                                        });
+                                    }
+                                    options.push({ text: 'Cancel', onPress: () => {} });
+                                    Alert.alert('Who do you want to call?', undefined, options);
+                                }}
                             >
                                 Call
                             </Button>
@@ -433,7 +485,7 @@ export default function AssignedDeliveriesScreen() {
 
                 <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 4 }}>
                     <Text style={{ fontSize: 10, color: theme.colors.onSurfaceVariant }}>
-                        {dayjs(item.date).format('MM/DD')} • {item.time}
+                        {dayjs(item.date).tz(PH_TIMEZONE).format('MM/DD')} • {item.time}
                     </Text>
                     <Text style={{ fontSize: 10, color: theme.colors.onSurfaceVariant }}>{item.distance} • {item.earnings}</Text>
                 </View>
@@ -475,15 +527,29 @@ export default function AssignedDeliveriesScreen() {
                     <View style={styles.filterSection}>
                         <Text variant="labelMedium" style={{ marginBottom: 8, color: theme.colors.onSurfaceVariant }}>Status</Text>
                         <View style={styles.filterRow}>
-                            {['All', 'Active', 'Completed', 'Cancelled'].map((status) => (
+                            {[
+                                { key: 'All', label: 'All' },
+                                { key: 'ASSIGNED', label: 'Assigned' },
+                                { key: 'PENDING', label: 'Pending' },
+                                { key: 'IN_TRANSIT', label: 'In Transit' },
+                                { key: 'ARRIVED', label: 'Arrived' },
+                                { key: 'RETURNING', label: 'Returning' },
+                                { key: 'TAMPERED', label: 'Tampered' },
+                                { key: 'COMPLETED', label: 'Completed' },
+                                { key: 'CANCELLED', label: 'Cancelled' },
+                            ].map(({ key, label }) => (
                                 <Chip
-                                    key={status}
-                                    selected={filter === status}
-                                    onPress={() => setFilter(status)}
-                                    style={styles.filterChip}
+                                    key={key}
+                                    selected={filter === key}
+                                    onPress={() => setFilter(key)}
+                                    style={[
+                                        styles.filterChip,
+                                        filter === key && { backgroundColor: getStatusColor(key) + '33' },
+                                    ]}
+                                    selectedColor={getStatusColor(key)}
                                     showSelectedOverlay
                                 >
-                                    {status}
+                                    {label}
                                 </Chip>
                             ))}
                         </View>

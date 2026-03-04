@@ -115,7 +115,11 @@ export default function PickupVerification({
                         </Text>
                         {distanceMeters !== null && (
                             <View style={styles.distanceBadge}>
-                                <Text style={styles.distanceText}>{distanceMeters}m away</Text>
+                                <Text style={styles.distanceText}>
+                                    {distanceMeters > 999
+                                        ? `${(distanceMeters / 1000).toFixed(1)} km away`
+                                        : `${distanceMeters}m away`}
+                                </Text>
                             </View>
                         )}
                     </View>
