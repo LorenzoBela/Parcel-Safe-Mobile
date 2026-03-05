@@ -3,6 +3,7 @@ import { Alert, StyleSheet, View } from 'react-native';
 import { Button, Chip, Divider, Text, useTheme } from 'react-native-paper';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import * as Location from 'expo-location';
 import useAuthStore from '../../store/authStore';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
@@ -59,6 +60,8 @@ export default function PairBoxScreen() {
     const [pairingState, setPairingState] = useState<BoxPairingState | null>(null);
     const [remainingMs, setRemainingMs] = useState<number | null>(null);
     const [expirationWarning, setExpirationWarning] = useState(false);
+    const [driftWarning, setDriftWarning] = useState(false);
+    const [driftDistanceKm, setDriftDistanceKm] = useState<string | null>(null);
 
     const canScan = permission?.granted && !scanLocked && !isPairing;
 
@@ -82,12 +85,28 @@ export default function PairBoxScreen() {
         startPairingExpirationMonitor(authedUserId, (event) => {
             if (event.type === 'EXPIRED') {
                 setExpirationWarning(false);
+                setDriftWarning(false);
                 Alert.alert(
                     'Session Expired',
                     `Your pairing with Box ${event.boxId} has expired and has been automatically removed.`,
                 );
             } else if (event.type === 'WARNING') {
                 setExpirationWarning(true);
+            } else if (event.type === 'DRIFT_EXPIRED') {
+                setDriftWarning(false);
+                setExpirationWarning(false);
+                const distKm = event.distanceMeters
+                    ? `${(event.distanceMeters / 1000).toFixed(1)} km`
+                    : 'far';
+                Alert.alert(
+                    'Pairing Removed — Too Far',
+                    `Your pairing with Box ${event.boxId} was automatically removed because you and the box are ${distKm} apart.`,
+                );
+            } else if (event.type === 'DRIFT_WARNING') {
+                setDriftWarning(true);
+                if (event.distanceMeters) {
+                    setDriftDistanceKm((event.distanceMeters / 1000).toFixed(1));
+                }
             }
         });
 
@@ -147,13 +166,40 @@ export default function PairBoxScreen() {
 
         try {
             setIsPairing(true);
+
+            // Get rider's current GPS for proximity check
+            // Admin accounts bypass the proximity check
+            let riderLocation: { latitude: number; longitude: number } | undefined;
+            const isAdmin = authedRole === 'admin';
+
+            if (!isAdmin) {
+                try {
+                    const { status } = await Location.requestForegroundPermissionsAsync();
+                    if (status === 'granted') {
+                        const position = await Location.getCurrentPositionAsync({
+                            accuracy: Location.Accuracy.Balanced,
+                        });
+                        riderLocation = {
+                            latitude: position.coords.latitude,
+                            longitude: position.coords.longitude,
+                        };
+                    }
+                } catch {
+                    // If location fails, proceed without proximity check
+                    console.warn('[PairBox] Could not get rider location for proximity check');
+                }
+            }
+
             await pairBoxWithRider({
                 boxId: scannedPayload.boxId,
                 riderId: authedUserId,
                 mode: derivedMode,
                 pairToken: scannedPayload.token,
                 sessionHours: derivedMode === 'SESSION' ? derivedSessionHours : undefined,
+                riderLocation,
+                skipProximityCheck: isAdmin,
             });
+            setDriftWarning(false);
             Alert.alert('Paired', `Box ${scannedPayload.boxId} is now linked to your account.`);
         } catch (error) {
             const message = error instanceof Error ? error.message : 'Please try scanning again.';
@@ -224,6 +270,21 @@ export default function PairBoxScreen() {
                     Scan the QR on the box to link it to your account.
                 </Text>
             </View>
+
+            {/* Drift Warning Banner */}
+            {driftWarning && isPairingActive(pairingState) && (
+                <View style={[styles.driftBanner, { backgroundColor: c.orangeBg, borderColor: c.orangeText }]}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                        <MaterialCommunityIcons name="map-marker-alert-outline" size={20} color={c.orangeText} />
+                        <Text style={{ marginLeft: 8, fontWeight: 'bold', color: c.orangeText, flex: 1 }}>
+                            Far from your box{driftDistanceKm ? ` (${driftDistanceKm} km away)` : ''}
+                        </Text>
+                    </View>
+                    <Text style={{ marginTop: 4, fontSize: 12, color: c.orangeText }}>
+                        You appear to be far from your paired box. If this continues, the pairing will be automatically removed.
+                    </Text>
+                </View>
+            )}
 
             {/* Show current pairing status if already paired */}
             {isPairingActive(pairingState) && !scannedPayload && (
@@ -472,5 +533,11 @@ const styles = StyleSheet.create({
         paddingVertical: 6,
         paddingHorizontal: 10,
         borderRadius: 8,
+    },
+    driftBanner: {
+        borderWidth: 1,
+        borderRadius: 12,
+        padding: 12,
+        marginBottom: 12,
     },
 });

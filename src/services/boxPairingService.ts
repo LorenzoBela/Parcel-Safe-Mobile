@@ -1,8 +1,10 @@
-import { getFirebaseDatabase } from './firebaseClient';
+import { getFirebaseDatabase, fetchBoxLocationOnce } from './firebaseClient';
 import { onValue, off, ref, set, serverTimestamp, get } from 'firebase/database';
 import { setSmartBoxAssignedUser, supabase } from './supabaseClient';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { AppState, type NativeEventSubscription } from 'react-native';
+import { calculateDistanceMeters } from '../utils/geoUtils';
+import * as Location from 'expo-location';
 
 export type PairingMode = 'ONE_TIME' | 'SESSION';
 export type PairingStatus = 'ACTIVE' | 'EXPIRED' | 'REVOKED';
@@ -27,12 +29,14 @@ export interface PairingQrPayload {
     sessionHours?: number;
 }
 
-/** Callback fired when a pairing is about to expire or has expired. */
+/** Callback fired when a pairing is about to expire, has expired, or drift is detected. */
 export type ExpirationWarningCallback = (event: {
-    type: 'WARNING' | 'EXPIRED';
+    type: 'WARNING' | 'EXPIRED' | 'DRIFT_WARNING' | 'DRIFT_EXPIRED';
     boxId: string;
     riderId: string;
     remainingMs: number;
+    /** Distance in meters between rider and box (only for DRIFT_* events). */
+    distanceMeters?: number;
 }) => void;
 
 const DEFAULT_SESSION_HOURS = 24;
@@ -41,6 +45,20 @@ const PAIRED_BOX_CACHE_KEY_PREFIX = 'parcelSafe:lastPairedBoxId:';
 const EXPIRATION_CHECK_INTERVAL_MS = 60_000; // 1 minute
 /** Warn the rider this many ms before expiration. */
 const EXPIRATION_WARNING_THRESHOLD_MS = 30 * 60 * 1000; // 30 minutes
+
+// ======================== Proximity Safeguard Constants ========================
+
+/** Maximum distance (meters) between rider and box to allow pairing. */
+export const PAIRING_MAX_DISTANCE_M = 500;
+
+/** Warn when rider and box drift apart by this distance (meters). */
+export const DRIFT_WARNING_THRESHOLD_M = 5_000; // 5 km
+
+/** Auto-unpair when rider and box are this far apart (meters). */
+export const DRIFT_UNPAIR_THRESHOLD_M = 50_000; // 50 km
+
+/** Number of consecutive checks exceeding the unpair threshold before acting. */
+const DRIFT_SUSTAINED_CHECKS = 3;
 
 function isValidFirebaseKeySegment(value: string): boolean {
     // RTDB disallows: . # $ [ ] /
@@ -224,14 +242,56 @@ export function subscribeToBoxPairing(
     return () => off(pairingRef);
 }
 
+// ======================== Proximity Validation ========================
+
+/**
+ * Validate that a rider is physically close to the box before pairing.
+ *
+ * @returns The distance in meters between rider and box.
+ * @throws Error if the rider is too far from the box (> PAIRING_MAX_DISTANCE_M).
+ */
+export async function validatePairingProximity(
+    riderLat: number,
+    riderLng: number,
+    boxId: string,
+): Promise<number> {
+    const boxLocation = await fetchBoxLocationOnce(boxId);
+
+    // Box has never reported any location — can't validate.
+    // Allow pairing (box may be new / never powered on).
+    if (!boxLocation) {
+        console.log('[Pairing] No box location data available, skipping proximity check');
+        return 0;
+    }
+
+    const distanceM = calculateDistanceMeters(
+        riderLat, riderLng,
+        boxLocation.latitude, boxLocation.longitude,
+    );
+
+    if (distanceM > PAIRING_MAX_DISTANCE_M) {
+        const distKm = (distanceM / 1000).toFixed(1);
+        throw new Error(
+            `You're too far from this box (${distKm} km away). ` +
+            `You need to be within ${PAIRING_MAX_DISTANCE_M}m to pair.`
+        );
+    }
+
+    return distanceM;
+}
+
 export async function pairBoxWithRider(params: {
     boxId: string;
     riderId: string;
     mode: PairingMode;
     pairToken?: string;
     sessionHours?: number;
+    /** Rider's current GPS, used for proximity check. Omit to skip. */
+    riderLocation?: { latitude: number; longitude: number };
+    /** Skip proximity check (for admin remote-pairing). */
+    skipProximityCheck?: boolean;
 }): Promise<void> {
-    const { boxId, riderId, mode, pairToken, sessionHours } = params;
+    const { boxId, riderId, mode, pairToken, sessionHours, riderLocation, skipProximityCheck } = params;
 
     if (!boxId || typeof boxId !== 'string' || !isValidFirebaseKeySegment(boxId)) {
         throw new Error('Invalid boxId for pairing');
@@ -250,6 +310,15 @@ export async function pairBoxWithRider(params: {
         if (!Number.isFinite(hours) || hours <= 0) {
             throw new Error('Invalid session duration');
         }
+    }
+
+    // Safeguard 1: Proximity check
+    if (riderLocation && !skipProximityCheck) {
+        await validatePairingProximity(
+            riderLocation.latitude,
+            riderLocation.longitude,
+            boxId,
+        );
     }
 
     const db = getFirebaseDatabase();
@@ -386,6 +455,10 @@ let _expirationWarningCb: ExpirationWarningCallback | null = null;
  * It also fires an `ExpirationWarningCallback` 30 minutes before expiry so
  * the UI can alert the rider.
  *
+ * Safeguard 2: Additionally checks the distance between the rider's phone GPS
+ * and the box's last known GPS. Warns at 5 km and auto-unpairs at 50 km if
+ * sustained for 3 consecutive checks.
+ *
  * Call `stopPairingExpirationMonitor()` (or pass a different riderId) to stop.
  */
 export function startPairingExpirationMonitor(
@@ -399,6 +472,9 @@ export function startPairingExpirationMonitor(
     _monitorRiderId = riderId;
     _expirationWarningCb = onWarning ?? null;
 
+    // Safeguard 2: Track consecutive drift violations
+    let consecutiveDriftViolations = 0;
+
     const checkExpiration = async () => {
         try {
             const db = getFirebaseDatabase();
@@ -408,6 +484,8 @@ export function startPairingExpirationMonitor(
             if (!state || state.status !== 'ACTIVE') return;
 
             const now = Date.now();
+
+            // ---- Session Expiration Check ----
             if (state.expires_at) {
                 const remaining = state.expires_at - now;
 
@@ -449,6 +527,7 @@ export function startPairingExpirationMonitor(
                         riderId,
                         remainingMs: 0,
                     });
+                    return; // No need to check drift if already expired
                 } else if (remaining <= EXPIRATION_WARNING_THRESHOLD_MS) {
                     _expirationWarningCb?.({
                         type: 'WARNING',
@@ -457,6 +536,67 @@ export function startPairingExpirationMonitor(
                         remainingMs: remaining,
                     });
                 }
+            }
+
+            // ---- Safeguard 2: Drift Detection ----
+            try {
+                // Use getLastKnownPositionAsync — cheap, no fresh GPS fix needed
+                const riderPos = await Location.getLastKnownPositionAsync();
+                if (!riderPos) return; // Can't check without rider GPS
+
+                const boxLocation = await fetchBoxLocationOnce(state.box_id);
+                if (!boxLocation) return; // Box has never reported GPS
+
+                const distanceM = calculateDistanceMeters(
+                    riderPos.coords.latitude, riderPos.coords.longitude,
+                    boxLocation.latitude, boxLocation.longitude,
+                );
+
+                if (distanceM > DRIFT_UNPAIR_THRESHOLD_M) {
+                    consecutiveDriftViolations++;
+                    console.warn(
+                        `[Pairing] Drift detected: ${(distanceM / 1000).toFixed(1)} km apart ` +
+                        `(${consecutiveDriftViolations}/${DRIFT_SUSTAINED_CHECKS} checks)`
+                    );
+
+                    if (consecutiveDriftViolations >= DRIFT_SUSTAINED_CHECKS) {
+                        // Sustained extreme drift — auto-unpair
+                        await markPairingExpired(state.box_id, riderId);
+                        _expirationWarningCb?.({
+                            type: 'DRIFT_EXPIRED',
+                            boxId: state.box_id,
+                            riderId,
+                            remainingMs: 0,
+                            distanceMeters: Math.round(distanceM),
+                        });
+                        consecutiveDriftViolations = 0;
+                    } else {
+                        _expirationWarningCb?.({
+                            type: 'DRIFT_WARNING',
+                            boxId: state.box_id,
+                            riderId,
+                            remainingMs: 0,
+                            distanceMeters: Math.round(distanceM),
+                        });
+                    }
+                } else if (distanceM > DRIFT_WARNING_THRESHOLD_M) {
+                    // Soft warning zone — don't increment unpair counter
+                    _expirationWarningCb?.({
+                        type: 'DRIFT_WARNING',
+                        boxId: state.box_id,
+                        riderId,
+                        remainingMs: 0,
+                        distanceMeters: Math.round(distanceM),
+                    });
+                    // Reset unpair counter since we're in warning zone, not critical
+                    consecutiveDriftViolations = 0;
+                } else {
+                    // Distance is healthy — reset counters
+                    consecutiveDriftViolations = 0;
+                }
+            } catch (driftErr) {
+                // Drift check is non-critical; never block the expiration monitor
+                console.warn('[Pairing] Drift check failed (non-critical):', driftErr);
             }
         } catch {
             // Swallow -- will retry next interval.

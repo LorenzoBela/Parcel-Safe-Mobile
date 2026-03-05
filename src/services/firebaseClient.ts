@@ -308,6 +308,46 @@ export async function writePhoneLocation(
 }
 
 /**
+ * Fetch the box's last known location from Firebase (one-time read).
+ *
+ * Normalizes split-path (`{ box, phone }`) and legacy flat structures.
+ * Prefers the `box` sub-node when available; falls back to `phone` or flat data.
+ * Returns `null` if the box has never reported any location.
+ */
+export async function fetchBoxLocationOnce(boxId: string): Promise<LocationData | null> {
+    const db = getFirebaseDatabase();
+    const locationRef = ref(db, `locations/${boxId}`);
+
+    const snapshot = await get(locationRef);
+    const rawData = snapshot.val();
+    if (!rawData) return null;
+
+    // New split-path structure: { box: { latitude, ... }, phone: { latitude, ... } }
+    if (rawData.box != null || rawData.phone != null) {
+        const sub = rawData.box ?? rawData.phone;
+        if (!sub) return null;
+        return {
+            ...sub,
+            latitude: Number(sub.latitude ?? sub.lat),
+            longitude: Number(sub.longitude ?? sub.lng),
+            source: sub.source || (rawData.box ? 'box' : 'phone'),
+        } as LocationData;
+    }
+
+    // Legacy flat structure
+    if (rawData.latitude != null) {
+        return {
+            ...rawData,
+            latitude: Number(rawData.latitude ?? rawData.lat),
+            longitude: Number(rawData.longitude ?? rawData.lng),
+            source: rawData.source || 'box',
+        } as LocationData;
+    }
+
+    return null;
+}
+
+/**
  * Subscribe to box state updates
  */
 export function subscribeToBoxState(
