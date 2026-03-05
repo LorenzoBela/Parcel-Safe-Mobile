@@ -100,6 +100,11 @@ export default function BookServiceScreen() {
     // Saved Addresses
     const [savedAddresses, setSavedAddresses] = useState<any[]>([]);
 
+    // Saved Contacts (synced from profiles.contact_defaults)
+    const [savedContacts, setSavedContacts] = useState<{ id: string; name: string; phone: string }[]>([]);
+    const [showSenderPicker, setShowSenderPicker] = useState(false);
+    const [showReceiverPicker, setShowReceiverPicker] = useState(false);
+
     // Which input is currently focused/active for map selection
     const [activeField, setActiveField] = useState<'pickup' | 'dropoff'>('pickup');
 
@@ -363,7 +368,7 @@ export default function BookServiceScreen() {
 
             const { data } = await supabase!
                 .from('profiles')
-                .select('saved_addresses')
+                .select('saved_addresses, contact_defaults')
                 .eq('id', userId)
                 .single();
 
@@ -373,15 +378,38 @@ export default function BookServiceScreen() {
                     : data.saved_addresses;
                 setSavedAddresses(Array.isArray(parsed) ? parsed : []);
             }
+
+            // Also load saved contacts for quick-fill
+            if (data?.contact_defaults) {
+                const cd = typeof data.contact_defaults === 'string'
+                    ? JSON.parse(data.contact_defaults)
+                    : data.contact_defaults;
+                setSavedContacts(Array.isArray(cd?.contacts) ? cd.contacts : []);
+            }
         };
         fetchSavedAddresses();
     }, [userId]);
 
+    // Quick-save a contact on the fly from the booking screen
+    const handleQuickSaveContact = async (name: string, phone: string) => {
+        if (!name.trim() || !phone.trim() || !userId) return;
+        if (savedContacts.some(c => c.name === name.trim() && c.phone === phone.trim())) return;
+        const newContact = { id: Date.now().toString(), name: name.trim(), phone: phone.trim() };
+        const updated = [...savedContacts, newContact];
+        setSavedContacts(updated);
+        try {
+            await supabase!.from('profiles').update({ contact_defaults: { contacts: updated } }).eq('id', userId);
+        } catch (e) {
+            console.error('Failed to save contact:', e);
+        }
+    };
+
     // Suggestion Selection Handler for Saved Addresses
     const handleSelectSavedAddress = async (addr: any) => {
+        // Support both key formats for cross-platform sync (mobile: latitude/longitude, web: lat/lng)
         const rawCoords = {
-            latitude: addr.latitude || 0,
-            longitude: addr.longitude || 0,
+            latitude: addr.latitude ?? addr.lat ?? 0,
+            longitude: addr.longitude ?? addr.lng ?? 0,
         };
 
         if (!rawCoords.latitude || !rawCoords.longitude) {
@@ -775,7 +803,13 @@ export default function BookServiceScreen() {
             id: item.id || Date.now().toString(),
             label: item.name || 'Saved Place',
             address: item.address || item.name,
-            ...(coords && { latitude: coords.latitude, longitude: coords.longitude })
+            // Write both key formats for cross-platform sync (mobile: latitude/longitude, web: lat/lng)
+            ...(coords && {
+                latitude: coords.latitude,
+                longitude: coords.longitude,
+                lat: coords.latitude,
+                lng: coords.longitude,
+            })
         };
 
         const nextSavedAddresses = existingIndex >= 0
@@ -906,6 +940,11 @@ export default function BookServiceScreen() {
             return;
         }
 
+        if (senderName.trim().toLowerCase() === recipientName.trim().toLowerCase() && senderPhone.trim() === recipientPhone.trim()) {
+            Alert.alert('Same Contact', 'Sender and receiver cannot be the same person with the same number.');
+            return;
+        }
+
         // Block new bookings if there is already an active one
         if (hasActiveBooking) {
             Alert.alert(
@@ -1016,20 +1055,97 @@ export default function BookServiceScreen() {
                         <View style={{ width: 40 }} />
                     </View>
                     <ScrollView style={{ padding: 20 }} showsVerticalScrollIndicator={false}>
+                        {/* Saved contacts quick-fill — compact dropdowns */}
+                        {savedContacts.length > 0 ? (
+                            <View style={{ flexDirection: 'row', gap: 8, marginBottom: 16 }}>
+                                {/* Fill Sender dropdown */}
+                                <View style={{ flex: 1 }}>
+                                    <TouchableOpacity
+                                        onPress={() => { setShowSenderPicker(!showSenderPicker); setShowReceiverPicker(false); }}
+                                        style={{ backgroundColor: '#000', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}
+                                    >
+                                        <Text style={{ fontSize: 12, color: '#fff', fontWeight: '600' }}>Fill Sender</Text>
+                                        <MaterialCommunityIcons name={showSenderPicker ? 'chevron-up' : 'chevron-down'} size={16} color="#fff" />
+                                    </TouchableOpacity>
+                                    {showSenderPicker && (
+                                        <View style={{ backgroundColor: '#f5f5f5', borderRadius: 10, marginTop: 4, overflow: 'hidden', borderWidth: 1, borderColor: '#e0e0e0' }}>
+                                            {savedContacts.map((c) => (
+                                                <TouchableOpacity
+                                                    key={c.id}
+                                                    onPress={() => { setSenderName(c.name); setSenderPhone(c.phone); setShowSenderPicker(false); }}
+                                                    style={{ paddingHorizontal: 12, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#e0e0e0' }}
+                                                >
+                                                    <Text style={{ fontSize: 13, fontWeight: '600', color: '#212121' }}>{c.name}</Text>
+                                                    <Text style={{ fontSize: 11, color: '#757575' }}>{c.phone}</Text>
+                                                </TouchableOpacity>
+                                            ))}
+                                        </View>
+                                    )}
+                                </View>
+                                {/* Fill Receiver dropdown */}
+                                <View style={{ flex: 1 }}>
+                                    <TouchableOpacity
+                                        onPress={() => { setShowReceiverPicker(!showReceiverPicker); setShowSenderPicker(false); }}
+                                        style={{ backgroundColor: '#000', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}
+                                    >
+                                        <Text style={{ fontSize: 12, color: '#fff', fontWeight: '600' }}>Fill Receiver</Text>
+                                        <MaterialCommunityIcons name={showReceiverPicker ? 'chevron-up' : 'chevron-down'} size={16} color="#fff" />
+                                    </TouchableOpacity>
+                                    {showReceiverPicker && (
+                                        <View style={{ backgroundColor: '#f5f5f5', borderRadius: 10, marginTop: 4, overflow: 'hidden', borderWidth: 1, borderColor: '#e0e0e0' }}>
+                                            {savedContacts.map((c) => (
+                                                <TouchableOpacity
+                                                    key={c.id}
+                                                    onPress={() => { setRecipientName(c.name); setRecipientPhone(c.phone); setShowReceiverPicker(false); }}
+                                                    style={{ paddingHorizontal: 12, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#e0e0e0' }}
+                                                >
+                                                    <Text style={{ fontSize: 13, fontWeight: '600', color: '#212121' }}>{c.name}</Text>
+                                                    <Text style={{ fontSize: 11, color: '#757575' }}>{c.phone}</Text>
+                                                </TouchableOpacity>
+                                            ))}
+                                        </View>
+                                    )}
+                                </View>
+                            </View>
+                        ) : (
+                            <View style={{ marginBottom: 12, padding: 12, backgroundColor: '#f5f5f5', borderRadius: 12, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                                <MaterialCommunityIcons name="account-plus-outline" size={18} color="#9e9e9e" />
+                                <Text style={{ fontSize: 12, color: '#757575', flex: 1 }}>Fill in contacts below and tap "Save" to quick-fill next time.</Text>
+                            </View>
+                        )}
+
                         <View style={styles.formSection}>
                             <Text variant="titleSmall" style={styles.sectionTitle}>Pickup Contact</Text>
                             <View style={styles.inputRow}>
                                 <TextInput mode="flat" placeholder="Sender Name" value={senderName} onChangeText={setSenderName} style={styles.modernInput} activeUnderlineColor="#000" underlineColor="#E0E0E0" />
-                                <TextInput mode="flat" placeholder="09XXXXXXXXX" value={senderPhone} onChangeText={(value) => setSenderPhone(normalizePhoneInput(value))} keyboardType="phone-pad" style={styles.modernInput} activeUnderlineColor="#000" underlineColor="#E0E0E0" maxLength={11} />
+                                <TextInput mode="flat" placeholder="09XXXXXXXXX" value={senderPhone} onChangeText={(value) => setSenderPhone(normalizePhoneInput(value))} keyboardType="phone-pad" style={styles.modernInput} activeUnderlineColor="#E0E0E0" maxLength={11} />
                             </View>
+                            {senderName.trim() && senderPhone.length === 11 && !savedContacts.some(c => c.name === senderName.trim() && c.phone === senderPhone.trim()) && (
+                                <TouchableOpacity
+                                    onPress={() => handleQuickSaveContact(senderName, senderPhone)}
+                                    style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 4 }}
+                                >
+                                    <MaterialCommunityIcons name="content-save-outline" size={14} color="#1565c0" />
+                                    <Text style={{ fontSize: 11, color: '#1565c0', fontWeight: '600' }}>Save sender to contacts</Text>
+                                </TouchableOpacity>
+                            )}
                         </View>
 
                         <View style={styles.formSection}>
                             <Text variant="titleSmall" style={styles.sectionTitle}>Drop-off Contact</Text>
                             <View style={styles.inputRow}>
                                 <TextInput mode="flat" placeholder="Recipient Name" value={recipientName} onChangeText={setRecipientName} style={styles.modernInput} activeUnderlineColor="#000" underlineColor="#E0E0E0" />
-                                <TextInput mode="flat" placeholder="09XXXXXXXXX" value={recipientPhone} onChangeText={(value) => setRecipientPhone(normalizePhoneInput(value))} keyboardType="phone-pad" style={styles.modernInput} activeUnderlineColor="#000" underlineColor="#E0E0E0" maxLength={11} />
+                                <TextInput mode="flat" placeholder="09XXXXXXXXX" value={recipientPhone} onChangeText={(value) => setRecipientPhone(normalizePhoneInput(value))} keyboardType="phone-pad" style={styles.modernInput} activeUnderlineColor="#E0E0E0" maxLength={11} />
                             </View>
+                            {recipientName.trim() && recipientPhone.length === 11 && !savedContacts.some(c => c.name === recipientName.trim() && c.phone === recipientPhone.trim()) && (
+                                <TouchableOpacity
+                                    onPress={() => handleQuickSaveContact(recipientName, recipientPhone)}
+                                    style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 4 }}
+                                >
+                                    <MaterialCommunityIcons name="content-save-outline" size={14} color="#c62828" />
+                                    <Text style={{ fontSize: 11, color: '#c62828', fontWeight: '600' }}>Save receiver to contacts</Text>
+                                </TouchableOpacity>
+                            )}
                         </View>
 
                         <View style={styles.formSection}>

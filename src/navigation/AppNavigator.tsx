@@ -47,6 +47,7 @@ import TermsOfServiceScreen from '../screens/common/TermsOfServiceScreen';
 import PrivacyPolicyScreen from '../screens/common/PrivacyPolicyScreen';
 import EditProfileScreen from '../screens/common/EditProfileScreen';
 import SavedAddressesScreen from '../screens/common/SavedAddressesScreen';
+import SavedContactsScreen from '../screens/common/SavedContactsScreen';
 
 const Stack = createStackNavigator();
 const Tab = createBottomTabNavigator();
@@ -183,7 +184,7 @@ const AdminNavigator = () => {
 export default function AppNavigator() {
     // Layer 4: Trigger Firebase-to-Supabase sync on app startup
     useEffect(() => {
-        triggerDeliverySync().catch(() => {});
+        triggerDeliverySync().catch(() => { });
     }, []);
 
     return (
@@ -227,6 +228,7 @@ export default function AppNavigator() {
                 <Stack.Screen name="PrivacyPolicy" component={PrivacyPolicyScreen} options={{ headerShown: true, title: 'Privacy Policy' }} />
                 <Stack.Screen name="EditProfile" component={EditProfileScreen} options={{ headerShown: true, title: 'Edit Profile' }} />
                 <Stack.Screen name="SavedAddresses" component={SavedAddressesScreen} options={{ headerShown: true, title: 'Saved Addresses' }} />
+                <Stack.Screen name="SavedContacts" component={SavedContactsScreen} options={{ headerShown: true, title: 'Saved Contacts' }} />
 
                 {/* EC-81: Theft Detection Screens */}
                 <Stack.Screen name="TheftAlert" component={TheftAlertScreen} options={{ headerShown: true, title: 'Box Security' }} />

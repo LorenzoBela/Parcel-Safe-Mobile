@@ -111,6 +111,13 @@ export default function ProfileScreen() {
                         right={props => <List.Icon {...props} icon="chevron-right" />}
                         onPress={() => navigation.navigate('SavedAddresses')}
                     />
+                    <List.Item
+                        title="Saved Contacts"
+                        description="Quick-fill sender/recipient when booking"
+                        left={props => <List.Icon {...props} icon="account-multiple" />}
+                        right={props => <List.Icon {...props} icon="chevron-right" />}
+                        onPress={() => navigation.navigate('SavedContacts')}
+                    />
                 </List.Section>
             </View>
         </ScrollView>

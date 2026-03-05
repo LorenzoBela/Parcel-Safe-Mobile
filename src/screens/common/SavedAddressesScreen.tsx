@@ -101,7 +101,13 @@ export default function SavedAddressesScreen() {
             address: addressText,
             details,
             isDefault: isDefault,
-            ...(locationCoords && { latitude: locationCoords.latitude, longitude: locationCoords.longitude })
+            // Write both key formats for cross-platform sync (mobile uses latitude/longitude, web uses lat/lng)
+            ...(locationCoords && {
+                latitude: locationCoords.latitude,
+                longitude: locationCoords.longitude,
+                lat: locationCoords.latitude,
+                lng: locationCoords.longitude,
+            })
         };
 
         let updatedList;
