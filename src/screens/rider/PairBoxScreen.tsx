@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Alert, StyleSheet, View } from 'react-native';
-import { Button, Card, Chip, Divider, Surface, Text, useTheme } from 'react-native-paper';
+import { Button, Chip, Divider, Text, useTheme } from 'react-native-paper';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import useAuthStore from '../../store/authStore';
@@ -26,9 +26,27 @@ const PAIRED_BOX_CACHE_KEY_PREFIX = 'parcelSafe:lastPairedBoxId:';
 
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { parseUTCString } from '../../utils/date';
+import { useAppTheme } from '../../context/ThemeContext';
+
+const lightC = {
+    bg: '#F7F7F8', card: '#FFFFFF', text: '#111111', textSec: '#6B6B6B', textTer: '#9E9E9E',
+    accent: '#111111', accentText: '#FFFFFF', border: '#E5E5E5', divider: '#F0F0F0',
+    search: '#F2F2F3', greenBg: '#F0FFF0', greenText: '#2E7D32',
+    redBg: '#FFF0F0', redText: '#D32F2F', orangeBg: '#FFF8E1', orangeText: '#E65100',
+    blueBg: '#EEF4FF', blueText: '#1565C0',
+};
+const darkC = {
+    bg: '#0D0D0D', card: '#1A1A1A', text: '#F5F5F5', textSec: '#A0A0A0', textTer: '#666666',
+    accent: '#FFFFFF', accentText: '#000000', border: '#2A2A2A', divider: '#222222',
+    search: '#1E1E1E', greenBg: '#0D2818', greenText: '#66BB6A',
+    redBg: '#2C1616', redText: '#FF6B6B', orangeBg: '#2C2010', orangeText: '#FFB74D',
+    blueBg: '#162040', blueText: '#64B5F6',
+};
 
 export default function PairBoxScreen() {
     const theme = useTheme();
+    const { isDarkMode } = useAppTheme();
+    const c = isDarkMode ? darkC : lightC;
     const insets = useSafeAreaInsets();
     const authedUserId = useAuthStore((state: any) => state.user?.userId) as string | undefined;
     const authedRole = useAuthStore((state: any) => state.role) as string | null;
@@ -58,7 +76,6 @@ export default function PairBoxScreen() {
         return unsubscribe;
     }, [authedUserId]);
 
-    // Start background expiration monitor when rider is authenticated.
     useEffect(() => {
         if (!authedUserId) return;
 
@@ -77,7 +94,6 @@ export default function PairBoxScreen() {
         return () => stopPairingExpirationMonitor();
     }, [authedUserId]);
 
-    // Update countdown timer every 30 seconds.
     useEffect(() => {
         const update = () => setRemainingMs(getPairingRemainingMs(pairingState));
         update();
@@ -93,9 +109,7 @@ export default function PairBoxScreen() {
 
     const handleBarcode = useCallback(
         ({ data }: { data: string }) => {
-            if (scanLocked) {
-                return;
-            }
+            if (scanLocked) return;
 
             const parsed = parsePairingQr(data);
             if (!parsed?.boxId) {
@@ -105,15 +119,11 @@ export default function PairBoxScreen() {
 
             setScannedPayload(parsed);
 
-            // Cache boxId early so other screens have a fallback pointer even before pairing is confirmed.
             if (authedUserId) {
                 AsyncStorage.setItem(`${PAIRED_BOX_CACHE_KEY_PREFIX}${authedUserId}`, parsed.boxId).catch(() => undefined);
             }
 
-            // Seed the UI from the QR once, but allow the user to override after scan.
-            if (parsed.mode) {
-                setMode(parsed.mode);
-            }
+            if (parsed.mode) setMode(parsed.mode);
             if (typeof parsed.sessionHours === 'number' && Number.isFinite(parsed.sessionHours) && parsed.sessionHours > 0) {
                 setSessionHours(parsed.sessionHours);
             }
@@ -123,16 +133,13 @@ export default function PairBoxScreen() {
     );
 
     const handlePair = useCallback(async () => {
-        if (!scannedPayload?.boxId) {
-            return;
-        }
+        if (!scannedPayload?.boxId) return;
 
         if (!authedUserId) {
             Alert.alert('Not Logged In', 'Please log in to pair a box.');
             return;
         }
 
-        // Allow riders and admins to pair (customers should not be able to claim hardware).
         if (authedRole && authedRole === 'customer') {
             Alert.alert('Wrong Account', 'Please log in with a rider or admin account to pair a box.');
             return;
@@ -191,18 +198,18 @@ export default function PairBoxScreen() {
 
     if (!permission) {
         return (
-            <View style={styles.centered}>
-                <Text>Requesting camera permission...</Text>
+            <View style={[styles.centered, { backgroundColor: c.bg }]}>
+                <Text style={{ color: c.textSec }}>Requesting camera permission...</Text>
             </View>
         );
     }
 
     if (!permission.granted) {
         return (
-            <View style={styles.centered}>
-                <MaterialCommunityIcons name="qrcode-scan" size={48} color={theme.colors.primary} />
-                <Text style={{ marginTop: 12 }}>Camera permission is required to scan box QR codes.</Text>
-                <Button mode="contained" style={{ marginTop: 16 }} onPress={requestPermission}>
+            <View style={[styles.centered, { backgroundColor: c.bg }]}>
+                <MaterialCommunityIcons name="qrcode-scan" size={48} color={c.accent} />
+                <Text style={{ marginTop: 12, color: c.textSec }}>Camera permission is required to scan box QR codes.</Text>
+                <Button mode="contained" style={{ marginTop: 16 }} buttonColor={c.accent} textColor={c.accentText} onPress={requestPermission}>
                     Enable Camera
                 </Button>
             </View>
@@ -210,46 +217,46 @@ export default function PairBoxScreen() {
     }
 
     return (
-        <View style={[styles.container, { paddingTop: Math.max(insets.top, 20), paddingBottom: insets.bottom + 20 }]}>
-            <Surface style={styles.header} elevation={2}>
-                <Text variant="titleLarge" style={{ fontWeight: 'bold' }}>Pair a Smart Box</Text>
-                <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
+        <View style={[styles.container, { backgroundColor: c.bg, paddingTop: Math.max(insets.top, 20), paddingBottom: insets.bottom + 20 }]}>
+            <View style={[styles.header, { backgroundColor: c.card, borderWidth: 1, borderColor: c.border }]}>
+                <Text variant="titleLarge" style={{ fontWeight: 'bold', color: c.text }}>Pair a Smart Box</Text>
+                <Text variant="bodySmall" style={{ color: c.textSec }}>
                     Scan the QR on the box to link it to your account.
                 </Text>
-            </Surface>
+            </View>
 
             {/* Show current pairing status if already paired */}
             {isPairingActive(pairingState) && !scannedPayload && (
-                <Card style={styles.payloadCard} mode="elevated">
-                    <Card.Content>
+                <View style={[styles.payloadCard, { backgroundColor: c.card, borderWidth: 1, borderColor: c.border }]}>
+                    <View style={{ padding: 16 }}>
                         <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
-                            <MaterialCommunityIcons name="link-variant" size={24} color={theme.colors.primary} />
-                            <Text variant="titleMedium" style={{ fontWeight: 'bold', marginLeft: 8 }}>
+                            <MaterialCommunityIcons name="link-variant" size={24} color={c.greenText} />
+                            <Text variant="titleMedium" style={{ fontWeight: 'bold', marginLeft: 8, color: c.text }}>
                                 Currently Paired
                             </Text>
                         </View>
-                        <Text style={{ marginTop: 8 }}>Box ID: {pairingState.box_id}</Text>
-                        <Text style={{ marginTop: 4, color: theme.colors.onSurfaceVariant }}>
+                        <Text style={{ marginTop: 8, color: c.text }}>Box ID: {pairingState.box_id}</Text>
+                        <Text style={{ marginTop: 4, color: c.textSec }}>
                             Mode: {pairingState.mode === 'ONE_TIME' ? 'One-time' : 'Session'}
                         </Text>
                         {pairingState.mode === 'SESSION' && pairingState.expires_at && (
                             <>
-                                <Text style={{ marginTop: 4, color: theme.colors.onSurfaceVariant }}>
+                                <Text style={{ marginTop: 4, color: c.textSec }}>
                                     Expires: {parseUTCString(pairingState.expires_at).toLocaleString('en-US', { timeZone: 'Asia/Manila' })}
                                 </Text>
                                 <View style={[
                                     styles.countdownRow,
-                                    expirationWarning && { backgroundColor: '#FEF3C7' },
+                                    { backgroundColor: expirationWarning ? c.orangeBg : c.search },
                                 ]}>
                                     <MaterialCommunityIcons
                                         name={expirationWarning ? 'clock-alert-outline' : 'clock-outline'}
                                         size={18}
-                                        color={expirationWarning ? '#D97706' : theme.colors.onSurfaceVariant}
+                                        color={expirationWarning ? c.orangeText : c.textSec}
                                     />
                                     <Text style={{
                                         marginLeft: 6,
                                         fontWeight: expirationWarning ? 'bold' : 'normal',
-                                        color: expirationWarning ? '#D97706' : theme.colors.onSurfaceVariant,
+                                        color: expirationWarning ? c.orangeText : c.textSec,
                                     }}>
                                         {remainingMs !== null && remainingMs > 0
                                             ? `Time remaining: ${formatRemainingTime(remainingMs)}`
@@ -257,39 +264,38 @@ export default function PairBoxScreen() {
                                     </Text>
                                 </View>
                                 {expirationWarning && (
-                                    <Text style={{ marginTop: 4, color: '#D97706', fontSize: 12 }}>
+                                    <Text style={{ marginTop: 4, color: c.orangeText, fontSize: 12 }}>
                                         Your session is expiring soon. The box will auto-unpair when time runs out.
                                     </Text>
                                 )}
                             </>
                         )}
-                    </Card.Content>
-                    <Card.Actions style={{ justifyContent: 'flex-end', padding: 16 }}>
+                    </View>
+                    <View style={{ flexDirection: 'row', justifyContent: 'flex-end', padding: 16 }}>
                         <Button
                             mode="outlined"
-                            style={{ borderColor: theme.colors.error }}
-                            textColor={theme.colors.error}
+                            style={{ borderColor: c.redText }}
+                            textColor={c.redText}
                             disabled={isPairing}
                             loading={isPairing}
                             onPress={handleUnpair}
                         >
                             Unpair Box
                         </Button>
-                    </Card.Actions>
-                </Card>
+                    </View>
+                </View>
             )}
 
             {/* Only show scanner if not paired or if they want to pair a different box */}
             {(!isPairingActive(pairingState) || scannedPayload) && (
                 <>
-                    <Card style={styles.scannerCard} mode="elevated">
+                    <View style={[styles.scannerCard, { borderWidth: 1, borderColor: c.border }]}>
                         <View style={styles.cameraContainer}>
                             <CameraView
                                 style={styles.camera}
                                 onBarcodeScanned={canScan ? handleBarcode : undefined}
                                 barcodeScannerSettings={{ barcodeTypes: ['qr'] }}
                             />
-                            {/* Visual guide only */}
                             <View pointerEvents="none" style={styles.qrGuide} />
                         </View>
                         {!canScan && (
@@ -297,34 +303,38 @@ export default function PairBoxScreen() {
                                 <Text style={{ color: 'white' }}>Scan paused</Text>
                             </View>
                         )}
-                    </Card>
+                    </View>
 
                     {scannedPayload && (
-                        <Card style={styles.payloadCard} mode="elevated">
-                            <Card.Content>
-                                <Text variant="titleMedium" style={{ fontWeight: 'bold' }}>Scan Result</Text>
-                                <Text style={{ marginTop: 8 }}>Box ID: {scannedPayload.boxId}</Text>
+                        <View style={[styles.payloadCard, { backgroundColor: c.card, borderWidth: 1, borderColor: c.border }]}>
+                            <View style={{ padding: 16 }}>
+                                <Text variant="titleMedium" style={{ fontWeight: 'bold', color: c.text }}>Scan Result</Text>
+                                <Text style={{ marginTop: 8, color: c.text }}>Box ID: {scannedPayload.boxId}</Text>
                                 {scannedPayload.token && (
-                                    <Text style={{ marginTop: 4, color: theme.colors.onSurfaceVariant }}>
+                                    <Text style={{ marginTop: 4, color: c.textSec }}>
                                         Token: {scannedPayload.token.slice(0, 6)}•••
                                     </Text>
                                 )}
 
-                                <Divider style={{ marginVertical: 12 }} />
+                                <View style={{ height: 1, backgroundColor: c.divider, marginVertical: 12 }} />
 
-                                <Text variant="titleSmall" style={{ marginBottom: 8 }}>Pairing Mode</Text>
+                                <Text variant="titleSmall" style={{ marginBottom: 8, color: c.text }}>Pairing Mode</Text>
                                 <View style={styles.modeRow}>
                                     <Chip
                                         selected={derivedMode === 'ONE_TIME'}
                                         onPress={() => setMode('ONE_TIME')}
-                                        style={styles.modeChip}
+                                        style={[styles.modeChip, { backgroundColor: derivedMode === 'ONE_TIME' ? c.accent : c.search, borderWidth: 1, borderColor: derivedMode === 'ONE_TIME' ? c.accent : c.border }]}
+                                        textStyle={{ color: derivedMode === 'ONE_TIME' ? c.accentText : c.text }}
+                                        showSelectedCheck={false}
                                     >
                                         One-time
                                     </Chip>
                                     <Chip
                                         selected={derivedMode === 'SESSION'}
                                         onPress={() => setMode('SESSION')}
-                                        style={styles.modeChip}
+                                        style={[styles.modeChip, { backgroundColor: derivedMode === 'SESSION' ? c.accent : c.search, borderWidth: 1, borderColor: derivedMode === 'SESSION' ? c.accent : c.border }]}
+                                        textStyle={{ color: derivedMode === 'SESSION' ? c.accentText : c.text }}
+                                        showSelectedCheck={false}
                                     >
                                         Session
                                     </Chip>
@@ -332,14 +342,16 @@ export default function PairBoxScreen() {
 
                                 {derivedMode === 'SESSION' && (
                                     <>
-                                        <Text variant="titleSmall" style={{ marginTop: 12 }}>Session Duration</Text>
+                                        <Text variant="titleSmall" style={{ marginTop: 12, color: c.text }}>Session Duration</Text>
                                         <View style={styles.modeRow}>
                                             {SESSION_OPTIONS.map((hours) => (
                                                 <Chip
                                                     key={hours}
                                                     selected={derivedSessionHours === hours}
                                                     onPress={() => setSessionHours(hours)}
-                                                    style={styles.modeChip}
+                                                    style={[styles.modeChip, { backgroundColor: derivedSessionHours === hours ? c.accent : c.search, borderWidth: 1, borderColor: derivedSessionHours === hours ? c.accent : c.border }]}
+                                                    textStyle={{ color: derivedSessionHours === hours ? c.accentText : c.text }}
+                                                    showSelectedCheck={false}
                                                 >
                                                     {hours}h
                                                 </Chip>
@@ -347,10 +359,12 @@ export default function PairBoxScreen() {
                                         </View>
                                     </>
                                 )}
-                            </Card.Content>
-                            <Card.Actions style={{ justifyContent: 'space-between', padding: 16 }}>
+                            </View>
+                            <View style={{ flexDirection: 'row', justifyContent: 'space-between', padding: 16 }}>
                                 <Button
                                     mode="outlined"
+                                    style={{ borderColor: c.border }}
+                                    textColor={c.text}
                                     onPress={() => {
                                         setScannedPayload(null);
                                         setScanLocked(false);
@@ -363,6 +377,8 @@ export default function PairBoxScreen() {
                                 {isScannedBoxPairedToMe ? (
                                     <Button
                                         mode="outlined"
+                                        style={{ borderColor: c.redText }}
+                                        textColor={c.redText}
                                         disabled={isPairing}
                                         onPress={handleUnpair}
                                     >
@@ -371,6 +387,8 @@ export default function PairBoxScreen() {
                                 ) : (
                                     <Button
                                         mode="contained"
+                                        buttonColor={c.accent}
+                                        textColor={c.accentText}
                                         loading={isPairing}
                                         disabled={isPairing}
                                         onPress={handlePair}
@@ -378,8 +396,8 @@ export default function PairBoxScreen() {
                                         Pair Box
                                     </Button>
                                 )}
-                            </Card.Actions>
-                        </Card>
+                            </View>
+                        </View>
                     )}
                 </>
             )}
@@ -390,7 +408,7 @@ export default function PairBoxScreen() {
 const styles = StyleSheet.create({
     container: {
         flex: 1,
-        backgroundColor: '#F7F9FC',
+        paddingHorizontal: 20,
     },
     header: {
         padding: 16,
@@ -441,6 +459,7 @@ const styles = StyleSheet.create({
     modeRow: {
         flexDirection: 'row',
         flexWrap: 'wrap',
+        marginTop: 4,
     },
     modeChip: {
         marginRight: 8,
@@ -453,6 +472,5 @@ const styles = StyleSheet.create({
         paddingVertical: 6,
         paddingHorizontal: 10,
         borderRadius: 8,
-        backgroundColor: '#F1F5F9',
     },
 });

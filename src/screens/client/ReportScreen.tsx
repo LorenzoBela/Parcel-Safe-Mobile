@@ -1,14 +1,25 @@
 import React, { useState, useEffect } from 'react';
-import { View, StyleSheet, ScrollView, Alert, KeyboardAvoidingView, Platform } from 'react-native';
-import { Text, TextInput, Button, useTheme, Chip, Surface, Card, ActivityIndicator } from 'react-native-paper';
+import { View, StyleSheet, ScrollView, Alert, KeyboardAvoidingView, Platform, TouchableOpacity, TextInput, StatusBar, ActivityIndicator } from 'react-native';
+import { Text } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useAppTheme } from '../../context/ThemeContext';
 import { supabase } from '../../services/supabaseClient';
 import { parseUTCString } from '../../utils/date';
 
-/** Format a UTC ISO timestamp to PH-local display using the device clock.
- *  The device is in Asia/Manila, so native Date handles the conversion. */
+// ─── Colors ─────────────────────────────────────────────────────────────────────
+const light = {
+    bg: '#FFFFFF', card: '#F6F6F6', border: '#E5E5EA',
+    text: '#000000', textSec: '#6B6B6B', textTer: '#AEAEB2',
+    accent: '#000000', red: '#E11900', inputBg: '#F2F2F7',
+};
+const dark = {
+    bg: '#000000', card: '#141414', border: '#2C2C2E',
+    text: '#FFFFFF', textSec: '#8E8E93', textTer: '#636366',
+    accent: '#FFFFFF', red: '#FF453A', inputBg: '#1C1C1E',
+};
+
 const formatDate = (iso: string) => {
     const d = parseUTCString(iso);
     if (isNaN(d.getTime())) return 'N/A';
@@ -17,8 +28,8 @@ const formatDate = (iso: string) => {
         + d.toLocaleTimeString('en-US', { timeZone: 'Asia/Manila', hour: 'numeric', minute: '2-digit', hour12: true });
 };
 
-const formatStatus = (status: string): string => {
-    switch (status) {
+const formatStatus = (s: string): string => {
+    switch (s) {
         case 'PENDING': return 'Pending';
         case 'ASSIGNED': return 'Assigned';
         case 'IN_TRANSIT': return 'In Transit';
@@ -27,19 +38,13 @@ const formatStatus = (status: string): string => {
         case 'COMPLETED': return 'Delivered';
         case 'CANCELLED': return 'Cancelled';
         case 'TAMPERED': return 'Tampered';
-        case 'RETURNING': return 'Returning to Sender';
-        case 'RETURNED': return 'Returned to Sender';
-        default: return status.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+        case 'RETURNING': return 'Returning';
+        case 'RETURNED': return 'Returned';
+        default: return s.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
     }
 };
 
-const ISSUE_CATEGORIES = [
-    'Late Delivery',
-    'Damaged Item',
-    'Rude Rider',
-    'App Issue',
-    'Other'
-];
+const ISSUE_CATEGORIES = ['Late Delivery', 'Damaged Item', 'Rude Rider', 'App Issue', 'Other'];
 
 interface Order {
     id: string;
@@ -51,8 +56,11 @@ interface Order {
 }
 
 export default function ReportScreen() {
-    const theme = useTheme();
+    const { isDarkMode } = useAppTheme();
+    const c = isDarkMode ? dark : light;
     const navigation = useNavigation();
+    const insets = useSafeAreaInsets();
+
     const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
     const [selectedOrder, setSelectedOrder] = useState<string | null>(null);
     const [description, setDescription] = useState('');
@@ -60,233 +68,167 @@ export default function ReportScreen() {
     const [orders, setOrders] = useState<Order[]>([]);
     const [fetchingOrders, setFetchingOrders] = useState(true);
 
-    useEffect(() => {
-        fetchOrders();
-    }, []);
+    useEffect(() => { fetchOrders(); }, []);
 
     const fetchOrders = async () => {
         try {
             const { data: { user } } = await supabase.auth.getUser();
-            if (!user) {
-                setFetchingOrders(false);
-                return;
-            }
-
+            if (!user) { setFetchingOrders(false); return; }
             const { data, error } = await supabase
                 .from('deliveries')
                 .select('id, tracking_number, created_at, package_description, status, dropoff_address')
                 .eq('customer_id', user.id)
                 .order('created_at', { ascending: false })
                 .limit(5);
-
             if (error) throw error;
             setOrders(data || []);
         } catch (error) {
             console.error('Error fetching orders:', error);
-            // Don't alert on mount, just show empty or error state
-        } finally {
-            setFetchingOrders(false);
-        }
+        } finally { setFetchingOrders(false); }
     };
 
     const handleSubmit = async () => {
-        if (!selectedOrder) {
-            Alert.alert('Missing Info', 'Please select the order you are reporting.');
-            return;
-        }
-        if (!selectedCategory) {
-            Alert.alert('Missing Info', 'Please select an issue category.');
-            return;
-        }
-        if (!description.trim()) {
-            Alert.alert('Missing Info', 'Please describe the issue.');
-            return;
-        }
-
+        if (!selectedOrder) { Alert.alert('Missing Info', 'Please select the order.'); return; }
+        if (!selectedCategory) { Alert.alert('Missing Info', 'Please select an issue category.'); return; }
+        if (!description.trim()) { Alert.alert('Missing Info', 'Please describe the issue.'); return; }
         setLoading(true);
         try {
             const { data: { user } } = await supabase.auth.getUser();
-            if (!user) throw new Error('User not authenticated');
-
-            const { error } = await supabase
-                .from('issue_reports')
-                .insert({
-                    user_id: user.id,
-                    order_id: selectedOrder,
-                    category: selectedCategory,
-                    description: description.trim(),
-                    status: 'OPEN'
-                });
-
+            if (!user) throw new Error('Not authenticated');
+            const { error } = await supabase.from('issue_reports').insert({
+                user_id: user.id, order_id: selectedOrder,
+                category: selectedCategory, description: description.trim(), status: 'OPEN',
+            });
             if (error) throw error;
-
-            Alert.alert('Report Submitted', 'We have received your report and will investigate shortly.', [
-                { text: 'OK', onPress: () => navigation.goBack() }
-            ]);
-        } catch (error) {
-            console.error('Error submitting report:', error);
-            Alert.alert('Error', 'Failed to submit report. Please try again.');
-        } finally {
-            setLoading(false);
-        }
+            Alert.alert('Report Submitted', 'We\'ll investigate shortly.', [{ text: 'OK', onPress: () => navigation.goBack() }]);
+        } catch {
+            Alert.alert('Error', 'Failed to submit. Please try again.');
+        } finally { setLoading(false); }
     };
 
-    const insets = useSafeAreaInsets();
-
     return (
-        <KeyboardAvoidingView
-            style={[styles.container, { backgroundColor: theme.colors.background }]}
-            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        >
-            <ScrollView contentContainerStyle={[styles.content, {
-                paddingBottom: insets.bottom + 20,
-                paddingTop: insets.top + 20
-            }]}>
+        <KeyboardAvoidingView style={{ flex: 1, backgroundColor: c.bg }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+            <StatusBar barStyle={isDarkMode ? 'light-content' : 'dark-content'} />
+            <ScrollView contentContainerStyle={{ padding: 16, paddingTop: insets.top + 12, paddingBottom: insets.bottom + 40 }}>
+
+                {/* Header */}
                 <View style={styles.header}>
-                    <MaterialCommunityIcons name="file-document-edit-outline" size={48} color={theme.colors.error} />
-                    <Text variant="headlineMedium" style={[styles.title, { color: theme.colors.error }]}>Report an Issue</Text>
-                    <Text variant="bodyMedium" style={{ textAlign: 'center', color: theme.colors.onSurfaceVariant }}>
-                        We're sorry you experienced a problem. {'\n'}Please let us know what happened.
-                    </Text>
+                    <View style={[styles.headerIcon, { backgroundColor: c.red + '14' }]}>
+                        <MaterialCommunityIcons name="file-document-edit-outline" size={32} color={c.red} />
+                    </View>
+                    <Text style={[styles.headerTitle, { color: c.text }]}>Report an Issue</Text>
+                    <Text style={[styles.headerSub, { color: c.textSec }]}>We're sorry you had a problem. Tell us what happened.</Text>
                 </View>
 
-                <Surface style={[styles.section, { backgroundColor: theme.colors.surface }]} elevation={1}>
-                    <Text variant="titleMedium" style={[styles.sectionTitle, { color: theme.colors.onSurface }]}>Select Order</Text>
+                {/* Select Order */}
+                <Text style={[styles.sectionLabel, { color: c.textSec }]}>SELECT ORDER</Text>
+                <View style={[styles.section, { backgroundColor: c.card, borderColor: c.border }]}>
                     {fetchingOrders ? (
-                        <ActivityIndicator style={{ padding: 20 }} />
+                        <ActivityIndicator style={{ padding: 20 }} color={c.accent} />
                     ) : orders.length > 0 ? (
-                        orders.map((order) => (
-                            <Card
-                                key={order.id}
-                                style={[
-                                    styles.orderCard,
-                                    { backgroundColor: theme.colors.surface, borderColor: theme.colors.outline },
-                                    selectedOrder === order.id && { borderColor: theme.colors.primary, backgroundColor: theme.colors.secondaryContainer }
-                                ]}
-                                onPress={() => setSelectedOrder(order.id)}
-                                mode="outlined"
-                            >
-                                <Card.Content style={styles.orderCardContent}>
+                        orders.map(order => {
+                            const selected = selectedOrder === order.id;
+                            return (
+                                <TouchableOpacity
+                                    key={order.id}
+                                    style={[styles.orderRow, { borderColor: selected ? c.accent : c.border, backgroundColor: selected ? c.accent + '08' : 'transparent' }]}
+                                    onPress={() => setSelectedOrder(order.id)}
+                                    activeOpacity={0.7}
+                                >
                                     <View style={{ flex: 1 }}>
-                                        <Text variant="titleSmall" style={{ fontWeight: 'bold' }}>{order.tracking_number || 'Order #' + order.id.slice(0, 8)}</Text>
-                                        <Text variant="bodySmall" numberOfLines={1}>{order.package_description || 'No description'} • {formatDate(order.created_at)}</Text>
-                                        <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>{formatStatus(order.status)}</Text>
+                                        <Text style={[styles.orderTrk, { color: c.text }]}>{order.tracking_number || 'Order #' + order.id.slice(0, 8)}</Text>
+                                        <Text style={[styles.orderMeta, { color: c.textSec }]}>
+                                            {order.package_description || 'No description'} • {formatDate(order.created_at)}
+                                        </Text>
+                                        <Text style={[styles.orderStatus, { color: c.textTer }]}>{formatStatus(order.status)}</Text>
                                     </View>
-                                    {selectedOrder === order.id && (
-                                        <MaterialCommunityIcons name="check-circle" size={24} color={theme.colors.primary} />
-                                    )}
-                                </Card.Content>
-                            </Card>
-                        ))
+                                    {selected && <MaterialCommunityIcons name="check-circle" size={22} color={c.accent} />}
+                                </TouchableOpacity>
+                            );
+                        })
                     ) : (
-                        <Text style={{ textAlign: 'center', color: theme.colors.onSurfaceVariant, padding: 20 }}>No recent orders found.</Text>
+                        <Text style={[styles.emptyText, { color: c.textSec }]}>No recent orders found.</Text>
                     )}
-                </Surface>
+                </View>
 
-                <Surface style={[styles.section, { backgroundColor: theme.colors.surface }]} elevation={1}>
-                    <Text variant="titleMedium" style={[styles.sectionTitle, { color: theme.colors.onSurface }]}>What went wrong?</Text>
-                    <View style={styles.chipContainer}>
-                        {ISSUE_CATEGORIES.map((cat) => (
-                            <Chip
-                                key={cat}
-                                selected={selectedCategory === cat}
-                                onPress={() => setSelectedCategory(cat)}
-                                style={styles.chip}
-                                showSelectedOverlay
-                            >
-                                {cat}
-                            </Chip>
-                        ))}
+                {/* Issue Category */}
+                <Text style={[styles.sectionLabel, { color: c.textSec }]}>WHAT WENT WRONG?</Text>
+                <View style={[styles.section, { backgroundColor: c.card, borderColor: c.border }]}>
+                    <View style={styles.chipWrap}>
+                        {ISSUE_CATEGORIES.map(cat => {
+                            const active = selectedCategory === cat;
+                            return (
+                                <TouchableOpacity
+                                    key={cat}
+                                    style={[styles.chip, {
+                                        backgroundColor: active ? c.accent : 'transparent',
+                                        borderColor: active ? c.accent : c.border,
+                                    }]}
+                                    onPress={() => setSelectedCategory(cat)}
+                                    activeOpacity={0.7}
+                                >
+                                    <Text style={[styles.chipText, { color: active ? c.bg : c.textSec }]}>{cat}</Text>
+                                </TouchableOpacity>
+                            );
+                        })}
                     </View>
-                </Surface>
+                </View>
 
-                <Surface style={[styles.section, { backgroundColor: theme.colors.surface }]} elevation={1}>
-                    <Text variant="titleMedium" style={[styles.sectionTitle, { color: theme.colors.onSurface }]}>Tell us more</Text>
+                {/* Description */}
+                <Text style={[styles.sectionLabel, { color: c.textSec }]}>TELL US MORE</Text>
+                <View style={[styles.section, { backgroundColor: c.card, borderColor: c.border }]}>
                     <TextInput
-                        mode="outlined"
                         placeholder="Describe the incident..."
+                        placeholderTextColor={c.textTer}
                         multiline
-                        numberOfLines={6}
+                        numberOfLines={5}
                         value={description}
                         onChangeText={setDescription}
-                        style={[styles.input, { backgroundColor: theme.colors.background }]}
-                        textColor={theme.colors.onSurface}
-                        placeholderTextColor={theme.colors.onSurfaceVariant}
+                        style={[styles.textArea, { backgroundColor: c.inputBg, color: c.text, borderColor: c.border }]}
+                        textAlignVertical="top"
                     />
-                </Surface>
+                </View>
 
-                <Button
-                    mode="contained"
+                {/* Submit */}
+                <TouchableOpacity
+                    style={[styles.submitBtn, { backgroundColor: c.accent, opacity: loading ? 0.6 : 1 }]}
                     onPress={handleSubmit}
-                    loading={loading}
                     disabled={loading}
-                    style={styles.button}
-                    buttonColor={theme.colors.error}
+                    activeOpacity={0.8}
                 >
-                    Submit Report
-                </Button>
+                    {loading ? (
+                        <ActivityIndicator color="#FFFFFF" />
+                    ) : (
+                        <Text style={styles.submitBtnText}>Submit Report</Text>
+                    )}
+                </TouchableOpacity>
 
-                <Button
-                    mode="text"
-                    onPress={() => navigation.goBack()}
-                    style={styles.cancelButton}
-                >
-                    Cancel
-                </Button>
+                <TouchableOpacity style={styles.cancelBtn} onPress={() => navigation.goBack()} activeOpacity={0.7}>
+                    <Text style={[styles.cancelBtnText, { color: c.textSec }]}>Cancel</Text>
+                </TouchableOpacity>
             </ScrollView>
         </KeyboardAvoidingView>
     );
 }
 
 const styles = StyleSheet.create({
-    container: {
-        flex: 1,
-    },
-    content: {
-        padding: 20,
-    },
-    header: {
-        alignItems: 'center',
-        marginVertical: 24,
-    },
-    title: {
-        fontWeight: 'bold',
-        marginVertical: 8,
-    },
-    section: {
-        padding: 16,
-        borderRadius: 12,
-        marginBottom: 20,
-    },
-    sectionTitle: {
-        marginBottom: 12,
-        fontWeight: 'bold',
-    },
-    chipContainer: {
-        flexDirection: 'row',
-        flexWrap: 'wrap',
-        gap: 8,
-    },
-    chip: {
-        marginBottom: 4,
-    },
-    input: {
-        // backgroundColor handled inline
-    },
-    button: {
-        marginTop: 8,
-        paddingVertical: 4,
-    },
-    cancelButton: {
-        marginTop: 8,
-    },
-    orderCard: {
-        marginBottom: 8,
-        borderWidth: 1,
-    },
-    orderCardContent: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-    }
+    header: { alignItems: 'center', marginBottom: 24, marginTop: 8 },
+    headerIcon: { width: 64, height: 64, borderRadius: 32, alignItems: 'center', justifyContent: 'center', marginBottom: 12 },
+    headerTitle: { fontSize: 22, fontWeight: '800' },
+    headerSub: { fontSize: 14, textAlign: 'center', marginTop: 4, lineHeight: 20 },
+    sectionLabel: { fontSize: 12, fontWeight: '600', letterSpacing: 0.8, marginLeft: 4, marginBottom: 6, marginTop: 4 },
+    section: { borderRadius: 14, borderWidth: 1, padding: 12, marginBottom: 20 },
+    orderRow: { flexDirection: 'row', alignItems: 'center', padding: 12, borderRadius: 10, borderWidth: 1, marginBottom: 8 },
+    orderTrk: { fontSize: 14, fontWeight: '700' },
+    orderMeta: { fontSize: 12, marginTop: 1 },
+    orderStatus: { fontSize: 11, marginTop: 1 },
+    emptyText: { textAlign: 'center', padding: 20, fontSize: 14 },
+    chipWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+    chip: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20, borderWidth: 1 },
+    chipText: { fontSize: 13, fontWeight: '600' },
+    textArea: { borderRadius: 10, borderWidth: 1, padding: 12, minHeight: 110, fontSize: 14, lineHeight: 20 },
+    submitBtn: { paddingVertical: 16, borderRadius: 14, alignItems: 'center', marginTop: 4 },
+    submitBtnText: { color: '#FFFFFF', fontSize: 16, fontWeight: '700' },
+    cancelBtn: { alignItems: 'center', marginTop: 12 },
+    cancelBtnText: { fontSize: 15, fontWeight: '600' },
 });

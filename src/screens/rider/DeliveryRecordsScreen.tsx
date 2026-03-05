@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { View, StyleSheet, FlatList, TouchableOpacity, RefreshControl, ActivityIndicator } from 'react-native';
-import { Text, Card, Chip, Searchbar, Surface, useTheme, IconButton } from 'react-native-paper';
+import { Text, Chip, Searchbar, useTheme, IconButton } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { supabase } from '../../services/supabaseClient';
@@ -10,9 +10,21 @@ import dayjs from 'dayjs';
 import utc from 'dayjs/plugin/utc';
 import timezone from 'dayjs/plugin/timezone';
 import { parseUTCString } from '../../utils/date';
+import { useAppTheme } from '../../context/ThemeContext';
 
 dayjs.extend(utc);
 dayjs.extend(timezone);
+
+const lightC = {
+    bg: '#F7F7F8', card: '#FFFFFF', text: '#111111', textSec: '#6B6B6B', textTer: '#9E9E9E',
+    accent: '#111111', accentText: '#FFFFFF', border: '#E5E5E5', divider: '#F0F0F0',
+    search: '#F2F2F3',
+};
+const darkC = {
+    bg: '#0D0D0D', card: '#1A1A1A', text: '#F5F5F5', textSec: '#A0A0A0', textTer: '#666666',
+    accent: '#FFFFFF', accentText: '#000000', border: '#2A2A2A', divider: '#222222',
+    search: '#1E1E1E',
+};
 
 /** Map Supabase DeliveryStatus to display-friendly labels */
 const mapStatus = (raw: string): string => {
@@ -33,6 +45,8 @@ const mapStatus = (raw: string): string => {
 
 export default function DeliveryRecordsScreen() {
     const theme = useTheme();
+    const { isDarkMode } = useAppTheme();
+    const c = isDarkMode ? darkC : lightC;
     const navigation = useNavigation<any>();
     const riderId = useAuthStore((state: any) => state.user?.userId);
 
@@ -57,7 +71,6 @@ export default function DeliveryRecordsScreen() {
         setErrorMsg(null);
 
         try {
-            // Updated query to fetch customer profile
             const { data, error } = await supabase
                 .from('deliveries')
                 .select('*, profiles:customer_id(full_name)')
@@ -70,7 +83,6 @@ export default function DeliveryRecordsScreen() {
             } else {
                 const mapped = (data || []).map((d: any) => {
                     const rawTrk = d.tracking_number || d.id;
-                    // Truncate if too long (e.g., > 12 chars), show last 8
                     const shortTrk = rawTrk.length > 20 ? '...' + rawTrk.slice(-12) : rawTrk;
 
                     const dateObj = d.created_at ? parseUTCString(d.created_at) : null;
@@ -85,28 +97,21 @@ export default function DeliveryRecordsScreen() {
                         shortTrk: shortTrk,
                         status: mapStatus(d.status),
                         rawStatus: d.status,
-                        // Fix Timezone: Manually add 8 hours to the raw timestamp (which Supabase sends as UTC-like string)
                         date: dateObj ? dayjs(d.created_at).add(8, 'hour').format('MMM D, YYYY') : 'N/A',
                         time: dateObj ? dayjs(d.created_at).add(8, 'hour').format('h:mm A') : '',
-                        // Map Customer Name
                         customer: d.profiles?.full_name || 'Unknown Customer',
-                        customerName: d.profiles?.full_name || 'Unknown Customer', // Keep for backward compat if needed locally
+                        customerName: d.profiles?.full_name || 'Unknown Customer',
                         earnings: d.estimated_fare != null ? `₱${Number(d.estimated_fare).toFixed(2)}` : '—',
-                        // Separate Addresses
                         pickup: d.pickup_address || 'N/A',
                         dropoff: d.dropoff_address || 'N/A',
-                        pickupAddress: d.pickup_address || 'N/A', // Keep for safety if used elsewhere
+                        pickupAddress: d.pickup_address || 'N/A',
                         dropoffAddress: d.dropoff_address || 'N/A',
-
-                        // Coordinates for Map
                         pickup_lat: d.pickup_lat,
                         pickup_lng: d.pickup_lng,
                         dropoff_lat: d.dropoff_lat,
                         dropoff_lng: d.dropoff_lng,
-
-                        // Pass image if available (proof of delivery)
                         image: d.proof_of_delivery_url || d.image_url || null,
-                        pickupImage: d.pickup_photo_url || null, // EC-56: Added pickup photo
+                        pickupImage: d.pickup_photo_url || null,
                         distance: d.distance_text || (d.distance ? `${d.distance.toFixed(1)} km` : 'N/A'),
                     };
                 });
@@ -121,12 +126,10 @@ export default function DeliveryRecordsScreen() {
         }
     }, [riderId]);
 
-    // Fetch on mount
     useEffect(() => {
         fetchDeliveries();
     }, [fetchDeliveries]);
 
-    // Re-fetch when screen gains focus (sync first, then fetch)
     useFocusEffect(
         useCallback(() => {
             triggerDeliverySync().then(() => fetchDeliveries());
@@ -140,13 +143,12 @@ export default function DeliveryRecordsScreen() {
             case 'Pending': return '#FF9800';
             case 'Cancelled': return '#F44336';
             case 'Tampered': return '#D32F2F';
-            case 'Returning': return '#FF9800'; // Orange
-            case 'Returned': return '#9E9E9E'; // Grey
+            case 'Returning': return '#FF9800';
+            case 'Returned': return '#9E9E9E';
             default: return '#757575';
         }
     };
 
-    // Use actual current date for filter comparisons
     const currentDate = new Date();
 
     const filteredData = historyData.filter(item => {
@@ -183,122 +185,121 @@ export default function DeliveryRecordsScreen() {
         }, 0);
 
     const renderItem = ({ item }: { item: any }) => (
-        <Card style={[styles.card, { backgroundColor: theme.colors.surface }]} mode="elevated" onPress={() => navigation.navigate('DeliveryDetail', { delivery: item })}>
-            <Card.Content>
-                <View style={styles.cardHeader}>
-                    <View style={{ flex: 1, marginRight: 8 }}>
-                        <Text variant="titleMedium" style={{ fontWeight: 'bold' }} numberOfLines={1}>
-                            {item.shortTrk}
-                        </Text>
-                        <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
-                            {item.date} • {item.time}
-                        </Text>
-                    </View>
-                    <View style={{ alignItems: 'flex-end', minWidth: 80 }}>
-                        <Text variant="titleMedium" style={{ fontWeight: 'bold', color: theme.colors.primary }}>
-                            {item.earnings}
-                        </Text>
-                        <Chip
-                            style={{ backgroundColor: getStatusColor(item.status) + '20', height: 24, paddingVertical: 0 }}
-                            textStyle={{ color: getStatusColor(item.status), fontWeight: 'bold', fontSize: 10, lineHeight: 10 }}
-                            compact
-                        >
+        <TouchableOpacity
+            activeOpacity={0.7}
+            onPress={() => navigation.navigate('DeliveryDetail', { delivery: item })}
+            style={[styles.card, { backgroundColor: c.card, borderWidth: 1, borderColor: c.border }]}
+        >
+            <View style={styles.cardHeader}>
+                <View style={{ flex: 1, marginRight: 8 }}>
+                    <Text variant="titleMedium" style={{ fontWeight: 'bold', color: c.text }} numberOfLines={1}>
+                        {item.shortTrk}
+                    </Text>
+                    <Text variant="bodySmall" style={{ color: c.textSec }}>
+                        {item.date} • {item.time}
+                    </Text>
+                </View>
+                <View style={{ alignItems: 'flex-end', minWidth: 80 }}>
+                    <Text variant="titleMedium" style={{ fontWeight: 'bold', color: c.accent }}>
+                        {item.earnings}
+                    </Text>
+                    <View style={{ backgroundColor: getStatusColor(item.status) + '20', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 6, marginTop: 2 }}>
+                        <Text style={{ color: getStatusColor(item.status), fontWeight: 'bold', fontSize: 10 }}>
                             {item.status}
-                        </Chip>
+                        </Text>
                     </View>
                 </View>
+            </View>
 
-                <View style={[styles.divider, { backgroundColor: theme.colors.outlineVariant }]} />
+            <View style={[styles.divider, { backgroundColor: c.divider }]} />
 
-                {/* Customer Info */}
-                <View style={styles.row}>
-                    <View style={styles.iconBox}>
-                        <MaterialCommunityIcons name="account" size={16} color={theme.colors.onSurfaceVariant} />
-                    </View>
-                    <Text variant="bodyMedium" style={[styles.rowText, { color: theme.colors.onSurface, fontWeight: '600' }]}>
-                        {item.customerName}
-                    </Text>
+            <View style={styles.row}>
+                <View style={styles.iconBox}>
+                    <MaterialCommunityIcons name="account" size={16} color={c.textSec} />
                 </View>
+                <Text variant="bodyMedium" style={[styles.rowText, { color: c.text, fontWeight: '600' }]}>
+                    {item.customerName}
+                </Text>
+            </View>
 
-                {/* Pickup Address */}
-                <View style={[styles.row, { alignItems: 'flex-start' }]}>
-                    <View style={[styles.iconBox, { marginTop: 2 }]}>
-                        <MaterialCommunityIcons name="map-marker-up" size={16} color="#4CAF50" />
-                    </View>
-                    <Text variant="bodySmall" numberOfLines={2} style={[styles.rowText, { color: theme.colors.onSurface }]}>
-                        {item.pickup}
-                    </Text>
+            <View style={[styles.row, { alignItems: 'flex-start' }]}>
+                <View style={[styles.iconBox, { marginTop: 2 }]}>
+                    <MaterialCommunityIcons name="map-marker-up" size={16} color="#4CAF50" />
                 </View>
+                <Text variant="bodySmall" numberOfLines={2} style={[styles.rowText, { color: c.text }]}>
+                    {item.pickup}
+                </Text>
+            </View>
 
-                {/* Dropoff Address */}
-                <View style={[styles.row, { alignItems: 'flex-start' }]}>
-                    <View style={[styles.iconBox, { marginTop: 2 }]}>
-                        <MaterialCommunityIcons name="map-marker-down" size={16} color="#F44336" />
-                    </View>
-                    <Text variant="bodySmall" numberOfLines={2} style={[styles.rowText, { color: theme.colors.onSurface }]}>
-                        {item.dropoff}
-                    </Text>
+            <View style={[styles.row, { alignItems: 'flex-start' }]}>
+                <View style={[styles.iconBox, { marginTop: 2 }]}>
+                    <MaterialCommunityIcons name="map-marker-down" size={16} color="#F44336" />
                 </View>
-
-            </Card.Content>
-        </Card>
+                <Text variant="bodySmall" numberOfLines={2} style={[styles.rowText, { color: c.text }]}>
+                    {item.dropoff}
+                </Text>
+            </View>
+        </TouchableOpacity>
     );
 
     const renderGridItem = ({ item }: { item: any }) => (
-        <Card style={[styles.gridCard, { backgroundColor: theme.colors.surface }]} mode="elevated" onPress={() => navigation.navigate('DeliveryDetail', { delivery: item })}>
-            <Card.Content style={{ padding: 12 }}>
-                <Text variant="labelLarge" style={{ fontWeight: 'bold', fontSize: 12 }} numberOfLines={1}>
+        <TouchableOpacity
+            activeOpacity={0.7}
+            onPress={() => navigation.navigate('DeliveryDetail', { delivery: item })}
+            style={[styles.gridCard, { backgroundColor: c.card, borderWidth: 1, borderColor: c.border }]}
+        >
+            <View style={{ padding: 12 }}>
+                <Text variant="labelLarge" style={{ fontWeight: 'bold', fontSize: 12, color: c.text }} numberOfLines={1}>
                     {item.shortTrk}
                 </Text>
-                <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant, fontSize: 10, marginBottom: 8 }}>
+                <Text variant="bodySmall" style={{ color: c.textSec, fontSize: 10, marginBottom: 8 }}>
                     {item.date}
                 </Text>
 
-                <Text variant="titleMedium" style={{ fontWeight: 'bold', color: theme.colors.primary, marginBottom: 4 }}>
+                <Text variant="titleMedium" style={{ fontWeight: 'bold', color: c.accent, marginBottom: 4 }}>
                     {item.earnings}
                 </Text>
 
-                <View style={[styles.divider, { backgroundColor: theme.colors.outlineVariant }]} />
+                <View style={[styles.divider, { backgroundColor: c.divider }]} />
 
-                <Text numberOfLines={1} style={{ fontSize: 12, color: theme.colors.onSurface, fontWeight: 'bold' }}>
+                <Text numberOfLines={1} style={{ fontSize: 12, color: c.text, fontWeight: 'bold' }}>
                     {item.customerName}
                 </Text>
 
                 <View style={{ marginTop: 8 }}>
-                    <Chip
-                        style={{ backgroundColor: getStatusColor(item.status) + '20', height: 20, alignSelf: 'flex-start' }}
-                        textStyle={{ color: getStatusColor(item.status), fontWeight: 'bold', fontSize: 9, lineHeight: 10 }}
-                        compact
-                    >
-                        {item.status}
-                    </Chip>
+                    <View style={{ backgroundColor: getStatusColor(item.status) + '20', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 6, alignSelf: 'flex-start' }}>
+                        <Text style={{ color: getStatusColor(item.status), fontWeight: 'bold', fontSize: 9 }}>
+                            {item.status}
+                        </Text>
+                    </View>
                 </View>
-            </Card.Content>
-        </Card>
+            </View>
+        </TouchableOpacity>
     );
 
     return (
-        <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
-            <View style={[styles.header, { backgroundColor: theme.colors.surface }]}>
+        <View style={[styles.container, { backgroundColor: c.bg }]}>
+            <View style={[styles.header, { backgroundColor: c.card, borderBottomWidth: 1, borderBottomColor: c.border }]}>
                 <View style={styles.headerTop}>
-                    <IconButton icon="arrow-left" onPress={() => navigation.goBack()} />
-                    <Text variant="headlineSmall" style={{ fontWeight: 'bold' }}>History & Earnings</Text>
+                    <IconButton icon="arrow-left" iconColor={c.text} onPress={() => navigation.goBack()} />
+                    <Text variant="headlineSmall" style={{ fontWeight: 'bold', color: c.text }}>History & Earnings</Text>
                     <IconButton
                         icon={viewMode === 'list' ? 'view-grid' : 'view-list'}
+                        iconColor={c.text}
                         onPress={() => setViewMode(prev => prev === 'list' ? 'grid' : 'list')}
                     />
                 </View>
 
                 {/* Summary Stats */}
                 <View style={styles.statsContainer}>
-                    <Surface style={[styles.statCard, { backgroundColor: theme.colors.surface }]} elevation={2}>
-                        <Text variant="labelMedium" style={{ color: theme.colors.onSurfaceVariant }}>Total Jobs</Text>
-                        <Text variant="headlineMedium" style={{ fontWeight: 'bold', color: '#2196F3' }}>{filteredData.length}</Text>
-                    </Surface>
-                    <Surface style={[styles.statCard, { backgroundColor: theme.colors.surface }]} elevation={2}>
-                        <Text variant="labelMedium" style={{ color: theme.colors.onSurfaceVariant }}>Total Earnings</Text>
-                        <Text variant="headlineMedium" style={{ fontWeight: 'bold', color: '#4CAF50' }}>Total: ₱{totalEarnings.toFixed(2)}</Text>
-                    </Surface>
+                    <View style={[styles.statCard, { backgroundColor: c.search, borderWidth: 1, borderColor: c.border }]}>
+                        <Text variant="labelMedium" style={{ color: c.textSec }}>Total Jobs</Text>
+                        <Text variant="headlineMedium" style={{ fontWeight: 'bold', color: c.accent }}>{filteredData.length}</Text>
+                    </View>
+                    <View style={[styles.statCard, { backgroundColor: c.search, borderWidth: 1, borderColor: c.border }]}>
+                        <Text variant="labelMedium" style={{ color: c.textSec }}>Total Earnings</Text>
+                        <Text variant="headlineMedium" style={{ fontWeight: 'bold', color: '#4CAF50' }}>₱{totalEarnings.toFixed(2)}</Text>
+                    </View>
                 </View>
             </View>
 
@@ -307,8 +308,10 @@ export default function DeliveryRecordsScreen() {
                     placeholder="Search history..."
                     onChangeText={setSearchQuery}
                     value={searchQuery}
-                    style={[styles.searchBar, { backgroundColor: theme.colors.elevation.level1 }]}
-                    inputStyle={{ minHeight: 0 }}
+                    style={[styles.searchBar, { backgroundColor: c.search, borderWidth: 1, borderColor: c.border }]}
+                    inputStyle={{ minHeight: 0, color: c.text }}
+                    iconColor={c.textSec}
+                    placeholderTextColor={c.textTer}
                 />
 
                 <View style={styles.filterContainer}>
@@ -317,9 +320,17 @@ export default function DeliveryRecordsScreen() {
                             key={f}
                             selected={filter === f}
                             onPress={() => setFilter(f)}
-                            style={[styles.filterChip, filter === f && { backgroundColor: theme.colors.primaryContainer, borderColor: theme.colors.primary }]}
-                            textStyle={{ color: filter === f ? theme.colors.onPrimaryContainer : theme.colors.onSurface }}
-                            showSelectedOverlay
+                            style={[
+                                styles.filterChip,
+                                {
+                                    backgroundColor: filter === f ? c.accent : c.search,
+                                    borderWidth: 1,
+                                    borderColor: filter === f ? c.accent : c.border,
+                                },
+                            ]}
+                            textStyle={{ color: filter === f ? c.accentText : c.text, fontSize: 12 }}
+                            showSelectedCheck={false}
+                            showSelectedOverlay={false}
                         >
                             {f}
                         </Chip>
@@ -328,15 +339,15 @@ export default function DeliveryRecordsScreen() {
 
                 {loading ? (
                     <View style={styles.emptyState}>
-                        <ActivityIndicator size="large" color={theme.colors.primary} />
-                        <Text style={{ marginTop: 10, color: theme.colors.onSurfaceVariant }}>Loading records...</Text>
+                        <ActivityIndicator size="large" color={c.accent} />
+                        <Text style={{ marginTop: 10, color: c.textSec }}>Loading records...</Text>
                     </View>
                 ) : errorMsg ? (
                     <View style={styles.emptyState}>
-                        <MaterialCommunityIcons name="alert-circle-outline" size={60} color={theme.colors.error} />
-                        <Text style={{ marginTop: 10, color: theme.colors.error }}>{errorMsg}</Text>
+                        <MaterialCommunityIcons name="alert-circle-outline" size={60} color="#D32F2F" />
+                        <Text style={{ marginTop: 10, color: '#D32F2F' }}>{errorMsg}</Text>
                         <TouchableOpacity onPress={() => fetchDeliveries()} style={{ marginTop: 16 }}>
-                            <Text style={{ color: theme.colors.primary, fontWeight: 'bold' }}>Tap to retry</Text>
+                            <Text style={{ color: c.accent, fontWeight: 'bold' }}>Tap to retry</Text>
                         </TouchableOpacity>
                     </View>
                 ) : (
@@ -353,13 +364,13 @@ export default function DeliveryRecordsScreen() {
                             <RefreshControl
                                 refreshing={refreshing}
                                 onRefresh={() => fetchDeliveries(true)}
-                                colors={[theme.colors.primary]}
+                                colors={[c.accent]}
                             />
                         }
                         ListEmptyComponent={
                             <View style={styles.emptyState}>
-                                <MaterialCommunityIcons name="package-variant-closed" size={60} color={theme.colors.onSurfaceVariant} />
-                                <Text style={{ marginTop: 10, color: theme.colors.onSurfaceVariant }}>No delivery records yet</Text>
+                                <MaterialCommunityIcons name="package-variant-closed" size={60} color={c.textTer} />
+                                <Text style={{ marginTop: 10, color: c.textSec }}>No delivery records yet</Text>
                             </View>
                         }
                     />
@@ -375,7 +386,6 @@ const styles = StyleSheet.create({
     },
     header: {
         paddingBottom: 20,
-        elevation: 2,
         borderBottomLeftRadius: 24,
         borderBottomRightRadius: 24,
         zIndex: 1,
@@ -395,7 +405,6 @@ const styles = StyleSheet.create({
     },
     statCard: {
         flex: 1,
-        backgroundColor: 'white',
         padding: 16,
         borderRadius: 16,
         alignItems: 'center',
@@ -408,8 +417,8 @@ const styles = StyleSheet.create({
     searchBar: {
         marginHorizontal: 20,
         marginBottom: 12,
-        elevation: 1,
         borderRadius: 12,
+        elevation: 0,
     },
     filterContainer: {
         flexDirection: 'row',
@@ -418,7 +427,6 @@ const styles = StyleSheet.create({
     },
     filterChip: {
         marginRight: 8,
-        borderWidth: 1,
     },
     listContent: {
         paddingHorizontal: 20,
@@ -427,6 +435,7 @@ const styles = StyleSheet.create({
     card: {
         marginBottom: 12,
         borderRadius: 12,
+        padding: 16,
     },
     gridCard: {
         marginBottom: 12,
@@ -441,7 +450,6 @@ const styles = StyleSheet.create({
     },
     divider: {
         height: 1,
-        backgroundColor: '#F0F0F0',
         marginBottom: 12,
     },
     row: {
@@ -455,7 +463,6 @@ const styles = StyleSheet.create({
         marginRight: 8,
     },
     rowText: {
-        color: '#444',
         flex: 1,
     },
     emptyState: {

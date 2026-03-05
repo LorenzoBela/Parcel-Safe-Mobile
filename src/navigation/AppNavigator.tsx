@@ -1,4 +1,5 @@
 import React, { useEffect } from 'react';
+import { StyleSheet } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
 import { createStackNavigator } from '@react-navigation/stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
@@ -59,17 +60,25 @@ const TabIcon = ({ name, color, size }: { name: any; color: string; size: number
 // Customer Tabs
 const CustomerNavigator = () => {
     const theme = useTheme();
+    const isDark = theme.dark;
+    const tabBg = isDark ? '#000000' : '#FFFFFF';
+    const tabBorder = isDark ? '#1C1C1E' : '#E5E5EA';
+    const activeColor = isDark ? '#FFFFFF' : '#000000';
+    const inactiveColor = '#8E8E93';
     return (
         <Tab.Navigator
             id="CustomerTabs"
             screenOptions={{
                 headerShown: false,
-                tabBarActiveTintColor: theme.colors.primary,
-                tabBarInactiveTintColor: theme.colors.onSurfaceVariant,
+                tabBarActiveTintColor: activeColor,
+                tabBarInactiveTintColor: inactiveColor,
                 tabBarStyle: {
-                    backgroundColor: theme.colors.surface,
-                    borderTopColor: theme.colors.outline,
-                }
+                    backgroundColor: tabBg,
+                    borderTopColor: tabBorder,
+                    borderTopWidth: StyleSheet.hairlineWidth,
+                    elevation: 0,
+                },
+                tabBarLabelStyle: { fontSize: 11, fontWeight: '600' },
             }}
         >
             <Tab.Screen
@@ -139,17 +148,32 @@ const RiderNavigator = () => {
 // Admin Tabs
 const AdminNavigator = () => {
     const theme = useTheme();
+    // Dynamic dark/light admin tab bar — Uber-style
+    const isDark = theme.dark;
+    const tabBg = isDark ? '#000000' : '#FFFFFF';
+    const tabBorder = isDark ? '#1C1C1E' : '#E5E5EA';
+    const activeColor = isDark ? '#FFFFFF' : '#000000';
+    const inactiveColor = isDark ? '#8E8E93' : '#8E8E93';
     return (
         <Tab.Navigator
             id="AdminTabs"
             screenOptions={{
                 headerShown: false,
-                tabBarActiveTintColor: '#F44336',
-                tabBarInactiveTintColor: theme.colors.onSurfaceVariant,
+                tabBarActiveTintColor: activeColor,
+                tabBarInactiveTintColor: inactiveColor,
                 tabBarStyle: {
-                    backgroundColor: theme.colors.surface,
-                    borderTopColor: theme.colors.outline,
-                }
+                    backgroundColor: tabBg,
+                    borderTopColor: tabBorder,
+                    borderTopWidth: 0.5,
+                    elevation: 0,
+                    height: 56,
+                    paddingBottom: 6,
+                },
+                tabBarLabelStyle: {
+                    fontSize: 11,
+                    fontWeight: '600',
+                    letterSpacing: 0.1,
+                },
             }}
         >
             <Tab.Screen

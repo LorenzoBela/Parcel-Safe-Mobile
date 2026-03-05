@@ -1,18 +1,55 @@
 import React, { useState, useCallback } from 'react';
-import { View, StyleSheet, ScrollView } from 'react-native';
-import { Text, List, Switch, Divider, useTheme, Avatar, Surface, Button } from 'react-native-paper';
+import { View, StyleSheet, ScrollView, TouchableOpacity, StatusBar } from 'react-native';
+import { Text, Switch, Avatar, Button } from 'react-native-paper';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { useAppTheme } from '../../context/ThemeContext';
 import { supabase } from '../../services/supabaseClient';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { signOut, signInWithGoogleAndSyncProfile } from '../../services/auth';
 import useAuthStore from '../../store/authStore';
-
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+// ─── Colors ─────────────────────────────────────────────────────────────────────
+const light = {
+    bg: '#FFFFFF', card: '#F6F6F6', border: '#E5E5EA',
+    text: '#000000', textSec: '#6B6B6B', textTer: '#AEAEB2',
+    accent: '#000000', red: '#E11900', switchTrack: '#000000',
+};
+const dark = {
+    bg: '#000000', card: '#141414', border: '#2C2C2E',
+    text: '#FFFFFF', textSec: '#8E8E93', textTer: '#636366',
+    accent: '#FFFFFF', red: '#FF453A', switchTrack: '#FFFFFF',
+};
+
+// ─── Row Component ──────────────────────────────────────────────────────────────
+function SettingsRow({ icon, label, subtitle, onPress, right, c }: {
+    icon: string; label: string; subtitle?: string;
+    onPress?: () => void; right?: React.ReactNode;
+    c: typeof light;
+}) {
+    const Wrapper = onPress ? TouchableOpacity : View;
+    return (
+        <Wrapper
+            onPress={onPress}
+            activeOpacity={0.6}
+            style={[styles.row, { borderBottomColor: c.border }]}
+        >
+            <View style={[styles.rowIcon, { backgroundColor: c.card }]}>
+                <MaterialCommunityIcons name={icon as any} size={20} color={c.accent} />
+            </View>
+            <View style={styles.rowContent}>
+                <Text style={[styles.rowLabel, { color: c.text }]}>{label}</Text>
+                {subtitle ? <Text style={[styles.rowSub, { color: c.textSec }]}>{subtitle}</Text> : null}
+            </View>
+            {right ?? (onPress ? <MaterialCommunityIcons name="chevron-right" size={20} color={c.textTer} /> : null)}
+        </Wrapper>
+    );
+}
+
+// ─── Screen ─────────────────────────────────────────────────────────────────────
 export default function SettingsScreen() {
-    const theme = useTheme();
     const { isDarkMode, toggleTheme } = useAppTheme();
+    const c = isDarkMode ? dark : light;
     const navigation = useNavigation<any>();
     const insets = useSafeAreaInsets();
     const login = useAuthStore((state: any) => state.login);
@@ -34,11 +71,7 @@ export default function SettingsScreen() {
         }
     };
 
-    useFocusEffect(
-        useCallback(() => {
-            fetchProfile();
-        }, [])
-    );
+    useFocusEffect(useCallback(() => { fetchProfile(); }, []));
 
     const handleLogout = async () => {
         try {
@@ -56,10 +89,8 @@ export default function SettingsScreen() {
             setIsSwitching(true);
             await signOut();
             logout();
-
             const result = await signInWithGoogleAndSyncProfile();
             login(result);
-
             if (result.role === 'customer') {
                 navigation.replace('CustomerApp');
             } else {
@@ -75,154 +106,126 @@ export default function SettingsScreen() {
 
     return (
         <ScrollView
-            style={[styles.container, { backgroundColor: theme.colors.background }]}
-            contentContainerStyle={{
-                paddingTop: insets.top,
-                paddingBottom: insets.bottom + 40
-            }}
+            style={[styles.container, { backgroundColor: c.bg }]}
+            contentContainerStyle={{ paddingTop: insets.top + 8, paddingBottom: insets.bottom + 60 }}
         >
-            {/* Profile Header */}
-            <Surface style={[styles.profileHeader, { backgroundColor: theme.colors.surface }]} elevation={1}>
+            <StatusBar barStyle={isDarkMode ? 'light-content' : 'dark-content'} />
+
+            {/* Profile Card */}
+            <View style={[styles.profileCard, { backgroundColor: c.card, borderColor: c.border }]}>
                 <Avatar.Image
-                    size={60}
+                    size={56}
                     source={{ uri: profile?.avatar_url || 'https://i.pravatar.cc/150?img=12' }}
                 />
                 <View style={styles.profileInfo}>
-                    <Text variant="titleMedium" style={{ color: theme.colors.onSurface, fontWeight: 'bold' }}>
+                    <Text style={[styles.profileName, { color: c.text }]}>
                         {profile?.full_name || 'Loading...'}
                     </Text>
-                    <Text variant="bodyMedium" style={{ color: theme.colors.onSurfaceVariant }}>
+                    <Text style={[styles.profileEmail, { color: c.textSec }]}>
                         {profile?.email || 'User'}
                     </Text>
                 </View>
-            </Surface>
+                <MaterialCommunityIcons name="chevron-right" size={20} color={c.textTer} />
+            </View>
 
-            <Text variant="headlineMedium" style={[styles.header, { color: theme.colors.onBackground }]}>Settings</Text>
-
-            <List.Section>
-                <List.Subheader>Preferences</List.Subheader>
-                <List.Item
-                    title="Push Notifications"
-                    description="Receive updates about your deliveries"
-                    left={props => <List.Icon {...props} icon="bell" />}
-                    right={() => <Switch value={notifications} onValueChange={setNotifications} />}
-                />
-                <Divider />
-                <Divider />
-                <List.Item
-                    title="Dark Mode"
-                    description="Use dark theme for the app"
-                    left={props => <List.Icon {...props} icon="theme-light-dark" />}
-                    right={() => <Switch value={isDarkMode} onValueChange={toggleTheme} />}
-                />
-
-            </List.Section>
-
-            <List.Section>
-                <List.Subheader>Support</List.Subheader>
-                <List.Item
-                    title="Help Center"
-                    left={props => <List.Icon {...props} icon="help-circle" />}
-                    onPress={() => navigation.navigate('HelpCenter')}
-                    right={props => <List.Icon {...props} icon="chevron-right" />}
-                />
-                <Divider />
-                {profile?.role === 'RIDER' && (
-                    <>
-                        <List.Item
-                            title="Rider Support"
-                            left={props => <List.Icon {...props} icon="face-agent" />}
-                            onPress={() => navigation.navigate('RiderSupport')}
-                            right={props => <List.Icon {...props} icon="chevron-right" />}
+            {/* Preferences */}
+            <Text style={[styles.sectionTitle, { color: c.textSec }]}>PREFERENCES</Text>
+            <View style={[styles.section, { backgroundColor: c.card, borderColor: c.border }]}>
+                <SettingsRow
+                    icon="bell-outline"
+                    label="Push Notifications"
+                    subtitle="Delivery updates & alerts"
+                    c={c}
+                    right={
+                        <Switch
+                            value={notifications}
+                            onValueChange={setNotifications}
+                            trackColor={{ false: c.border, true: c.switchTrack }}
                         />
-                        <Divider />
-                    </>
-                )}
-                <List.Item
-                    title="Terms of Service"
-                    left={props => <List.Icon {...props} icon="file-document" />}
-                    onPress={() => navigation.navigate('TermsOfService')}
-                    right={props => <List.Icon {...props} icon="chevron-right" />}
+                    }
                 />
-                <Divider />
-                <List.Item
-                    title="Privacy Policy"
-                    left={props => <List.Icon {...props} icon="shield-account" />}
-                    onPress={() => navigation.navigate('PrivacyPolicy')}
-                    right={props => <List.Icon {...props} icon="chevron-right" />}
+                <SettingsRow
+                    icon="moon-waning-crescent"
+                    label="Dark Mode"
+                    subtitle="Use dark theme"
+                    c={c}
+                    right={
+                        <Switch
+                            value={isDarkMode}
+                            onValueChange={toggleTheme}
+                            trackColor={{ false: c.border, true: c.switchTrack }}
+                        />
+                    }
                 />
-            </List.Section>
+            </View>
 
-            <View style={styles.logoutContainer}>
+            {/* Support */}
+            <Text style={[styles.sectionTitle, { color: c.textSec }]}>SUPPORT</Text>
+            <View style={[styles.section, { backgroundColor: c.card, borderColor: c.border }]}>
+                <SettingsRow icon="help-circle-outline" label="Help Center" c={c} onPress={() => navigation.navigate('HelpCenter')} />
+                {profile?.role === 'RIDER' && (
+                    <SettingsRow icon="face-agent" label="Rider Support" c={c} onPress={() => navigation.navigate('RiderSupport')} />
+                )}
+                <SettingsRow icon="file-document-outline" label="Terms of Service" c={c} onPress={() => navigation.navigate('TermsOfService')} />
+                <SettingsRow icon="shield-check-outline" label="Privacy Policy" c={c} onPress={() => navigation.navigate('PrivacyPolicy')} />
+            </View>
+
+            {/* Account */}
+            <Text style={[styles.sectionTitle, { color: c.textSec }]}>ACCOUNT</Text>
+            <View style={[styles.section, { backgroundColor: c.card, borderColor: c.border }]}>
                 {(role === 'rider' || role === 'admin') && (
-                    <Button
-                        mode="contained-tonal"
-                        icon={() => <MaterialCommunityIcons name="view-dashboard" size={20} color={theme.colors.onSecondaryContainer} />}
-                        onPress={() => navigation.replace('RoleSelection')}
-                        style={styles.changeDashboardBtn}
-                        textColor={theme.colors.onSecondaryContainer}
-                    >
-                        Change Dashboard
-                    </Button>
+                    <SettingsRow icon="view-dashboard-outline" label="Change Dashboard" c={c} onPress={() => navigation.replace('RoleSelection')} />
                 )}
-                <Button
-                    mode="outlined"
-                    icon={() => <MaterialCommunityIcons name="google" size={20} color={theme.colors.onSurface} />}
-                    onPress={handleSwitchAccount}
-                    loading={isSwitching}
-                    disabled={isSwitching}
-                    style={styles.switchAccountBtn}
-                    textColor={theme.colors.onSurface}
-                >
-                    Switch Account
-                </Button>
-                <Button mode="contained" buttonColor={theme.colors.error} onPress={handleLogout}>
-                    Log Out
-                </Button>
+                <SettingsRow icon="google" label="Switch Account" c={c} onPress={handleSwitchAccount} />
             </View>
 
-            <View style={styles.versionContainer}>
-                <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>App Version 1.0.1</Text>
-            </View>
+            <TouchableOpacity
+                style={[styles.logoutBtn, { backgroundColor: c.red + '12', borderColor: c.red + '30' }]}
+                onPress={handleLogout}
+                activeOpacity={0.7}
+            >
+                <MaterialCommunityIcons name="logout" size={18} color={c.red} />
+                <Text style={[styles.logoutText, { color: c.red }]}>Log Out</Text>
+            </TouchableOpacity>
+
+            <Text style={[styles.version, { color: c.textTer }]}>App Version 1.0.1</Text>
         </ScrollView>
     );
 }
 
+// ─── Styles ─────────────────────────────────────────────────────────────────────
 const styles = StyleSheet.create({
-    container: {
-        flex: 1,
+    container: { flex: 1 },
+    profileCard: {
+        flexDirection: 'row', alignItems: 'center', marginHorizontal: 16, marginBottom: 24,
+        padding: 16, borderRadius: 16, borderWidth: 1,
     },
-    profileHeader: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        padding: 16,
-        marginHorizontal: 16,
-        marginTop: 16,
-        marginBottom: 8,
-        borderRadius: 12,
+    profileInfo: { flex: 1, marginLeft: 14 },
+    profileName: { fontSize: 18, fontWeight: '700' },
+    profileEmail: { fontSize: 13, marginTop: 2 },
+    sectionTitle: {
+        fontSize: 12, fontWeight: '600', letterSpacing: 0.8,
+        marginHorizontal: 20, marginBottom: 6, marginTop: 4,
     },
-    profileInfo: {
-        marginLeft: 16,
-        flex: 1,
+    section: {
+        marginHorizontal: 16, borderRadius: 14, borderWidth: 1,
+        overflow: 'hidden', marginBottom: 20,
     },
-    header: {
-        padding: 24,
-        paddingTop: 16,
-        fontWeight: 'bold',
+    row: {
+        flexDirection: 'row', alignItems: 'center', paddingVertical: 14,
+        paddingHorizontal: 14, borderBottomWidth: StyleSheet.hairlineWidth,
     },
-    versionContainer: {
-        alignItems: 'center',
-        padding: 24,
+    rowIcon: {
+        width: 36, height: 36, borderRadius: 10, alignItems: 'center', justifyContent: 'center',
     },
-    logoutContainer: {
-        marginTop: 20,
-        paddingHorizontal: 16,
+    rowContent: { flex: 1, marginLeft: 12 },
+    rowLabel: { fontSize: 15, fontWeight: '500' },
+    rowSub: { fontSize: 12, marginTop: 1 },
+    logoutBtn: {
+        flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+        marginHorizontal: 16, paddingVertical: 14, borderRadius: 14, borderWidth: 1,
+        gap: 8, marginBottom: 8,
     },
-    changeDashboardBtn: {
-        marginBottom: 12,
-    },
-    switchAccountBtn: {
-        marginBottom: 12,
-        borderColor: '#ccc',
-    }
+    logoutText: { fontSize: 15, fontWeight: '600' },
+    version: { textAlign: 'center', fontSize: 12, marginTop: 16 },
 });

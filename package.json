@@ -86,6 +86,7 @@
     "expo-intent-launcher": "^13.0.8",
     "expo-location": "^19.0.8",
     "expo-notifications": "~0.32.16",
+    "expo-status-bar": "^55.0.4",
     "expo-task-manager": "~14.0.9",
     "expo-updates": "~29.0.16",
     "firebase": "^12.7.0",

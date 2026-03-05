@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { View, StyleSheet, ScrollView, TouchableOpacity, Alert, Share } from 'react-native';
-import { Text, Card, Avatar, Button, Surface, IconButton, Modal, Portal, TextInput, Chip, Divider } from 'react-native-paper';
+import { View, StyleSheet, ScrollView, TouchableOpacity, Alert, Share, StatusBar } from 'react-native';
+import { Text, Modal, Portal, TextInput, Chip, Divider } from 'react-native-paper';
 import { useNavigation } from '@react-navigation/native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import dayjs from 'dayjs';
@@ -14,6 +14,60 @@ import * as Location from 'expo-location';
 import { fetchWeather, WeatherData } from '../../services/weatherService';
 import { NetworkStatusBanner } from '../../components';
 import { HardwareByBoxId, subscribeToAllHardware } from '../../services/firebaseClient';
+import { useAppTheme } from '../../context/ThemeContext';
+
+// ─── Dual-mode Color Palette ────────────────────────────────────────────────────
+
+type StatusBarStyle = 'dark-content' | 'light-content';
+
+type ColorPalette = {
+    bg: string; card: string; card2: string; border: string;
+    accent: string; textPrimary: string; textSecondary: string; textTertiary: string;
+    red: string; green: string; orange: string; modalBg: string;
+    statusBar: StatusBarStyle; pillBg: string; chipBg: string; chipSelected: string; qrBg: string;
+};
+
+const lightColors: ColorPalette = {
+    bg: '#FFFFFF',
+    card: '#F6F6F6',
+    card2: '#EEEEEE',
+    border: '#E5E5EA',
+    accent: '#000000',
+    textPrimary: '#000000',
+    textSecondary: '#6B6B6B',
+    textTertiary: '#999999',
+    red: '#FF3B30',
+    green: '#34C759',
+    orange: '#FF9500',
+    modalBg: '#FFFFFF',
+    statusBar: 'dark-content' as const,
+    pillBg: '#F2F2F7',
+    chipBg: '#F2F2F7',
+    chipSelected: '#E8F0FE',
+    qrBg: '#FFFFFF',
+};
+
+const darkColors: ColorPalette = {
+    bg: '#000000',
+    card: '#141414',
+    card2: '#1C1C1E',
+    border: '#2C2C2E',
+    accent: '#FFFFFF',
+    textPrimary: '#FFFFFF',
+    textSecondary: '#8E8E93',
+    textTertiary: '#48484A',
+    red: '#FF453A',
+    green: '#30D158',
+    orange: '#FF9F0A',
+    modalBg: '#1C1C1E',
+    statusBar: 'light-content' as const,
+    pillBg: '#1C1C1E',
+    chipBg: '#1C1C1E',
+    chipSelected: '#1a2f4a',
+    qrBg: '#FFFFFF',
+};
+
+// ─── Helpers ────────────────────────────────────────────────────────────────────
 
 function formatRemainingMs(ms: number): string {
     if (!Number.isFinite(ms) || ms <= 0) return '0m';
@@ -33,15 +87,13 @@ function deriveHardwareStatus(hw: HardwareByBoxId[string] | null): string {
     return 'IDLE';
 }
 
-type StatCardProps = {
-    label: string;
-    value: string;
-    icon: string;
-    color: string;
-};
+// ─── Component ──────────────────────────────────────────────────────────────────
 
 export default function AdminDashboard() {
     const navigation = useNavigation<any>();
+    const { isDarkMode } = useAppTheme();
+    const c = isDarkMode ? darkColors : lightColors;
+
     const [currentTime, setCurrentTime] = useState(dayjs());
     const [overrideModalVisible, setOverrideModalVisible] = useState(false);
     const [pairQrModalVisible, setPairQrModalVisible] = useState(false);
@@ -99,8 +151,6 @@ export default function AdminDashboard() {
         try {
             const boxes = await listSmartBoxes();
             setAvailableBoxes(boxes);
-
-            // Match web UX (QR is generated for a known box): auto-pick a box so QR renders immediately.
             if (!pairBoxId.trim() && boxes.length > 0) {
                 setPairBoxId(boxes[0].id);
             }
@@ -133,7 +183,6 @@ export default function AdminDashboard() {
             Alert.alert('QR Not Ready', 'Generate a QR first.');
             return;
         }
-
         qrRef.current.toDataURL(async (data: string) => {
             try {
                 const fileUri = `${FileSystem.cacheDirectory}pairing-qr-${pairBoxId || 'box'}.png`;
@@ -159,7 +208,6 @@ export default function AdminDashboard() {
         return unsubscribe;
     }, []);
 
-    // EC-03: Handle manual delivery completion
     const handleOverrideDelivery = async () => {
         if (!trackingInput.trim()) {
             Alert.alert('Error', 'Please enter a tracking number or delivery ID');
@@ -172,7 +220,6 @@ export default function AdminDashboard() {
 
         setIsProcessing(true);
 
-        // First verify the delivery exists
         const delivery = await getDeliveryByIdOrTracking(trackingInput.trim());
         if (!delivery) {
             Alert.alert('Not Found', 'No delivery found with that tracking number');
@@ -186,7 +233,6 @@ export default function AdminDashboard() {
             return;
         }
 
-        // Confirm before proceeding
         Alert.alert(
             'Confirm Override',
             `Mark delivery ${delivery.tracking_number} as COMPLETED?\n\nReason: ${reasonInput}`,
@@ -213,10 +259,8 @@ export default function AdminDashboard() {
         );
     };
 
-    // Live weather state
+    // Weather
     const [weather, setWeather] = useState<WeatherData | null>(null);
-
-    // Fetch device location and weather
     useEffect(() => {
         (async () => {
             const { status } = await Location.requestForegroundPermissionsAsync();
@@ -227,10 +271,10 @@ export default function AdminDashboard() {
         })();
     }, []);
 
+    // ─── Hardware Summary ───────────────────────────────────────────────────────
     const hardwareSummary = useMemo(() => {
         const entries = Object.values(hardwareSnapshot ?? {});
         const total = entries.length;
-
         let tamper = 0;
         let active = 0;
         let offline = 0;
@@ -252,587 +296,712 @@ export default function AdminDashboard() {
         });
 
         const online = Math.max(total - offline, 0);
-
         return { total, tamper, active, offline, online, gpsLocked, lte, wifi };
     }, [hardwareSnapshot]);
 
-    const stats = [
-        { label: 'Tracked Boxes', value: String(hardwareSummary.total), icon: 'package-variant-closed', color: '#4CAF50' },
-        { label: 'Tamper Alerts', value: String(hardwareSummary.tamper), icon: 'alert-circle', color: '#F44336' },
-        { label: 'Active Movement', value: String(hardwareSummary.active), icon: 'truck-fast', color: '#2196F3' },
-        { label: 'Offline Boxes', value: String(hardwareSummary.offline), icon: 'wifi-off', color: '#FF9800' },
+    // ─── Quick Action Items ─────────────────────────────────────────────────────
+    const quickActions = [
+        { icon: 'map-marker-radius', label: 'Live Map', onPress: () => navigation.navigate('GlobalMap') },
+        { icon: 'alert-octagon', label: 'Alerts', onPress: () => navigation.navigate('TamperAlerts'), badge: hardwareSummary.tamper },
+        { icon: 'file-document-outline', label: 'Records', onPress: () => navigation.navigate('DeliveryRecords') },
+        { icon: 'lock-open-variant-outline', label: 'Unlock Box', onPress: () => navigation.navigate('AdminRemoteUnlock') },
+        { icon: 'check-circle-outline', label: 'Complete Del.', onPress: () => setOverrideModalVisible(true) },
+        { icon: 'qrcode-scan', label: 'Pair QR', onPress: openPairQrModal },
     ];
 
-    const StatCard = ({ label, value, icon, color }: StatCardProps) => (
-        <Surface style={styles.statCard} elevation={2}>
-            <View style={[styles.statIcon, { backgroundColor: color + '20' }]}>
-                <MaterialCommunityIcons name={icon} size={24} color={color} />
-            </View>
-            <Text variant="headlineSmall" style={{ fontWeight: 'bold', marginTop: 8 }}>{value}</Text>
-            <Text variant="bodySmall" style={{ color: '#666' }}>{label}</Text>
-        </Surface>
-    );
-
+    // ─── Render ─────────────────────────────────────────────────────────────────
     return (
-        <View style={styles.container}>
-            {/* Attractive Header */}
-            <View style={styles.headerBackground}>
-                <View style={styles.headerContent}>
-                    <View>
-                        <Text style={styles.dateText}>{currentTime.format('dddd, MMMM D')}</Text>
-                        <Text style={styles.timeText}>{currentTime.format('h:mm A')}</Text>
-                    </View>
-                    {weather && (
-                        <View style={styles.weatherContainer}>
-                            <MaterialCommunityIcons name={weather.icon as any} size={30} color="white" />
-                            <Text style={styles.weatherText}>{weather.temp}</Text>
-                            <Text style={styles.weatherCondition}>{weather.condition}</Text>
-                        </View>
-                    )}
+        <View style={[styles.container, { backgroundColor: c.bg }]}>
+            <StatusBar barStyle={c.statusBar} backgroundColor={c.bg} />
+
+            {/* ── Header ─────────────────────────────────────────────────────── */}
+            <View style={[styles.header, { backgroundColor: c.bg }]}>
+                <View>
+                    <Text style={[styles.greeting, { color: c.textPrimary }]}>Admin Overview</Text>
+                    <Text style={[styles.dateLabel, { color: c.textSecondary }]}>
+                        {currentTime.format('dddd, MMM D · h:mm A')}
+                    </Text>
                 </View>
+                {weather && (
+                    <View style={[styles.weatherPill, { backgroundColor: c.pillBg }]}>
+                        <MaterialCommunityIcons name={weather.icon as any} size={16} color={c.textSecondary} />
+                        <Text style={[styles.weatherTemp, { color: c.textPrimary }]}>{weather.temp}</Text>
+                    </View>
+                )}
             </View>
 
-            <ScrollView contentContainerStyle={styles.scrollContent}>
+            <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
 
-                <View style={styles.header}>
-                    <Text variant="headlineMedium" style={styles.headerTitle}>Admin Overview</Text>
-                    <IconButton icon="refresh" size={24} onPress={() => console.log('Refresh')} />
-                </View>
-
-                {/* Network connectivity status */}
+                {/* Network banner */}
                 <NetworkStatusBanner />
 
-                <Card style={styles.liveTrackingCard}>
-                    <Card.Content>
-                        <View style={styles.liveTrackingHeader}>
-                            <View style={{ flex: 1 }}>
-                                <Text variant="titleMedium" style={{ fontWeight: 'bold' }}>
-                                    Live Hardware Tracking
-                                </Text>
-                                <Text variant="bodySmall" style={{ color: '#666', marginTop: 2 }}>
-                                    Realtime fleet telemetry from Firebase
-                                </Text>
-                            </View>
-                            <Button mode="contained" icon="map" compact onPress={() => navigation.navigate('GlobalMap')}>
-                                Open Map
-                            </Button>
-                        </View>
+                {/* ── Stat Metrics Row ────────────────────────────────────────── */}
+                <View style={styles.metricsRow}>
+                    <MetricTile value={hardwareSummary.total} label="Boxes" c={c} />
+                    <MetricTile value={hardwareSummary.online} label="Online" c={c} valueColor={c.green} />
+                    <MetricTile value={hardwareSummary.tamper} label="Tamper" c={c} valueColor={hardwareSummary.tamper > 0 ? c.red : c.textSecondary} />
+                    <MetricTile value={hardwareSummary.offline} label="Offline" c={c} valueColor={hardwareSummary.offline > 0 ? c.orange : c.textSecondary} />
+                </View>
 
-                        <View style={styles.liveTrackingChipRow}>
-                            <Chip compact icon="check-decagram" style={styles.liveChip}>
-                                Online {hardwareSummary.online}
-                            </Chip>
-                            <Chip compact icon="crosshairs-gps" style={styles.liveChip}>
-                                GPS Lock {hardwareSummary.gpsLocked}
-                            </Chip>
-                            <Chip compact icon="antenna" style={styles.liveChip}>
-                                LTE {hardwareSummary.lte}
-                            </Chip>
-                            <Chip compact icon="wifi" style={styles.liveChip}>
-                                WiFi {hardwareSummary.wifi}
-                            </Chip>
-                        </View>
-                    </Card.Content>
-                </Card>
+                {/* ── Live Hardware Card ──────────────────────────────────────── */}
+                <View style={[styles.section, { backgroundColor: c.card, borderColor: c.border }]}>
+                    <View style={styles.sectionHeader}>
+                        <Text style={[styles.sectionTitle, { color: c.textPrimary, marginBottom: 0 }]}>Live Hardware</Text>
+                        <TouchableOpacity onPress={() => navigation.navigate('GlobalMap')} style={styles.sectionAction}>
+                            <Text style={[styles.sectionActionText, { color: c.accent }]}>Open Map</Text>
+                            <MaterialCommunityIcons name="chevron-right" size={16} color={c.accent} />
+                        </TouchableOpacity>
+                    </View>
+                    <View style={styles.chipRow}>
+                        <Pill icon="check-decagram" label={`Online ${hardwareSummary.online}`} c={c} />
+                        <Pill icon="crosshairs-gps" label={`GPS ${hardwareSummary.gpsLocked}`} c={c} />
+                        <Pill icon="antenna" label={`LTE ${hardwareSummary.lte}`} c={c} />
+                        <Pill icon="wifi" label={`WiFi ${hardwareSummary.wifi}`} c={c} />
+                    </View>
+                </View>
 
-                <Surface style={styles.pairingBanner} elevation={1}>
+                {/* ── Paired Box Status ───────────────────────────────────────── */}
+                <View style={[styles.pairingCard, { backgroundColor: c.card, borderColor: c.border }]}>
                     <View style={{ flex: 1 }}>
-                        <Text variant="titleSmall" style={{ fontWeight: 'bold' }}>Paired Box</Text>
+                        <Text style={[styles.pairingTitle, { color: c.textPrimary }]}>Paired Box</Text>
                         {isPaired ? (
                             <>
-                                <Text variant="bodyMedium" style={{ marginTop: 2 }}>
-                                    {pairingState?.box_id}
-                                </Text>
-                                <Text variant="bodySmall" style={{ color: '#666', marginTop: 2 }}>
+                                <Text style={[styles.pairingBoxId, { color: c.accent }]}>{pairingState?.box_id}</Text>
+                                <Text style={[styles.pairingMeta, { color: c.textSecondary }]}>
                                     {pairingState?.mode === 'ONE_TIME' ? 'One-time' : 'Session'}
-                                    {pairingState?.expires_at ? ` • ${formatRemainingMs(pairingState.expires_at - Date.now())} left` : ''}
+                                    {pairingState?.expires_at ? ` · ${formatRemainingMs(pairingState.expires_at - Date.now())} left` : ''}
                                 </Text>
                             </>
                         ) : (
-                            <Text variant="bodySmall" style={{ color: '#666', marginTop: 2 }}>
-                                Not paired
-                            </Text>
+                            <Text style={[styles.pairingMeta, { color: c.textSecondary }]}>Not paired</Text>
                         )}
                     </View>
-                    <Button mode="outlined" onPress={() => navigation.navigate('PairBox')}>
-                        Pair
-                    </Button>
-                </Surface>
+                    <TouchableOpacity style={[styles.pairingBtn, { backgroundColor: c.accent }]} onPress={() => navigation.navigate('PairBox')}>
+                        <Text style={styles.pairingBtnText}>Pair</Text>
+                    </TouchableOpacity>
+                </View>
 
-                {/* Stats Grid */}
-                <View style={styles.statsGrid}>
-                    {stats.map((stat, index) => (
-                        <StatCard key={index} {...stat} />
+                {/* ── Quick Actions Grid ──────────────────────────────────────── */}
+                <Text style={[styles.sectionTitle, { color: c.textPrimary }]}>System Management</Text>
+                <View style={styles.actionsGrid}>
+                    {quickActions.map((a, i) => (
+                        <TouchableOpacity
+                            key={i}
+                            style={[styles.actionTile, { backgroundColor: c.card, borderColor: c.border }]}
+                            onPress={a.onPress}
+                            activeOpacity={0.7}
+                        >
+                            <View style={[styles.actionIconWrap, { backgroundColor: c.card2 }]}>
+                                <MaterialCommunityIcons name={a.icon as any} size={22} color={c.textPrimary} />
+                                {a.badge && a.badge > 0 ? (
+                                    <View style={styles.badge}>
+                                        <Text style={styles.badgeText}>{a.badge}</Text>
+                                    </View>
+                                ) : null}
+                            </View>
+                            <Text style={[styles.actionLabel, { color: c.textSecondary }]}>{a.label}</Text>
+                        </TouchableOpacity>
                     ))}
                 </View>
 
-                {/* Quick Links */}
-                <Text variant="titleMedium" style={styles.sectionTitle}>System Management</Text>
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.quickLinksScroll}>
-                    <Button
-                        mode="contained"
-                        icon="map"
-                        style={[styles.quickLinkBtn, { backgroundColor: '#3F51B5' }]}
-                        onPress={() => navigation.navigate('GlobalMap')}
-                    >
-                        Live Map
-                    </Button>
-                    <Button
-                        mode="contained"
-                        icon="alert"
-                        style={[styles.quickLinkBtn, { backgroundColor: '#F44336' }]}
-                        onPress={() => navigation.navigate('TamperAlerts')}
-                    >
-                        Alerts
-                    </Button>
-                    <Button
-                        mode="contained"
-                        icon="file-document"
-                        style={[styles.quickLinkBtn, { backgroundColor: '#607D8B' }]}
-                        onPress={() => navigation.navigate('DeliveryRecords')}
-                    >
-                        Records
-                    </Button>
-                    <Button
-                        mode="contained"
-                        icon="lock-open-alert"
-                        style={[styles.quickLinkBtn, { backgroundColor: '#FF5722' }]}
-                        onPress={() => navigation.navigate('AdminRemoteUnlock')}
-                    >
-                        Unlock Box
-                    </Button>
-                    <Button
-                        mode="contained"
-                        icon="checkbox-marked-circle-outline"
-                        style={[styles.quickLinkBtn, { backgroundColor: '#FF9800' }]}
-                        onPress={() => setOverrideModalVisible(true)}
-                    >
-                        Complete Del.
-                    </Button>
-                    <Button
-                        mode="contained"
-                        icon="qrcode"
-                        style={[styles.quickLinkBtn, { backgroundColor: '#1D4ED8' }]}
-                        onPress={openPairQrModal}
-                    >
-                        Pair QR
-                    </Button>
-                    <Button
-                        mode="contained"
-                        icon="bell-ring"
-                        style={[styles.quickLinkBtn, { backgroundColor: '#9C27B0' }]}
-                        onPress={async () => {
-                            try {
-                                const baseUrl = process.env.EXPO_PUBLIC_TRACKING_WEB_BASE_URL || process.env.EXPO_PUBLIC_API_URL || 'https://parcel-safe.vercel.app';
-                                await fetch(`${baseUrl}/api/notifications/promo`, { method: 'POST' });
-                                Alert.alert('Sent', 'Test push notification triggered! Check your notifications/lockscreen. (App must be backgrounded for banner)');
-                            } catch (e: any) {
-                                Alert.alert('Error', `Failed: ${e.message}`);
-                            }
-                        }}
-                    >
-                        Push Test
-                    </Button>
-                </ScrollView>
+                {/* ── Push Test Button ────────────────────────────────────────── */}
+                <TouchableOpacity
+                    style={[styles.pushTestBtn, { borderColor: c.border }]}
+                    activeOpacity={0.7}
+                    onPress={async () => {
+                        try {
+                            const baseUrl = process.env.EXPO_PUBLIC_TRACKING_WEB_BASE_URL || process.env.EXPO_PUBLIC_API_URL || 'https://parcel-safe.vercel.app';
+                            await fetch(`${baseUrl}/api/notifications/promo`, { method: 'POST' });
+                            Alert.alert('Sent', 'Test push notification triggered!');
+                        } catch (e: any) {
+                            Alert.alert('Error', `Failed: ${e.message}`);
+                        }
+                    }}
+                >
+                    <MaterialCommunityIcons name="bell-ring-outline" size={18} color={c.accent} />
+                    <Text style={[styles.pushTestLabel, { color: c.accent }]}>Send Push Test</Text>
+                </TouchableOpacity>
 
-                {/* EC-03: Override Delivery Modal */}
-                <Portal>
-                    <Modal
-                        visible={overrideModalVisible}
-                        onDismiss={() => setOverrideModalVisible(false)}
-                        contentContainerStyle={styles.modalContainer}
-                    >
-                        <Text variant="titleLarge" style={{ fontWeight: 'bold', marginBottom: 16 }}>
-                            Manual Delivery Override
+                {/* ── Recent Alerts ───────────────────────────────────────────── */}
+                <View style={styles.sectionHeader}>
+                    <Text style={[styles.sectionTitle, { color: c.textPrimary, marginBottom: 0 }]}>Recent Alerts</Text>
+                    <TouchableOpacity onPress={() => navigation.navigate('TamperAlerts')}>
+                        <Text style={[styles.sectionActionText, { color: c.accent }]}>View All</Text>
+                    </TouchableOpacity>
+                </View>
+                <View style={[styles.alertCard, { backgroundColor: c.card, borderColor: c.border, borderLeftColor: c.green }]}>
+                    <MaterialCommunityIcons name="shield-check-outline" size={22} color={c.green} />
+                    <View style={{ marginLeft: 12, flex: 1 }}>
+                        <Text style={[styles.alertTitle, { color: c.textPrimary }]}>All Clear</Text>
+                        <Text style={[styles.alertSub, { color: c.textSecondary }]}>No recent alerts</Text>
+                    </View>
+                </View>
+
+                <View style={{ height: 40 }} />
+            </ScrollView>
+
+            {/* ── Override Delivery Modal ─────────────────────────────────────── */}
+            <Portal>
+                <Modal
+                    visible={overrideModalVisible}
+                    onDismiss={() => setOverrideModalVisible(false)}
+                    contentContainerStyle={[styles.modal, { backgroundColor: c.modalBg, borderColor: c.border }]}
+                >
+                    <Text style={[styles.modalTitle, { color: c.textPrimary }]}>Manual Delivery Override</Text>
+                    <Text style={[styles.modalDesc, { color: c.textSecondary }]}>
+                        Use when hardware failed but customer received the package.
+                    </Text>
+                    <TextInput
+                        label="Tracking Number / Delivery ID"
+                        value={trackingInput}
+                        onChangeText={setTrackingInput}
+                        mode="outlined"
+                        style={[styles.modalInput, { backgroundColor: c.card2 }]}
+                        outlineColor={c.border}
+                        activeOutlineColor={c.accent}
+                        textColor={c.textPrimary}
+                        theme={{ colors: { onSurfaceVariant: c.textSecondary, surface: c.card2 } }}
+                    />
+                    <TextInput
+                        label="Reason for Override"
+                        value={reasonInput}
+                        onChangeText={setReasonInput}
+                        mode="outlined"
+                        multiline
+                        numberOfLines={2}
+                        placeholder="e.g., Battery died, customer confirmed receipt"
+                        placeholderTextColor={c.textTertiary}
+                        style={[styles.modalInput, { backgroundColor: c.card2 }]}
+                        outlineColor={c.border}
+                        activeOutlineColor={c.accent}
+                        textColor={c.textPrimary}
+                        theme={{ colors: { onSurfaceVariant: c.textSecondary, surface: c.card2 } }}
+                    />
+                    <View style={styles.modalActions}>
+                        <TouchableOpacity style={[styles.modalCancelBtn, { borderColor: c.border }]} onPress={() => setOverrideModalVisible(false)}>
+                            <Text style={[styles.modalCancelText, { color: c.textPrimary }]}>Cancel</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                            style={[styles.modalConfirmBtn, { backgroundColor: c.accent }, isProcessing && { opacity: 0.5 }]}
+                            onPress={handleOverrideDelivery}
+                            disabled={isProcessing}
+                        >
+                            <Text style={styles.modalConfirmText}>{isProcessing ? 'Processing…' : 'Complete Delivery'}</Text>
+                        </TouchableOpacity>
+                    </View>
+                </Modal>
+            </Portal>
+
+            {/* ── Pair QR Modal ───────────────────────────────────────────────── */}
+            <Portal>
+                <Modal
+                    visible={pairQrModalVisible}
+                    onDismiss={() => setPairQrModalVisible(false)}
+                    contentContainerStyle={[styles.modal, { backgroundColor: c.modalBg, borderColor: c.border }]}
+                >
+                    <ScrollView showsVerticalScrollIndicator={false} nestedScrollEnabled contentContainerStyle={{ paddingBottom: 8 }}>
+                        <Text style={[styles.modalTitle, { color: c.textPrimary }]}>Generate Pairing QR</Text>
+                        <Text style={[styles.modalDesc, { color: c.textSecondary }]}>
+                            Select a box, choose mode, then share the QR payload.
                         </Text>
-                        <Text variant="bodyMedium" style={{ color: '#666', marginBottom: 16 }}>
-                            Use this when box battery died or hardware failed but customer received package.
-                        </Text>
+
+                        <Text style={[styles.modalLabel, { color: c.textSecondary }]}>Select Box</Text>
+                        <View style={[styles.boxSelect, { borderColor: c.border, backgroundColor: c.card }]}>
+                            {boxesLoading ? (
+                                <Text style={[styles.boxSelectEmpty, { color: c.textSecondary }]}>Loading boxes…</Text>
+                            ) : availableBoxes.length === 0 ? (
+                                <>
+                                    <Text style={[styles.boxSelectEmpty, { color: c.textSecondary }]}>No boxes found.</Text>
+                                    <TextInput
+                                        label="Box ID (manual)"
+                                        value={pairBoxId}
+                                        onChangeText={setPairBoxId}
+                                        mode="outlined"
+                                        outlineColor={c.border}
+                                        activeOutlineColor={c.accent}
+                                        textColor={c.textPrimary}
+                                        theme={{ colors: { onSurfaceVariant: c.textSecondary, surface: c.card2 } }}
+                                    />
+                                </>
+                            ) : (
+                                <ScrollView style={{ flexGrow: 0 }} nestedScrollEnabled contentContainerStyle={styles.chipRow}>
+                                    {availableBoxes.map((box) => (
+                                        <Chip
+                                            key={box.id}
+                                            selected={pairBoxId === box.id}
+                                            onPress={() => setPairBoxId(box.id)}
+                                            style={[styles.darkChip, { backgroundColor: c.chipBg, borderColor: c.border }, pairBoxId === box.id && { borderColor: c.accent, backgroundColor: c.chipSelected }]}
+                                            textStyle={{ color: c.textPrimary, fontSize: 12 }}
+                                            selectedColor={c.accent}
+                                        >
+                                            {box.id}
+                                        </Chip>
+                                    ))}
+                                </ScrollView>
+                            )}
+                        </View>
+
+                        <Text style={[styles.modalLabel, { color: c.textSecondary }]}>Pairing Mode</Text>
+                        <View style={styles.chipRow}>
+                            <Chip
+                                selected={pairMode === 'ONE_TIME'}
+                                onPress={() => setPairMode('ONE_TIME')}
+                                style={[styles.darkChip, { backgroundColor: c.chipBg, borderColor: c.border }, pairMode === 'ONE_TIME' && { borderColor: c.accent, backgroundColor: c.chipSelected }]}
+                                textStyle={{ color: c.textPrimary, fontSize: 12 }}
+                                selectedColor={c.accent}
+                            >
+                                One-time
+                            </Chip>
+                            <Chip
+                                selected={pairMode === 'SESSION'}
+                                onPress={() => setPairMode('SESSION')}
+                                style={[styles.darkChip, { backgroundColor: c.chipBg, borderColor: c.border }, pairMode === 'SESSION' && { borderColor: c.accent, backgroundColor: c.chipSelected }]}
+                                textStyle={{ color: c.textPrimary, fontSize: 12 }}
+                                selectedColor={c.accent}
+                            >
+                                Session
+                            </Chip>
+                        </View>
+
+                        {pairMode === 'SESSION' && (
+                            <View style={{ marginBottom: 8 }}>
+                                <Text style={[styles.modalLabel, { color: c.textSecondary }]}>Session Duration</Text>
+                                <View style={styles.chipRow}>
+                                    {[4, 12, 24, 48].map((hours) => (
+                                        <Chip
+                                            key={hours}
+                                            selected={sessionHours === hours}
+                                            onPress={() => setSessionHours(hours)}
+                                            style={[styles.darkChip, { backgroundColor: c.chipBg, borderColor: c.border }, sessionHours === hours && { borderColor: c.accent, backgroundColor: c.chipSelected }]}
+                                            textStyle={{ color: c.textPrimary, fontSize: 12 }}
+                                            selectedColor={c.accent}
+                                        >
+                                            {hours}h
+                                        </Chip>
+                                    ))}
+                                </View>
+                            </View>
+                        )}
+
+                        <View style={styles.tokenRow}>
+                            <TextInput
+                                label="Pair Token"
+                                value={pairToken}
+                                mode="outlined"
+                                style={{ flex: 1 }}
+                                editable={false}
+                                outlineColor={c.border}
+                                textColor={c.textPrimary}
+                                theme={{ colors: { onSurfaceVariant: c.textSecondary, surface: c.card2 } }}
+                            />
+                            <TouchableOpacity style={[styles.regenBtn, { borderColor: c.border }]} onPress={() => setPairToken(generatePairToken())}>
+                                <Text style={[styles.regenBtnText, { color: c.accent }]}>Regen</Text>
+                            </TouchableOpacity>
+                        </View>
+
+                        <Divider style={{ backgroundColor: c.border, marginVertical: 16 }} />
+
+                        <View style={styles.qrWrap}>
+                            {pairingPayload ? (
+                                <View style={[styles.qrInner, { backgroundColor: c.qrBg }]}>
+                                    <QRCode
+                                        value={pairingPayload}
+                                        size={180}
+                                        getRef={(ref) => (qrRef.current = ref)}
+                                        backgroundColor="#FFFFFF"
+                                    />
+                                </View>
+                            ) : (
+                                <Text style={{ color: c.textSecondary }}>Select a box to render QR</Text>
+                            )}
+                        </View>
+
                         <TextInput
-                            label="Tracking Number / Delivery ID"
-                            value={trackingInput}
-                            onChangeText={setTrackingInput}
-                            mode="outlined"
-                            style={{ marginBottom: 12 }}
-                        />
-                        <TextInput
-                            label="Reason for Override"
-                            value={reasonInput}
-                            onChangeText={setReasonInput}
+                            label="QR Payload"
+                            value={pairingPayload}
                             mode="outlined"
                             multiline
                             numberOfLines={2}
-                            placeholder="e.g., Battery died, customer confirmed receipt"
-                            style={{ marginBottom: 20 }}
+                            editable={false}
+                            style={{ marginBottom: 12 }}
+                            outlineColor={c.border}
+                            textColor={c.textPrimary}
+                            theme={{ colors: { onSurfaceVariant: c.textSecondary, surface: c.card2 } }}
                         />
-                        <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 12 }}>
-                            <Button
-                                mode="outlined"
-                                onPress={() => setOverrideModalVisible(false)}
-                            >
-                                Cancel
-                            </Button>
-                            <Button
-                                mode="contained"
-                                onPress={handleOverrideDelivery}
-                                loading={isProcessing}
-                                disabled={isProcessing}
-                                buttonColor="#FF9800"
-                            >
-                                Complete Delivery
-                            </Button>
+
+                        <View style={styles.modalActions}>
+                            <TouchableOpacity style={[styles.modalCancelBtn, { borderColor: c.border }]} onPress={copyPairingPayload}>
+                                <Text style={[styles.modalCancelText, { color: c.textPrimary }]}>Copy</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity style={[styles.modalCancelBtn, { borderColor: c.border }]} onPress={sharePairingPayload}>
+                                <Text style={[styles.modalCancelText, { color: c.textPrimary }]}>Share</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity style={[styles.modalConfirmBtn, { backgroundColor: c.accent }]} onPress={shareQrImage}>
+                                <Text style={styles.modalConfirmText}>Share QR</Text>
+                            </TouchableOpacity>
                         </View>
-                    </Modal>
-                </Portal>
-
-                {/* Pair QR Modal */}
-                <Portal>
-                    <Modal
-                        visible={pairQrModalVisible}
-                        onDismiss={() => setPairQrModalVisible(false)}
-                        contentContainerStyle={styles.modalContainer}
-                    >
-                        <ScrollView
-                            showsVerticalScrollIndicator={false}
-                            nestedScrollEnabled
-                            contentContainerStyle={{ paddingBottom: 8 }}
-                        >
-                            <Text variant="titleLarge" style={{ fontWeight: 'bold', marginBottom: 12 }}>
-                                Generate Pairing QR
-                            </Text>
-                            <Text variant="bodySmall" style={{ color: '#666', marginBottom: 16 }}>
-                                Select a box, choose one-time or session mode, then share or copy the QR payload.
-                            </Text>
-
-                            <Text variant="bodySmall" style={{ marginBottom: 8 }}>Select Box</Text>
-                            <View style={styles.boxSelectContainer}>
-                                {boxesLoading ? (
-                                    <Text variant="bodySmall" style={{ color: '#666' }}>Loading boxes…</Text>
-                                ) : availableBoxes.length === 0 ? (
-                                    <>
-                                        <Text variant="bodySmall" style={{ color: '#666', marginBottom: 8 }}>No boxes found.</Text>
-                                        <TextInput
-                                            label="Box ID (manual)"
-                                            value={pairBoxId}
-                                            onChangeText={setPairBoxId}
-                                            mode="outlined"
-                                        />
-                                    </>
-                                ) : (
-                                    <ScrollView
-                                        style={styles.boxSelectScroll}
-                                        contentContainerStyle={styles.boxSelectContent}
-                                        nestedScrollEnabled
-                                    >
-                                        {availableBoxes.map((box) => (
-                                            <Chip
-                                                key={box.id}
-                                                selected={pairBoxId === box.id}
-                                                onPress={() => setPairBoxId(box.id)}
-                                                style={styles.boxChip}
-                                            >
-                                                {box.id}
-                                            </Chip>
-                                        ))}
-                                    </ScrollView>
-                                )}
-                            </View>
-
-                            <Text variant="bodySmall" style={{ marginBottom: 8 }}>Pairing Mode</Text>
-                            <View style={styles.modeRow}>
-                                <Chip
-                                    selected={pairMode === 'ONE_TIME'}
-                                    onPress={() => setPairMode('ONE_TIME')}
-                                    style={styles.modeChip}
-                                >
-                                    One-time
-                                </Chip>
-                                <Chip
-                                    selected={pairMode === 'SESSION'}
-                                    onPress={() => setPairMode('SESSION')}
-                                    style={styles.modeChip}
-                                >
-                                    Session
-                                </Chip>
-                            </View>
-
-                            {pairMode === 'SESSION' && (
-                                <View style={{ marginBottom: 8 }}>
-                                    <Text variant="bodySmall" style={{ marginBottom: 8 }}>Session Duration</Text>
-                                    <View style={styles.modeRow}>
-                                        {[4, 12, 24, 48].map((hours) => (
-                                            <Chip
-                                                key={hours}
-                                                selected={sessionHours === hours}
-                                                onPress={() => setSessionHours(hours)}
-                                                style={styles.modeChip}
-                                            >
-                                                {hours}h
-                                            </Chip>
-                                        ))}
-                                    </View>
-                                </View>
-                            )}
-
-                            <View style={styles.tokenRow}>
-                                <TextInput
-                                    label="Pair Token"
-                                    value={pairToken}
-                                    mode="outlined"
-                                    style={{ flex: 1 }}
-                                    editable={false}
-                                />
-                                <Button mode="outlined" onPress={() => setPairToken(generatePairToken())}>
-                                    Regenerate
-                                </Button>
-                            </View>
-
-                            <Divider style={{ marginVertical: 16 }} />
-
-                            <View style={styles.qrContainer}>
-                                {pairingPayload ? (
-                                    <QRCode
-                                        value={pairingPayload}
-                                        size={200}
-                                        getRef={(ref) => (qrRef.current = ref)}
-                                    />
-                                ) : (
-                                    <Text style={{ color: '#666' }}>Select a box to render QR</Text>
-                                )}
-                            </View>
-
-                            <TextInput
-                                label="QR Payload"
-                                value={pairingPayload}
-                                mode="outlined"
-                                multiline
-                                numberOfLines={3}
-                                editable={false}
-                                style={{ marginBottom: 12 }}
-                            />
-
-                            <View style={styles.modalActionsRow}>
-                                <Button mode="outlined" onPress={copyPairingPayload}>Copy Payload</Button>
-                                <Button mode="outlined" onPress={sharePairingPayload}>Share Payload</Button>
-                                <Button mode="contained" onPress={shareQrImage}>Share QR</Button>
-                            </View>
-                        </ScrollView>
-                    </Modal>
-                </Portal>
-
-                {/* Recent Alerts List */}
-                <View style={styles.alertsHeader}>
-                    <Text variant="titleMedium" style={styles.sectionTitle}>Recent Alerts</Text>
-                    <Button mode="text" compact onPress={() => navigation.navigate('TamperAlerts')}>View All</Button>
-                </View>
-
-                <Surface style={styles.alertItem} elevation={1}>
-                    <View style={styles.alertLeft}>
-                        <MaterialCommunityIcons name="shield-check-outline" size={24} color="#4CAF50" style={styles.alertIcon} />
-                        <View>
-                            <Text variant="titleSmall" style={{ color: '#4CAF50' }}>All Clear</Text>
-                            <Text variant="bodySmall">No recent alerts</Text>
-                        </View>
-                    </View>
-                </Surface>
-
-            </ScrollView>
+                    </ScrollView>
+                </Modal>
+            </Portal>
         </View>
     );
 }
 
+// ─── Sub-components ─────────────────────────────────────────────────────────────
+
+type MetricTileProps = { value: number; label: string; c: typeof lightColors; valueColor?: string };
+
+function MetricTile({ value, label, c, valueColor }: MetricTileProps) {
+    return (
+        <View style={[styles.metricTile, { backgroundColor: c.card, borderColor: c.border }]}>
+            <Text style={[styles.metricValue, { color: valueColor || c.textPrimary }]}>{value}</Text>
+            <Text style={[styles.metricLabel, { color: c.textSecondary }]}>{label}</Text>
+        </View>
+    );
+}
+
+type PillProps = { icon: string; label: string; c: typeof lightColors };
+
+function Pill({ icon, label, c }: PillProps) {
+    return (
+        <View style={[styles.pill, { backgroundColor: c.pillBg }]}>
+            <MaterialCommunityIcons name={icon as any} size={14} color={c.textSecondary} />
+            <Text style={[styles.pillText, { color: c.textSecondary }]}>{label}</Text>
+        </View>
+    );
+}
+
+// ─── Styles ─────────────────────────────────────────────────────────────────────
+
 const styles = StyleSheet.create({
     container: {
         flex: 1,
-        backgroundColor: '#F7F9FC',
     },
-    pairingBanner: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        padding: 12,
-        borderRadius: 12,
-        marginBottom: 16,
-        backgroundColor: 'white',
-    },
-    liveTrackingCard: {
-        marginBottom: 16,
-        backgroundColor: 'white',
-        borderRadius: 12,
-    },
-    liveTrackingHeader: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        gap: 12,
-        marginBottom: 10,
-    },
-    liveTrackingChipRow: {
-        flexDirection: 'row',
-        flexWrap: 'wrap',
-        gap: 8,
-    },
-    liveChip: {
-        backgroundColor: '#F4F6FA',
-    },
-    headerBackground: {
-        backgroundColor: '#F44336',
-        paddingTop: 50,
-        paddingBottom: 20,
-        paddingHorizontal: 20,
-        borderBottomLeftRadius: 20,
-        borderBottomRightRadius: 20,
-        elevation: 4,
-    },
-    headerContent: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-    },
-    dateText: {
-        color: 'rgba(255,255,255,0.8)',
-        fontSize: 14,
-        fontWeight: 'bold',
-    },
-    timeText: {
-        color: 'white',
-        fontSize: 32,
-        fontWeight: 'bold',
-    },
-    weatherContainer: {
-        alignItems: 'center',
-    },
-    weatherText: {
-        color: 'white',
-        fontSize: 18,
-        fontWeight: 'bold',
-    },
-    weatherCondition: {
-        color: 'rgba(255,255,255,0.8)',
-        fontSize: 12,
-    },
-    scrollContent: {
-        padding: 20,
-    },
+
+    // Header
     header: {
         flexDirection: 'row',
         justifyContent: 'space-between',
         alignItems: 'center',
-        marginBottom: 20,
-        marginTop: 10,
+        paddingTop: 54,
+        paddingBottom: 16,
+        paddingHorizontal: 20,
     },
-    headerTitle: {
-        fontWeight: 'bold',
+    greeting: {
+        fontSize: 26,
+        fontWeight: '700',
+        letterSpacing: -0.4,
     },
-    statsGrid: {
+    dateLabel: {
+        fontSize: 13,
+        marginTop: 4,
+        fontWeight: '500',
+    },
+    weatherPill: {
         flexDirection: 'row',
-        flexWrap: 'wrap',
+        alignItems: 'center',
+        paddingHorizontal: 12,
+        paddingVertical: 6,
+        borderRadius: 20,
+        gap: 6,
+    },
+    weatherTemp: {
+        fontSize: 13,
+        fontWeight: '600',
+    },
+
+    scroll: {
+        paddingHorizontal: 20,
+        paddingTop: 4,
+    },
+
+    // Metrics Row
+    metricsRow: {
+        flexDirection: 'row',
         justifyContent: 'space-between',
         marginBottom: 24,
+        marginTop: 8,
     },
-    statCard: {
-        width: '48%',
-        padding: 16,
-        backgroundColor: 'white',
-        borderRadius: 16,
-        marginBottom: 16,
-    },
-    statIcon: {
-        width: 40,
-        height: 40,
-        borderRadius: 20,
-        justifyContent: 'center',
+    metricTile: {
+        flex: 1,
         alignItems: 'center',
+        paddingVertical: 16,
+        borderRadius: 14,
+        marginHorizontal: 4,
+        borderWidth: 1,
+    },
+    metricValue: {
+        fontSize: 28,
+        fontWeight: '700',
+        letterSpacing: -0.5,
+    },
+    metricLabel: {
+        fontSize: 11,
+        fontWeight: '600',
+        marginTop: 4,
+        textTransform: 'uppercase',
+        letterSpacing: 0.5,
+    },
+
+    // Sections
+    section: {
+        borderRadius: 14,
+        padding: 16,
+        marginBottom: 16,
+        borderWidth: 1,
+    },
+    sectionHeader: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginBottom: 12,
     },
     sectionTitle: {
-        fontWeight: 'bold',
+        fontSize: 17,
+        fontWeight: '700',
+        letterSpacing: -0.2,
         marginBottom: 12,
     },
-    quickLinksScroll: {
-        marginBottom: 24,
-    },
-    quickLinkBtn: {
-        marginRight: 12,
-        borderRadius: 20,
-    },
-    alertsHeader: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        marginBottom: 8,
-    },
-    alertItem: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        padding: 16,
-        backgroundColor: 'white',
-        borderRadius: 12,
-        marginBottom: 10,
-        borderLeftWidth: 4,
-        borderLeftColor: '#F44336',
-    },
-    alertLeft: {
+    sectionAction: {
         flexDirection: 'row',
         alignItems: 'center',
+        gap: 2,
     },
-    alertIcon: {
-        marginRight: 12,
+    sectionActionText: {
+        fontSize: 13,
+        fontWeight: '600',
     },
-    boxSelectContainer: {
-        borderWidth: 1,
-        borderColor: '#DDD',
-        borderRadius: 8,
-        padding: 8,
-        marginBottom: 12,
-        maxHeight: 140,
-    },
-    boxSelectScroll: {
-        flexGrow: 0,
-    },
-    boxSelectContent: {
+
+    chipRow: {
         flexDirection: 'row',
         flexWrap: 'wrap',
         gap: 8,
     },
-    boxChip: {
-        marginRight: 0,
-        marginBottom: 0,
-    },
-    modalContainer: {
-        backgroundColor: 'white',
-        padding: 24,
-        margin: 20,
+    pill: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 5,
+        paddingHorizontal: 10,
+        paddingVertical: 6,
         borderRadius: 16,
-        maxHeight: '90%',
     },
-    modeRow: {
+    pillText: {
+        fontSize: 12,
+        fontWeight: '500',
+    },
+
+    // Pairing Card
+    pairingCard: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        borderRadius: 14,
+        padding: 16,
+        marginBottom: 24,
+        borderWidth: 1,
+    },
+    pairingTitle: {
+        fontSize: 15,
+        fontWeight: '700',
+    },
+    pairingBoxId: {
+        fontSize: 14,
+        fontWeight: '600',
+        marginTop: 2,
+    },
+    pairingMeta: {
+        fontSize: 12,
+        marginTop: 2,
+    },
+    pairingBtn: {
+        paddingHorizontal: 20,
+        paddingVertical: 10,
+        borderRadius: 10,
+    },
+    pairingBtnText: {
+        color: '#FFFFFF',
+        fontWeight: '700',
+        fontSize: 14,
+    },
+
+    // Actions Grid
+    actionsGrid: {
         flexDirection: 'row',
         flexWrap: 'wrap',
+        justifyContent: 'space-between',
+        marginBottom: 20,
+    },
+    actionTile: {
+        width: '31%',
+        borderRadius: 14,
+        paddingVertical: 20,
+        alignItems: 'center',
+        marginBottom: 12,
+        borderWidth: 1,
+    },
+    actionIconWrap: {
+        width: 44,
+        height: 44,
+        borderRadius: 22,
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginBottom: 8,
+    },
+    actionLabel: {
+        fontSize: 11,
+        fontWeight: '600',
+        textAlign: 'center',
+    },
+    badge: {
+        position: 'absolute',
+        top: -4,
+        right: -4,
+        backgroundColor: '#FF453A',
+        borderRadius: 8,
+        minWidth: 16,
+        height: 16,
+        justifyContent: 'center',
+        alignItems: 'center',
+        paddingHorizontal: 4,
+    },
+    badgeText: {
+        color: '#FFFFFF',
+        fontSize: 10,
+        fontWeight: '700',
+    },
+
+    // Push test
+    pushTestBtn: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 8,
+        paddingVertical: 14,
+        borderRadius: 12,
+        borderWidth: 1,
+        marginBottom: 24,
+    },
+    pushTestLabel: {
+        fontSize: 14,
+        fontWeight: '600',
+    },
+
+    // Alerts
+    alertCard: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        borderRadius: 14,
+        padding: 16,
+        borderWidth: 1,
+        borderLeftWidth: 3,
+    },
+    alertTitle: {
+        fontSize: 14,
+        fontWeight: '700',
+    },
+    alertSub: {
+        fontSize: 12,
+        marginTop: 2,
+    },
+
+    // Modal
+    modal: {
+        padding: 24,
+        margin: 20,
+        borderRadius: 20,
+        maxHeight: '90%',
+        borderWidth: 1,
+    },
+    modalTitle: {
+        fontSize: 20,
+        fontWeight: '700',
+        marginBottom: 8,
+    },
+    modalDesc: {
+        fontSize: 13,
+        marginBottom: 20,
+        lineHeight: 18,
+    },
+    modalLabel: {
+        fontSize: 12,
+        fontWeight: '600',
+        marginBottom: 8,
+        textTransform: 'uppercase',
+        letterSpacing: 0.5,
+    },
+    modalInput: {
         marginBottom: 12,
     },
-    modeChip: {
+    modalActions: {
+        flexDirection: 'row',
+        justifyContent: 'flex-end',
+        gap: 10,
+        marginTop: 8,
+    },
+    modalCancelBtn: {
+        paddingHorizontal: 18,
+        paddingVertical: 10,
+        borderRadius: 10,
+        borderWidth: 1,
+    },
+    modalCancelText: {
+        fontWeight: '600',
+        fontSize: 14,
+    },
+    modalConfirmBtn: {
+        paddingHorizontal: 18,
+        paddingVertical: 10,
+        borderRadius: 10,
+    },
+    modalConfirmText: {
+        color: '#FFFFFF',
+        fontWeight: '700',
+        fontSize: 14,
+    },
+
+    // Box select in modal
+    boxSelect: {
+        borderWidth: 1,
+        borderRadius: 12,
+        padding: 10,
+        marginBottom: 16,
+        maxHeight: 140,
+    },
+    boxSelectEmpty: {
+        fontSize: 13,
+        marginBottom: 8,
+    },
+
+    // Chips
+    darkChip: {
+        borderWidth: 1,
         marginRight: 8,
         marginBottom: 8,
     },
+
     tokenRow: {
         flexDirection: 'row',
         alignItems: 'center',
-        gap: 12,
+        gap: 10,
         marginBottom: 8,
     },
-    qrContainer: {
+    regenBtn: {
+        paddingHorizontal: 16,
+        paddingVertical: 12,
+        borderRadius: 10,
+        borderWidth: 1,
+    },
+    regenBtnText: {
+        fontWeight: '600',
+        fontSize: 13,
+    },
+    qrWrap: {
         alignItems: 'center',
         justifyContent: 'center',
-        paddingVertical: 12,
-        backgroundColor: '#F8FAFC',
-        borderRadius: 12,
-        marginBottom: 12,
+        paddingVertical: 16,
     },
-    modalActionsRow: {
-        flexDirection: 'row',
-        flexWrap: 'wrap',
-        justifyContent: 'space-between',
-        gap: 8,
+    qrInner: {
+        padding: 12,
+        borderRadius: 12,
     },
 });

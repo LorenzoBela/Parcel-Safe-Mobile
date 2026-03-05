@@ -1,11 +1,11 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { View, StyleSheet, ScrollView, TouchableOpacity, ImageBackground, Image, Alert, RefreshControl, Share } from 'react-native';
-import { Text, Card, Button, useTheme, Avatar, Surface, Portal, Modal, IconButton } from 'react-native-paper';
+import { View, StyleSheet, ScrollView, TouchableOpacity, ImageBackground, StatusBar, Alert, RefreshControl, Share } from 'react-native';
+import { Text, Avatar, Portal, Modal, IconButton } from 'react-native-paper';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import dayjs from 'dayjs';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useAppTheme } from '../../context/ThemeContext'; // Import custom hook if needed, or just useTheme from paper
+import { useAppTheme } from '../../context/ThemeContext';
 import * as Location from 'expo-location';
 import { CustomerHardwareBanner, NetworkStatusBanner } from '../../components';
 import { subscribeToDisplay } from '../../services/firebaseClient';
@@ -15,16 +15,67 @@ import {
     formatCancellationReason
 } from '../../services/cancellationService';
 import { supabase } from '../../services/supabaseClient';
-
 import useAuthStore from '../../store/authStore';
 import { fetchWeather, weatherBackgroundImages, WeatherData } from '../../services/weatherService';
 
+// ─── Colors ─────────────────────────────────────────────────────────────────────
+type StatusBarStyle = 'dark-content' | 'light-content';
+type ColorPalette = {
+    bg: string; card: string; border: string;
+    text: string; textSec: string; textTer: string;
+    accent: string; red: string; green: string; orange: string;
+    pillBg: string; modalBg: string; statusBar: StatusBarStyle;
+};
+const lightC: ColorPalette = {
+    bg: '#FFFFFF', card: '#F6F6F6', border: '#E5E5EA',
+    text: '#000000', textSec: '#6B6B6B', textTer: '#AEAEB2',
+    accent: '#000000', red: '#E11900', green: '#34C759', orange: '#FF9500',
+    pillBg: '#F2F2F7', modalBg: 'rgba(0,0,0,0.4)', statusBar: 'dark-content' as const,
+};
+const darkC: ColorPalette = {
+    bg: '#000000', card: '#141414', border: '#2C2C2E',
+    text: '#FFFFFF', textSec: '#8E8E93', textTer: '#636366',
+    accent: '#FFFFFF', red: '#FF453A', green: '#30D158', orange: '#FFB340',
+    pillBg: '#1C1C1E', modalBg: 'rgba(0,0,0,0.7)', statusBar: 'light-content' as const,
+};
+
+// ─── Status helpers ─────────────────────────────────────────────────────────────
+function formatStatus(status: string): string {
+    switch (status) {
+        case 'PENDING': return 'Pending';
+        case 'ASSIGNED': return 'Assigned';
+        case 'PICKED_UP': return 'Picked Up';
+        case 'IN_TRANSIT': return 'In Transit';
+        case 'ARRIVED': return 'Arrived';
+        case 'COMPLETED': return 'Delivered';
+        case 'CANCELLED': return 'Cancelled';
+        case 'RETURNING': return 'Returning';
+        default: return status.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+    }
+}
+
+function statusColor(status: string): string {
+    switch (status) {
+        case 'COMPLETED':
+        case 'RETURNED': return '#34C759';
+        case 'IN_TRANSIT':
+        case 'ASSIGNED': return '#007AFF';
+        case 'ARRIVED': return '#FF9500';
+        case 'CANCELLED': return '#8E8E93';
+        case 'TAMPERED':
+        case 'RETURNING': return '#FF3B30';
+        default: return '#8E8E93';
+    }
+}
+
+// ─── Component ──────────────────────────────────────────────────────────────────
 export default function CustomerDashboard() {
     const navigation = useNavigation<any>();
-    const theme = useTheme();
+    const { isDarkMode } = useAppTheme();
+    const c = isDarkMode ? darkC : lightC;
     const [currentTime, setCurrentTime] = useState(dayjs());
-    const [modalVisible, setModalVisible] = useState(false); // For Proof of Delivery
-    const [shareModalVisible, setShareModalVisible] = useState(false); // For Share Warning
+    const [modalVisible, setModalVisible] = useState(false);
+    const [shareModalVisible, setShareModalVisible] = useState(false);
     const [locationName, setLocationName] = useState('Locating...');
     const [refreshing, setRefreshing] = useState(false);
     const [displayStatus, setDisplayStatus] = useState<'OK' | 'DEGRADED' | 'FAILED'>('OK');
@@ -32,16 +83,14 @@ export default function CustomerDashboard() {
     const [weather, setWeather] = useState<WeatherData | null>(null);
     const [deviceCoords, setDeviceCoords] = useState<{ lat: number; lng: number } | null>(null);
 
-    // Get authenticated user data from store
     const authedUser = useAuthStore((state: any) => state.user) as any;
     const displayName = authedUser?.fullName || authedUser?.name || authedUser?.email || 'User';
     const avatarUri = authedUser?.photo || null;
+    const firstName = displayName.split(' ')[0];
 
-    // Dynamic data — populated from real sources when available
     const [activeDelivery, setActiveDelivery] = useState<{
         id: string; status: string; eta: string; rider: string; location: string; shareToken?: string;
     } | null>(null);
-
     const activeDeliveryId = activeDelivery?.id || null;
 
     const [recentActivity, setRecentActivity] = useState<{
@@ -49,10 +98,10 @@ export default function CustomerDashboard() {
         serviceType: string; status: string;
     }[]>([]);
 
-    const handleShare = () => {
-        setShareModalVisible(true);
-    };
+    const insets = useSafeAreaInsets();
 
+    // ─── Share ──────────────────────────────────────────────────────────────
+    const handleShare = () => setShareModalVisible(true);
     const performShare = async () => {
         setShareModalVisible(false);
         if (!activeDelivery) return;
@@ -60,66 +109,43 @@ export default function CustomerDashboard() {
             const token = activeDelivery.shareToken || activeDelivery.id;
             const baseUrl = process.env.EXPO_PUBLIC_TRACKING_WEB_BASE_URL || 'https://parcel-safe.vercel.app';
             const shareUrl = `${baseUrl}/track/${token}`;
-            await Share.share({
-                message: `Track your Parcel-Safe delivery here: ${shareUrl}`,
-                url: shareUrl, // iOS uses this
-                title: 'Track Parcel'
-            });
-        } catch (error: any) {
-            Alert.alert(error.message);
-        }
+            await Share.share({ message: `Track your Parcel-Safe delivery here: ${shareUrl}`, url: shareUrl, title: 'Track Parcel' });
+        } catch (error: any) { Alert.alert(error.message); }
     };
 
+    // ─── Clock ──────────────────────────────────────────────────────────────
     useEffect(() => {
-        const timer = setInterval(() => {
-            setCurrentTime(dayjs());
-        }, 1000); // Update every second
+        const timer = setInterval(() => setCurrentTime(dayjs()), 1000);
         return () => clearInterval(timer);
     }, []);
 
+    // ─── Location ───────────────────────────────────────────────────────────
     const fetchLocation = useCallback(async () => {
         let { status } = await Location.requestForegroundPermissionsAsync();
-        if (status !== 'granted') {
-            setLocationName('Permission denied');
-            Alert.alert('Permission to access location was denied');
-            return;
-        }
-
+        if (status !== 'granted') { setLocationName('Permission denied'); return; }
         try {
             let location = await Location.getCurrentPositionAsync({});
             const { latitude, longitude } = location.coords;
             setDeviceCoords({ lat: latitude, lng: longitude });
-
             let address = await Location.reverseGeocodeAsync({ latitude, longitude });
-
-            if (address && address.length > 0) {
+            if (address?.length > 0) {
                 const { city, region, name } = address[0];
-                // Prefer city/region, fallback to name
-                const locString = city ? `${city}, ${region}` : name;
-                setLocationName(locString || 'Unknown Location');
+                setLocationName(city ? `${city}, ${region}` : name || 'Unknown Location');
             }
-        } catch (error) {
-            console.log('Error fetching location:', error);
-            setLocationName('Location unavailable');
-        }
+        } catch { setLocationName('Location unavailable'); }
     }, []);
 
-    useEffect(() => {
-        fetchLocation();
-    }, [fetchLocation]);
+    useEffect(() => { fetchLocation(); }, [fetchLocation]);
 
-    // Fetch weather when location is available
+    // ─── Weather ────────────────────────────────────────────────────────────
     useEffect(() => {
         if (!deviceCoords) return;
-        fetchWeather(deviceCoords.lat, deviceCoords.lng).then((data) => {
-            if (data) setWeather(data);
-        });
+        fetchWeather(deviceCoords.lat, deviceCoords.lng).then((data) => { if (data) setWeather(data); });
     }, [deviceCoords]);
 
+    // ─── Active delivery ────────────────────────────────────────────────────
     const fetchActiveDelivery = useCallback(async () => {
-        console.log('Fetching active delivery...');
         if (!authedUser?.userId) return;
-
         try {
             const { data, error } = await supabase
                 .from('deliveries')
@@ -129,41 +155,24 @@ export default function CustomerDashboard() {
                 .order('created_at', { ascending: false })
                 .limit(1)
                 .single();
-
-            if (error && error.code !== 'PGRST116') { // PGRST116 is "The result contains 0 rows"
-                console.log('Error fetching active delivery:', error);
-                setActiveDelivery(null);
-                return;
-            }
-
+            if (error && error.code !== 'PGRST116') { setActiveDelivery(null); return; }
             if (data) {
                 setActiveDelivery({
-                    id: data.id,
-                    status: data.status,
-                    // ETA logic: if estimated_dropoff_time exists, show formatted time (e.g. "5:30 PM").
-                    // If not, show "Calculating..."
+                    id: data.id, status: data.status,
                     eta: data.estimated_dropoff_time ? dayjs(data.estimated_dropoff_time).format('h:mm A') : null,
                     rider: data.rider?.full_name || 'Finding a rider...',
                     location: data.status === 'PENDING' ? (data.pickup_address || 'Pickup Point') : (data.dropoff_address || 'Dropoff Point'),
-                    shareToken: data.share_token
+                    shareToken: data.share_token,
                 });
-            } else {
-                setActiveDelivery(null);
-            }
-
-        } catch (error) {
-            console.log('Error in fetchActiveDelivery:', error);
-            setActiveDelivery(null);
-        }
+            } else { setActiveDelivery(null); }
+        } catch { setActiveDelivery(null); }
     }, [authedUser?.userId]);
 
-    useEffect(() => {
-        fetchActiveDelivery();
-    }, [fetchActiveDelivery]);
+    useEffect(() => { fetchActiveDelivery(); }, [fetchActiveDelivery]);
 
+    // ─── Recent activity ────────────────────────────────────────────────────
     const fetchRecentActivity = useCallback(async () => {
         if (!authedUser?.userId) return;
-
         try {
             const { data, error } = await supabase
                 .from('deliveries')
@@ -171,26 +180,15 @@ export default function CustomerDashboard() {
                 .eq('customer_id', authedUser.userId)
                 .order('created_at', { ascending: false })
                 .limit(3);
-
-            if (error) {
-                console.log('Error fetching recent activity:', error);
-                return;
-            }
-
+            if (error) return;
             if (data) {
-                const mappedActivity = data.map((item: any) => ({
-                    id: item.id,
-                    trackingId: item.tracking_number || item.id,
-                    type: 'Delivery',
-                    date: dayjs(item.created_at).format('MMM D, YYYY'),
-                    serviceType: 'Standard Delivery',
-                    status: item.status
-                }));
-                setRecentActivity(mappedActivity);
+                setRecentActivity(data.map((item: any) => ({
+                    id: item.id, trackingId: item.tracking_number || item.id,
+                    type: 'Delivery', date: dayjs(item.created_at).format('MMM D, YYYY'),
+                    serviceType: 'Standard Delivery', status: item.status,
+                })));
             }
-        } catch (error) {
-            console.log('Error in fetchRecentActivity:', error);
-        }
+        } catch { /* silent */ }
     }, [authedUser?.userId]);
 
     const onRefresh = useCallback(async () => {
@@ -199,596 +197,369 @@ export default function CustomerDashboard() {
         setRefreshing(false);
     }, [fetchLocation, fetchActiveDelivery, fetchRecentActivity]);
 
-    useFocusEffect(
-        useCallback(() => {
-            fetchActiveDelivery();
-            fetchRecentActivity();
-        }, [fetchActiveDelivery, fetchRecentActivity])
-    );
-
-    const hideModal = () => setModalVisible(false);
-
-    const getStatusIcon = (status: string) => {
-        switch (status) {
-            case 'COMPLETED': return { icon: 'check', color: theme.colors.primary, bg: theme.colors.primaryContainer };
-            case 'RETURNED': return { icon: 'check-all', color: theme.colors.primary, bg: theme.colors.primaryContainer };
-            case 'TAMPERED': return { icon: 'alert-circle', color: theme.colors.error, bg: theme.colors.errorContainer };
-            case 'CANCELLED': return { icon: 'close', color: theme.colors.onSurfaceVariant, bg: theme.colors.surfaceVariant };
-            case 'RETURNING': return { icon: 'keyboard-return', color: theme.colors.error, bg: theme.colors.errorContainer };
-            default: return { icon: 'information', color: theme.colors.secondary, bg: theme.colors.secondaryContainer };
-        }
-    };
-
-    // Helper to format status string (e.g., "IN_TRANSIT" -> "In Transit")
-    const formatStatus = (status: string) => {
-        if (!status) return '';
-        switch (status) {
-            case 'PENDING': return 'Pending';
-            case 'ASSIGNED': return 'Rider Assigned';
-            case 'PICKED_UP': return 'Picked Up';
-            case 'IN_TRANSIT': return 'In Transit';
-            case 'ARRIVED': return 'Arrived';
-            case 'COMPLETED': return 'Delivered';
-            case 'CANCELLED': return 'Cancelled';
-            case 'RETURNING': return 'Returning';
-            default: return status.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
-        }
-    };
-
-    const QuickAction = ({ icon, label, onPress, color }) => (
-        <TouchableOpacity style={styles.actionItem} onPress={onPress}>
-            <Surface style={[styles.actionIcon, { backgroundColor: color }]} elevation={2}>
-                <MaterialCommunityIcons name={icon} size={28} color="white" />
-            </Surface>
-            <Text variant="labelMedium" style={styles.actionLabel}>{label}</Text>
-        </TouchableOpacity>
-    );
+    useFocusEffect(useCallback(() => {
+        fetchActiveDelivery();
+        fetchRecentActivity();
+    }, [fetchActiveDelivery, fetchRecentActivity]));
 
     const getGreeting = () => {
-        const hour = currentTime.hour();
-        if (hour < 12) return 'Good Morning,';
-        if (hour < 18) return 'Good Afternoon,';
-        return 'Good Evening,';
+        const h = currentTime.hour();
+        if (h < 12) return 'Good Morning';
+        if (h < 18) return 'Good Afternoon';
+        return 'Good Evening';
     };
 
-    const insets = useSafeAreaInsets();
+    // ═══════════════════════════════════════════════════════════════════════
+    //  RENDER
+    // ═══════════════════════════════════════════════════════════════════════
 
     return (
-        <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
-            {/* Attractive Header with Weather Background */}
+        <View style={[styles.container, { backgroundColor: c.bg }]}>
+            <StatusBar barStyle={c.statusBar} />
+
+            {/* ── Weather Banner ─────────────────────────────────────────── */}
             <ImageBackground
                 source={{ uri: weather ? (weatherBackgroundImages[weather.condition] || weatherBackgroundImages['Sunny']) : weatherBackgroundImages['Sunny'] }}
-                style={[styles.headerBackground, { height: 180 + insets.top }]}
-                imageStyle={{ borderBottomLeftRadius: 20, borderBottomRightRadius: 20 }}
+                style={[styles.headerBg, { height: 170 + insets.top }]}
+                imageStyle={{ borderBottomLeftRadius: 24, borderBottomRightRadius: 24 }}
                 resizeMode="cover"
             >
-                <View style={[styles.headerOverlay, { paddingBottom: 20 }]}>
-                    <View style={styles.headerContent}>
-                        <View>
-                            <View style={styles.locationContainer}>
-                                <MaterialCommunityIcons name="map-marker" size={16} color="rgba(255,255,255,0.9)" />
-                                <Text style={styles.locationText}>{locationName}</Text>
+                <View style={[styles.headerOverlay, { paddingTop: insets.top + 12 }]}>
+                    <View style={styles.headerRow}>
+                        <View style={{ flex: 1 }}>
+                            <View style={styles.locRow}>
+                                <MaterialCommunityIcons name="map-marker" size={14} color="rgba(255,255,255,0.85)" />
+                                <Text style={styles.locText}>{locationName}</Text>
                             </View>
                             <Text style={styles.dateText}>{currentTime.format('dddd, MMMM D')}</Text>
                             <Text style={styles.timeText}>{currentTime.format('h:mm A')}</Text>
                         </View>
                         {weather && (
-                            <View style={styles.weatherContainer}>
-                                <MaterialCommunityIcons name={weather.icon as any} size={30} color="white" />
-                                <Text style={styles.weatherText}>{weather.temp}</Text>
-                                <Text style={styles.weatherCondition}>{weather.condition}</Text>
+                            <View style={styles.weatherPill}>
+                                <MaterialCommunityIcons name={weather.icon as any} size={26} color="#FFFFFF" />
+                                <Text style={styles.weatherTemp}>{weather.temp}</Text>
+                                <Text style={styles.weatherCond}>{weather.condition}</Text>
                             </View>
                         )}
                     </View>
                 </View>
             </ImageBackground>
 
+            {/* ── Content ────────────────────────────────────────────────── */}
             <ScrollView
-                style={{ backgroundColor: theme.colors.background }}
-                contentContainerStyle={[
-                    styles.scrollContent,
-                    { paddingBottom: 80 + insets.bottom }
-                ]}
+                style={{ backgroundColor: c.bg }}
+                contentContainerStyle={[styles.scroll, { paddingBottom: 80 + insets.bottom }]}
                 showsVerticalScrollIndicator={false}
-                refreshControl={
-                    <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
-                }
+                refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
             >
-
-                {/* Greeting Section */}
-                <View style={styles.greetingContainer}>
-                    <View>
-                        <Text variant="headlineSmall" style={[styles.greeting, { color: theme.colors.onSurfaceVariant }]}>{getGreeting()}</Text>
-                        <Text variant="headlineMedium" style={[styles.userName, { color: theme.colors.onSurface }]}>{displayName}</Text>
+                {/* Greeting */}
+                <View style={styles.greetRow}>
+                    <View style={{ flex: 1 }}>
+                        <Text style={[styles.greetLabel, { color: c.textSec }]}>{getGreeting()}</Text>
+                        <Text style={[styles.greetName, { color: c.text }]}>{firstName}</Text>
                     </View>
                     {avatarUri ? (
-                        <Avatar.Image size={50} source={{ uri: avatarUri }} />
+                        <Avatar.Image size={46} source={{ uri: avatarUri }} />
                     ) : (
-                        <Avatar.Text size={50} label={displayName.charAt(0).toUpperCase()} />
+                        <View style={[styles.avatarFallback, { backgroundColor: c.accent }]}>
+                            <Text style={[styles.avatarLetter, { color: c.bg }]}>{firstName.charAt(0)}</Text>
+                        </View>
                     )}
                 </View>
 
-                {/* Network connectivity status */}
+                {/* Banners */}
                 <NetworkStatusBanner />
-
-                {/* EC-86: Display failure notification */}
                 <CustomerHardwareBanner displayStatus={displayStatus} />
 
-                {/* EC-32: Cancellation Alert Banner */}
+                {/* Cancellation alert */}
                 {cancellation && !cancellation.packageRetrieved && (
                     <TouchableOpacity
                         onPress={() => navigation.navigate('TrackOrder')}
                         activeOpacity={0.8}
+                        style={[styles.cancelBanner, { backgroundColor: c.red + '14', borderColor: c.red + '30' }]}
                     >
-                        <Surface style={[styles.cancellationBanner, { backgroundColor: theme.colors.errorContainer }]} elevation={2}>
-                            <View style={styles.cancellationBannerContent}>
-                                <View style={[styles.cancellationIcon, { backgroundColor: theme.colors.error }]}>
-                                    <MaterialCommunityIcons name="alert-circle" size={24} color="white" />
-                                </View>
-                                <View style={{ flex: 1, marginLeft: 12 }}>
-                                    <Text variant="titleSmall" style={{ fontWeight: 'bold', color: theme.colors.error }}>
-                                        Delivery Cancelled
-                                    </Text>
-                                    <Text variant="bodySmall" style={{ color: theme.colors.onErrorContainer }}>
-                                        {formatCancellationReason(cancellation.reason)} • Tap to view return OTP
-                                    </Text>
-                                </View>
-                                <MaterialCommunityIcons name="chevron-right" size={24} color={theme.colors.error} />
-                            </View>
-                        </Surface>
+                        <View style={[styles.cancelIcon, { backgroundColor: c.red }]}>
+                            <MaterialCommunityIcons name="alert-circle" size={20} color="#FFFFFF" />
+                        </View>
+                        <View style={{ flex: 1, marginLeft: 12 }}>
+                            <Text style={[styles.cancelTitle, { color: c.red }]}>Delivery Cancelled</Text>
+                            <Text style={[styles.cancelSub, { color: c.textSec }]}>
+                                {formatCancellationReason(cancellation.reason)} • Tap to view
+                            </Text>
+                        </View>
+                        <MaterialCommunityIcons name="chevron-right" size={20} color={c.red} />
                     </TouchableOpacity>
                 )}
 
-                {/* Active Delivery Card */}
-                <Text variant="titleMedium" style={[styles.sectionTitle, { color: theme.colors.onSurface }]}>Active Delivery</Text>
+                {/* ── Active Delivery Card ───────────────────────────────── */}
+                <Text style={[styles.sectionTitle, { color: c.text }]}>Active Delivery</Text>
                 {activeDelivery ? (
-                    <Card style={[styles.deliveryCard, { backgroundColor: theme.colors.primaryContainer }]} mode="elevated">
-                        <View style={styles.deliveryHeader}>
-                            <View style={styles.deliveryIdContainer}>
-                                <MaterialCommunityIcons name="package-variant" size={20} color={theme.colors.onPrimaryContainer} />
-                                {/* Truncate ID to 8 chars and uppercase for better UI */}
-                                <Text variant="titleSmall" style={{ marginLeft: 8, color: theme.colors.onPrimaryContainer }}>
+                    <View style={[styles.deliveryCard, { backgroundColor: c.card, borderColor: c.border }]}>
+                        {/* Header */}
+                        <View style={[styles.deliveryHeader, { borderBottomColor: c.border }]}>
+                            <View style={styles.deliveryIdRow}>
+                                <MaterialCommunityIcons name="package-variant" size={18} color={c.accent} />
+                                <Text style={[styles.deliveryId, { color: c.text }]}>
                                     {activeDelivery.id.substring(0, 8).toUpperCase()}
                                 </Text>
                             </View>
-                            <View style={[styles.statusBadge, { backgroundColor: theme.colors.primary }]}>
-                                <Text style={[styles.statusText, { color: theme.colors.onPrimary }]}>
+                            <View style={[styles.statusPill, { backgroundColor: statusColor(activeDelivery.status) + '1A' }]}>
+                                <Text style={[styles.statusPillText, { color: statusColor(activeDelivery.status) }]}>
                                     {formatStatus(activeDelivery.status)}
                                 </Text>
                             </View>
                         </View>
-
-                        <Card.Content style={styles.deliveryContent}>
-                            <View style={styles.deliveryRow}>
-                                <MaterialCommunityIcons name="clock-outline" size={20} color={theme.colors.onSurfaceVariant} />
-                                <Text variant="bodyMedium" style={[styles.deliveryDetail, { color: theme.colors.onSurface }]}>
-                                    {activeDelivery.eta ? `Arriving by ${activeDelivery.eta}` : 'Calculating ETA...'}
-                                </Text>
-                            </View>
-                            <View style={styles.deliveryRow}>
-                                <MaterialCommunityIcons name="map-marker-outline" size={20} color={theme.colors.onSurfaceVariant} />
-                                <Text variant="bodyMedium" style={[styles.deliveryDetail, { color: theme.colors.onSurface }]}>{activeDelivery.location}</Text>
-                            </View>
-                            <View style={styles.deliveryRow}>
-                                <MaterialCommunityIcons name="motorbike" size={20} color={theme.colors.onSurfaceVariant} />
-                                <Text variant="bodyMedium" style={[styles.deliveryDetail, { color: theme.colors.onSurface }]}>{activeDelivery.rider}</Text>
-                            </View>
-                        </Card.Content>
-
-                        <Card.Content style={styles.deliveryActions}>
-                            <Button
-                                mode="contained"
+                        {/* Info rows */}
+                        <View style={styles.deliveryBody}>
+                            <InfoRow icon="clock-outline" text={activeDelivery.eta ? `Arriving by ${activeDelivery.eta}` : 'Calculating ETA...'} c={c} />
+                            <InfoRow icon="map-marker-outline" text={activeDelivery.location} c={c} />
+                            <InfoRow icon="motorbike" text={activeDelivery.rider} c={c} />
+                        </View>
+                        {/* Actions */}
+                        <View style={styles.deliveryActions}>
+                            <TouchableOpacity
+                                style={[styles.primaryBtn, { backgroundColor: c.accent }]}
                                 onPress={() => navigation.navigate('TrackOrder', { bookingId: activeDelivery.id })}
-                                icon="map"
-                                style={{ width: '100%', borderRadius: 8, marginBottom: 12 }}
-                                contentStyle={{ height: 56 }}
-                                labelStyle={{ fontSize: 18, fontWeight: 'bold' }}
+                                activeOpacity={0.8}
                             >
-                                Track Order
-                            </Button>
-                            <View style={{ flexDirection: 'row', gap: 12 }}>
-                                <Button
-                                    mode="contained-tonal"
+                                <MaterialCommunityIcons name="map" size={18} color={c.bg} />
+                                <Text style={[styles.primaryBtnText, { color: c.bg }]}>Track Order</Text>
+                            </TouchableOpacity>
+                            <View style={styles.secondaryBtnRow}>
+                                <TouchableOpacity
+                                    style={[styles.secondaryBtn, { backgroundColor: c.pillBg, borderColor: c.border }]}
                                     onPress={() => navigation.navigate('OTP', { boxId: activeDelivery.id, deliveryId: activeDelivery.id })}
-                                    icon="lock-open"
-                                    style={{ flex: 1, borderRadius: 8 }}
-                                    contentStyle={{ height: 48 }}
-                                    labelStyle={{ fontSize: 14, fontWeight: 'bold' }}
+                                    activeOpacity={0.7}
                                 >
-                                    Unlock
-                                </Button>
-                                <Button
-                                    mode="outlined"
+                                    <MaterialCommunityIcons name="lock-open-outline" size={16} color={c.text} />
+                                    <Text style={[styles.secondaryBtnText, { color: c.text }]}>Unlock</Text>
+                                </TouchableOpacity>
+                                <TouchableOpacity
+                                    style={[styles.secondaryBtn, { backgroundColor: c.pillBg, borderColor: c.border }]}
                                     onPress={handleShare}
-                                    icon="share-variant"
-                                    style={{ flex: 1, borderRadius: 8, borderColor: theme.colors.primary }}
-                                    contentStyle={{ height: 48 }}
-                                    labelStyle={{ fontSize: 14, fontWeight: 'bold' }}
+                                    activeOpacity={0.7}
                                 >
-                                    Share
-                                </Button>
+                                    <MaterialCommunityIcons name="share-variant-outline" size={16} color={c.text} />
+                                    <Text style={[styles.secondaryBtnText, { color: c.text }]}>Share</Text>
+                                </TouchableOpacity>
                             </View>
-                        </Card.Content>
-                    </Card>
+                        </View>
+                    </View>
                 ) : (
-                    <Card style={[styles.deliveryCard, { backgroundColor: theme.colors.surfaceVariant }]} mode="elevated">
-                        <Card.Content style={{ alignItems: 'center', paddingVertical: 24 }}>
-                            <MaterialCommunityIcons name="package-variant" size={48} color={theme.colors.onSurfaceVariant} />
-                            <Text variant="bodyLarge" style={{ color: theme.colors.onSurfaceVariant, marginTop: 12 }}>No active delivery</Text>
-                            <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant, marginTop: 4 }}>Book a service to get started</Text>
-                        </Card.Content>
-                    </Card>
+                    <View style={[styles.emptyCard, { backgroundColor: c.card, borderColor: c.border }]}>
+                        <MaterialCommunityIcons name="package-variant" size={40} color={c.textTer} />
+                        <Text style={[styles.emptyTitle, { color: c.textSec }]}>No active delivery</Text>
+                        <Text style={[styles.emptySub, { color: c.textTer }]}>Book a service to get started</Text>
+                    </View>
                 )}
 
-                {/* Main Action - Book Now */}
-                <Card style={[styles.bookActionCard, { backgroundColor: theme.colors.surface }]} onPress={() => navigation.navigate('BookService')} mode="elevated">
-                    <Card.Content style={styles.bookActionContent}>
-                        <View style={styles.bookActionTextContainer}>
-                            <Text variant="titleLarge" style={[styles.bookActionTitle, { color: theme.colors.onSurface }]}>Send a Package</Text>
-                            <Text variant="bodyMedium" style={{ color: theme.colors.onSurfaceVariant }}>Fast, secure delivery with Parcel-Safe</Text>
-                        </View>
-                        <Surface style={styles.bookActionIcon} elevation={4}>
-                            <MaterialCommunityIcons name="moped" size={32} color={theme.colors.primary} />
-                        </Surface>
-                    </Card.Content>
-                </Card>
+                {/* ── Book Action ────────────────────────────────────────── */}
+                <TouchableOpacity
+                    style={[styles.bookCard, { backgroundColor: c.accent }]}
+                    onPress={() => navigation.navigate('BookService')}
+                    activeOpacity={0.85}
+                >
+                    <View style={{ flex: 1 }}>
+                        <Text style={[styles.bookTitle, { color: c.bg }]}>Send a Package</Text>
+                        <Text style={[styles.bookSub, { color: c.bg + 'AA' }]}>Fast, secure delivery</Text>
+                    </View>
+                    <View style={[styles.bookIcon, { backgroundColor: c.bg }]}>
+                        <MaterialCommunityIcons name="moped" size={28} color={c.accent} />
+                    </View>
+                </TouchableOpacity>
 
-                <View style={styles.actionsGrid}>
-                    {/* Book button removed from here, promoted to Hero Card */}
-                    <QuickAction icon="calculator" label="Rates" onPress={() => navigation.navigate('Rates')} color={theme.colors.primary} />
-                    <QuickAction icon="history" label="History" onPress={() => navigation.navigate('DeliveryLog')} color={theme.colors.secondary} />
-                    <QuickAction icon="file-document-outline" label="Report" onPress={() => navigation.navigate('Report')} color={theme.colors.tertiary} />
+                {/* ── Quick Actions ──────────────────────────────────────── */}
+                <View style={styles.quickRow}>
+                    <QuickAction icon="calculator" label="Rates" c={c} onPress={() => navigation.navigate('Rates')} />
+                    <QuickAction icon="history" label="History" c={c} onPress={() => navigation.navigate('DeliveryLog')} />
+                    <QuickAction icon="file-document-outline" label="Report" c={c} onPress={() => navigation.navigate('Report')} />
                 </View>
 
-                {/* Recent Activity */}
-                <Text variant="titleMedium" style={[styles.sectionTitle, { color: theme.colors.onSurface }]}>Recent Activity</Text>
+                {/* ── Recent Activity ────────────────────────────────────── */}
+                <Text style={[styles.sectionTitle, { color: c.text }]}>Recent Activity</Text>
                 {recentActivity.length > 0 ? (
-                    recentActivity.map((activity) => {
-                        const statusStyle = getStatusIcon(activity.status);
+                    recentActivity.map((a) => {
+                        const sc = statusColor(a.status);
                         return (
-                            <Card key={activity.id} style={[styles.activityCard, { backgroundColor: theme.colors.surface }]} mode="elevated">
-                                <Card.Content style={styles.activityContent}>
-                                    <View style={styles.activityRow}>
-                                        <View style={[styles.iconContainer, { backgroundColor: statusStyle.bg }]}>
-                                            <MaterialCommunityIcons name={statusStyle.icon as any} size={24} color={statusStyle.color} />
-                                        </View>
-                                        <View style={styles.activityInfo}>
-                                            <Text variant="titleSmall" style={[styles.trackingId, { color: theme.colors.onSurface }]}>{activity.trackingId}</Text>
-                                            <Text variant="bodySmall" style={[styles.serviceType, { color: theme.colors.onSurfaceVariant }]}>{activity.serviceType}</Text>
-                                        </View>
-                                        <View style={styles.activityStatus}>
-                                            <Text variant="labelSmall" style={{ color: statusStyle.color, fontWeight: 'bold' }}>{activity.status}</Text>
-                                            <Text variant="bodySmall" style={styles.dateTextCard}>{activity.date}</Text>
-                                        </View>
-                                    </View>
-                                </Card.Content>
-                            </Card>
+                            <View key={a.id} style={[styles.activityRow, { backgroundColor: c.card, borderColor: c.border }]}>
+                                <View style={[styles.activityDot, { backgroundColor: sc + '22' }]}>
+                                    <View style={[styles.activityDotInner, { backgroundColor: sc }]} />
+                                </View>
+                                <View style={{ flex: 1 }}>
+                                    <Text style={[styles.activityId, { color: c.text }]}>{a.trackingId}</Text>
+                                    <Text style={[styles.activitySub, { color: c.textSec }]}>{a.serviceType}</Text>
+                                </View>
+                                <View style={{ alignItems: 'flex-end' }}>
+                                    <Text style={[styles.activityStatus, { color: sc }]}>{formatStatus(a.status)}</Text>
+                                    <Text style={[styles.activityDate, { color: c.textTer }]}>{a.date}</Text>
+                                </View>
+                            </View>
                         );
                     })
                 ) : (
-                    <Card style={[styles.activityCard, { backgroundColor: theme.colors.surface }]} mode="elevated">
-                        <Card.Content style={{ alignItems: 'center', paddingVertical: 20 }}>
-                            <MaterialCommunityIcons name="history" size={36} color={theme.colors.onSurfaceVariant} />
-                            <Text variant="bodyMedium" style={{ color: theme.colors.onSurfaceVariant, marginTop: 8 }}>No recent activity</Text>
-                        </Card.Content>
-                    </Card>
+                    <View style={[styles.emptyCard, { backgroundColor: c.card, borderColor: c.border }]}>
+                        <MaterialCommunityIcons name="history" size={36} color={c.textTer} />
+                        <Text style={[styles.emptyTitle, { color: c.textSec }]}>No recent activity</Text>
+                    </View>
                 )}
-
             </ScrollView>
 
-
-
-            {/* Premium Share Warning Modal */}
+            {/* ── Share Warning Modal ────────────────────────────────────── */}
             <Portal>
-                <Modal visible={shareModalVisible} onDismiss={() => setShareModalVisible(false)} contentContainerStyle={[styles.modalContainer, { backgroundColor: theme.colors.surface }]}>
-                    <View style={styles.modalContent}>
-                        <Surface style={[styles.warningIconSurface, { backgroundColor: theme.colors.errorContainer }]} elevation={2}>
-                            <MaterialCommunityIcons name="shield-lock-outline" size={48} color={theme.colors.error} />
-                        </Surface>
-
-                        <Text variant="headlineSmall" style={[styles.modalTitle, { marginTop: 16, color: theme.colors.error }]}>
-                            Security Warning
+                <Modal visible={shareModalVisible} onDismiss={() => setShareModalVisible(false)}
+                    contentContainerStyle={[styles.modal, { backgroundColor: c.card }]}
+                >
+                    <View style={{ alignItems: 'center' }}>
+                        <View style={[styles.modalIcon, { backgroundColor: c.red + '14' }]}>
+                            <MaterialCommunityIcons name="shield-lock-outline" size={40} color={c.red} />
+                        </View>
+                        <Text style={[styles.modalTitle, { color: c.red }]}>Security Warning</Text>
+                        <Text style={[styles.modalBody, { color: c.text }]}>
+                            You are about to share a live tracking link.{'\n\n'}
+                            <Text style={{ fontWeight: '700' }}>Only share with the intended recipient.</Text>
+                            {'\n'}They may be able to unlock the box.
                         </Text>
-
-                        <Text variant="bodyLarge" style={{ textAlign: 'center', marginBottom: 24, color: theme.colors.onSurface, lineHeight: 24 }}>
-                            You are about to share a live tracking link.
-                            {'\n\n'}
-                            <Text style={{ fontWeight: 'bold', color: theme.colors.onSurface }}>Only share this with the intended recipient.</Text>
-                            {'\n'}
-                            They may be able to <Text style={{ color: theme.colors.primary, fontWeight: 'bold' }}>unlock the box</Text> depending on your settings.
-                        </Text>
-
-                        <Button
-                            mode="contained"
-                            onPress={performShare}
-                            style={{ width: '100%', marginBottom: 12, backgroundColor: theme.colors.primary }}
-                            contentStyle={{ paddingVertical: 6 }}
+                        <TouchableOpacity
+                            style={[styles.primaryBtn, { backgroundColor: c.accent, width: '100%', marginBottom: 10 }]}
+                            onPress={performShare} activeOpacity={0.8}
                         >
-                            I Understand, Share Link
-                        </Button>
-
-                        <Button
-                            mode="outlined"
-                            onPress={() => setShareModalVisible(false)}
-                            style={{ width: '100%', borderColor: theme.colors.outline }}
-                            textColor={theme.colors.onSurfaceVariant}
+                            <Text style={[styles.primaryBtnText, { color: c.bg }]}>I Understand, Share</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                            style={[styles.secondaryBtn, { borderColor: c.border, width: '100%' }]}
+                            onPress={() => setShareModalVisible(false)} activeOpacity={0.7}
                         >
-                            Cancel
-                        </Button>
+                            <Text style={[styles.secondaryBtnText, { color: c.textSec }]}>Cancel</Text>
+                        </TouchableOpacity>
                     </View>
                 </Modal>
             </Portal>
 
-            {/* Proof of Delivery Modal */}
+            {/* ── Proof Modal ────────────────────────────────────────────── */}
             <Portal>
-                <Modal visible={modalVisible} onDismiss={() => setModalVisible(false)} contentContainerStyle={[styles.modalContainer, { backgroundColor: theme.colors.surface }]}>
-                    <View style={styles.modalContent}>
-                        <IconButton icon="close" size={24} onPress={() => setModalVisible(false)} style={styles.closeButton} />
-                        <Text variant="titleMedium" style={[styles.modalTitle, { color: theme.colors.onSurface }]}>Delivery Proof</Text>
-                        {/* Image removed from history, keeping modal structure if needed for active delivery later */}
-                        <Text>No proof image available.</Text>
-                    </View>
+                <Modal visible={modalVisible} onDismiss={() => setModalVisible(false)}
+                    contentContainerStyle={[styles.modal, { backgroundColor: c.card }]}
+                >
+                    <IconButton icon="close" size={22} iconColor={c.textSec} onPress={() => setModalVisible(false)} style={styles.modalClose} />
+                    <Text style={[styles.modalTitle, { color: c.text }]}>Delivery Proof</Text>
+                    <Text style={{ color: c.textSec }}>No proof image available.</Text>
                 </Modal>
             </Portal>
         </View>
     );
 }
 
+// ─── Sub-components ─────────────────────────────────────────────────────────────
+function InfoRow({ icon, text, c }: { icon: string; text: string; c: typeof lightC }) {
+    return (
+        <View style={styles.infoRow}>
+            <MaterialCommunityIcons name={icon as any} size={16} color={c.textSec} />
+            <Text style={[styles.infoText, { color: c.text }]} numberOfLines={1}>{text}</Text>
+        </View>
+    );
+}
+
+function QuickAction({ icon, label, onPress, c }: { icon: string; label: string; onPress: () => void; c: typeof lightC }) {
+    return (
+        <TouchableOpacity style={styles.quickItem} onPress={onPress} activeOpacity={0.7}>
+            <View style={[styles.quickIcon, { backgroundColor: c.pillBg, borderColor: c.border }]}>
+                <MaterialCommunityIcons name={icon as any} size={22} color={c.accent} />
+            </View>
+            <Text style={[styles.quickLabel, { color: c.textSec }]}>{label}</Text>
+        </TouchableOpacity>
+    );
+}
+
+// ─── Styles ─────────────────────────────────────────────────────────────────────
 const styles = StyleSheet.create({
-    container: {
-        flex: 1,
-        backgroundColor: '#F7F9FC',
-    },
-    headerBackground: {
-        height: 180,
-        justifyContent: 'flex-end',
-    },
+    container: { flex: 1 },
+    // Header
+    headerBg: { justifyContent: 'flex-end' },
     headerOverlay: {
-        backgroundColor: 'rgba(0,0,0,0.1)', // Lighter overlay to show image better
-        height: '100%',
-        justifyContent: 'flex-end',
-        paddingBottom: 20,
-        paddingHorizontal: 20,
-        borderBottomLeftRadius: 20,
-        borderBottomRightRadius: 20,
+        flex: 1, justifyContent: 'flex-end', paddingHorizontal: 20, paddingBottom: 20,
+        backgroundColor: 'rgba(0,0,0,0.15)', borderBottomLeftRadius: 24, borderBottomRightRadius: 24,
     },
-    headerContent: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        alignItems: 'flex-end', // Align bottom to keep time and weather aligned
+    headerRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-end' },
+    locRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 2 },
+    locText: { color: 'rgba(255,255,255,0.85)', fontSize: 12, fontWeight: '600', marginLeft: 4 },
+    dateText: { color: 'rgba(255,255,255,0.9)', fontSize: 13, fontWeight: '600' },
+    timeText: { color: '#FFFFFF', fontSize: 30, fontWeight: '800' },
+    weatherPill: { alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.35)', padding: 8, borderRadius: 14 },
+    weatherTemp: { color: '#FFFFFF', fontSize: 16, fontWeight: '700' },
+    weatherCond: { color: 'rgba(255,255,255,0.8)', fontSize: 11 },
+    // Scroll
+    scroll: { paddingHorizontal: 16, paddingTop: 16 },
+    // Greeting
+    greetRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 20 },
+    greetLabel: { fontSize: 14 },
+    greetName: { fontSize: 26, fontWeight: '800' },
+    avatarFallback: { width: 46, height: 46, borderRadius: 23, alignItems: 'center', justifyContent: 'center' },
+    avatarLetter: { fontSize: 20, fontWeight: '700' },
+    // Cancellation
+    cancelBanner: {
+        flexDirection: 'row', alignItems: 'center', padding: 14, borderRadius: 14,
+        borderWidth: 1, marginBottom: 16,
     },
-    locationContainer: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        marginBottom: 4,
+    cancelIcon: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
+    cancelTitle: { fontSize: 14, fontWeight: '700' },
+    cancelSub: { fontSize: 12, marginTop: 1 },
+    // Section
+    sectionTitle: { fontSize: 18, fontWeight: '700', marginBottom: 10, marginTop: 6 },
+    // Delivery card
+    deliveryCard: { borderRadius: 16, borderWidth: 1, marginBottom: 20, overflow: 'hidden' },
+    deliveryHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 14, borderBottomWidth: StyleSheet.hairlineWidth },
+    deliveryIdRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+    deliveryId: { fontSize: 14, fontWeight: '700' },
+    statusPill: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 20 },
+    statusPillText: { fontSize: 12, fontWeight: '700' },
+    deliveryBody: { padding: 14, gap: 8 },
+    infoRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+    infoText: { fontSize: 14 },
+    deliveryActions: { padding: 14, paddingTop: 0, gap: 10 },
+    primaryBtn: {
+        flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+        paddingVertical: 14, borderRadius: 14, gap: 8,
     },
-    locationText: {
-        color: 'rgba(255,255,255,0.9)',
-        fontSize: 12,
-        fontWeight: '600',
-        marginLeft: 4,
+    primaryBtnText: { fontSize: 15, fontWeight: '700' },
+    secondaryBtnRow: { flexDirection: 'row', gap: 10 },
+    secondaryBtn: {
+        flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+        paddingVertical: 12, borderRadius: 12, borderWidth: 1, gap: 6,
     },
-    dateText: {
-        color: 'rgba(255,255,255,0.9)',
-        fontSize: 14,
-        fontWeight: 'bold',
+    secondaryBtnText: { fontSize: 13, fontWeight: '600' },
+    // Empty
+    emptyCard: {
+        alignItems: 'center', padding: 28, borderRadius: 16, borderWidth: 1, marginBottom: 20,
     },
-    timeText: {
-        color: 'white',
-        fontSize: 32,
-        fontWeight: 'bold',
+    emptyTitle: { fontSize: 15, fontWeight: '600', marginTop: 10 },
+    emptySub: { fontSize: 13, marginTop: 3 },
+    // Book card
+    bookCard: {
+        flexDirection: 'row', alignItems: 'center', padding: 18, borderRadius: 16, marginBottom: 20,
     },
-    weatherContainer: {
-        alignItems: 'center',
-        backgroundColor: 'rgba(0,0,0,0.4)',
-        padding: 8,
-        borderRadius: 12,
-    },
-    weatherText: {
-        color: 'white',
-        fontSize: 18,
-        fontWeight: 'bold',
-    },
-    weatherCondition: {
-        color: 'rgba(255,255,255,0.9)',
-        fontSize: 12,
-    },
-    scrollContent: {
-        padding: 20,
-        paddingBottom: 80,
-    },
-    greetingContainer: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        marginBottom: 24,
-        marginTop: 10,
-    },
-    greeting: {
-        color: '#666',
-    },
-    userName: {
-        fontWeight: 'bold',
-    },
-    sectionTitle: {
-        fontWeight: 'bold',
-        marginBottom: 12,
-        marginTop: 8,
-    },
-    deliveryCard: {
-        marginBottom: 24,
-        borderRadius: 16,
-    },
-    deliveryHeader: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        padding: 16,
-        borderBottomWidth: 1,
-        borderBottomColor: 'rgba(0,0,0,0.05)',
-    },
-    deliveryIdContainer: {
-        flexDirection: 'row',
-        alignItems: 'center',
-    },
-    statusBadge: {
-        backgroundColor: '#E3F2FD',
-        paddingHorizontal: 10,
-        paddingVertical: 4,
-        borderRadius: 12,
-    },
-    statusText: {
-        color: '#1976D2',
-        fontSize: 12,
-        fontWeight: 'bold',
-    },
-    deliveryContent: {
-        padding: 16,
-    },
-    deliveryRow: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        marginBottom: 8,
-    },
-    deliveryDetail: {
-        marginLeft: 10,
-        color: '#444',
-    },
-    deliveryActions: {
-        padding: 16,
-        paddingTop: 0,
-    },
-    actionsGrid: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        marginBottom: 24,
-    },
-    actionItem: {
-        alignItems: 'center',
-        width: '22%',
-    },
-    actionIcon: {
-        width: 50,
-        height: 50,
-        borderRadius: 16,
-        justifyContent: 'center',
-        alignItems: 'center',
-        marginBottom: 8,
-    },
-    actionLabel: {
-        color: '#555',
-    },
-
-
-    modalContainer: {
-        padding: 20,
-        margin: 20,
-        borderRadius: 16,
-        alignItems: 'center',
-    },
-    modalContent: {
-        width: '100%',
-        alignItems: 'center',
-    },
-    closeButton: {
-        position: 'absolute',
-        right: -10,
-        top: -10,
-    },
-    modalTitle: {
-        fontWeight: 'bold',
-        marginBottom: 16,
-    },
-    activityCard: {
-        marginBottom: 12,
-        borderRadius: 12,
-    },
-    activityContent: {
-        paddingVertical: 12,
-        paddingHorizontal: 16,
-    },
+    bookTitle: { fontSize: 18, fontWeight: '800' },
+    bookSub: { fontSize: 13, marginTop: 2 },
+    bookIcon: { width: 50, height: 50, borderRadius: 25, alignItems: 'center', justifyContent: 'center' },
+    // Quick actions
+    quickRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 24 },
+    quickItem: { alignItems: 'center', width: '30%' },
+    quickIcon: { width: 52, height: 52, borderRadius: 16, alignItems: 'center', justifyContent: 'center', borderWidth: 1, marginBottom: 6 },
+    quickLabel: { fontSize: 12, fontWeight: '500' },
+    // Activity
     activityRow: {
-        flexDirection: 'row',
-        alignItems: 'center',
+        flexDirection: 'row', alignItems: 'center', padding: 14, borderRadius: 14,
+        borderWidth: 1, marginBottom: 10, gap: 12,
     },
-    iconContainer: {
-        width: 40,
-        height: 40,
-        borderRadius: 20,
-        justifyContent: 'center',
-        alignItems: 'center',
-        marginRight: 16,
-    },
-    activityInfo: {
-        flex: 1,
-    },
-    trackingId: {
-        fontWeight: 'bold',
-        color: '#333',
-    },
-    serviceType: {
-        color: '#777',
-    },
-    activityStatus: {
-        alignItems: 'flex-end',
-    },
-    dateTextCard: {
-        color: '#999',
-        fontSize: 11,
-        marginTop: 2,
-    },
-    bookActionCard: {
-        marginBottom: 24,
-        backgroundColor: '#009688', // Teal primary color (or use theme.colors.primary)
-        borderRadius: 16,
-        elevation: 4,
-    },
-    bookActionContent: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        paddingVertical: 12,
-    },
-    bookActionTextContainer: {
-        flex: 1,
-    },
-    bookActionTitle: {
-        color: 'white',
-        fontWeight: 'bold',
-        marginBottom: 4,
-    },
-    bookActionIcon: {
-        backgroundColor: 'white',
-        borderRadius: 25,
-        width: 50,
-        height: 50,
-        justifyContent: 'center',
-        alignItems: 'center',
-    },
-    warningIconSurface: {
-        width: 80,
-        height: 80,
-        borderRadius: 40,
-        justifyContent: 'center',
-        alignItems: 'center',
-        marginBottom: 8,
-    },
-    // EC-32: Cancellation Banner
-    cancellationBanner: {
-        borderRadius: 12,
-        marginBottom: 16,
-        overflow: 'hidden',
-    },
-    cancellationBannerContent: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        padding: 16,
-    },
-    cancellationIcon: {
-        width: 40,
-        height: 40,
-        borderRadius: 20,
-        justifyContent: 'center',
-        alignItems: 'center',
-    },
+    activityDot: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
+    activityDotInner: { width: 10, height: 10, borderRadius: 5 },
+    activityId: { fontSize: 14, fontWeight: '600' },
+    activitySub: { fontSize: 12, marginTop: 1 },
+    activityStatus: { fontSize: 12, fontWeight: '700' },
+    activityDate: { fontSize: 11, marginTop: 1 },
+    // Modal
+    modal: { padding: 24, margin: 24, borderRadius: 20, alignItems: 'center' },
+    modalIcon: { width: 72, height: 72, borderRadius: 36, alignItems: 'center', justifyContent: 'center', marginBottom: 12 },
+    modalTitle: { fontSize: 18, fontWeight: '700', marginBottom: 12 },
+    modalBody: { textAlign: 'center', lineHeight: 22, marginBottom: 20, fontSize: 14 },
+    modalClose: { position: 'absolute', right: 0, top: 0 },
 });

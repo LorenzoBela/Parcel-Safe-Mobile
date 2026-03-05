@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { View, StyleSheet, ScrollView, Switch, ImageBackground, Alert, RefreshControl, TouchableOpacity, Dimensions, Linking, Platform, AppState } from 'react-native';
-import { Text, Card, Button, Avatar, ProgressBar, MD3Colors, Surface, Chip, useTheme, IconButton } from 'react-native-paper';
+import { Text, Card, Button, Avatar, ProgressBar, MD3Colors, Chip, useTheme, IconButton } from 'react-native-paper';
 import { useNavigation } from '@react-navigation/native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import dayjs from 'dayjs';
@@ -131,10 +131,36 @@ import { getAuth } from 'firebase/auth'; // EC-Fix: Fallback auth
 import { supabase } from '../../services/supabaseClient'; // EC-Fix: Session restoration
 
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useAppTheme } from '../../context/ThemeContext';
+import { StatusBar } from 'expo-status-bar';
+
+// ── Uber-style dual palette ──
+const lightC = {
+    bg: '#FFFFFF', card: '#FFFFFF', search: '#F2F2F7',
+    text: '#000000', textSec: '#6B6B6B', textTer: '#AEAEB2',
+    border: '#E5E5EA', accent: '#000000', accentText: '#FFFFFF',
+    divider: '#F2F2F7',
+    greenBg: '#ECFDF5', greenText: '#059669',
+    redBg: '#FEF2F2', redText: '#DC2626',
+    orangeBg: '#FFF7ED', orangeText: '#EA580C',
+    blueBg: '#EFF6FF', blueText: '#2563EB',
+};
+const darkC = {
+    bg: '#000000', card: '#1C1C1E', search: '#2C2C2E',
+    text: '#FFFFFF', textSec: '#8E8E93', textTer: '#636366',
+    border: '#38383A', accent: '#FFFFFF', accentText: '#000000',
+    divider: '#2C2C2E',
+    greenBg: '#052E16', greenText: '#4ADE80',
+    redBg: '#450A0A', redText: '#FCA5A5',
+    orangeBg: '#431407', orangeText: '#FDBA74',
+    blueBg: '#172554', blueText: '#93C5FD',
+};
 
 export default function RiderDashboard() {
     const navigation = useNavigation<any>();
     const theme = useTheme();
+    const { isDarkMode } = useAppTheme();
+    const c = isDarkMode ? darkC : lightC;
     const insets = useSafeAreaInsets();
     const [isOnline, setIsOnline] = useState(true);
     const [currentTime, setCurrentTime] = useState(dayjs());
@@ -1394,16 +1420,17 @@ export default function RiderDashboard() {
     };
 
     const QuickAction = ({ icon, label, onPress, color }) => (
-        <TouchableOpacity style={styles.actionItem} onPress={onPress}>
-            <Surface style={[styles.actionIcon, { backgroundColor: color }]} elevation={2}>
-                <MaterialCommunityIcons name={icon} size={28} color="white" />
-            </Surface>
-            <Text variant="labelMedium" style={[styles.actionLabel, { color: theme.colors.onSurface }]}>{label}</Text>
+        <TouchableOpacity style={styles.actionItem} onPress={onPress} activeOpacity={0.7}>
+            <View style={[styles.actionIcon, { backgroundColor: color + '14', borderWidth: 1, borderColor: color + '30' }]}>
+                <MaterialCommunityIcons name={icon} size={22} color={color} />
+            </View>
+            <Text style={[styles.actionLabel, { color: c.textSec }]}>{label}</Text>
         </TouchableOpacity>
     );
 
     return (
-        <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
+        <View style={[styles.container, { backgroundColor: c.bg }]}>
+            <StatusBar style={isDarkMode ? 'light' : 'dark'} />
             {/* Incoming Order Modal - overlays entire screen */}
             <IncomingOrderModal
                 visible={showOrderModal}
@@ -1476,22 +1503,22 @@ export default function RiderDashboard() {
             >
                 {/* EC-78: Reassignment Pending Banner (Persistent if Modal Dismissed) */}
                 {reassignmentState && isReassignmentPending(reassignmentState) && !showReassignmentModal && (
-                    <Surface style={[styles.warningBanner, { backgroundColor: '#FFF3E0', marginBottom: 16 }]} elevation={4}>
+                    <View style={[styles.warningBanner, { backgroundColor: c.orangeBg, borderWidth: 1, borderColor: c.orangeText, marginBottom: 16 }]}>
                         <MaterialCommunityIcons
                             name={getReassignmentType(reassignmentState, riderId) === 'outgoing' ? "swap-horizontal" : "account-switch"}
                             size={24}
-                            color="#FF9800"
+                            color={c.orangeText}
                         />
                         <View style={{ flex: 1, marginLeft: 12 }}>
-                            <Text style={[styles.bannerTitle, { color: '#E65100' }]}>
+                            <Text style={[styles.bannerTitle, { color: c.orangeText }]}>
                                 {getReassignmentType(reassignmentState, riderId) === 'outgoing' ? 'REASSIGNMENT PENDING' : 'NEW ASSIGNMENT'}
                             </Text>
-                            <Text style={[styles.bannerText, { color: '#EF6C00' }]}>
+                            <Text style={[styles.bannerText, { color: c.orangeText }]}>
                                 Action required for delivery update.
                             </Text>
                         </View>
-                        <Button mode="text" onPress={() => setShowReassignmentModal(true)} textColor="#E65100">View</Button>
-                    </Surface>
+                        <Button mode="text" onPress={() => setShowReassignmentModal(true)} textColor={c.orangeText}>View</Button>
+                    </View>
                 )}
 
                 {/* EC-89: Session Expiry Banner */}
@@ -1501,145 +1528,145 @@ export default function RiderDashboard() {
                 />
                 {/* EC-18: Tamper Alert Banner */}
                 {tamperState?.detected && (
-                    <Surface style={styles.tamperBanner} elevation={4}>
-                        <MaterialCommunityIcons name="alert-decagram" size={24} color="white" />
+                    <View style={[styles.tamperBanner, { backgroundColor: c.redBg, borderWidth: 1, borderColor: c.redText }]}>
+                        <MaterialCommunityIcons name="alert-decagram" size={24} color={c.redText} />
                         <View style={{ flex: 1, marginLeft: 12 }}>
-                            <Text style={styles.tamperTitle}>SECURITY ALERT</Text>
-                            <Text style={styles.tamperText}>Unauthorized box access detected!</Text>
+                            <Text style={[styles.tamperTitle, { color: c.redText }]}>SECURITY ALERT</Text>
+                            <Text style={[styles.tamperText, { color: c.redText }]}>Unauthorized box access detected!</Text>
                         </View>
-                    </Surface>
+                    </View>
                 )}
 
                 {/* EC-82: Keypad Warning Banner */}
                 {keypadState?.is_stuck && (
-                    <Surface style={styles.warningBanner} elevation={4}>
-                        <MaterialCommunityIcons name="keyboard-off" size={24} color="white" />
+                    <View style={[styles.warningBanner, { backgroundColor: c.orangeBg, borderWidth: 1, borderColor: c.orangeText }]}>
+                        <MaterialCommunityIcons name="keyboard-off" size={24} color={c.orangeText} />
                         <View style={{ flex: 1, marginLeft: 12 }}>
-                            <Text style={styles.bannerTitle}>KEYPAD MALFUNCTION</Text>
-                            <Text style={styles.bannerText}>Key '{keypadState.stuck_key}' is stuck. Use App Unlock.</Text>
+                            <Text style={[styles.bannerTitle, { color: c.orangeText }]}>KEYPAD MALFUNCTION</Text>
+                            <Text style={[styles.bannerText, { color: c.orangeText }]}>Key '{keypadState.stuck_key}' is stuck. Use App Unlock.</Text>
                         </View>
-                    </Surface>
+                    </View>
                 )}
 
                 {/* EC-85: Recall Banner */}
                 {recallState.isRecalled && (
-                    <Surface style={styles.dangerBanner} elevation={4}>
-                        <MaterialCommunityIcons name="backup-restore" size={24} color="white" />
+                    <View style={[styles.dangerBanner, { backgroundColor: c.redBg, borderWidth: 1, borderColor: c.redText }]}>
+                        <MaterialCommunityIcons name="backup-restore" size={24} color={c.redText} />
                         <View style={{ flex: 1, marginLeft: 12 }}>
-                            <Text style={styles.bannerTitle}>PACKAGE RECALLED</Text>
-                            <Text style={styles.bannerText}>Return to Sender immediately!</Text>
+                            <Text style={[styles.bannerTitle, { color: c.redText }]}>PACKAGE RECALLED</Text>
+                            <Text style={[styles.bannerText, { color: c.redText }]}>Return to Sender immediately!</Text>
                             {recallState.returnOtp && (
-                                <Text style={[styles.bannerText, { fontWeight: 'bold', marginTop: 4 }]}>
+                                <Text style={[styles.bannerText, { color: c.redText, fontWeight: 'bold', marginTop: 4 }]}>
                                     Return OTP: {recallState.returnOtp}
                                 </Text>
                             )}
                         </View>
-                    </Surface>
+                    </View>
                 )}
 
                 {/* EC-84: GPS Health Warning */}
                 {gpsHealth?.isDegraded && (
-                    <Surface style={styles.warningBanner} elevation={3}>
-                        <MaterialCommunityIcons name="satellite-variant" size={24} color="white" />
+                    <View style={[styles.warningBanner, { backgroundColor: c.orangeBg, borderWidth: 1, borderColor: c.orangeText }]}>
+                        <MaterialCommunityIcons name="satellite-variant" size={24} color={c.orangeText} />
                         <View style={{ flex: 1, marginLeft: 12 }}>
-                            <Text style={styles.bannerTitle}>WEAK GPS SIGNAL</Text>
-                            <Text style={styles.bannerText}>
+                            <Text style={[styles.bannerTitle, { color: c.orangeText }]}>WEAK GPS SIGNAL</Text>
+                            <Text style={[styles.bannerText, { color: c.orangeText }]}>
                                 {gpsHealth.obstructionDetected
                                     ? "Box antenna obstructed! Please clear package."
                                     : `Poor reception (HDOP: ${gpsHealth.hdop.toFixed(1)})`}
                             </Text>
                         </View>
-                    </Surface>
+                    </View>
                 )}
 
                 {/* EC-83: Hinge Damage Banner */}
                 {hingeState?.status === 'DAMAGED' && (
-                    <Surface style={styles.dangerBanner} elevation={4}>
-                        <MaterialCommunityIcons name="door-open" size={24} color="white" />
+                    <View style={[styles.dangerBanner, { backgroundColor: c.redBg, borderWidth: 1, borderColor: c.redText }]}>
+                        <MaterialCommunityIcons name="door-open" size={24} color={c.redText} />
                         <View style={{ flex: 1, marginLeft: 12 }}>
-                            <Text style={styles.bannerTitle}>HINGE DAMAGE</Text>
-                            <Text style={styles.bannerText}>Physical integrity compromised!</Text>
+                            <Text style={[styles.bannerTitle, { color: c.redText }]}>HINGE DAMAGE</Text>
+                            <Text style={[styles.bannerText, { color: c.redText }]}>Physical integrity compromised!</Text>
                         </View>
-                    </Surface>
+                    </View>
                 )}
 
                 {hingeState?.status === 'FLAPPING' && (
-                    <Surface style={styles.warningBanner} elevation={4}>
-                        <MaterialCommunityIcons name="door-open" size={24} color="white" />
+                    <View style={[styles.warningBanner, { backgroundColor: c.orangeBg, borderWidth: 1, borderColor: c.orangeText }]}>
+                        <MaterialCommunityIcons name="door-open" size={24} color={c.orangeText} />
                         <View style={{ flex: 1, marginLeft: 12 }}>
-                            <Text style={styles.bannerTitle}>DOOR SENSOR UNSTABLE</Text>
-                            <Text style={styles.bannerText}>Check for obstructions near door.</Text>
+                            <Text style={[styles.bannerTitle, { color: c.orangeText }]}>DOOR SENSOR UNSTABLE</Text>
+                            <Text style={[styles.bannerText, { color: c.orangeText }]}>Check for obstructions near door.</Text>
                         </View>
-                    </Surface>
+                    </View>
                 )}
                 {/* EC-01/EC-06: Offline Mode Banner */}
                 <NetworkStatusBanner pendingSyncs={pendingSyncs} />
 
                 {/* EC-08: GPS Spoofing Warning */}
                 {gpsSpoofWarning && (
-                    <Surface style={styles.spoofWarning} elevation={3}>
-                        <MaterialCommunityIcons name="map-marker-alert" size={24} color="#7B341E" />
+                    <View style={[styles.spoofWarning, { backgroundColor: c.orangeBg, borderWidth: 1, borderColor: c.orangeText }]}>
+                        <MaterialCommunityIcons name="map-marker-alert" size={24} color={c.orangeText} />
                         <View style={{ flex: 1, marginLeft: 12 }}>
-                            <Text style={styles.spoofTitle}>GPS ANOMALY</Text>
-                            <Text style={styles.spoofText}>Unusual location data detected</Text>
+                            <Text style={[styles.spoofTitle, { color: c.orangeText }]}>GPS ANOMALY</Text>
+                            <Text style={[styles.spoofText, { color: c.orangeText }]}>Unusual location data detected</Text>
                         </View>
                         <TouchableOpacity onPress={() => setGpsSpoofWarning(false)}>
-                            <MaterialCommunityIcons name="close" size={20} color="#7B341E" />
+                            <MaterialCommunityIcons name="close" size={20} color={c.orangeText} />
                         </TouchableOpacity>
-                    </Surface>
+                    </View>
                 )}
 
                 {/* EC-46: Clock Skew Warning */}
                 {clockSkewWarning && (
-                    <Surface style={styles.clockWarning} elevation={2}>
-                        <MaterialCommunityIcons name="clock-alert" size={20} color="#1E40AF" />
-                        <Text style={styles.clockText}>Device time may be out of sync</Text>
+                    <View style={[styles.clockWarning, { backgroundColor: c.blueBg, borderWidth: 1, borderColor: c.blueText }]}>
+                        <MaterialCommunityIcons name="clock-alert" size={20} color={c.blueText} />
+                        <Text style={[styles.clockText, { color: c.blueText }]}>Device time may be out of sync</Text>
                         <TouchableOpacity onPress={() => setClockSkewWarning(false)}>
-                            <MaterialCommunityIcons name="close" size={18} color="#1E40AF" />
+                            <MaterialCommunityIcons name="close" size={18} color={c.blueText} />
                         </TouchableOpacity>
-                    </Surface>
+                    </View>
                 )}
 
                 {/* EC-10: Photo Queue Full Warning */}
                 {photoQueueFull && (
-                    <Surface style={styles.queueWarning} elevation={2}>
-                        <MaterialCommunityIcons name="image-off" size={20} color="#B45309" />
-                        <Text style={styles.queueText}>Photo queue full ({photoQueueCount}/{SAFETY_CONSTANTS.MAX_QUEUED_PHOTOS})</Text>
-                    </Surface>
+                    <View style={[styles.queueWarning, { backgroundColor: c.orangeBg, borderWidth: 1, borderColor: c.orangeText }]}>
+                        <MaterialCommunityIcons name="image-off" size={20} color={c.orangeText} />
+                        <Text style={[styles.queueText, { color: c.orangeText }]}>Photo queue full ({photoQueueCount}/{SAFETY_CONSTANTS.MAX_QUEUED_PHOTOS})</Text>
+                    </View>
                 )}
 
                 {/* Status Toggle - EC-ENHANCE: Clear Offline/Online distinction */}
-                <View style={[styles.statusToggleContainer, { backgroundColor: theme.colors.surface }]}>
+                <View style={[styles.statusToggleContainer, { backgroundColor: c.card, borderColor: c.border, borderWidth: 1 }]}>
                     <View style={styles.statusContainer}>
-                        <View style={[styles.statusDot, { backgroundColor: isOnline ? '#4CAF50' : '#9E9E9E' }]} />
+                        <View style={[styles.statusDot, { backgroundColor: isOnline ? c.greenText : c.textTer }]} />
                         <View>
-                            <Text variant="titleMedium" style={[styles.statusText, { color: theme.colors.onSurface }]}>
+                            <Text variant="titleMedium" style={[styles.statusText, { color: c.text }]}>
                                 {isOnline ? 'You are Online' : 'You are Offline'}
                             </Text>
-                            <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
+                            <Text variant="bodySmall" style={{ color: c.textSec }}>
                                 {isOnline ? 'Receiving orders' : 'Browsing mode only'}
                             </Text>
                         </View>
                     </View>
-                    <Switch value={isOnline} onValueChange={setIsOnline} trackColor={{ true: "#4CAF50", false: "#767577" }} />
+                    <Switch value={isOnline} onValueChange={setIsOnline} trackColor={{ true: c.accent, false: c.search }} thumbColor={isDarkMode ? c.text : c.bg} />
                 </View>
 
                 {/* GPS Connection Status Indicator */}
-                <Surface style={styles.gpsStatusCard} elevation={1}>
+                <View style={[styles.gpsStatusCard, { backgroundColor: c.card, borderColor: c.border, borderWidth: 1 }]}>
                     <View style={styles.gpsStatusRow}>
                         <View style={[
                             styles.gpsStatusIcon,
-                            { backgroundColor: hasActiveDelivery ? getStatusColor(gpsSource, isBoxOnline) + '20' : '#F5F5F5' }
+                            { backgroundColor: hasActiveDelivery ? getStatusColor(gpsSource, isBoxOnline) + '20' : c.search }
                         ]}>
                             <MaterialCommunityIcons
                                 name={hasActiveDelivery && gpsSource === 'box' ? 'access-point' : hasActiveDelivery && gpsSource === 'phone' ? 'cellphone' : 'access-point-off'}
                                 size={24}
-                                color={hasActiveDelivery ? getStatusColor(gpsSource, isBoxOnline) : '#9E9E9E'}
+                                color={hasActiveDelivery ? getStatusColor(gpsSource, isBoxOnline) : c.textTer}
                             />
                         </View>
                         <View style={styles.gpsStatusInfo}>
-                            <Text variant="titleSmall" style={{ fontWeight: 'bold' }}>GPS Tracking</Text>
-                            <Text variant="bodySmall" style={{ color: hasActiveDelivery ? (localPhoneLocation && gpsSource === 'none' ? '#FFC107' : getStatusColor(gpsSource, isBoxOnline)) : '#9E9E9E' }}>
+                            <Text variant="titleSmall" style={{ fontWeight: 'bold', color: c.text }}>GPS Tracking</Text>
+                            <Text variant="bodySmall" style={{ color: hasActiveDelivery ? (localPhoneLocation && gpsSource === 'none' ? c.orangeText : getStatusColor(gpsSource, isBoxOnline)) : c.textSec }}>
                                 {hasActiveDelivery ?
                                     (localPhoneLocation && gpsSource === 'none' ? 'Using Phone (Local Fallback)' : getStatusMessage(gpsSource, isBoxOnline))
                                     : 'No Active Delivery'}
@@ -1649,23 +1676,23 @@ export default function RiderDashboard() {
                             <Chip
                                 compact
                                 icon="phone"
-                                style={{ backgroundColor: '#FFF3E0' }}
-                                textStyle={{ fontSize: 10 }}
+                                style={{ backgroundColor: c.orangeBg }}
+                                textStyle={{ fontSize: 10, color: c.orangeText }}
                             >
                                 Fallback
                             </Chip>
                         )}
                     </View>
-                </Surface>
+                </View>
 
                 {/* Pairing Status */}
-                <Surface style={styles.pairingCard} elevation={2}>
+                <View style={[styles.pairingCard, { backgroundColor: c.card, borderColor: c.border, borderWidth: 1 }]}>
                     <View style={styles.pairingRow}>
                         <View style={styles.pairingInfo}>
-                            <Text variant="titleSmall" style={{ fontWeight: 'bold' }}>
+                            <Text variant="titleSmall" style={{ fontWeight: 'bold', color: c.text }}>
                                 {isPaired ? 'Box Paired' : 'No Box Paired'}
                             </Text>
-                            <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
+                            <Text variant="bodySmall" style={{ color: c.textSec }}>
                                 {isPaired && pairedBoxId
                                     ? `Box ${pairedBoxId} • ${pairingModeLabel}`
                                     : 'Scan a box QR to link controls and health data.'}
@@ -1673,6 +1700,9 @@ export default function RiderDashboard() {
                         </View>
                         <Button
                             mode={isPaired ? 'outlined' : 'contained'}
+                            textColor={isPaired ? c.text : c.accentText}
+                            buttonColor={isPaired ? 'transparent' : c.accent}
+                            style={{ borderColor: isPaired ? c.border : 'transparent' }}
                             onPress={() => {
                                 // "Manage" is for pairing/unpairing; controls are available via Box Status.
                                 navigation.navigate('PairBox');
@@ -1681,7 +1711,7 @@ export default function RiderDashboard() {
                             {isPaired ? 'Manage' : 'Pair Box'}
                         </Button>
                     </View>
-                </Surface>
+                </View>
 
                 {/* Quick Actions */}
                 <View style={styles.actionsGrid}>
@@ -1696,17 +1726,17 @@ export default function RiderDashboard() {
                             }
                             navigation.navigate('BoxControls', { boxId: pairedBoxId });
                         }}
-                        color="#FF9800"
+                        color={c.accent}
                     />
-                    <QuickAction icon="history" label="History" onPress={() => navigation.navigate('DeliveryRecords')} color="#2196F3" />
-                    <QuickAction icon="face-agent" label="Support" onPress={() => navigation.navigate('RiderSupport')} color="#9C27B0" />
-                    <QuickAction icon="cog" label="Settings" onPress={() => navigation.navigate('RiderSettings')} color="#607D8B" />
+                    <QuickAction icon="history" label="History" onPress={() => navigation.navigate('DeliveryRecords')} color={c.accent} />
+                    <QuickAction icon="face-agent" label="Support" onPress={() => navigation.navigate('RiderSupport')} color={c.accent} />
+                    <QuickAction icon="cog" label="Settings" onPress={() => navigation.navigate('RiderSettings')} color={c.accent} />
                 </View>
 
                 {/* Next Delivery Card */}
-                <Text variant="titleMedium" style={styles.sectionTitle}>Current Job</Text>
+                <Text variant="titleMedium" style={[styles.sectionTitle, { color: c.text }]}>Current Job</Text>
                 {nextDelivery ? (
-                    <Card style={styles.jobCard} mode="elevated" onPress={() => navigation.navigate('JobDetail', { job: nextDelivery })}>
+                    <Card style={[styles.jobCard, { backgroundColor: c.card, borderColor: c.border, borderWidth: 1 }]} mode="contained" onPress={() => navigation.navigate('JobDetail', { job: nextDelivery })}>
                         <View style={styles.mapContainer}>
                             {(lastLocation || riderLocation) && MAPBOX_TOKEN ? (
                                 <MapboxGL.MapView
@@ -1792,8 +1822,8 @@ export default function RiderDashboard() {
                                     )}
                                 </MapboxGL.MapView>
                             ) : (
-                                <View style={[styles.mapPlaceholder, { backgroundColor: theme.colors.surfaceVariant }]}>
-                                    <Text style={{ color: theme.colors.onSurfaceVariant }}>
+                                <View style={[styles.mapPlaceholder, { backgroundColor: c.search }]}>
+                                    <Text style={{ color: c.textSec }}>
                                         {MAPBOX_TOKEN ? 'Loading Map...' : 'Map unavailable: configure MAPBOX_ACCESS_TOKEN'}
                                     </Text>
                                 </View>
@@ -1803,34 +1833,34 @@ export default function RiderDashboard() {
                         <Card.Content style={styles.jobContent}>
                             <View style={styles.jobHeader}>
                                 <View style={{ flex: 1, marginRight: 8 }}>
-                                    <Text variant="titleMedium" style={{ fontWeight: 'bold' }}>{nextDelivery.customer}</Text>
-                                    <Text variant="bodySmall" style={{ color: '#666' }}>{nextDelivery.id}</Text>
+                                    <Text variant="titleMedium" style={{ fontWeight: 'bold', color: c.text }}>{nextDelivery.customer}</Text>
+                                    <Text variant="bodySmall" style={{ color: c.textSec }}>{nextDelivery.id}</Text>
                                 </View>
                                 <View style={{ alignItems: 'flex-end' }}>
-                                    <Chip icon="map-marker-distance" compact style={{ backgroundColor: '#E3F2FD', marginBottom: 4 }}>{distance}</Chip>
-                                    <Chip compact style={{ backgroundColor: '#E8F5E9' }} textStyle={{ fontSize: 10, color: '#2E7D32', fontWeight: 'bold' }}>{activeDelivery.status.replace(/_/g, ' ')}</Chip>
+                                    <Chip icon="map-marker-distance" compact style={{ backgroundColor: c.search, marginBottom: 4 }} textStyle={{ color: c.text }}>{distance}</Chip>
+                                    <Chip compact style={{ backgroundColor: c.greenBg }} textStyle={{ fontSize: 10, color: c.greenText, fontWeight: 'bold' }}>{activeDelivery.status.replace(/_/g, ' ')}</Chip>
                                 </View>
                             </View>
 
-                            <View style={styles.divider} />
+                            <View style={[styles.divider, { backgroundColor: c.divider }]} />
 
                             {/* Pickup Section */}
                             <View style={{ marginBottom: 16 }}>
                                 <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
-                                    <View style={[styles.badge, { backgroundColor: '#E3F2FD', width: 24, height: 24, borderRadius: 12, marginRight: 8 }]}>
-                                        <MaterialCommunityIcons name="package-variant" size={14} color="#2196F3" />
+                                    <View style={[styles.badge, { backgroundColor: c.blueBg, width: 24, height: 24, borderRadius: 12, marginRight: 8 }]}>
+                                        <MaterialCommunityIcons name="package-variant" size={14} color={c.blueText} />
                                     </View>
-                                    <Text variant="labelSmall" style={{ color: theme.colors.primary, fontWeight: 'bold' }}>PICKUP</Text>
+                                    <Text variant="labelSmall" style={{ color: c.blueText, fontWeight: 'bold' }}>PICKUP</Text>
                                 </View>
                                 <View style={[styles.addressContainer, { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }]}>
-                                    <Text variant="bodyMedium" style={[styles.address, { flex: 1, marginBottom: 0, marginLeft: 0 }]}>
+                                    <Text variant="bodyMedium" style={[styles.address, { flex: 1, marginBottom: 0, marginLeft: 0, color: c.text }]}>
                                         {nextDelivery.pickupAddress || 'Pickup Address'}
                                     </Text>
                                     <IconButton
                                         icon="navigation"
                                         mode="contained"
-                                        containerColor={theme.colors.primaryContainer}
-                                        iconColor={theme.colors.primary}
+                                        containerColor={c.search}
+                                        iconColor={c.text}
                                         size={20}
                                         onPress={() => handleNavigate('PICKUP')}
                                         style={{ margin: 0, marginLeft: 8 }}
@@ -1842,20 +1872,20 @@ export default function RiderDashboard() {
                             {['RETURNING', 'TAMPERED'].includes(activeDelivery.status) ? (
                                 <View style={{ marginBottom: 8 }}>
                                     <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
-                                        <View style={[styles.badge, { backgroundColor: '#FFEBEE', width: 24, height: 24, borderRadius: 12, marginRight: 8 }]}>
-                                            <MaterialCommunityIcons name="keyboard-return" size={14} color="#F44336" />
+                                        <View style={[styles.badge, { backgroundColor: c.redBg, width: 24, height: 24, borderRadius: 12, marginRight: 8 }]}>
+                                            <MaterialCommunityIcons name="keyboard-return" size={14} color={c.redText} />
                                         </View>
-                                        <Text variant="labelSmall" style={{ color: theme.colors.error, fontWeight: 'bold' }}>RETURN DESTINATION</Text>
+                                        <Text variant="labelSmall" style={{ color: c.redText, fontWeight: 'bold' }}>RETURN DESTINATION</Text>
                                     </View>
                                     <View style={[styles.addressContainer, { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }]}>
-                                        <Text variant="bodyMedium" style={[styles.address, { flex: 1, marginBottom: 0, marginLeft: 0 }]}>
+                                        <Text variant="bodyMedium" style={[styles.address, { flex: 1, marginBottom: 0, marginLeft: 0, color: c.text }]}>
                                             {nextDelivery.pickupAddress || 'Pickup Address'}
                                         </Text>
                                         <IconButton
                                             icon="navigation"
                                             mode="contained"
-                                            containerColor={theme.colors.errorContainer}
-                                            iconColor={theme.colors.error}
+                                            containerColor={c.search}
+                                            iconColor={c.text}
                                             size={20}
                                             onPress={() => handleNavigate('PICKUP')}
                                             style={{ margin: 0, marginLeft: 8 }}
@@ -1865,20 +1895,20 @@ export default function RiderDashboard() {
                             ) : (
                                 <View style={{ marginBottom: 8 }}>
                                     <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
-                                        <View style={[styles.badge, { backgroundColor: '#FFEBEE', width: 24, height: 24, borderRadius: 12, marginRight: 8 }]}>
-                                            <MaterialCommunityIcons name="map-marker" size={14} color="#F44336" />
+                                        <View style={[styles.badge, { backgroundColor: c.redBg, width: 24, height: 24, borderRadius: 12, marginRight: 8 }]}>
+                                            <MaterialCommunityIcons name="map-marker" size={14} color={c.redText} />
                                         </View>
-                                        <Text variant="labelSmall" style={{ color: theme.colors.error, fontWeight: 'bold' }}>DROPOFF</Text>
+                                        <Text variant="labelSmall" style={{ color: c.redText, fontWeight: 'bold' }}>DROPOFF</Text>
                                     </View>
                                     <View style={[styles.addressContainer, { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }]}>
-                                        <Text variant="bodyMedium" style={[styles.address, { flex: 1, marginBottom: 0, marginLeft: 0 }]}>
+                                        <Text variant="bodyMedium" style={[styles.address, { flex: 1, marginBottom: 0, marginLeft: 0, color: c.text }]}>
                                             {nextDelivery.address}
                                         </Text>
                                         <IconButton
                                             icon="navigation"
                                             mode="contained"
-                                            containerColor={theme.colors.errorContainer}
-                                            iconColor={theme.colors.error}
+                                            containerColor={c.search}
+                                            iconColor={c.text}
                                             size={20}
                                             onPress={() => handleNavigate('DROPOFF')}
                                             style={{ margin: 0, marginLeft: 8 }}
@@ -1890,8 +1920,8 @@ export default function RiderDashboard() {
 
                             <View style={styles.jobMeta}>
                                 <View style={styles.metaItem}>
-                                    <MaterialCommunityIcons name="clock-outline" size={16} color="#666" />
-                                    <Text style={styles.metaText}>ETA: {nextDelivery.estimatedTime || '-- min'}</Text>
+                                    <MaterialCommunityIcons name="clock-outline" size={16} color={c.textSec} />
+                                    <Text style={[styles.metaText, { color: c.textSec }]}>ETA: {nextDelivery.estimatedTime || '-- min'}</Text>
                                 </View>
                             </View>
                         </Card.Content>
@@ -1924,7 +1954,8 @@ export default function RiderDashboard() {
                                         dropoffLng: nextDelivery.dropoffLng,
                                     });
                                 }}
-                                buttonColor={theme.colors.primary}
+                                buttonColor={c.accent}
+                                textColor={c.accentText}
                                 icon="navigation"
                             >
                                 {['PICKED_UP', 'IN_TRANSIT', 'ARRIVED'].includes(activeDelivery.status) ? 'Resume Trip' : 'Start Trip'}
@@ -1932,9 +1963,9 @@ export default function RiderDashboard() {
 
                             <Button
                                 mode="outlined"
-                                style={{ width: '100%', borderRadius: 8, borderColor: theme.colors.primary, marginBottom: 12 }}
+                                style={{ width: '100%', borderRadius: 8, borderColor: c.border, marginBottom: 12 }}
                                 onPress={() => navigation.navigate('JobDetail', { job: nextDelivery })}
-                                textColor={theme.colors.primary}
+                                textColor={c.text}
                                 icon="file-document-outline"
                             >
                                 View Job Details
@@ -1945,7 +1976,7 @@ export default function RiderDashboard() {
                                     mode="text"
                                     style={{ width: '100%', borderRadius: 8 }}
                                     onPress={() => setShowCancelModal(true)}
-                                    textColor={theme.colors.error}
+                                    textColor={c.redText}
                                 >
                                     Cancel Delivery
                                 </Button>
@@ -1953,24 +1984,24 @@ export default function RiderDashboard() {
                         </Card.Content>
                     </Card>
                 ) : (
-                    <Card style={[styles.jobCard, { backgroundColor: theme.colors.surfaceVariant }]} mode="elevated">
+                    <Card style={[styles.jobCard, { backgroundColor: c.search, borderColor: 'transparent', borderWidth: 0 }]} mode="contained">
                         <Card.Content style={{ alignItems: 'center', paddingVertical: 32 }}>
-                            <MaterialCommunityIcons name="truck-delivery-outline" size={48} color={theme.colors.onSurfaceVariant} />
-                            <Text variant="bodyLarge" style={{ color: theme.colors.onSurfaceVariant, marginTop: 12 }}>No current job</Text>
-                            <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant, marginTop: 4 }}>Waiting for incoming orders</Text>
+                            <MaterialCommunityIcons name="truck-delivery-outline" size={48} color={c.textTer} />
+                            <Text variant="bodyLarge" style={{ color: c.textSec, marginTop: 12 }}>No current job</Text>
+                            <Text variant="bodySmall" style={{ color: c.textTer, marginTop: 4 }}>Waiting for incoming orders</Text>
                         </Card.Content>
                     </Card>
                 )}
 
                 {/* Smart Box Status */}
-                <Text variant="titleMedium" style={styles.sectionTitle}>Box Status</Text>
-                <Surface style={styles.statusCard} elevation={2}>
+                <Text variant="titleMedium" style={[styles.sectionTitle, { color: c.text }]}>Box Status</Text>
+                <View style={[styles.statusCard, { backgroundColor: c.card, borderColor: c.border, borderWidth: 1 }]}>
 
                     {/* Enhanced Unlock Button with Lottie */}
                     <View style={styles.unlockContainer}>
                         <View style={styles.unlockInfo}>
-                            <Text variant="titleMedium" style={{ fontWeight: 'bold' }}>Lock Mechanism</Text>
-                            <Text variant="bodyMedium" style={{ color: !isPaired ? '#9E9E9E' : (isLocked ? '#4CAF50' : '#F44336') }}>
+                            <Text variant="titleMedium" style={{ fontWeight: 'bold', color: c.text }}>Lock Mechanism</Text>
+                            <Text variant="bodyMedium" style={{ color: !isPaired ? c.textTer : (isLocked ? c.greenText : c.redText) }}>
                                 {!isPaired ? 'No Box Connected' : (isLocked ? 'Securely Locked' : 'Unlocked')}
                             </Text>
                         </View>
@@ -1978,9 +2009,9 @@ export default function RiderDashboard() {
                             style={[
                                 styles.unlockButton,
                                 {
-                                    backgroundColor: !isPaired ? '#F5F5F5' : (isLocked ? '#E8F5E9' : '#FFEBEE'),
+                                    backgroundColor: !isPaired ? c.search : (isLocked ? c.greenBg : c.redBg),
                                     borderWidth: 1,
-                                    borderColor: !isPaired ? '#E0E0E0' : (isLocked ? '#4CAF50' : '#F44336')
+                                    borderColor: !isPaired ? c.border : (isLocked ? c.greenText : c.redText)
                                 }
                             ]}
                             onPress={toggleLock}
@@ -1989,49 +2020,49 @@ export default function RiderDashboard() {
                             <MaterialCommunityIcons
                                 name={!isPaired ? "shield-off-outline" : (isLocked ? "shield-lock" : "shield-lock-open")}
                                 size={40}
-                                color={!isPaired ? "#BDBDBD" : (isLocked ? "#4CAF50" : "#F44336")}
+                                color={!isPaired ? c.textTer : (isLocked ? c.greenText : c.redText)}
                             />
                         </TouchableOpacity>
                     </View>
 
-                    <View style={styles.divider} />
+                    <View style={[styles.divider, { backgroundColor: c.divider }]} />
 
                     <View style={styles.statusRow}>
-                        <View style={[styles.statusIconContainer, { backgroundColor: isPaired ? getBatteryColor() + '20' : '#F5F5F5' }]}>
+                        <View style={[styles.statusIconContainer, { backgroundColor: isPaired ? getBatteryColor() + '20' : c.search }]}>
                             <MaterialCommunityIcons
                                 name={isPaired ? getBatteryIcon() as any : "battery-unknown"}
                                 size={24}
-                                color={isPaired ? getBatteryColor() : '#BDBDBD'}
+                                color={isPaired ? getBatteryColor() : c.textTer}
                             />
                         </View>
                         <View style={styles.statusInfo}>
-                            <Text variant="titleSmall">Battery Level</Text>
+                            <Text variant="titleSmall" style={{ color: c.text }}>Battery Level</Text>
                             <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4 }}>
                                 <ProgressBar
                                     progress={isPaired ? boxStatus.battery : 0}
-                                    color={isPaired ? getBatteryColor() : '#E0E0E0'}
+                                    color={isPaired ? getBatteryColor() : c.textTer}
                                     style={styles.progressBar}
                                 />
-                                <Text variant="labelSmall" style={{ marginLeft: 8, fontWeight: 'bold', color: isPaired ? getBatteryColor() : '#9E9E9E' }}>
+                                <Text variant="labelSmall" style={{ marginLeft: 8, fontWeight: 'bold', color: isPaired ? getBatteryColor() : c.textSec }}>
                                     {isPaired ? (batteryState ? `${batteryState.percentage}%` : 'Syncing...') : '--%'}
                                 </Text>
                             </View>
                         </View>
                     </View>
 
-                    <View style={styles.divider} />
+                    <View style={[styles.divider, { backgroundColor: c.divider }]} />
 
                     <View style={styles.statusRow}>
-                        <View style={[styles.statusIconContainer, { backgroundColor: isPaired ? '#F3E5F5' : '#F5F5F5' }]}>
+                        <View style={[styles.statusIconContainer, { backgroundColor: isPaired ? c.blueBg : c.search }]}>
                             <MaterialCommunityIcons
                                 name={isPaired ? "bluetooth" : "bluetooth-off"}
                                 size={24}
-                                color={isPaired ? "#9C27B0" : "#BDBDBD"}
+                                color={isPaired ? c.blueText : c.textTer}
                             />
                         </View>
                         <View style={styles.statusInfo}>
-                            <Text variant="titleSmall">Connection</Text>
-                            <Text variant="bodySmall" style={{ color: '#666' }}>
+                            <Text variant="titleSmall" style={{ color: c.text }}>Connection</Text>
+                            <Text variant="bodySmall" style={{ color: c.textSec }}>
                                 {isPaired ? `${boxStatus.connection} • ${boxStatus.signal}` : 'Not Connected'}
                             </Text>
                         </View>
@@ -2042,6 +2073,8 @@ export default function RiderDashboard() {
                             <Button
                                 mode="contained"
                                 style={{ flex: 1 }}
+                                buttonColor={c.accent}
+                                textColor={c.accentText}
                                 onPress={() => navigation.navigate('PairBox')}
                             >
                                 Pair Box
@@ -2049,13 +2082,14 @@ export default function RiderDashboard() {
                         )}
                         <Button
                             mode="outlined"
-                            style={{ flex: 1 }}
+                            style={{ flex: 1, borderColor: c.border }}
+                            textColor={c.text}
                             onPress={() => navigation.navigate('BoxControls')}
                         >
                             Advanced Controls
                         </Button>
                     </View>
-                </Surface>
+                </View>
 
 
 
@@ -2094,12 +2128,10 @@ export default function RiderDashboard() {
 
 const styles = StyleSheet.create({
     bannerTitle: {
-        color: 'white',
         fontWeight: 'bold',
         fontSize: 14,
     },
     bannerText: {
-        color: 'white',
         fontSize: 12,
     },
     warningBanner: {
@@ -2109,7 +2141,6 @@ const styles = StyleSheet.create({
         marginHorizontal: 16,
         marginBottom: 16,
         borderRadius: 12,
-        backgroundColor: '#F57C00', // Orange for warning
     },
     dangerBanner: {
         flexDirection: 'row',
@@ -2118,11 +2149,9 @@ const styles = StyleSheet.create({
         marginHorizontal: 16,
         marginBottom: 16,
         borderRadius: 12,
-        backgroundColor: '#D32F2F', // Red for critical
     },
     container: {
         flex: 1,
-        backgroundColor: '#F7F9FC',
     },
     headerBackground: {
         height: 180,
@@ -2188,10 +2217,8 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         marginBottom: 24,
         marginTop: 10,
-        // backgroundColor: 'white', // Handled by theme
         padding: 16,
         borderRadius: 16,
-        elevation: 1,
     },
     statusContainer: {
         flexDirection: 'row',
@@ -2205,18 +2232,16 @@ const styles = StyleSheet.create({
     },
     statusText: {
         fontWeight: 'bold',
-        color: '#444',
     },
     sectionTitle: {
         fontWeight: 'bold',
         marginBottom: 12,
-        color: '#333',
     },
     jobCard: {
         marginBottom: 24,
-        // backgroundColor: 'white', // Handled by theme
         overflow: 'hidden',
         borderRadius: 16,
+        elevation: 0,
     },
     mapContainer: {
         height: 150,
@@ -2252,7 +2277,6 @@ const styles = StyleSheet.create({
         marginBottom: 12,
     },
     address: {
-        color: '#444',
         marginLeft: 8,
         flex: 1,
     },
@@ -2267,7 +2291,6 @@ const styles = StyleSheet.create({
     },
     metaText: {
         marginLeft: 4,
-        color: '#666',
         fontSize: 12,
         fontWeight: 'bold',
     },
@@ -2276,7 +2299,6 @@ const styles = StyleSheet.create({
         paddingTop: 0,
     },
     statusCard: {
-        // backgroundColor: 'white', // Handled by theme
         borderRadius: 16,
         padding: 16,
         marginBottom: 24,
@@ -2304,7 +2326,6 @@ const styles = StyleSheet.create({
     },
     divider: {
         height: 1,
-        backgroundColor: '#F0F0F0',
         marginVertical: 8,
     },
     actionsGrid: {
@@ -2333,7 +2354,8 @@ const styles = StyleSheet.create({
         borderBottomRightRadius: 30,
     },
     actionLabel: {
-        color: '#555',
+        fontSize: 12,
+        marginTop: 6,
     },
     unlockContainer: {
         flexDirection: 'row',
@@ -2350,11 +2372,9 @@ const styles = StyleSheet.create({
         borderRadius: 30,
         justifyContent: 'center',
         alignItems: 'center',
-        elevation: 1,
     },
 
     gpsStatusCard: {
-        // backgroundColor: 'white', // Handled by theme
         borderRadius: 16,
         padding: 12,
         marginBottom: 16,
@@ -2391,23 +2411,19 @@ const styles = StyleSheet.create({
     tamperBanner: {
         flexDirection: 'row',
         alignItems: 'center',
-        backgroundColor: '#D32F2F',
         marginHorizontal: 16,
         marginTop: 16,
         padding: 16,
         borderRadius: 12,
     },
     tamperTitle: {
-        color: 'white',
         fontWeight: 'bold',
         fontSize: 16,
     },
     tamperText: {
-        color: 'rgba(255,255,255,0.9)',
         fontSize: 14,
     },
 
-    // EC-08: GPS Spoofing Warning Styles
     spoofWarning: {
         flexDirection: 'row',
         alignItems: 'center',
@@ -2415,17 +2431,12 @@ const styles = StyleSheet.create({
         marginHorizontal: 16,
         marginBottom: 16,
         borderRadius: 12,
-        backgroundColor: '#FBE9E7',
-        borderWidth: 1,
-        borderColor: '#FFCCBC'
     },
     spoofTitle: {
-        color: '#D84315',
         fontWeight: 'bold',
         fontSize: 14,
     },
     spoofText: {
-        color: '#D84315',
         fontSize: 12,
     },
     clockWarning: {
@@ -2435,13 +2446,9 @@ const styles = StyleSheet.create({
         marginHorizontal: 16,
         marginBottom: 16,
         borderRadius: 8,
-        backgroundColor: '#E3F2FD',
-        borderWidth: 1,
-        borderColor: '#BBDEFB'
     },
     clockText: {
         flex: 1,
-        color: '#1565C0',
         fontSize: 12,
         marginLeft: 8,
     },
@@ -2452,12 +2459,8 @@ const styles = StyleSheet.create({
         marginHorizontal: 16,
         marginBottom: 8,
         borderRadius: 8,
-        backgroundColor: '#FFF3E0',
-        borderWidth: 1,
-        borderColor: '#FFE0B2'
     },
     queueText: {
-        color: '#EF6C00',
         fontSize: 12,
         marginLeft: 8,
         fontWeight: '600',

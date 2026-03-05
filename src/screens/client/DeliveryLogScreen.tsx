@@ -1,22 +1,32 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { View, StyleSheet, FlatList, TouchableOpacity, ScrollView, RefreshControl, ActivityIndicator } from 'react-native';
-import { Text, Card, Searchbar, Chip, useTheme, Surface, IconButton } from 'react-native-paper';
+import { View, StyleSheet, FlatList, TouchableOpacity, ScrollView, RefreshControl, ActivityIndicator, StatusBar, TextInput } from 'react-native';
+import { Text } from 'react-native-paper';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useAppTheme } from '../../context/ThemeContext';
 import { supabase } from '../../services/supabaseClient';
 import { parseUTCString } from '../../utils/date';
 import { triggerDeliverySync } from '../../services/deliverySyncService';
 import useAuthStore from '../../store/authStore';
 
-/** Map Supabase DeliveryStatus to display-friendly labels */
+// ─── Colors ─────────────────────────────────────────────────────────────────────
+const light = {
+    bg: '#FFFFFF', card: '#F6F6F6', border: '#E5E5EA',
+    text: '#000000', textSec: '#6B6B6B', textTer: '#AEAEB2',
+    accent: '#000000', search: '#F2F2F7', pillBg: '#F2F2F7',
+};
+const dark = {
+    bg: '#000000', card: '#141414', border: '#2C2C2E',
+    text: '#FFFFFF', textSec: '#8E8E93', textTer: '#636366',
+    accent: '#FFFFFF', search: '#1C1C1E', pillBg: '#1C1C1E',
+};
+
 const mapStatus = (raw: string): string => {
     switch (raw) {
         case 'COMPLETED': return 'Delivered';
-        case 'IN_TRANSIT': return 'In Transit';
-        case 'ASSIGNED': return 'In Transit';
+        case 'IN_TRANSIT': case 'ASSIGNED': case 'ARRIVED': return 'In Transit';
         case 'PENDING': return 'Pending';
-        case 'ARRIVED': return 'In Transit';
         case 'TAMPERED': return 'Tampered';
         case 'CANCELLED': return 'Cancelled';
         case 'RETURNING': return 'Returning';
@@ -25,318 +35,242 @@ const mapStatus = (raw: string): string => {
     }
 };
 
-const getDistanceFromLatLonInKm = (lat1: number, lon1: number, lat2: number, lon2: number) => {
-    var R = 6371; // Radius of the earth in km
-    var dLat = deg2rad(lat2 - lat1);  // deg2rad below
-    var dLon = deg2rad(lon2 - lon1);
-    var a =
-        Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-        Math.cos(deg2rad(lat1)) * Math.cos(deg2rad(lat2)) *
-        Math.sin(dLon / 2) * Math.sin(dLon / 2)
-        ;
-    var c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-    var d = R * c; // Distance in km
-    return d;
+function statusColor(s: string): string {
+    switch (s) {
+        case 'Delivered': return '#34C759';
+        case 'In Transit': return '#007AFF';
+        case 'Pending': return '#FF9500';
+        case 'Cancelled': case 'Returned': return '#8E8E93';
+        case 'Tampered': case 'Returning': return '#FF3B30';
+        default: return '#8E8E93';
+    }
 }
 
-const deg2rad = (deg: number) => {
-    return deg * (Math.PI / 180)
-}
+const getDistanceFromLatLonInKm = (lat1: number, lon1: number, lat2: number, lon2: number) => {
+    const R = 6371;
+    const dLat = (lat2 - lat1) * (Math.PI / 180);
+    const dLon = (lon2 - lon1) * (Math.PI / 180);
+    const a = Math.sin(dLat / 2) ** 2 + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLon / 2) ** 2;
+    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+};
+
+const FILTERS: { key: string; icon: string; color: string }[] = [
+    { key: 'All', icon: 'format-list-bulleted', color: '#8E8E93' },
+    { key: 'Delivered', icon: 'check-circle', color: '#34C759' },
+    { key: 'In Transit', icon: 'truck-delivery', color: '#007AFF' },
+    { key: 'Pending', icon: 'clock-outline', color: '#FF9500' },
+    { key: 'Cancelled', icon: 'close-circle', color: '#8E8E93' },
+    { key: 'Tampered', icon: 'alert-circle', color: '#FF3B30' },
+];
 
 export default function DeliveryLogScreen() {
     const navigation = useNavigation<any>();
-    const theme = useTheme();
+    const { isDarkMode } = useAppTheme();
+    const c = isDarkMode ? dark : light;
     const userId = useAuthStore((state: any) => state.user?.userId);
+    const insets = useSafeAreaInsets();
 
     const [searchQuery, setSearchQuery] = useState('');
     const [selectedFilter, setSelectedFilter] = useState('All');
     const [showFilters, setShowFilters] = useState(false);
-    const [viewMode, setViewMode] = useState<'list' | 'grid'>('list');
-
     const [logs, setLogs] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
     const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-    const FILTERS = ['All', 'Delivered', 'In Transit', 'Cancelled', 'Tampered'];
-    const insets = useSafeAreaInsets();
-
     const fetchDeliveries = useCallback(async (isRefresh = false) => {
-        if (!userId || !supabase) {
-            setLoading(false);
-            return;
-        }
-
-        if (isRefresh) setRefreshing(true);
-        else setLoading(true);
-
+        if (!userId || !supabase) { setLoading(false); return; }
+        if (isRefresh) setRefreshing(true); else setLoading(true);
         setErrorMsg(null);
-
         try {
             const { data, error } = await supabase
                 .from('deliveries')
                 .select('*, customer:customer_id(full_name)')
                 .eq('customer_id', userId)
                 .order('created_at', { ascending: false });
-
-            if (error) {
-                console.error('[DeliveryLog] Supabase error:', error.message);
-                setErrorMsg('Failed to load delivery history.');
-            } else {
-                const mapped = (data || []).map((d: any) => ({
-                    id: d.id,
-                    trk: d.tracking_number || d.id,
-                    status: mapStatus(d.status),
-                    rawStatus: d.status,
-                    date: d.created_at
-                        ? parseUTCString(d.created_at).toLocaleDateString('en-US', {
-                            timeZone: 'Asia/Manila',
-                            year: 'numeric',
-                            month: 'short',
-                            day: 'numeric',
-                        })
-                        : 'N/A',
-                    rider: d.rider_name || 'Unassigned',
-                    price: d.estimated_fare != null ? `₱${Number(d.estimated_fare).toFixed(2)}` : '—',
-                    serviceType: 'Parcel Delivery',
-                    // Map actual coordinates and details
-                    pickupLat: d.pickup_lat,
-                    pickupLng: d.pickup_lng,
-                    dropoffLat: d.dropoff_lat,
-                    dropoffLng: d.dropoff_lng,
-                    pickupAddress: d.pickup_address || 'No pickup address',
-                    dropoffAddress: d.dropoff_address || 'No dropoff address',
-                    address: d.dropoff_address || 'No address provided', // Legacy field
-                    customer: d.recipient_name || d.customer?.full_name || 'Unknown',
-                    distance: d.pickup_lat && d.pickup_lng && d.dropoff_lat && d.dropoff_lng
-                        ? `${getDistanceFromLatLonInKm(d.pickup_lat, d.pickup_lng, d.dropoff_lat, d.dropoff_lng).toFixed(2)} km`
-                        : 'N/A',
-                }));
-                setLogs(mapped);
-            }
-        } catch (err) {
-            console.error('[DeliveryLog] fetch error:', err);
-            setErrorMsg('Something went wrong.');
-        } finally {
-            setLoading(false);
-            setRefreshing(false);
-        }
+            if (error) { setErrorMsg('Failed to load history.'); return; }
+            setLogs((data || []).map((d: any) => ({
+                id: d.id,
+                trk: d.tracking_number || d.id,
+                status: mapStatus(d.status),
+                rawStatus: d.status,
+                date: d.created_at
+                    ? parseUTCString(d.created_at).toLocaleDateString('en-US', { timeZone: 'Asia/Manila', year: 'numeric', month: 'short', day: 'numeric' })
+                    : 'N/A',
+                rider: d.rider_name || 'Unassigned',
+                price: d.estimated_fare != null ? `₱${Number(d.estimated_fare).toFixed(2)}` : '—',
+                pickupAddress: d.pickup_address || 'No pickup address',
+                dropoffAddress: d.dropoff_address || 'No dropoff address',
+                distance: d.pickup_lat && d.pickup_lng && d.dropoff_lat && d.dropoff_lng
+                    ? `${getDistanceFromLatLonInKm(d.pickup_lat, d.pickup_lng, d.dropoff_lat, d.dropoff_lng).toFixed(1)} km` : 'N/A',
+            })));
+        } catch { setErrorMsg('Something went wrong.'); }
+        finally { setLoading(false); setRefreshing(false); }
     }, [userId]);
 
-    // Fetch on mount
-    useEffect(() => {
-        fetchDeliveries();
-    }, [fetchDeliveries]);
+    useEffect(() => { fetchDeliveries(); }, [fetchDeliveries]);
+    useFocusEffect(useCallback(() => { triggerDeliverySync().then(() => fetchDeliveries()); }, [fetchDeliveries]));
 
-    // Re-fetch when screen gains focus (sync first, then fetch)
-    useFocusEffect(
-        useCallback(() => {
-            triggerDeliverySync().then(() => fetchDeliveries());
-        }, [fetchDeliveries])
+    const filtered = logs.filter(l =>
+        l.trk.toLowerCase().includes(searchQuery.toLowerCase()) &&
+        (selectedFilter === 'All' || l.status === selectedFilter)
     );
 
-    const filteredLogs = logs.filter(log => {
-        const matchesSearch = log.trk.toLowerCase().includes(searchQuery.toLowerCase());
-        const matchesFilter = selectedFilter === 'All' || log.status === selectedFilter;
-        return matchesSearch && matchesFilter;
-    });
+    // Count per filter for badges
+    const countFor = (key: string) => key === 'All' ? logs.length : logs.filter(l => l.status === key).length;
 
-    const getStatusColor = (status: string) => {
-        switch (status) {
-            case 'Delivered': return '#4CAF50';
-            case 'In Transit': return '#2196F3';
-            case 'Pending': return '#FF9800';
-            case 'Cancelled': return '#9E9E9E';
-            case 'Tampered': return '#D32F2F';
-            case 'Returning': return '#FF9800';
-            case 'Returned': return '#9E9E9E';
-            default: return '#9E9E9E';
-        }
-    };
-
-    const getStatusIcon = (status: string) => {
-        switch (status) {
-            case 'Delivered': return 'check-circle';
-            case 'In Transit': return 'truck-delivery';
-            case 'Pending': return 'clock-outline';
-            case 'Cancelled': return 'close-circle';
-            case 'Tampered': return 'alert-circle';
-            case 'Returning': return 'undo';
-            case 'Returned': return 'keyboard-return';
-            default: return 'help-circle';
-        }
-    };
-
-    const renderItem = ({ item }: { item: any }) => (
-        <Card
-            style={[
-                styles.card,
-                viewMode === 'grid' ? styles.cardGrid : styles.cardList,
-                { backgroundColor: theme.colors.surface }
-            ]}
-            mode="elevated"
-            onPress={() => navigation.navigate('DeliveryDetail', { delivery: item })}
-        >
-            <View style={styles.cardInner}>
-                <View style={styles.cardContent}>
-                    <View style={styles.cardHeader}>
-                        <View style={{ flex: 1 }}>
-                            <Text variant="titleMedium" style={{ fontWeight: 'bold', color: theme.colors.onSurface }} numberOfLines={1}>{item.trk}</Text>
-                            <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }} numberOfLines={1}>{item.serviceType}</Text>
-                        </View>
-                        {viewMode === 'list' && (
-                            <Chip
-                                icon={getStatusIcon(item.status)}
-                                textStyle={{ fontSize: 11, color: 'white', fontWeight: 'bold' }}
-                                style={{ backgroundColor: getStatusColor(item.status), height: 30, borderRadius: 15 }}
-                            >
-                                {item.status.toUpperCase()}
-                            </Chip>
-                        )}
+    const renderItem = ({ item }: { item: any }) => {
+        const sc = statusColor(item.status);
+        return (
+            <TouchableOpacity
+                style={[styles.card, { backgroundColor: c.card, borderColor: c.border }]}
+                onPress={() => navigation.navigate('DeliveryDetail', { delivery: item })}
+                activeOpacity={0.7}
+            >
+                {/* Header */}
+                <View style={styles.cardHeader}>
+                    <View style={{ flex: 1 }}>
+                        <Text style={[styles.cardTrk, { color: c.text }]} numberOfLines={1}>{item.trk}</Text>
+                        <Text style={[styles.cardSub, { color: c.textSec }]}>{item.date}</Text>
                     </View>
-
-                    {viewMode === 'grid' && (
-                        <View style={{ height: 4, backgroundColor: getStatusColor(item.status), borderRadius: 2, marginBottom: 8, marginTop: 4 }} />
-                    )}
-
-                    {item.status === 'Tampered' && (
-                        <View style={styles.alertContainer}>
-                            <MaterialCommunityIcons name="alert-circle" size={16} color="#D32F2F" />
-                            <Text style={styles.alertText}>Tampering Detected!</Text>
-                        </View>
-                    )}
-
-                    {viewMode === 'list' && (
-                        <View style={styles.addressContainer}>
-                            <View style={styles.addressRow}>
-                                <MaterialCommunityIcons name="map-marker-outline" size={14} color={theme.colors.primary} />
-                                <Text variant="bodySmall" style={styles.addressText} numberOfLines={1}>
-                                    {item.pickupAddress}
-                                </Text>
-                            </View>
-                            <View style={styles.addressDotLine} />
-                            <View style={styles.addressRow}>
-                                <MaterialCommunityIcons name="map-marker" size={14} color={theme.colors.error} />
-                                <Text variant="bodySmall" style={styles.addressText} numberOfLines={1}>
-                                    {item.dropoffAddress}
-                                </Text>
-                            </View>
-                        </View>
-                    )}
-
-                    <View style={styles.divider} />
-
-                    <View style={[styles.footer, viewMode === 'grid' && styles.footerGrid]}>
-                        <View style={{ flex: viewMode === 'grid' ? 0 : 1 }}>
-                            <View style={styles.detailRow}>
-                                <MaterialCommunityIcons name="calendar" size={14} color="#888" />
-                                <Text variant="bodySmall" style={styles.detailText} numberOfLines={1}>{item.date}</Text>
-                            </View>
-                            <View style={[styles.detailRow, { marginTop: 4 }]}>
-                                <MaterialCommunityIcons name="map-marker-distance" size={14} color="#888" />
-                                <Text variant="bodySmall" style={styles.detailText} numberOfLines={1}>{item.distance}</Text>
-                            </View>
-                            {viewMode === 'list' && (
-                                <View style={[styles.detailRow, { marginTop: 4 }]}>
-                                    <MaterialCommunityIcons name="motorbike" size={14} color="#888" />
-                                    <Text variant="bodySmall" style={styles.detailText}>{item.rider}</Text>
-                                </View>
-                            )}
-                        </View>
-                        <Text
-                            variant="titleMedium"
-                            style={[
-                                { fontWeight: 'bold', color: theme.colors.primary },
-                                viewMode === 'grid' && { marginTop: 4 }
-                            ]}
-                        >
-                            {viewMode === 'list' ? `Fare: ${item.price}` : item.price}
-                        </Text>
+                    <View style={[styles.statusPill, { backgroundColor: sc + '1A' }]}>
+                        <Text style={[styles.statusPillText, { color: sc }]}>{item.status}</Text>
                     </View>
                 </View>
-            </View>
-        </Card>
-    );
+                {/* Tampered alert */}
+                {item.status === 'Tampered' && (
+                    <View style={[styles.alertRow, { backgroundColor: '#FF3B30' + '14' }]}>
+                        <MaterialCommunityIcons name="alert-circle" size={14} color="#FF3B30" />
+                        <Text style={styles.alertText}>Tampering Detected!</Text>
+                    </View>
+                )}
+                {/* Route */}
+                <View style={styles.routeBlock}>
+                    <View style={styles.routeRow}>
+                        <View style={[styles.routeDot, { backgroundColor: c.accent }]} />
+                        <Text style={[styles.routeText, { color: c.text }]} numberOfLines={1}>{item.pickupAddress}</Text>
+                    </View>
+                    <View style={[styles.routeLine, { backgroundColor: c.border }]} />
+                    <View style={styles.routeRow}>
+                        <View style={[styles.routeDot, { backgroundColor: c.textTer }]} />
+                        <Text style={[styles.routeText, { color: c.text }]} numberOfLines={1}>{item.dropoffAddress}</Text>
+                    </View>
+                </View>
+                {/* Footer */}
+                <View style={[styles.cardFooter, { borderTopColor: c.border }]}>
+                    <View style={styles.footerMeta}>
+                        <MaterialCommunityIcons name="map-marker-distance" size={13} color={c.textTer} />
+                        <Text style={[styles.footerText, { color: c.textSec }]}>{item.distance}</Text>
+                    </View>
+                    <View style={styles.footerMeta}>
+                        <MaterialCommunityIcons name="motorbike" size={13} color={c.textTer} />
+                        <Text style={[styles.footerText, { color: c.textSec }]}>{item.rider}</Text>
+                    </View>
+                    <Text style={[styles.fareText, { color: c.accent }]}>{item.price}</Text>
+                </View>
+            </TouchableOpacity>
+        );
+    };
 
     return (
-        <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
-            <View style={[styles.header, { backgroundColor: theme.colors.surface, paddingTop: insets.top + 10 }]}>
-                <Text variant="headlineSmall" style={[styles.title, { color: theme.colors.onSurface }]}>Delivery History</Text>
-                <View style={{ flexDirection: 'row' }}>
-                    <IconButton
-                        icon={showFilters ? "filter-off" : "filter-variant"}
+        <View style={[styles.container, { backgroundColor: c.bg }]}>
+            <StatusBar barStyle={isDarkMode ? 'light-content' : 'dark-content'} />
+
+            {/* Header */}
+            <View style={[styles.header, { backgroundColor: c.bg, paddingTop: insets.top + 10 }]}>
+                <Text style={[styles.title, { color: c.text }]}>History</Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                    {selectedFilter !== 'All' && (
+                        <TouchableOpacity onPress={() => setSelectedFilter('All')} activeOpacity={0.7}>
+                            <Text style={{ fontSize: 12, color: c.accent, fontWeight: '600' }}>Clear</Text>
+                        </TouchableOpacity>
+                    )}
+                    <TouchableOpacity
                         onPress={() => setShowFilters(!showFilters)}
-                        selected={showFilters}
-                    />
-                    <IconButton
-                        icon={viewMode === 'grid' ? "view-list" : "view-grid"}
-                        onPress={() => setViewMode(viewMode === 'list' ? 'grid' : 'list')}
-                    />
+                        style={[styles.filterToggle, {
+                            backgroundColor: showFilters ? c.accent : c.search,
+                        }]}
+                        activeOpacity={0.7}
+                    >
+                        <MaterialCommunityIcons
+                            name={showFilters ? 'filter-off' : 'filter-variant'}
+                            size={16}
+                            color={showFilters ? c.bg : c.textSec}
+                        />
+                    </TouchableOpacity>
                 </View>
             </View>
 
-            <Searchbar
-                placeholder="Search tracking ID..."
-                onChangeText={setSearchQuery}
-                value={searchQuery}
-                style={[styles.searchBar, { backgroundColor: theme.colors.surface }]}
-                inputStyle={{ fontSize: 14, color: theme.colors.onSurface }}
-                iconColor={theme.colors.onSurfaceVariant}
-                placeholderTextColor={theme.colors.onSurfaceVariant}
-            />
+            {/* Search */}
+            <View style={[styles.searchRow, { backgroundColor: c.search, marginHorizontal: 16, borderRadius: 10 }]}>
+                <MaterialCommunityIcons name="magnify" size={16} color={c.textTer} />
+                <TextInput
+                    placeholder="Search tracking ID..."
+                    placeholderTextColor={c.textTer}
+                    value={searchQuery}
+                    onChangeText={setSearchQuery}
+                    style={[styles.searchInput, { color: c.text }]}
+                />
+            </View>
 
+            {/* Filters (collapsible) */}
             {showFilters && (
-                <View style={styles.filterContainer}>
-                    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterScroll}>
-                        {FILTERS.map((filter) => (
-                            <Chip
-                                key={filter}
-                                selected={selectedFilter === filter}
-                                onPress={() => setSelectedFilter(filter)}
-                                style={[styles.filterChip, selectedFilter === filter && { backgroundColor: theme.colors.primaryContainer }]}
-                                showSelectedOverlay
+                <View style={styles.filterRow}>
+                    {FILTERS.map(f => {
+                        const active = selectedFilter === f.key;
+                        const count = countFor(f.key);
+                        return (
+                            <TouchableOpacity
+                                key={f.key}
+                                onPress={() => setSelectedFilter(f.key)}
+                                style={[styles.filterChip, {
+                                    backgroundColor: active ? c.accent : 'transparent',
+                                }]}
+                                activeOpacity={0.7}
                             >
-                                {filter}
-                            </Chip>
-                        ))}
-                    </ScrollView>
+                                <Text style={[styles.filterChipText, { color: active ? c.bg : c.textSec }]}>
+                                    {f.key}{count > 0 ? ` (${count})` : ''}
+                                </Text>
+                            </TouchableOpacity>
+                        );
+                    })}
                 </View>
             )}
 
+            {/* Results count */}
+            <View style={styles.resultRow}>
+                <Text style={[styles.resultText, { color: c.textTer }]}>
+                    {filtered.length} {filtered.length === 1 ? 'delivery' : 'deliveries'}
+                    {selectedFilter !== 'All' ? ` · ${selectedFilter}` : ''}
+                </Text>
+            </View>
+
+            {/* List */}
             {loading ? (
                 <View style={styles.emptyState}>
-                    <ActivityIndicator size="large" color={theme.colors.primary} />
-                    <Text style={{ marginTop: 10, color: theme.colors.onSurfaceVariant }}>Loading deliveries...</Text>
+                    <ActivityIndicator size="large" color={c.accent} />
+                    <Text style={[styles.emptyText, { color: c.textSec }]}>Loading...</Text>
                 </View>
             ) : errorMsg ? (
                 <View style={styles.emptyState}>
-                    <MaterialCommunityIcons name="alert-circle-outline" size={60} color={theme.colors.error} />
-                    <Text style={{ marginTop: 10, color: theme.colors.error }}>{errorMsg}</Text>
-                    <TouchableOpacity onPress={() => fetchDeliveries()} style={{ marginTop: 16 }}>
-                        <Text style={{ color: theme.colors.primary, fontWeight: 'bold' }}>Tap to retry</Text>
+                    <MaterialCommunityIcons name="alert-circle-outline" size={48} color="#FF3B30" />
+                    <Text style={[styles.emptyText, { color: '#FF3B30' }]}>{errorMsg}</Text>
+                    <TouchableOpacity onPress={() => fetchDeliveries()}>
+                        <Text style={[styles.retryText, { color: c.accent }]}>Tap to retry</Text>
                     </TouchableOpacity>
                 </View>
             ) : (
                 <FlatList
-                    key={viewMode}
-                    data={filteredLogs}
+                    data={filtered}
                     renderItem={renderItem}
                     keyExtractor={item => item.id}
-                    contentContainerStyle={styles.listContent}
+                    contentContainerStyle={{ padding: 16, paddingBottom: 80 + insets.bottom }}
                     showsVerticalScrollIndicator={false}
-                    numColumns={viewMode === 'grid' ? 2 : 1}
-                    columnWrapperStyle={viewMode === 'grid' ? { justifyContent: 'space-between' } : undefined}
-                    refreshControl={
-                        <RefreshControl
-                            refreshing={refreshing}
-                            onRefresh={() => fetchDeliveries(true)}
-                            colors={[theme.colors.primary]}
-                        />
-                    }
+                    refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => fetchDeliveries(true)} />}
                     ListEmptyComponent={
                         <View style={styles.emptyState}>
-                            <MaterialCommunityIcons name="package-variant-closed" size={60} color={theme.colors.onSurfaceVariant} />
-                            <Text style={{ marginTop: 10, color: theme.colors.onSurfaceVariant }}>No deliveries found</Text>
+                            <MaterialCommunityIcons name="package-variant-closed" size={48} color={c.textTer} />
+                            <Text style={[styles.emptyText, { color: c.textSec }]}>No deliveries found</Text>
                         </View>
                     }
                 />
@@ -346,128 +280,37 @@ export default function DeliveryLogScreen() {
 }
 
 const styles = StyleSheet.create({
-    container: {
-        flex: 1,
-        backgroundColor: '#F7F9FC',
-    },
-    header: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        paddingHorizontal: 20,
-        paddingTop: 50,
-        paddingBottom: 10,
-        backgroundColor: 'white',
-    },
-    title: {
-        fontWeight: 'bold',
-    },
-    searchBar: {
-        margin: 20,
-        marginTop: 10,
-        backgroundColor: 'white',
-        elevation: 2,
-        borderRadius: 12,
-    },
-    listContent: {
-        padding: 20,
-        paddingTop: 10,
-    },
-    filterContainer: {
-        marginBottom: 10,
-    },
-    filterScroll: {
-        paddingHorizontal: 20,
-    },
-    filterChip: {
-        marginRight: 8,
-    },
-    card: {
-        backgroundColor: 'white',
-        borderRadius: 12,
-        overflow: 'hidden',
-    },
-    cardList: {
-        marginBottom: 16,
-    },
-    cardGrid: {
-        flex: 0.48,
-        marginBottom: 16,
-    },
-    cardInner: {
-        flexDirection: 'row',
-    },
-    cardContent: {
-        flex: 1,
-        padding: 16,
-    },
-    cardHeader: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        alignItems: 'flex-start',
-        marginBottom: 12,
-    },
-    divider: {
-        height: 1,
-        backgroundColor: '#F0F0F0',
-        marginVertical: 12,
-    },
-    detailRow: {
-        flexDirection: 'row',
-        alignItems: 'center',
-    },
-    detailText: {
-        color: '#666',
-        marginLeft: 6,
-    },
-    alertContainer: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        marginBottom: 4,
-    },
-    alertText: {
-        color: '#D32F2F',
-        fontSize: 12,
-        fontWeight: 'bold',
-        marginLeft: 4,
-    },
-    addressContainer: {
-        marginVertical: 8,
-    },
-    addressRow: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        marginBottom: 4,
-    },
-    addressText: {
-        color: '#555',
-        marginLeft: 8,
-        flex: 1,
-    },
-    addressDotLine: {
-        height: 10,
-        borderLeftWidth: 1,
-        borderLeftColor: '#ddd',
-        marginLeft: 7,
-        marginBottom: 4,
-    },
-    footer: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        marginTop: 'auto',
-    },
-    footerGrid: {
-        flexDirection: 'column',
-        alignItems: 'flex-start',
-    },
-    riderInfo: {
-        flexDirection: 'row',
-        alignItems: 'center',
-    },
-    emptyState: {
-        alignItems: 'center',
-        justifyContent: 'center',
-        marginTop: 100,
-    },
+    container: { flex: 1 },
+    header: { paddingHorizontal: 20, paddingBottom: 8, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+    title: { fontSize: 28, fontWeight: '800' },
+    filterToggle: { width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center' },
+    searchRow: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 8, gap: 6, marginBottom: 6 },
+    searchInput: { flex: 1, fontSize: 14, padding: 0 },
+    filterRow: { flexDirection: 'row', flexWrap: 'wrap', paddingHorizontal: 16, paddingBottom: 4, gap: 6 },
+    filterChip: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 10 },
+    filterChipText: { fontSize: 12, fontWeight: '600' },
+    resultRow: { paddingHorizontal: 20, paddingBottom: 4, paddingTop: 2 },
+    resultText: { fontSize: 11, fontWeight: '500' },
+    // Card
+    card: { borderRadius: 14, borderWidth: 1, marginBottom: 12, overflow: 'hidden' },
+    cardHeader: { flexDirection: 'row', alignItems: 'center', padding: 14 },
+    cardTrk: { fontSize: 15, fontWeight: '700' },
+    cardSub: { fontSize: 12, marginTop: 1 },
+    statusPill: { paddingHorizontal: 10, paddingVertical: 3, borderRadius: 20 },
+    statusPillText: { fontSize: 11, fontWeight: '700' },
+    alertRow: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 14, paddingVertical: 6 },
+    alertText: { color: '#FF3B30', fontSize: 12, fontWeight: '700' },
+    routeBlock: { paddingHorizontal: 14, paddingBottom: 10 },
+    routeRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+    routeDot: { width: 8, height: 8, borderRadius: 4 },
+    routeLine: { width: 1, height: 12, marginLeft: 3.5 },
+    routeText: { fontSize: 13, flex: 1 },
+    cardFooter: { flexDirection: 'row', alignItems: 'center', borderTopWidth: StyleSheet.hairlineWidth, padding: 12, gap: 12 },
+    footerMeta: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+    footerText: { fontSize: 12 },
+    fareText: { fontSize: 14, fontWeight: '700', marginLeft: 'auto' },
+    // Empty
+    emptyState: { alignItems: 'center', justifyContent: 'center', marginTop: 100 },
+    emptyText: { marginTop: 10, fontSize: 14 },
+    retryText: { marginTop: 12, fontWeight: '700', fontSize: 14 },
 });

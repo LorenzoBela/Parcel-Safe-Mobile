@@ -95,6 +95,14 @@ jest.mock('../../../services/adminOverrideService', () => ({
     triggerAdminOverride: jest.fn(() => Promise.resolve()),
 }));
 
+jest.mock('../../../context/ThemeContext', () => ({
+    useAppTheme: () => ({
+        isDarkMode: false,
+        toggleTheme: jest.fn(),
+        theme: {},
+    }),
+}));
+
 const renderWithProvider = (component: React.ReactElement) =>
     render(<PaperProvider>{component}</PaperProvider>);
 

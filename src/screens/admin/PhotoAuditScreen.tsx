@@ -1,16 +1,30 @@
 import React, { useEffect, useState } from 'react';
-import { View, StyleSheet, Image, ScrollView, Dimensions, Linking } from 'react-native';
-import { Text, Card } from 'react-native-paper';
+import { View, StyleSheet, Image, ScrollView, Dimensions, Linking, TouchableOpacity, StatusBar } from 'react-native';
+import { Text } from 'react-native-paper';
 import {
     subscribeToPhotoAuditLog,
     subscribeToDeliveryProof,
     PhotoAuditState,
     DeliveryProofState,
 } from '../../services/firebaseClient';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { useAppTheme } from '../../context/ThemeContext';
 
-export default function PhotoAuditScreen({ route }) {
+const lightC = {
+    bg: '#FFFFFF', card: '#F6F6F6', border: '#E5E5EA', text: '#000000',
+    textSec: '#6B6B6B', accent: '#000000',
+};
+const darkC = {
+    bg: '#000000', card: '#141414', border: '#2C2C2E', text: '#FFFFFF',
+    textSec: '#8E8E93', accent: '#FFFFFF',
+};
+
+export default function PhotoAuditScreen({ route }: any) {
     const { logId } = route.params || {};
     const width = Dimensions.get('window').width;
+    const { isDarkMode } = useAppTheme();
+    const c = isDarkMode ? darkC : lightC;
+
     const [audit, setAudit] = useState<PhotoAuditState | null>(null);
     const [proof, setProof] = useState<DeliveryProofState | null>(null);
 
@@ -27,30 +41,40 @@ export default function PhotoAuditScreen({ route }) {
     const resolvedPhotoUrl = audit?.latest_photo_url || proof?.proof_photo_url;
     const photos = resolvedPhotoUrl ? [resolvedPhotoUrl] : [];
 
+    const InfoRow = ({ label, value }: { label: string; value: string }) => (
+        <View style={styles.infoRow}>
+            <Text style={[styles.infoLabel, { color: c.textSec }]}>{label}</Text>
+            <Text style={[styles.infoValue, { color: c.text }]}>{value}</Text>
+        </View>
+    );
+
     return (
-        <ScrollView style={styles.container}>
-            <Text variant="headlineSmall" style={styles.title}>Audit Logs for ID: {logId}</Text>
+        <ScrollView style={[styles.container, { backgroundColor: c.bg }]}>
+            <StatusBar barStyle={isDarkMode ? 'light-content' : 'dark-content'} backgroundColor={c.bg} />
 
-            <Card style={styles.card}>
-                <Card.Content>
-                    <Text variant="bodyMedium">Delivery ID: {audit?.delivery_id || logId || 'N/A'}</Text>
-                    <Text variant="bodyMedium">Box ID: {audit?.box_id || 'N/A'}</Text>
-                    <Text variant="bodyMedium">Object Path: {audit?.latest_photo_object_path || proof?.proof_photo_object_path || 'N/A'}</Text>
-                    <Text variant="bodyMedium">Uploaded At: {audit?.latest_photo_uploaded_at || proof?.proof_photo_uploaded_at || 'N/A'}</Text>
-                </Card.Content>
-            </Card>
+            <Text style={[styles.title, { color: c.text }]}>Audit Logs for ID: {logId}</Text>
 
-            <Text variant="titleMedium" style={styles.sectionTitle}>Captured Photos</Text>
+            <View style={[styles.card, { backgroundColor: c.card, borderColor: c.border }]}>
+                <InfoRow label="Delivery ID" value={audit?.delivery_id || logId || 'N/A'} />
+                <InfoRow label="Box ID" value={audit?.box_id || 'N/A'} />
+                <InfoRow label="Object Path" value={audit?.latest_photo_object_path || proof?.proof_photo_object_path || 'N/A'} />
+                <InfoRow label="Uploaded At" value={String(audit?.latest_photo_uploaded_at || proof?.proof_photo_uploaded_at || 'N/A')} />
+            </View>
+
+            <Text style={[styles.sectionTitle, { color: c.text }]}>Captured Photos</Text>
             {photos.length === 0 ? (
-                <Text style={styles.emptyText}>No uploaded photo found for this audit log yet.</Text>
+                <View style={styles.emptyWrap}>
+                    <MaterialCommunityIcons name="camera-off-outline" size={36} color={c.textSec} />
+                    <Text style={[styles.emptyText, { color: c.textSec }]}>No uploaded photo found yet.</Text>
+                </View>
             ) : (
                 <ScrollView horizontal pagingEnabled showsHorizontalScrollIndicator={false}>
                     {photos.map((photo, index) => (
                         <View key={index} style={{ width, alignItems: 'center' }}>
                             <Image source={{ uri: photo }} style={styles.image} resizeMode="cover" />
-                            <Text style={styles.linkText} onPress={() => Linking.openURL(photo)}>
-                                Open full image URL
-                            </Text>
+                            <TouchableOpacity onPress={() => Linking.openURL(photo)}>
+                                <Text style={[styles.linkText, { color: c.accent }]}>Open full image</Text>
+                            </TouchableOpacity>
                         </View>
                     ))}
                 </ScrollView>
@@ -60,32 +84,58 @@ export default function PhotoAuditScreen({ route }) {
 }
 
 const styles = StyleSheet.create({
-    container: {
-        flex: 1,
-        backgroundColor: '#fff',
-    },
+    container: { flex: 1 },
     title: {
-        padding: 16,
+        fontSize: 22,
+        fontWeight: '700',
+        padding: 20,
+        paddingBottom: 12,
+        letterSpacing: -0.3,
     },
     card: {
-        margin: 16,
+        marginHorizontal: 20,
+        borderRadius: 14,
+        padding: 16,
+        borderWidth: 1,
+    },
+    infoRow: {
+        marginBottom: 12,
+    },
+    infoLabel: {
+        fontSize: 11,
+        fontWeight: '600',
+        textTransform: 'uppercase',
+        letterSpacing: 0.5,
+        marginBottom: 2,
+    },
+    infoValue: {
+        fontSize: 14,
+        fontWeight: '500',
     },
     sectionTitle: {
-        padding: 16,
-        paddingBottom: 0,
+        fontSize: 17,
+        fontWeight: '700',
+        padding: 20,
+        paddingBottom: 8,
     },
     image: {
-        width: Dimensions.get('window').width - 32,
-        height: 200,
-        borderRadius: 8,
-        margin: 16,
+        width: Dimensions.get('window').width - 40,
+        height: 220,
+        borderRadius: 14,
+        margin: 20,
+        marginTop: 8,
+    },
+    emptyWrap: {
+        alignItems: 'center',
+        paddingTop: 30,
+        gap: 10,
     },
     emptyText: {
-        paddingHorizontal: 16,
-        color: '#666',
+        textAlign: 'center',
     },
     linkText: {
-        color: '#1565C0',
+        fontSize: 14,
+        fontWeight: '600',
         marginBottom: 12,
     },
 });

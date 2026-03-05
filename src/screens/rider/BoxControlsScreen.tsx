@@ -2,6 +2,31 @@ import React, { useState, useEffect, useRef } from 'react';
 import { View, StyleSheet, ScrollView, Alert, TouchableOpacity, Modal } from 'react-native';
 import { Text, Card, Button, Surface, ProgressBar, useTheme, IconButton, Divider, Portal, ActivityIndicator } from 'react-native-paper';
 import LottieView from 'lottie-react-native';
+import { useAppTheme } from '../../context/ThemeContext';
+
+// ── Uber-style dual palette (mirrors RiderDashboard) ──
+const lightC = {
+    bg: '#FFFFFF', card: '#FFFFFF', search: '#F2F2F7',
+    text: '#000000', textSec: '#6B6B6B', textTer: '#AEAEB2',
+    border: '#E5E5EA', accent: '#000000', accentText: '#FFFFFF',
+    divider: '#F2F2F7',
+    greenBg: '#ECFDF5', greenText: '#059669',
+    redBg: '#FEF2F2', redText: '#DC2626',
+    orangeBg: '#FFF7ED', orangeText: '#EA580C',
+    blueBg: '#EFF6FF', blueText: '#2563EB',
+    purpleBg: '#F5F3FF', purpleText: '#7C3AED',
+};
+const darkC = {
+    bg: '#000000', card: '#1C1C1E', search: '#2C2C2E',
+    text: '#FFFFFF', textSec: '#8E8E93', textTer: '#636366',
+    border: '#38383A', accent: '#FFFFFF', accentText: '#000000',
+    divider: '#2C2C2E',
+    greenBg: '#052E16', greenText: '#4ADE80',
+    redBg: '#450A0A', redText: '#FCA5A5',
+    orangeBg: '#431407', orangeText: '#FDBA74',
+    blueBg: '#172554', blueText: '#93C5FD',
+    purpleBg: '#2E1065', purpleText: '#C4B5FD',
+};
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import dayjs from 'dayjs';
 import { useNavigation, useRoute } from '@react-navigation/native';
@@ -52,6 +77,8 @@ export default function BoxControlsScreen() {
     const insets = useSafeAreaInsets();
     const route = useRoute<any>();
     const theme = useTheme();
+    const { isDarkMode } = useAppTheme();
+    const c = isDarkMode ? darkC : lightC;
     const animationRef = useRef<LottieView>(null);
     const [rebooting, setRebooting] = useState(false);
     const [logs, setLogs] = useState<{ time: string; message: string; type: string }[]>([]);
@@ -579,9 +606,9 @@ export default function BoxControlsScreen() {
     // EC-03: Get battery color
     const getBatteryColor = () => {
         const pct = batteryState?.percentage ?? 85;
-        if (pct > 20) return '#4CAF50';
-        if (pct > 10) return '#FF9800';
-        return '#F44336';
+        if (pct > 20) return c.greenText;
+        if (pct > 10) return c.orangeText;
+        return c.redText;
     };
 
     const getBatteryIcon = () => {
@@ -594,10 +621,10 @@ export default function BoxControlsScreen() {
     };
 
     const TelemetryItem = ({ icon, label, value, color }) => (
-        <Surface style={styles.telemetryCard} elevation={1}>
+        <Surface style={[styles.telemetryCard, { backgroundColor: c.card, borderColor: c.border, borderWidth: isDarkMode ? 1 : 0 }]} elevation={isDarkMode ? 0 : 1}>
             <MaterialCommunityIcons name={icon} size={24} color={color} />
-            <Text variant="labelSmall" style={{ marginTop: 4, color: '#666' }}>{label}</Text>
-            <Text variant="titleMedium" style={{ fontWeight: 'bold' }}>{value}</Text>
+            <Text variant="labelSmall" style={{ marginTop: 4, color: c.textSec }}>{label}</Text>
+            <Text variant="titleMedium" style={{ fontWeight: 'bold', color: c.text }}>{value}</Text>
         </Surface>
     );
 
@@ -617,21 +644,21 @@ export default function BoxControlsScreen() {
     };
 
     return (
-        <View style={styles.container}>
+        <View style={[styles.container, { backgroundColor: c.bg }]}>
             <ScrollView contentContainerStyle={[styles.scrollContent, { paddingTop: Math.max(insets.top, 20), paddingBottom: insets.bottom + 20 }]}>
 
                 {!isPaired && (
-                    <Surface style={styles.pairingBanner} elevation={3}>
-                        <MaterialCommunityIcons name="qrcode" size={24} color="white" />
+                    <Surface style={[styles.pairingBanner, { backgroundColor: c.accent }]} elevation={3}>
+                        <MaterialCommunityIcons name="qrcode" size={24} color={c.accentText} />
                         <View style={{ flex: 1, marginLeft: 12 }}>
-                            <Text style={styles.alertTitle}>PAIR REQUIRED</Text>
-                            <Text style={styles.alertText}>Scan the box QR to unlock controls and health data.</Text>
+                            <Text style={[styles.alertTitle, { color: c.accentText }]}>PAIR REQUIRED</Text>
+                            <Text style={[styles.alertText, { color: isDarkMode ? 'rgba(0,0,0,0.7)' : 'rgba(255,255,255,0.9)' }]}>Scan the box QR to unlock controls and health data.</Text>
                         </View>
                         <Button
                             mode="contained"
                             onPress={() => navigation.navigate('PairBox' as never)}
-                            buttonColor="white"
-                            textColor="#374151"
+                            buttonColor={isDarkMode ? '#2C2C2E' : 'white'}
+                            textColor={c.text}
                         >
                             Pair
                         </Button>
@@ -640,39 +667,39 @@ export default function BoxControlsScreen() {
 
                 {/* EC-77: Admin Override Alert Banner */}
                 {isPaired && adminOverrideState?.active && !adminOverrideState.processed && (
-                    <Surface style={[styles.alertBanner, { backgroundColor: '#FF5722' }]} elevation={4}>
-                        <MaterialCommunityIcons name="lock-open-alert" size={24} color="white" />
+                    <Surface style={[styles.alertBanner, { backgroundColor: c.redBg, borderLeftWidth: 4, borderLeftColor: c.redText }]} elevation={isDarkMode ? 0 : 4}>
+                        <MaterialCommunityIcons name="lock-open-alert" size={24} color={c.redText} />
                         <View style={{ flex: 1, marginLeft: 12 }}>
-                            <Text style={styles.alertTitle}>ADMIN OVERRIDE</Text>
-                            <Text style={styles.alertText}>{getOverrideNotificationMessage(adminOverrideState)}</Text>
+                            <Text style={[styles.alertTitle, { color: c.redText }]}>ADMIN OVERRIDE</Text>
+                            <Text style={[styles.alertText, { color: c.textSec }]}>{getOverrideNotificationMessage(adminOverrideState)}</Text>
                         </View>
                     </Surface>
                 )}
 
                 {/* EC-18: Tamper Alert Banner */}
                 {isPaired && tamperState?.detected && (
-                    <Surface style={styles.alertBanner} elevation={4}>
-                        <MaterialCommunityIcons name="alert-decagram" size={24} color="white" />
+                    <Surface style={[styles.alertBanner, { backgroundColor: c.redBg, borderLeftWidth: 4, borderLeftColor: c.redText }]} elevation={isDarkMode ? 0 : 4}>
+                        <MaterialCommunityIcons name="alert-decagram" size={24} color={c.redText} />
                         <View style={{ flex: 1, marginLeft: 12 }}>
-                            <Text style={styles.alertTitle}>⚠️ SECURITY ALERT</Text>
-                            <Text style={styles.alertText}>Box tamper detected! Lockdown active.</Text>
+                            <Text style={[styles.alertTitle, { color: c.redText }]}>⚠️ SECURITY ALERT</Text>
+                            <Text style={[styles.alertText, { color: c.textSec }]}>Box tamper detected! Lockdown active.</Text>
                         </View>
                     </Surface>
                 )}
 
                 {/* EC-03: Low Battery Warning Banner */}
                 {isPaired && batteryState?.lowBatteryWarning && (
-                    <Surface style={[styles.warningBanner, batteryState.criticalBatteryWarning && styles.criticalBanner]} elevation={3}>
+                    <Surface style={[styles.warningBanner, { backgroundColor: batteryState.criticalBatteryWarning ? c.redBg : c.orangeBg, borderLeftWidth: 4, borderLeftColor: batteryState.criticalBatteryWarning ? c.redText : c.orangeText }]} elevation={isDarkMode ? 0 : 3}>
                         <MaterialCommunityIcons
                             name="battery-alert"
                             size={24}
-                            color={batteryState.criticalBatteryWarning ? "white" : "#7B341E"}
+                            color={batteryState.criticalBatteryWarning ? c.redText : c.orangeText}
                         />
                         <View style={{ flex: 1, marginLeft: 12 }}>
-                            <Text style={[styles.warningTitle, batteryState.criticalBatteryWarning && { color: 'white' }]}>
+                            <Text style={[styles.warningTitle, { color: batteryState.criticalBatteryWarning ? c.redText : c.orangeText }]}>
                                 {batteryState.criticalBatteryWarning ? '🔴 CRITICAL BATTERY' : '🟡 LOW BATTERY'}
                             </Text>
-                            <Text style={[styles.warningText, batteryState.criticalBatteryWarning && { color: 'rgba(255,255,255,0.9)' }]}>
+                            <Text style={[styles.warningText, { color: c.textSec }]}>
                                 Battery at {batteryState.percentage}% - {batteryState.criticalBatteryWarning ? 'Charge immediately!' : 'Charge soon'}
                             </Text>
                         </View>
@@ -681,12 +708,12 @@ export default function BoxControlsScreen() {
 
                 {/* EC-04: OTP Lockout Status Card */}
                 {isPaired && lockoutState?.active && (
-                    <Surface style={styles.lockoutCard} elevation={3}>
+                    <Surface style={[styles.lockoutCard, { backgroundColor: c.redBg, borderLeftColor: c.redText }]} elevation={isDarkMode ? 0 : 3}>
                         <View style={styles.lockoutHeader}>
-                            <MaterialCommunityIcons name="lock-alert" size={28} color="#D32F2F" />
+                            <MaterialCommunityIcons name="lock-alert" size={28} color={c.redText} />
                             <View style={{ flex: 1, marginLeft: 12 }}>
-                                <Text style={styles.lockoutTitle}>OTP LOCKOUT ACTIVE</Text>
-                                <Text style={styles.lockoutText}>
+                                <Text style={[styles.lockoutTitle, { color: c.redText }]}>OTP LOCKOUT ACTIVE</Text>
+                                <Text style={[styles.lockoutText, { color: c.textSec }]}>
                                     {lockoutState.attempt_count} failed attempts - Unlocks in {lockoutCountdown}
                                 </Text>
                             </View>
@@ -695,7 +722,8 @@ export default function BoxControlsScreen() {
                             mode="contained"
                             onPress={handleResetLockout}
                             style={styles.resetButton}
-                            buttonColor="#D32F2F"
+                            buttonColor={c.redText}
+                            textColor={isDarkMode ? '#000' : '#fff'}
                             icon="lock-open-variant"
                         >
                             Reset Lockout
@@ -705,76 +733,79 @@ export default function BoxControlsScreen() {
 
                 {/* EC-07: OTP Expiry Warning */}
                 {isPaired && otpStatus?.otp_expired && (
-                    <Surface style={styles.expiryCard} elevation={2}>
-                        <MaterialCommunityIcons name="clock-alert" size={24} color="#FF9800" />
+                    <Surface style={[styles.expiryCard, { backgroundColor: c.orangeBg, borderLeftColor: c.orangeText }]} elevation={isDarkMode ? 0 : 2}>
+                        <MaterialCommunityIcons name="clock-alert" size={24} color={c.orangeText} />
                         <View style={{ flex: 1, marginLeft: 12 }}>
-                            <Text style={styles.expiryTitle}>OTP EXPIRED</Text>
-                            <Text style={styles.expiryText}>The current OTP has expired. A new one must be generated.</Text>
+                            <Text style={[styles.expiryTitle, { color: c.orangeText }]}>OTP EXPIRED</Text>
+                            <Text style={[styles.expiryText, { color: c.textSec }]}>The current OTP has expired. A new one must be generated.</Text>
                         </View>
                     </Surface>
                 )}
 
                 {/* Header Animation */}
-                <View style={styles.headerContainer}>
+                <View style={[styles.headerContainer, { backgroundColor: c.card, borderColor: c.border, borderWidth: isDarkMode ? 1 : 0 }]}>
                     <MaterialCommunityIcons
                         name={!isPaired ? "link-variant-off" : (isLocked ? "shield-check" : "shield-alert")}
                         size={100}
-                        color={!isPaired ? "#9E9E9E" : (isLocked ? "#4CAF50" : "#F44336")}
+                        color={!isPaired ? c.textTer : (isLocked ? c.greenText : c.redText)}
                         style={{ marginBottom: 10 }}
                     />
-                    <Text variant="headlineSmall" style={{ fontWeight: 'bold', marginTop: 10 }}>
+                    <Text variant="headlineSmall" style={{ fontWeight: 'bold', marginTop: 10, color: c.text }}>
                         {!isPaired ? "No Box Connected" : (isLocked ? "System Secure" : "System Unlocked")}
                     </Text>
-                    <Text variant="bodyMedium" style={{ color: !isPaired ? '#757575' : (isLocked ? '#4CAF50' : '#F44336') }}>
+                    <Text variant="bodyMedium" style={{ color: !isPaired ? c.textTer : (isLocked ? c.greenText : c.redText) }}>
                         {!isPaired ? "Pair to view status" : (isLocked ? "Lock Engaged" : "Lock Disengaged")}
                     </Text>
                 </View>
 
                 {/* Telemetry Grid */}
-                <Text variant="titleMedium" style={styles.sectionTitle}>Live Telemetry</Text>
+                <Text variant="titleMedium" style={[styles.sectionTitle, { color: c.text }]}>Live Telemetry</Text>
                 <View style={styles.grid}>
                     <TelemetryItem
                         icon={isPaired ? getBatteryIcon() : "battery-unknown"}
                         label="Battery"
                         value={isPaired ? `${batteryState?.percentage ?? 85}%` : '--%'}
-                        color={isPaired ? getBatteryColor() : '#BDBDBD'}
+                        color={isPaired ? getBatteryColor() : c.textTer}
                     />
                     <TelemetryItem
                         icon={isPaired ? (hwDiag?.gps_fix ? 'satellite-variant' : 'satellite-variant-outline') : 'satellite-variant-outline'}
                         label="GPS Fix"
                         value={isPaired ? telemetry.gps : '--'}
-                        color={isPaired ? (hwDiag?.gps_fix ? '#4CAF50' : '#F44336') : '#BDBDBD'}
+                        color={isPaired ? (hwDiag?.gps_fix ? c.greenText : c.redText) : c.textTer}
                     />
                     <TelemetryItem
                         icon={isPaired ? (hasValidRssi(boxState?.rssi) && boxState!.rssi! >= -85 ? 'signal-4g' : 'signal') : 'signal-off'}
                         label="LTE Signal"
                         value={isPaired ? telemetry.signal : '-- dBm'}
-                        color={isPaired ? (hasValidRssi(boxState?.rssi) && boxState!.rssi! >= -85 ? '#4CAF50' : '#FF9800') : '#BDBDBD'}
+                        color={isPaired ? (hasValidRssi(boxState?.rssi) && boxState!.rssi! >= -85 ? c.greenText : c.orangeText) : c.textTer}
                     />
                     <TelemetryItem
                         icon="sync"
                         label="Last Sync"
                         value={isPaired ? telemetry.sync : '--'}
-                        color={isPaired ? "#9C27B0" : '#BDBDBD'}
+                        color={isPaired ? c.purpleText : c.textTer}
                     />
                 </View>
 
                 {/* EC-ENHANCE: Grouped Smart Box Controls */}
-                <Text variant="titleMedium" style={styles.sectionTitle}>Smart Box Controls</Text>
-                <Card style={styles.controlsCard}>
+                <Text variant="titleMedium" style={[styles.sectionTitle, { color: c.text }]}>Smart Box Controls</Text>
+                <Card style={[styles.controlsCard, { backgroundColor: c.card, borderColor: c.border, borderWidth: isDarkMode ? 1 : 0 }]}>
                     <Card.Content>
                         {/* 1. Biometric Access */}
                         <View style={styles.controlRow}>
-                            <View style={[styles.iconContainer, !isPaired && { backgroundColor: '#F0F0F0', opacity: 0.5 }]}>
+                            <View style={[styles.iconContainer, {
+                                backgroundColor: !isPaired ? c.search : (faceAuthStatus === 'SEARCHING' ? c.orangeBg : c.purpleBg),
+                                opacity: !isPaired ? 0.5 : 1
+                            }]}>
                                 <MaterialCommunityIcons
                                     name="face-recognition"
                                     size={28}
-                                    color={!isPaired ? '#BDBDBD' : (faceAuthStatus === 'SEARCHING' ? '#FF9800' : '#673AB7')}
+                                    color={!isPaired ? c.textTer : (faceAuthStatus === 'SEARCHING' ? c.orangeText : c.purpleText)}
                                 />
                             </View>
                             <View style={styles.controlInfo}>
-                                <Text variant="titleMedium" style={{ fontWeight: 'bold', color: !isPaired ? '#9E9E9E' : 'black' }}>Face Unlock</Text>
-                                <Text variant="bodySmall" style={{ color: !isPaired ? '#BDBDBD' : '#666' }}>
+                                <Text variant="titleMedium" style={{ fontWeight: 'bold', color: !isPaired ? c.textTer : c.text }}>Face Unlock</Text>
+                                <Text variant="bodySmall" style={{ color: !isPaired ? c.textTer : c.textSec }}>
                                     {isPaired ? (faceAuthStatus === 'SEARCHING' ? 'Scanning...' : 'Scan face to unlock') : 'Requires pairing'}
                                 </Text>
                             </View>
@@ -789,16 +820,19 @@ export default function BoxControlsScreen() {
                             </Button>
                         </View>
 
-                        <Divider style={styles.divider} />
+                        <Divider style={[styles.divider, { backgroundColor: c.divider }]} />
 
                         {/* 2. BLE OTP Transfer */}
                         <View style={styles.controlRow}>
-                            <View style={[styles.iconContainer, !isPaired && { backgroundColor: '#F0F0F0', opacity: 0.5 }]}>
-                                <MaterialCommunityIcons name="bluetooth" size={28} color={!isPaired ? '#BDBDBD' : "#2196F3"} />
+                            <View style={[styles.iconContainer, {
+                                backgroundColor: !isPaired ? c.search : c.blueBg,
+                                opacity: !isPaired ? 0.5 : 1
+                            }]}>
+                                <MaterialCommunityIcons name="bluetooth" size={28} color={!isPaired ? c.textTer : c.blueText} />
                             </View>
                             <View style={styles.controlInfo}>
-                                <Text variant="titleMedium" style={{ fontWeight: 'bold', color: !isPaired ? '#9E9E9E' : 'black' }}>BLE OTP</Text>
-                                <Text variant="bodySmall" style={{ color: !isPaired ? '#BDBDBD' : '#666' }}>
+                                <Text variant="titleMedium" style={{ fontWeight: 'bold', color: !isPaired ? c.textTer : c.text }}>BLE OTP</Text>
+                                <Text variant="bodySmall" style={{ color: !isPaired ? c.textTer : c.textSec }}>
                                     {isPaired ? 'Offline transfer' : 'Requires pairing'}
                                 </Text>
                             </View>
@@ -812,10 +846,10 @@ export default function BoxControlsScreen() {
                             </Button>
                         </View>
 
-                        <Divider style={styles.divider} />
+                        <Divider style={[styles.divider, { backgroundColor: c.divider }]} />
 
                         {/* 3. Manual Lock Control */}
-                        <Text variant="labelMedium" style={{ marginTop: 8, marginBottom: 8, color: theme.colors.outline }}>Manual Override</Text>
+                        <Text variant="labelMedium" style={{ marginTop: 8, marginBottom: 8, color: c.textTer }}>Manual Override</Text>
                         <Button
                             mode="contained"
                             onPress={toggleLock}
@@ -823,28 +857,29 @@ export default function BoxControlsScreen() {
                             style={[
                                 styles.button,
                                 {
-                                    backgroundColor: !isPaired ? '#E0E0E0' : (isLocked ? '#4CAF50' : '#F44336'),
+                                    backgroundColor: !isPaired ? c.search : (isLocked ? c.accent : c.redText),
                                     marginBottom: 16
                                 }
                             ]}
+                            textColor={!isPaired ? c.textTer : c.accentText}
                             icon={isLocked ? "lock" : "lock-open"}
                             contentStyle={{ height: 48 }}
                         >
                             {isPaired ? (isLocked ? "Unlock Box" : "Lock Box") : "Controls Disabled"}
                         </Button>
 
-                        <Divider style={styles.divider} />
+                        <Divider style={[styles.divider, { backgroundColor: c.divider }]} />
 
                         {/* 4. System Maintenance */}
-                        <Text variant="labelMedium" style={{ marginTop: 8, marginBottom: 8, color: theme.colors.outline }}>System Maintenance</Text>
+                        <Text variant="labelMedium" style={{ marginTop: 8, marginBottom: 8, color: c.textTer }}>System Maintenance</Text>
                         <View style={styles.row}>
                             <Button
                                 mode="outlined"
                                 onPress={handleReboot}
                                 loading={rebooting}
                                 disabled={!isPaired || rebooting}
-                                style={[styles.button, { flex: 1, marginRight: 8, borderColor: !isPaired ? '#E0E0E0' : '#FF9800' }]}
-                                textColor={!isPaired ? '#BDBDBD' : "#FF9800"}
+                                style={[styles.button, { flex: 1, marginRight: 8, borderColor: !isPaired ? c.border : c.orangeText }]}
+                                textColor={!isPaired ? c.textTer : c.orangeText}
                                 icon="restart"
                             >
                                 Reboot
@@ -854,20 +889,21 @@ export default function BoxControlsScreen() {
                                 onLongPress={handleEmergencyOpen}
                                 delayLongPress={1000}
                                 disabled={!isPaired}
-                                style={[styles.button, { flex: 1, borderColor: !isPaired ? '#E0E0E0' : '#D32F2F' }]}
-                                textColor={!isPaired ? '#BDBDBD' : "#D32F2F"}
+                                style={[styles.button, { flex: 1, borderColor: !isPaired ? c.border : c.redText }]}
+                                textColor={!isPaired ? c.textTer : c.redText}
                                 icon="alert"
                             >
                                 Emergency
                             </Button>
                         </View>
-                        <Text style={styles.hintText}>* Long press "Emergency" to force open</Text>
+                        <Text style={[styles.hintText, { color: c.textTer }]}>* Long press "Emergency" to force open</Text>
 
                         <Button
                             mode="contained"
                             onPress={handleReportStolen}
                             disabled={!isPaired}
-                            style={[styles.button, { marginTop: 16, backgroundColor: !isPaired ? '#E0E0E0' : '#B71C1C' }]}
+                            style={[styles.button, { marginTop: 16, backgroundColor: !isPaired ? c.search : c.redText }]}
+                            textColor={!isPaired ? c.textTer : (isDarkMode ? '#000' : '#fff')}
                             icon="shield-alert-outline"
                         >
                             Report Box Stolen/Missing
@@ -876,29 +912,29 @@ export default function BoxControlsScreen() {
                 </Card>
 
                 {/* Hardware Diagnostics — driven by real firmware data */}
-                <Text variant="titleMedium" style={styles.sectionTitle}>Hardware Diagnostics</Text>
-                <Card style={[styles.controlsCard, { marginBottom: 24 }]}>
+                <Text variant="titleMedium" style={[styles.sectionTitle, { color: c.text }]}>Hardware Diagnostics</Text>
+                <Card style={[styles.controlsCard, { marginBottom: 24, backgroundColor: c.card, borderColor: c.border, borderWidth: isDarkMode ? 1 : 0 }]}>
                     <Card.Content>
 
                         {/* LTE Module (GPS_LTE_Firebase_Test) */}
                         <View style={styles.diagRow}>
-                            <View style={[styles.iconContainer, { backgroundColor: '#E3F2FD' }]}>
-                                <MaterialCommunityIcons name="antenna" size={22} color="#2196F3" />
+                            <View style={[styles.iconContainer, { backgroundColor: c.blueBg }]}>
+                                <MaterialCommunityIcons name="antenna" size={22} color={c.blueText} />
                             </View>
                             <View style={styles.diagInfo}>
-                                <Text variant="titleSmall" style={{ fontWeight: 'bold' }}>LTE Module (A7670E)</Text>
-                                <Text variant="bodySmall" style={{ color: '#666' }}>
+                                <Text variant="titleSmall" style={{ fontWeight: 'bold', color: c.text }}>LTE Module (A7670E)</Text>
+                                <Text variant="bodySmall" style={{ color: c.textSec }}>
                                     {isPaired
                                         ? `${hwDiag?.op || 'Unknown carrier'} • CSQ: ${hwDiag?.csq ?? '--'}/31 (${getCsqPercent(hwDiag?.csq)}%)`
                                         : 'Requires pairing'}
                                 </Text>
                             </View>
                             <View style={[styles.diagBadge, {
-                                backgroundColor: isPaired && boxState?.rssi ? '#E3F2FD' : '#F5F5F5'
+                                backgroundColor: isPaired && boxState?.rssi ? c.blueBg : c.search
                             }]}>
                                 <Text style={[
                                     styles.diagBadgeText,
-                                    { color: isPaired && boxState?.rssi ? '#2196F3' : '#9E9E9E' }
+                                    { color: isPaired && boxState?.rssi ? c.blueText : c.textTer }
                                 ]}>
                                     {isPaired ? getRssiQuality(boxState?.rssi) : '--'}
                                 </Text>
@@ -910,17 +946,17 @@ export default function BoxControlsScreen() {
                         {/* GPS (GPS_LTE_Firebase_Test) */}
                         <View style={styles.diagRow}>
                             <View style={[styles.iconContainer, {
-                                backgroundColor: isPaired ? (hwDiag?.gps_fix ? '#E8F5E9' : '#FFEBEE') : '#F5F5F5'
+                                backgroundColor: isPaired ? (hwDiag?.gps_fix ? c.greenBg : c.redBg) : c.search
                             }]}>
                                 <MaterialCommunityIcons
                                     name="satellite-uplink"
                                     size={22}
-                                    color={isPaired ? (hwDiag?.gps_fix ? '#4CAF50' : '#F44336') : '#BDBDBD'}
+                                    color={isPaired ? (hwDiag?.gps_fix ? c.greenText : c.redText) : c.textTer}
                                 />
                             </View>
                             <View style={styles.diagInfo}>
-                                <Text variant="titleSmall" style={{ fontWeight: 'bold' }}>GPS / GNSS</Text>
-                                <Text variant="bodySmall" style={{ color: '#666' }}>
+                                <Text variant="titleSmall" style={{ fontWeight: 'bold', color: c.text }}>GPS / GNSS</Text>
+                                <Text variant="bodySmall" style={{ color: c.textSec }}>
                                     {isPaired
                                         ? (locationData
                                             ? `${locationData.latitude?.toFixed(5)}, ${locationData.longitude?.toFixed(5)}`
@@ -929,55 +965,55 @@ export default function BoxControlsScreen() {
                                 </Text>
                             </View>
                             <View style={[styles.diagBadge, {
-                                backgroundColor: isPaired ? (hwDiag?.gps_fix ? '#E8F5E9' : '#FFEBEE') : '#F5F5F5'
+                                backgroundColor: isPaired ? (hwDiag?.gps_fix ? c.greenBg : c.redBg) : c.search
                             }]}>
                                 <Text style={[
                                     styles.diagBadgeText,
-                                    { color: isPaired ? (hwDiag?.gps_fix ? '#4CAF50' : '#F44336') : '#9E9E9E' }
+                                    { color: isPaired ? (hwDiag?.gps_fix ? c.greenText : c.redText) : c.textTer }
                                 ]}>
                                     {isPaired ? (hwDiag?.gps_fix ? 'FIXED' : 'SEARCHING') : '--'}
                                 </Text>
                             </View>
                         </View>
 
-                        <Divider style={styles.divider} />
+                        <Divider style={[styles.divider, { backgroundColor: c.divider }]} />
 
                         {/* ESP32-CAM (ESP32CAM_OV3660_Supabase_R3_Test) */}
                         <View style={styles.diagRow}>
                             <View style={[styles.iconContainer, {
-                                backgroundColor: faceAuthStatus === 'SEARCHING' ? '#FFF3E0'
-                                    : faceAuthStatus === 'AUTHENTICATED' ? '#E8F5E9'
-                                    : '#F3E5F5'
+                                backgroundColor: faceAuthStatus === 'SEARCHING' ? c.orangeBg
+                                    : faceAuthStatus === 'AUTHENTICATED' ? c.greenBg
+                                        : c.purpleBg
                             }]}>
                                 <MaterialCommunityIcons
                                     name="camera-iris"
                                     size={22}
-                                    color={faceAuthStatus === 'SEARCHING' ? '#FF9800'
-                                        : faceAuthStatus === 'AUTHENTICATED' ? '#4CAF50'
-                                        : '#673AB7'}
+                                    color={faceAuthStatus === 'SEARCHING' ? c.orangeText
+                                        : faceAuthStatus === 'AUTHENTICATED' ? c.greenText
+                                            : c.purpleText}
                                 />
                             </View>
                             <View style={styles.diagInfo}>
-                                <Text variant="titleSmall" style={{ fontWeight: 'bold' }}>ESP32-CAM (OV3660)</Text>
-                                <Text variant="bodySmall" style={{ color: '#666' }}>
+                                <Text variant="titleSmall" style={{ fontWeight: 'bold', color: c.text }}>ESP32-CAM (OV3660)</Text>
+                                <Text variant="bodySmall" style={{ color: c.textSec }}>
                                     {faceAuthStatus === 'SEARCHING' ? 'Person-detect scan in progress...'
                                         : faceAuthStatus === 'AUTHENTICATED' ? 'Person authenticated — solenoid triggered'
-                                        : faceAuthStatus === 'TIMEOUT_REMOVE_HELMET' ? 'Blocked — helmet/occlusion detected'
-                                        : faceAuthStatus === 'FAILED_USE_OTP' ? 'No face match — fall back to OTP'
-                                        : 'Idle — continuous person-detect running'}
+                                            : faceAuthStatus === 'TIMEOUT_REMOVE_HELMET' ? 'Blocked — helmet/occlusion detected'
+                                                : faceAuthStatus === 'FAILED_USE_OTP' ? 'No face match — fall back to OTP'
+                                                    : 'Idle — continuous person-detect running'}
                                 </Text>
                             </View>
                             <View style={[styles.diagBadge, {
-                                backgroundColor: faceAuthStatus === 'SEARCHING' ? '#FFF3E0'
-                                    : faceAuthStatus === 'AUTHENTICATED' ? '#E8F5E9'
-                                    : '#F3E5F5'
+                                backgroundColor: faceAuthStatus === 'SEARCHING' ? c.orangeBg
+                                    : faceAuthStatus === 'AUTHENTICATED' ? c.greenBg
+                                        : c.purpleBg
                             }]}>
                                 <Text style={[
                                     styles.diagBadgeText,
                                     {
-                                        color: faceAuthStatus === 'SEARCHING' ? '#FF9800'
-                                            : faceAuthStatus === 'AUTHENTICATED' ? '#4CAF50'
-                                            : '#673AB7'
+                                        color: faceAuthStatus === 'SEARCHING' ? c.orangeText
+                                            : faceAuthStatus === 'AUTHENTICATED' ? c.greenText
+                                                : c.purpleText
                                     }
                                 ]}>
                                     {faceAuthStatus === 'IDLE' ? 'READY' : faceAuthStatus}
@@ -985,46 +1021,46 @@ export default function BoxControlsScreen() {
                             </View>
                         </View>
 
-                        <Divider style={styles.divider} />
+                        <Divider style={[styles.divider, { backgroundColor: c.divider }]} />
 
                         {/* Keypad Tester (Tester.ino) */}
                         <View style={styles.diagRow}>
                             <View style={[styles.iconContainer, {
-                                backgroundColor: lockoutState?.active ? '#FFEBEE'
-                                    : otpStatus?.otp_expired ? '#FFF8E1'
-                                    : '#E8F5E9'
+                                backgroundColor: lockoutState?.active ? c.redBg
+                                    : otpStatus?.otp_expired ? c.orangeBg
+                                        : c.greenBg
                             }]}>
                                 <MaterialCommunityIcons
                                     name="dialpad"
                                     size={22}
-                                    color={lockoutState?.active ? '#D32F2F'
-                                        : otpStatus?.otp_expired ? '#FF9800'
-                                        : '#4CAF50'}
+                                    color={lockoutState?.active ? c.redText
+                                        : otpStatus?.otp_expired ? c.orangeText
+                                            : c.greenText}
                                 />
                             </View>
                             <View style={styles.diagInfo}>
-                                <Text variant="titleSmall" style={{ fontWeight: 'bold' }}>Keypad Tester</Text>
-                                <Text variant="bodySmall" style={{ color: '#666' }}>
+                                <Text variant="titleSmall" style={{ fontWeight: 'bold', color: c.text }}>Keypad Tester</Text>
+                                <Text variant="bodySmall" style={{ color: c.textSec }}>
                                     {lockoutState?.active
                                         ? `LOCKOUT: ${lockoutState.attempt_count} failed — clears in ${lockoutCountdown}`
                                         : otpStatus?.otp_expired
-                                        ? 'OTP expired — new code required'
-                                        : activeOtpCode
-                                        ? `Active OTP: ${'●'.repeat(activeOtpCode.length)} (${activeOtpCode.length} digits)`
-                                        : 'Waiting for OTP assignment'}
+                                            ? 'OTP expired — new code required'
+                                            : activeOtpCode
+                                                ? `Active OTP: ${'●'.repeat(activeOtpCode.length)} (${activeOtpCode.length} digits)`
+                                                : 'Waiting for OTP assignment'}
                                 </Text>
                             </View>
                             <View style={[styles.diagBadge, {
-                                backgroundColor: lockoutState?.active ? '#FFEBEE'
-                                    : otpStatus?.otp_expired ? '#FFF8E1'
-                                    : '#E8F5E9'
+                                backgroundColor: lockoutState?.active ? c.redBg
+                                    : otpStatus?.otp_expired ? c.orangeBg
+                                        : c.greenBg
                             }]}>
                                 <Text style={[
                                     styles.diagBadgeText,
                                     {
-                                        color: lockoutState?.active ? '#D32F2F'
-                                            : otpStatus?.otp_expired ? '#E65100'
-                                            : '#388E3C'
+                                        color: lockoutState?.active ? c.redText
+                                            : otpStatus?.otp_expired ? c.orangeText
+                                                : c.greenText
                                     }
                                 ]}>
                                     {lockoutState?.active ? 'LOCKOUT' : otpStatus?.otp_expired ? 'EXPIRED' : 'READY'}
@@ -1032,23 +1068,23 @@ export default function BoxControlsScreen() {
                             </View>
                         </View>
 
-                        <Divider style={styles.divider} />
+                        <Divider style={[styles.divider, { backgroundColor: c.divider }]} />
 
                         {/* System Uptime & Data Usage */}
                         <View style={styles.diagRow}>
-                            <View style={[styles.iconContainer, { backgroundColor: '#F3E5F5' }]}>
-                                <MaterialCommunityIcons name="timer-outline" size={22} color="#9C27B0" />
+                            <View style={[styles.iconContainer, { backgroundColor: c.purpleBg }]}>
+                                <MaterialCommunityIcons name="timer-outline" size={22} color={c.purpleText} />
                             </View>
                             <View style={styles.diagInfo}>
-                                <Text variant="titleSmall" style={{ fontWeight: 'bold' }}>Device Health</Text>
-                                <Text variant="bodySmall" style={{ color: '#666' }}>
+                                <Text variant="titleSmall" style={{ fontWeight: 'bold', color: c.text }}>Device Health</Text>
+                                <Text variant="bodySmall" style={{ color: c.textSec }}>
                                     {hwDiag?.uptime_ms
                                         ? `Up ${Math.floor(hwDiag.uptime_ms / 3600000)}h ${Math.floor((hwDiag.uptime_ms % 3600000) / 60000)}m${hwDiag.time_synced ? ' • NTP ✓' : ' • Clock not synced'}`
                                         : isPaired ? 'Uptime not reported yet' : 'Requires pairing'}
                                 </Text>
                             </View>
-                            <View style={[styles.diagBadge, { backgroundColor: '#F3E5F5' }]}>
-                                <Text style={[styles.diagBadgeText, { color: '#9C27B0' }]}>
+                            <View style={[styles.diagBadge, { backgroundColor: c.purpleBg }]}>
+                                <Text style={[styles.diagBadgeText, { color: c.purpleText }]}>
                                     {hwDiag?.data_bytes ? `${(hwDiag.data_bytes / 1024).toFixed(1)} KB` : '--'}
                                 </Text>
                             </View>
@@ -1058,16 +1094,16 @@ export default function BoxControlsScreen() {
                 </Card>
 
                 {/* Detailed Logs */}
-                <Text variant="titleMedium" style={styles.sectionTitle}>System Event Log</Text>
-                <Surface style={styles.logContainer} elevation={2}>
+                <Text variant="titleMedium" style={[styles.sectionTitle, { color: c.text }]}>System Event Log</Text>
+                <Surface style={[styles.logContainer, { backgroundColor: isDarkMode ? '#1C1C1E' : '#1E1E1E' }]} elevation={isDarkMode ? 0 : 2}>
                     {isPaired ? (
                         logs.map((log, index) => (
-                            <View key={index} style={styles.logRow}>
-                                <Text style={styles.logTime}>{log.time}</Text>
+                            <View key={index} style={[styles.logRow, { borderBottomColor: isDarkMode ? '#38383A' : '#333' }]}>
+                                <Text style={[styles.logTime, { color: c.textTer }]}>{log.time}</Text>
                                 <Text style={[styles.logMessage, {
-                                    color: log.type === 'error' ? '#D32F2F' :
-                                        log.type === 'warning' ? '#FF9800' :
-                                            log.type === 'success' ? '#388E3C' : '#333'
+                                    color: log.type === 'error' ? c.redText :
+                                        log.type === 'warning' ? c.orangeText :
+                                            log.type === 'success' ? c.greenText : (isDarkMode ? '#AEAEB2' : '#CCC')
                                 }]}>
                                     {log.message}
                                 </Text>
@@ -1075,7 +1111,7 @@ export default function BoxControlsScreen() {
                         ))
                     ) : (
                         <View style={{ alignItems: 'center', justifyContent: 'center', height: 100 }}>
-                            <Text style={{ color: '#666', fontStyle: 'italic' }}>No logs available (Unpaired)</Text>
+                            <Text style={{ color: c.textTer, fontStyle: 'italic' }}>No logs available (Unpaired)</Text>
                         </View>
                     )}
                 </Surface>

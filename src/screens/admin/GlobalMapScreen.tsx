@@ -4,6 +4,7 @@ import {
     Animated, TextInput as RNTextInput, Platform, Easing,
 } from 'react-native';
 import { Text, Surface, Card, Chip, IconButton } from 'react-native-paper';
+import { useAppTheme } from '../../context/ThemeContext';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import MapboxGL from '../../components/map/MapboxWrapper';
@@ -227,16 +228,24 @@ const diagStyles = StyleSheet.create({
     tile: { width: '33.33%', paddingVertical: 8, paddingHorizontal: 4, alignItems: 'center' },
     tileIconWrap: {
         width: 26, height: 26, borderRadius: 13,
-        backgroundColor: '#F0F4FF', alignItems: 'center', justifyContent: 'center', marginBottom: 3,
+        alignItems: 'center', justifyContent: 'center', marginBottom: 3,
     },
-    tileLabel: { fontSize: 9, color: '#90A4AE', textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 2 },
-    tileValue: { fontSize: 12, fontWeight: '700', color: '#263238' },
+    tileLabel: { fontSize: 9, textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 2 },
+    tileValue: { fontSize: 12, fontWeight: '700' },
 });
 
 // ==================== Component ====================
 
 export default function GlobalMapScreen() {
     const MAPBOX_TOKEN = process.env.EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN;
+    const { isDarkMode } = useAppTheme();
+    // Dynamic colors for overlays
+    const uiBg = isDarkMode ? '#141414' : '#FFFFFF';
+    const uiBorder = isDarkMode ? '#2C2C2E' : '#E5E5EA';
+    const uiText = isDarkMode ? '#FFFFFF' : '#000000';
+    const uiTextSec = isDarkMode ? '#8E8E93' : '#6B6B6B';
+    const uiPill = isDarkMode ? '#1C1C1E' : '#F2F2F7';
+    const uiAccent = isDarkMode ? '#FFFFFF' : '#000000';
 
     const [locationsByBox, setLocationsByBox] = useState<LocationsByBoxId | null>(null);
     const [hardwareByBox, setHardwareByBox] = useState<HardwareByBoxId | null>(null);
@@ -485,10 +494,10 @@ export default function GlobalMapScreen() {
     const renderDiagnosticsCard = () => {
         if (!selectedBox) {
             return (
-                <Card style={styles.infoCardHint}>
+                <Card style={[styles.infoCardHint, { backgroundColor: uiBg }]}>
                     <Card.Content style={styles.infoHintContent}>
-                        <MaterialCommunityIcons name="gesture-tap" size={14} color="#64748B" />
-                        <Text variant="bodySmall" style={{ color: '#64748B' }}>
+                        <MaterialCommunityIcons name="gesture-tap" size={14} color={uiTextSec} />
+                        <Text variant="bodySmall" style={{ color: uiTextSec }}>
                             Tap a marker for diagnostics
                         </Text>
                     </Card.Content>
@@ -503,10 +512,10 @@ export default function GlobalMapScreen() {
         const displayStatus = selectedBox.alert ? 'TAMPER' : selectedBox.status;
 
         return (
-            <Card style={styles.infoCard}>
+            <Card style={[styles.infoCard, { backgroundColor: uiBg }]}>
                 <Card.Content style={styles.diagCompactContent}>
                     <View style={styles.diagHeaderCompact}>
-                        <Text variant="titleSmall" style={{ fontWeight: 'bold', flex: 1 }}>
+                        <Text variant="titleSmall" style={{ fontWeight: 'bold', flex: 1, color: uiText }}>
                             {selectedBox.id}
                         </Text>
                         <Chip
@@ -518,21 +527,21 @@ export default function GlobalMapScreen() {
                         </Chip>
                     </View>
                     <View style={styles.diagPillRow}>
-                        <View style={styles.diagPill}>
-                            <MaterialCommunityIcons name={selectedBox.connection === 'WiFi' ? 'wifi' : 'antenna'} size={14} color="#3F51B5" />
-                            <Text style={styles.diagPillText}>{selectedBox.connection ?? '—'}</Text>
+                        <View style={[styles.diagPill, { backgroundColor: uiPill }]}>
+                            <MaterialCommunityIcons name={selectedBox.connection === 'WiFi' ? 'wifi' : 'antenna'} size={14} color={uiAccent} />
+                            <Text style={[styles.diagPillText, { color: uiText }]}>{selectedBox.connection ?? '—'}</Text>
                         </View>
-                        <View style={styles.diagPill}>
+                        <View style={[styles.diagPill, { backgroundColor: uiPill }]}>
                             <MaterialCommunityIcons name={sigIcon as any} size={14} color={sigColor} />
                             <Text style={[styles.diagPillText, { color: sigColor }]}>{selectedBox.rssi != null ? `${selectedBox.rssi} dBm` : '—'}</Text>
                         </View>
-                        <View style={styles.diagPill}>
+                        <View style={[styles.diagPill, { backgroundColor: uiPill }]}>
                             <MaterialCommunityIcons name={selectedBox.gpsFix ? 'crosshairs-gps' : 'crosshairs-off'} size={14} color={selectedBox.gpsFix ? '#16A34A' : '#DC2626'} />
-                            <Text style={styles.diagPillText}>{selectedBox.gpsFix ? 'GPS Fix' : 'No Fix'}</Text>
+                            <Text style={[styles.diagPillText, { color: uiText }]}>{selectedBox.gpsFix ? 'GPS Fix' : 'No Fix'}</Text>
                         </View>
-                        <View style={styles.diagPill}>
+                        <View style={[styles.diagPill, { backgroundColor: uiPill }]}>
                             <MaterialCommunityIcons name="clock-outline" size={14} color="#F59E0B" />
-                            <Text style={styles.diagPillText}>{formatTimeAgo(selectedBox.lastUpdated || selectedBox.timestamp)}</Text>
+                            <Text style={[styles.diagPillText, { color: uiText }]}>{formatTimeAgo(selectedBox.lastUpdated || selectedBox.timestamp)}</Text>
                         </View>
                     </View>
                 </Card.Content>
@@ -582,31 +591,31 @@ export default function GlobalMapScreen() {
 
                 </MapboxGL.MapView>
             ) : (
-                <View style={[styles.map, styles.mapFallback]}>
-                    <Text style={{ color: '#666' }}>Map unavailable: set EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN in .env</Text>
+                <View style={[styles.map, styles.mapFallback, { backgroundColor: uiPill }]}>
+                    <Text style={{ color: uiTextSec }}>Map unavailable: set EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN in .env</Text>
                 </View>
             )}
 
             {/* Top summary banner */}
             <View style={styles.overlayTop}>
-                <Card style={styles.topCard}>
+                <Card style={[styles.topCard, { backgroundColor: uiBg }]}>
                     <Card.Content style={styles.topHudContent}>
                         <LivePulseDot color="#22C55E" />
                         <View style={{ flex: 1 }}>
-                            <Text variant="titleSmall" style={{ fontWeight: '800' }}>Live Fleet</Text>
-                            <Text variant="labelSmall" style={{ color: '#64748B' }}>
+                            <Text variant="titleSmall" style={{ fontWeight: '800', color: uiText }}>Live Fleet</Text>
+                            <Text variant="labelSmall" style={{ color: uiTextSec }}>
                                 {filteredBoxes.length}/{activeBoxes.length} boxes visible
                             </Text>
                         </View>
                         <View style={styles.topHudStats}>
                             <Text style={styles.topHudStatDanger}>T {tamperAlertCount}</Text>
-                            <Text style={styles.topHudStat}>A {activeMoveCount}</Text>
-                            <Text style={styles.topHudStat}>O {offlineCount}</Text>
+                            <Text style={[styles.topHudStat, { color: uiText }]}>A {activeMoveCount}</Text>
+                            <Text style={[styles.topHudStat, { color: uiText }]}>O {offlineCount}</Text>
                         </View>
                     </Card.Content>
                 </Card>
 
-                <Card style={styles.filterCard}>
+                <Card style={[styles.filterCard, { backgroundColor: uiBg }]}>
                     <Card.Content style={styles.filterRow}>
                         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterScrollContent}>
                             {(['ALL', 'TAMPER', 'ACTIVE', 'OFFLINE'] as FleetFilter[]).map((filterKey) => (
@@ -618,8 +627,8 @@ export default function GlobalMapScreen() {
                                         setFleetFilter(filterKey);
                                         Haptics.selectionAsync().catch(() => undefined);
                                     }}
-                                    style={[styles.filterChip, fleetFilter === filterKey ? styles.filterChipSelected : null]}
-                                    textStyle={fleetFilter === filterKey ? styles.filterChipTextSelected : undefined}
+                                    style={[styles.filterChip, { backgroundColor: uiPill }, fleetFilter === filterKey ? styles.filterChipSelected : null]}
+                                    textStyle={fleetFilter === filterKey ? styles.filterChipTextSelected : { color: uiText }}
                                 >
                                     {filterKey}
                                 </Chip>
@@ -627,10 +636,11 @@ export default function GlobalMapScreen() {
                         </ScrollView>
 
                         <View style={styles.filterActions}>
-                            <IconButton icon="crosshairs-gps" size={20} onPress={recenterToFleet} />
+                            <IconButton icon="crosshairs-gps" size={20} iconColor={uiText} onPress={recenterToFleet} />
                             <IconButton
                                 icon={listVisible ? 'chevron-down' : 'format-list-bulleted'}
                                 size={20}
+                                iconColor={uiText}
                                 onPress={() => setListVisible((v) => !v)}
                             />
                         </View>
@@ -645,12 +655,12 @@ export default function GlobalMapScreen() {
 
             {/* Box list panel */}
             {listVisible ? (
-                <View style={styles.listPanel}>
-                    <View style={styles.listHeader}>
-                        <Text variant="titleMedium" style={{ flex: 1 }}>
+                <View style={[styles.listPanel, { backgroundColor: uiBg }]}>
+                    <View style={[styles.listHeader, { borderBottomColor: uiBorder }]}>
+                        <Text variant="titleMedium" style={{ flex: 1, color: uiText }}>
                             Box Feed • {fleetFilter} ({filteredBoxes.length})
                         </Text>
-                        <IconButton icon="close" size={20} onPress={() => setListVisible(false)} />
+                        <IconButton icon="close" size={20} iconColor={uiText} onPress={() => setListVisible(false)} />
                     </View>
                     <ScrollView style={styles.listScroll}>
                         {filteredBoxes.map((box) => {
@@ -666,21 +676,20 @@ export default function GlobalMapScreen() {
                                         selectBox(box.id);
                                         setListVisible(false);
                                     }}
-                                    style={[styles.listItem, isSelected ? styles.listItemSelected : null]}
+                                    style={[styles.listItem, { borderBottomColor: uiBorder }, isSelected ? { backgroundColor: uiAccent + '15' } : null]}
                                 >
                                     <View style={styles.listItemLeft}>
                                         <View style={[styles.listItemDot, { backgroundColor: color }]} />
                                         <View style={{ flex: 1 }}>
                                             <View style={styles.listItemTitleRow}>
-                                                <Text variant="titleSmall" style={{ flex: 1 }}>
+                                                <Text variant="titleSmall" style={{ flex: 1, color: uiText }}>
                                                     {box.id}
                                                 </Text>
-                                                <Text variant="bodySmall" style={{ color: '#666' }}>
+                                                <Text variant="bodySmall" style={{ color: uiTextSec }}>
                                                     {box.alert ? 'TAMPER' : box.status}
                                                 </Text>
                                             </View>
                                             <View style={styles.listItemMetaRow}>
-                                                {/* Signal indicator */}
                                                 <View style={styles.listItemMeta}>
                                                     <MaterialCommunityIcons
                                                         name={getSignalIcon(bars) as any}
@@ -691,41 +700,37 @@ export default function GlobalMapScreen() {
                                                         {box.rssi != null ? `${box.rssi}dBm` : '—'}
                                                     </Text>
                                                 </View>
-                                                {/* Connection type */}
                                                 <View style={styles.listItemMeta}>
                                                     <MaterialCommunityIcons
                                                         name={box.connection === 'WiFi' ? 'wifi' : 'antenna'}
                                                         size={12}
-                                                        color="#666"
+                                                        color={uiTextSec}
                                                     />
-                                                    <Text style={styles.listItemMetaText}>
+                                                    <Text style={[styles.listItemMetaText, { color: uiTextSec }]}>
                                                         {box.connection ?? '—'}
                                                     </Text>
                                                 </View>
-                                                {/* GPS fix */}
                                                 <View style={styles.listItemMeta}>
                                                     <MaterialCommunityIcons
                                                         name={box.gpsFix ? 'crosshairs-gps' : 'crosshairs-off'}
                                                         size={12}
-                                                        color={box.gpsFix ? '#4CAF50' : '#999'}
+                                                        color={box.gpsFix ? '#4CAF50' : uiTextSec}
                                                     />
-                                                    <Text style={styles.listItemMetaText}>
+                                                    <Text style={[styles.listItemMetaText, { color: uiTextSec }]}>
                                                         {box.gpsFix ? 'Fix' : 'No Fix'}
                                                     </Text>
                                                 </View>
-                                                {/* Last update */}
-                                                {/* Data consumed */}
                                                 <View style={styles.listItemMeta}>
                                                     <MaterialCommunityIcons
                                                         name="cloud-upload-outline"
                                                         size={12}
-                                                        color="#666"
+                                                        color={uiTextSec}
                                                     />
-                                                    <Text style={styles.listItemMetaText}>
+                                                    <Text style={[styles.listItemMetaText, { color: uiTextSec }]}>
                                                         {formatDataBytes(box.dataBytes)}
                                                     </Text>
                                                 </View>
-                                                <Text style={[styles.listItemMetaText, { color: '#999' }]}>
+                                                <Text style={[styles.listItemMetaText, { color: uiTextSec }]}>
                                                     {formatTimeAgo(box.lastUpdated || box.timestamp)}
                                                 </Text>
                                             </View>
@@ -737,7 +742,7 @@ export default function GlobalMapScreen() {
 
                         {filteredBoxes.length === 0 ? (
                             <View style={{ padding: 20, alignItems: 'center' }}>
-                                <Text variant="bodySmall" style={{ color: '#999' }}>No boxes match this filter</Text>
+                                <Text variant="bodySmall" style={{ color: uiTextSec }}>No boxes match this filter</Text>
                             </View>
                         ) : null}
                     </ScrollView>
@@ -844,7 +849,7 @@ const styles = StyleSheet.create({
         backgroundColor: '#F8FAFC',
     },
     filterChipSelected: {
-        backgroundColor: '#1D4ED8',
+        backgroundColor: '#000000',
     },
     filterChipTextSelected: {
         color: '#FFFFFF',

@@ -1,186 +1,138 @@
 import React from 'react';
-import { View, StyleSheet, ScrollView } from 'react-native';
-import { Text, Card, Title, Paragraph, DataTable, useTheme, Button, Divider } from 'react-native-paper';
+import { View, StyleSheet, ScrollView, TouchableOpacity, StatusBar } from 'react-native';
+import { Text } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useAppTheme } from '../../context/ThemeContext';
 
+// ─── Colors ─────────────────────────────────────────────────────────────────────
+const light = {
+    bg: '#FFFFFF', card: '#F6F6F6', border: '#E5E5EA',
+    text: '#000000', textSec: '#6B6B6B', textTer: '#AEAEB2',
+    accent: '#000000', green: '#34C759', greenBg: '#F0FDF4', greenBorder: '#BBF7D0',
+};
+const dark = {
+    bg: '#000000', card: '#141414', border: '#2C2C2E',
+    text: '#FFFFFF', textSec: '#8E8E93', textTer: '#636366',
+    accent: '#FFFFFF', green: '#30D158', greenBg: '#0A1F0A', greenBorder: '#1A3A1A',
+};
+
+// ─── Data rows ──────────────────────────────────────────────────────────────────
+function RateRow({ label, value, c }: { label: string; value: string; c: typeof light }) {
+    return (
+        <View style={[styles.rateRow, { borderBottomColor: c.border }]}>
+            <Text style={[styles.rateLabel, { color: c.textSec }]}>{label}</Text>
+            <Text style={[styles.rateValue, { color: c.text }]}>{value}</Text>
+        </View>
+    );
+}
+
+function BulletRow({ text, c }: { text: string; c: typeof light }) {
+    return (
+        <View style={styles.bulletRow}>
+            <MaterialCommunityIcons name="check-circle" size={16} color={c.green} />
+            <Text style={[styles.bulletText, { color: c.text }]}>{text}</Text>
+        </View>
+    );
+}
+
+// ─── Screen ─────────────────────────────────────────────────────────────────────
 export default function RatesScreen() {
-    const theme = useTheme();
+    const { isDarkMode } = useAppTheme();
+    const c = isDarkMode ? dark : light;
     const navigation = useNavigation();
-
     const insets = useSafeAreaInsets();
 
     return (
         <ScrollView
-            style={[styles.container, { backgroundColor: theme.colors.background }]}
-            contentContainerStyle={[
-                styles.content,
-                { paddingTop: insets.top + 20, paddingBottom: insets.bottom + 20 }
-            ]}
+            style={[styles.container, { backgroundColor: c.bg }]}
+            contentContainerStyle={{ paddingTop: insets.top + 12, paddingBottom: insets.bottom + 40 }}
         >
+            <StatusBar barStyle={isDarkMode ? 'light-content' : 'dark-content'} />
+
+            {/* Header */}
             <View style={styles.header}>
-                <MaterialCommunityIcons name="tag-multiple" size={40} color={theme.colors.primary} />
-                <Text variant="headlineMedium" style={[styles.headerTitle, { color: theme.colors.primary }]}>
-                    System Rates
-                </Text>
-                <Text variant="bodyMedium" style={[styles.headerSubtitle, { color: theme.colors.onSurfaceVariant }]}>
-                    Transparent, affordable pricing for secure deliveries.
-                </Text>
+                <MaterialCommunityIcons name="tag-multiple" size={36} color={c.accent} />
+                <Text style={[styles.headerTitle, { color: c.text }]}>System Rates</Text>
+                <Text style={[styles.headerSub, { color: c.textSec }]}>Transparent pricing for secure deliveries</Text>
             </View>
 
-            {/* Base Fare Section */}
-            <Card style={[styles.card, { backgroundColor: theme.colors.surface }]} mode="elevated">
-                <Card.Content>
-                    <View style={styles.cardHeader}>
-                        <MaterialCommunityIcons name="moped" size={24} color={theme.colors.secondary} />
-                        <Title style={[styles.cardTitle, { color: theme.colors.onSurface }]}>Standard Delivery</Title>
+            {/* Standard Delivery */}
+            <Text style={[styles.sectionLabel, { color: c.textSec }]}>STANDARD DELIVERY</Text>
+            <View style={[styles.section, { backgroundColor: c.card, borderColor: c.border }]}>
+                <View style={styles.sectionHeaderRow}>
+                    <MaterialCommunityIcons name="moped" size={22} color={c.accent} />
+                    <Text style={[styles.sectionTitle, { color: c.text }]}>Parcel Delivery</Text>
+                </View>
+                <Text style={[styles.sectionDesc, { color: c.textSec }]}>
+                    Ideal for documents, small parcels, and food items. Includes Smart Top Box security.
+                </Text>
+                <View style={[styles.priceCard, { backgroundColor: c.bg, borderColor: c.border }]}>
+                    <View style={styles.priceMainRow}>
+                        <Text style={[styles.priceMain, { color: c.text }]}>₱49.00</Text>
+                        <Text style={[styles.priceUnit, { color: c.textTer }]}>base fare</Text>
                     </View>
-                    <Paragraph style={[styles.cardDescription, { color: theme.colors.onSurfaceVariant }]}>
-                        Ideal for documents, small parcels, and food items. Includes Smart Top Box security.
-                    </Paragraph>
-
-                    <View style={styles.priceRow}>
-                        <Text variant="titleLarge" style={[styles.price, { color: theme.colors.onSurface }]}>₱49.00</Text>
-                        <Text variant="bodyMedium" style={[styles.unit, { color: theme.colors.onSurfaceVariant }]}>Base Fare</Text>
+                    <View style={styles.priceMainRow}>
+                        <Text style={[styles.priceAdd, { color: c.text }]}>+ ₱10.00</Text>
+                        <Text style={[styles.priceUnit, { color: c.textTer }]}>per km after 1st km</Text>
                     </View>
-                    <View style={styles.priceRow}>
-                        <Text variant="titleMedium" style={[styles.price, { color: theme.colors.onSurface }]}>+ ₱10.00</Text>
-                        <Text variant="bodyMedium" style={[styles.unit, { color: theme.colors.onSurfaceVariant }]}>per km (after 1st km)</Text>
-                    </View>
-                </Card.Content>
-            </Card>
+                </View>
+            </View>
 
-            {/* Surcharges Table */}
-            <Card style={[styles.card, { backgroundColor: theme.colors.surface }]} mode="elevated">
-                <Card.Content>
-                    <View style={styles.cardHeader}>
-                        <MaterialCommunityIcons name="alert-circle-outline" size={24} color="#F57C00" />
-                        <Title style={[styles.cardTitle, { color: theme.colors.onSurface }]}>Add-ons & Surcharges</Title>
-                    </View>
+            {/* Surcharges */}
+            <Text style={[styles.sectionLabel, { color: c.textSec }]}>ADD-ONS & SURCHARGES</Text>
+            <View style={[styles.section, { backgroundColor: c.card, borderColor: c.border }]}>
+                <RateRow label="High Value (Insured)" value="+ ₱50.00" c={c} />
+                <RateRow label="Wait Time (per 5 min)" value="+ ₱15.00" c={c} />
+                <RateRow label="Night Service (10PM–6AM)" value="+ 20%" c={c} />
+                <RateRow label="Holiday Surcharge" value="+ 15%" c={c} />
+            </View>
 
-                    <DataTable>
-                        <DataTable.Header>
-                            <DataTable.Title>Item</DataTable.Title>
-                            <DataTable.Title numeric>Fee</DataTable.Title>
-                        </DataTable.Header>
+            {/* Security included */}
+            <Text style={[styles.sectionLabel, { color: c.textSec }]}>INCLUDED SECURITY</Text>
+            <View style={[styles.section, { backgroundColor: c.greenBg, borderColor: c.greenBorder }]}>
+                <View style={styles.sectionHeaderRow}>
+                    <MaterialCommunityIcons name="shield-check" size={22} color={c.green} />
+                    <Text style={[styles.sectionTitle, { color: c.green }]}>Every delivery includes</Text>
+                </View>
+                <BulletRow text="GPS Real-time Tracking" c={c} />
+                <BulletRow text="Photographic Proof of Delivery" c={c} />
+                <BulletRow text="Smart Lock Tamper Alerts" c={c} />
+            </View>
 
-                        <DataTable.Row>
-                            <DataTable.Cell>High Value Surcharge (Insured)</DataTable.Cell>
-                            <DataTable.Cell numeric>+ ₱50.00</DataTable.Cell>
-                        </DataTable.Row>
-
-                        <DataTable.Row>
-                            <DataTable.Cell>Wait Time (per 5 mins)</DataTable.Cell>
-                            <DataTable.Cell numeric>+ ₱15.00</DataTable.Cell>
-                        </DataTable.Row>
-
-                        <DataTable.Row>
-                            <DataTable.Cell>Night Service (10PM - 6AM)</DataTable.Cell>
-                            <DataTable.Cell numeric>+ 20%</DataTable.Cell>
-                        </DataTable.Row>
-                        <DataTable.Row>
-                            <DataTable.Cell>Holiday Surcharge</DataTable.Cell>
-                            <DataTable.Cell numeric>+ 15%</DataTable.Cell>
-                        </DataTable.Row>
-                    </DataTable>
-                </Card.Content>
-            </Card>
-
-            {/* Smart Security Value Prop */}
-            <Card style={[styles.card, { backgroundColor: theme.dark ? '#1B5E20' : '#E8F5E9' }]} mode="contained">
-                <Card.Content>
-                    <View style={styles.cardHeader}>
-                        <MaterialCommunityIcons name="shield-check" size={24} color={theme.dark ? '#A5D6A7' : '#2E7D32'} />
-                        <Title style={[styles.cardTitle, { color: theme.dark ? '#A5D6A7' : '#2E7D32' }]}>Included Security</Title>
-                    </View>
-                    <Paragraph style={{ color: theme.dark ? '#E8F5E9' : '#1B5E20' }}>
-                        Every delivery includes:
-                    </Paragraph>
-                    <View style={styles.bulletPoint}>
-                        <MaterialCommunityIcons name="check" size={16} color={theme.dark ? '#A5D6A7' : '#2E7D32'} />
-                        <Text style={[styles.bulletText, { color: theme.dark ? '#E8F5E9' : '#2E7D32' }]}>GPS Real-time Tracking</Text>
-                    </View>
-                    <View style={styles.bulletPoint}>
-                        <MaterialCommunityIcons name="check" size={16} color={theme.dark ? '#A5D6A7' : '#2E7D32'} />
-                        <Text style={[styles.bulletText, { color: theme.dark ? '#E8F5E9' : '#2E7D32' }]}>Photographic Proof of Delivery</Text>
-                    </View>
-                    <View style={styles.bulletPoint}>
-                        <MaterialCommunityIcons name="check" size={16} color={theme.dark ? '#A5D6A7' : '#2E7D32'} />
-                        <Text style={[styles.bulletText, { color: theme.dark ? '#E8F5E9' : '#2E7D32' }]}>Smart Lock Tamper Alerts</Text>
-                    </View>
-                </Card.Content>
-            </Card>
-
-            <View style={{ height: 20 }} />
-            <Button mode="outlined" onPress={() => navigation.goBack()}>
-                Close
-            </Button>
-
+            {/* Close */}
+            <TouchableOpacity
+                style={[styles.closeBtn, { backgroundColor: c.card, borderColor: c.border }]}
+                onPress={() => navigation.goBack()}
+                activeOpacity={0.7}
+            >
+                <Text style={[styles.closeBtnText, { color: c.textSec }]}>Close</Text>
+            </TouchableOpacity>
         </ScrollView>
     );
 }
 
 const styles = StyleSheet.create({
-    container: {
-        flex: 1,
-        backgroundColor: '#F5F5F5',
-    },
-    content: {
-        padding: 20,
-    },
-    header: {
-        alignItems: 'center',
-        marginBottom: 24,
-        marginTop: 10,
-    },
-    headerTitle: {
-        fontWeight: 'bold',
-        marginTop: 8,
-    },
-    headerSubtitle: {
-        color: '#666',
-        textAlign: 'center',
-    },
-    card: {
-        marginBottom: 16,
-        backgroundColor: 'white',
-        borderRadius: 12,
-    },
-    cardHeader: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        marginBottom: 8,
-    },
-    cardTitle: {
-        marginLeft: 8,
-        fontSize: 18,
-        fontWeight: 'bold',
-    },
-    cardDescription: {
-        color: '#555',
-        marginBottom: 16,
-    },
-    priceRow: {
-        flexDirection: 'row',
-        alignItems: 'baseline',
-        marginBottom: 4,
-    },
-    price: {
-        fontWeight: 'bold',
-        color: '#333',
-        marginRight: 8,
-    },
-    unit: {
-        color: '#777',
-    },
-    bulletPoint: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        marginTop: 4,
-    },
-    bulletText: {
-        marginLeft: 8,
-        color: '#2E7D32',
-    }
+    container: { flex: 1 },
+    header: { alignItems: 'center', paddingHorizontal: 20, marginBottom: 24, marginTop: 8 },
+    headerTitle: { fontSize: 24, fontWeight: '800', marginTop: 8 },
+    headerSub: { fontSize: 14, textAlign: 'center', marginTop: 3 },
+    sectionLabel: { fontSize: 12, fontWeight: '600', letterSpacing: 0.8, marginHorizontal: 20, marginBottom: 6, marginTop: 4 },
+    section: { marginHorizontal: 16, borderRadius: 14, borderWidth: 1, padding: 14, marginBottom: 20 },
+    sectionHeaderRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 6 },
+    sectionTitle: { fontSize: 16, fontWeight: '700' },
+    sectionDesc: { fontSize: 13, marginBottom: 12, lineHeight: 19 },
+    priceCard: { borderRadius: 10, borderWidth: 1, padding: 12, gap: 4 },
+    priceMainRow: { flexDirection: 'row', alignItems: 'baseline', gap: 8 },
+    priceMain: { fontSize: 22, fontWeight: '800' },
+    priceAdd: { fontSize: 16, fontWeight: '700' },
+    priceUnit: { fontSize: 13 },
+    rateRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 12, borderBottomWidth: StyleSheet.hairlineWidth },
+    rateLabel: { fontSize: 14, flex: 1 },
+    rateValue: { fontSize: 14, fontWeight: '700' },
+    bulletRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 5 },
+    bulletText: { fontSize: 14 },
+    closeBtn: { marginHorizontal: 16, paddingVertical: 14, borderRadius: 14, borderWidth: 1, alignItems: 'center', marginTop: 4 },
+    closeBtnText: { fontSize: 15, fontWeight: '600' },
 });
