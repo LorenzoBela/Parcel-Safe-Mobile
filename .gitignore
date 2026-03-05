@@ -39,3 +39,12 @@ yarn-error.*
 # generated native folders
 /ios
 /android
+
+# Build artifacts & APK backups (too large for GitHub)
+apk_backup/
+*.apk
+*.aab
+
+# Keystores & signing secrets (Article VI compliance)
+*.keystore
+release.keystore
