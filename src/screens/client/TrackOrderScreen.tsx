@@ -170,6 +170,19 @@ export default function TrackOrderScreen() {
     const CONSECUTIVE_OFF_ROUTE_REQUIRED = 1; // Immediate off-route reaction (was 2)
     const OFF_ROUTE_THRESHOLD_KM = 0.05; // 50m
 
+    // --- Map Matching budget control & local snap refs ---
+    const rawPathBuffer = useRef<{ coord: [number, number]; time: number }[]>([]);
+    const lastMatchTimeRef = useRef<number>(0);
+    const lastMatchedCoordRef = useRef<[number, number] | null>(null);
+    const lastMatchedRoadRef = useRef<[number, number][]>([]);
+    const lastSnapIndexRef = useRef<number>(0);
+    const smoothedCoordsRef = useRef<[number, number] | null>(null);
+    const EMA_POSITION_ALPHA = 0.4;
+    const deviceSpeedRef = useRef<number>(0);
+    const MAP_MATCH_MIN_MOVEMENT_M = 20;
+    const MAP_MATCH_MAX_DRIFT_M = 25;
+    const [snappedLocation, setSnappedLocation] = useState<{ lat: number; lng: number } | null>(null);
+
     // Loop/Status Guard Ref
     const stopTracking = useRef(false);
 
@@ -234,6 +247,126 @@ export default function TrackOrderScreen() {
 
     const displayLocation = useBoxLocation ? boxLiveLocation : riderLiveLocation;
 
+    // --- Map Matching function for mobile ---
+    const matchCoordinatesToRoad = async (
+        buffer: { coord: [number, number]; time: number }[],
+        rawCoord: [number, number]
+    ): Promise<[number, number][] | null> => {
+        if (buffer.length < 2 || !MAPBOX_TOKEN) return null;
+        const payloadPoints = buffer.slice(-25);
+        const coordinatesString = payloadPoints.map(p => `${p.coord[0]},${p.coord[1]}`).join(';');
+        const radiuses = payloadPoints.map(() => 8).join(';');
+        const timestamps = payloadPoints.map(p => Math.round(p.time / 1000)).join(';');
+        try {
+            const response = await fetch(
+                `https://api.mapbox.com/matching/v5/mapbox/driving/${coordinatesString}?radiuses=${radiuses}&timestamps=${timestamps}&tidy=true&geometries=geojson&access_token=${MAPBOX_TOKEN}`
+            );
+            if (!response.ok) return null;
+            const data = await response.json();
+            if (data.matchings && data.matchings.length > 0) {
+                const matchedGeometry = data.matchings[0].geometry.coordinates as [number, number][];
+                if (matchedGeometry.length > 0) {
+                    const lastPt = matchedGeometry[matchedGeometry.length - 1];
+                    const driftDist = distanceTurf(point(rawCoord), point(lastPt), { units: 'meters' });
+                    if (driftDist > MAP_MATCH_MAX_DRIFT_M) return null;
+                }
+                return matchedGeometry;
+            }
+        } catch (error) {
+            console.warn('[Map Matching Mobile] Failed:', error);
+        }
+        return null;
+    };
+
+    // --- GPS Snap Processing Effect ---
+    useEffect(() => {
+        if (!displayLocation?.lat || !displayLocation?.lng) return;
+        const rawCoord: [number, number] = [displayLocation.lng, displayLocation.lat];
+
+        // Buffer raw GPS with timestamps
+        rawPathBuffer.current.push({ coord: rawCoord, time: Date.now() });
+        if (rawPathBuffer.current.length > 25) rawPathBuffer.current = rawPathBuffer.current.slice(-25);
+
+        // Estimate speed for adaptive cooldown
+        const prev = prevRiderPos.current;
+        if (prev) {
+            const moveDist = distanceTurf(point([prev.lng, prev.lat]), point(rawCoord), { units: 'meters' });
+            const estimatedSpeed = moveDist / 2;
+            deviceSpeedRef.current = deviceSpeedRef.current * 0.7 + estimatedSpeed * 0.3;
+        }
+
+        // Adaptive cooldown: highway = 3s, normal = 5s, slow = 10s
+        let adaptiveCooldown: number;
+        if (deviceSpeedRef.current > 15) adaptiveCooldown = 3_000;
+        else if (deviceSpeedRef.current > 3) adaptiveCooldown = 5_000;
+        else adaptiveCooldown = 10_000;
+
+        const nowMs = Date.now();
+        const timeSinceLastMatch = nowMs - lastMatchTimeRef.current;
+        const movementSinceMatch = lastMatchedCoordRef.current
+            ? distanceTurf(point(lastMatchedCoordRef.current), point(rawCoord), { units: 'meters' })
+            : Infinity;
+
+        let snappedLng = displayLocation.lng;
+        let snappedLat = displayLocation.lat;
+
+        const processSnap = async () => {
+            // Budget-gated API call
+            if (rawPathBuffer.current.length >= 2 && timeSinceLastMatch >= adaptiveCooldown && movementSinceMatch >= MAP_MATCH_MIN_MOVEMENT_M) {
+                const matchedSegment = await matchCoordinatesToRoad(rawPathBuffer.current, rawCoord);
+                lastMatchTimeRef.current = nowMs;
+                lastMatchedCoordRef.current = rawCoord;
+                if (matchedSegment && matchedSegment.length > 0) {
+                    // Extend road forward ~100m
+                    const extendedRoad = [...matchedSegment];
+                    if (matchedSegment.length >= 2) {
+                        const secondLast = matchedSegment[matchedSegment.length - 2];
+                        const last = matchedSegment[matchedSegment.length - 1];
+                        const dLng = last[0] - secondLast[0];
+                        const dLat = last[1] - secondLast[1];
+                        for (let i = 1; i <= 3; i++) {
+                            extendedRoad.push([last[0] + dLng * i, last[1] + dLat * i]);
+                        }
+                    }
+                    lastMatchedRoadRef.current = extendedRoad;
+                    lastSnapIndexRef.current = 0;
+                    const lastMatchedPt = matchedSegment[matchedSegment.length - 1];
+                    snappedLng = lastMatchedPt[0];
+                    snappedLat = lastMatchedPt[1];
+                }
+            } else {
+                // Between calls: locally snap onto stored road geometry
+                if (lastMatchedRoadRef.current.length >= 2) {
+                    try {
+                        const rawPt = point(rawCoord);
+                        const road = lineString(lastMatchedRoadRef.current);
+                        const snapped = nearestPointOnLine(road, rawPt);
+                        const snapDist = (snapped.properties.dist ?? Infinity) * 1000;
+                        const snapIdx = snapped.properties.index ?? 0;
+                        const prevIdx = lastSnapIndexRef.current;
+                        if (snapDist < 30 && snapIdx >= prevIdx - 1) {
+                            const [sLng, sLat] = snapped.geometry.coordinates as [number, number];
+                            lastSnapIndexRef.current = Math.max(prevIdx, snapIdx);
+                            snappedLng = sLng;
+                            snappedLat = sLat;
+                        }
+                    } catch { /* fallback to raw */ }
+                }
+            }
+
+            // EMA smoothing
+            if (smoothedCoordsRef.current) {
+                snappedLng = EMA_POSITION_ALPHA * snappedLng + (1 - EMA_POSITION_ALPHA) * smoothedCoordsRef.current[0];
+                snappedLat = EMA_POSITION_ALPHA * snappedLat + (1 - EMA_POSITION_ALPHA) * smoothedCoordsRef.current[1];
+            }
+            smoothedCoordsRef.current = [snappedLng, snappedLat];
+
+            setSnappedLocation({ lat: snappedLat, lng: snappedLng });
+        };
+
+        processSnap();
+    }, [displayLocation?.lat, displayLocation?.lng]);
+
     // Fallback coordinates if no live data available
     const fallbackLat = delivery?.pickup_lat ?? params.pickupLat ?? destination.latitude;
     const fallbackLng = delivery?.pickup_lng ?? params.pickupLng ?? destination.longitude;
@@ -243,11 +376,11 @@ export default function TrackOrderScreen() {
         longitude: boxLiveLocation?.lng ?? (isPickedUp ? fallbackLng : fallbackLng),
     };
 
-    // The marker displayed as "Rider" on the map
+    // The marker displayed as "Rider" on the map — uses snapped location when available
     const hasLiveLocation = !!(displayLocation?.lat && displayLocation?.lng);
     const riderMarkerLocation = {
-        latitude: displayLocation?.lat ?? (isPickedUp ? boxLocation.latitude : fallbackLat),
-        longitude: displayLocation?.lng ?? (isPickedUp ? boxLocation.longitude : fallbackLng),
+        latitude: snappedLocation?.lat ?? displayLocation?.lat ?? (isPickedUp ? boxLocation.latitude : fallbackLat),
+        longitude: snappedLocation?.lng ?? displayLocation?.lng ?? (isPickedUp ? boxLocation.longitude : fallbackLng),
     };
 
     // Compute rider bearing (heading direction) from previous → current position
@@ -709,7 +842,7 @@ export default function TrackOrderScreen() {
                 ...(isNavigationMode ? {
                     pitch: 60,
                     zoomLevel: 19,
-                    heading: 0
+                    heading: riderBearing.current
                 } : {
                     pitch: 0,
                     zoomLevel: 16 // Fallback standard zoom
@@ -1215,8 +1348,8 @@ export default function TrackOrderScreen() {
                                     Share Tracking Link
                                 </Button>
 
-                {/* OTP is only relevant once rider has arrived at the drop-off location */}
-                {!cancellation && delivery?.status === 'ARRIVED' && (
+                                {/* OTP is only relevant once rider has arrived at the drop-off location */}
+                                {!cancellation && delivery?.status === 'ARRIVED' && (
                                     <Button
                                         mode="contained"
                                         style={styles.viewOtpBtn}

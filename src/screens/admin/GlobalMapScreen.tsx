@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState, useRef, useCallback } from 'react'
 import {
     View, StyleSheet, Dimensions, ScrollView, TouchableOpacity,
     Animated, TextInput as RNTextInput, Platform, Easing,
+    Image,
 } from 'react-native';
 import { Text, Surface, Card, Chip, IconButton } from 'react-native-paper';
 import { useAppTheme } from '../../context/ThemeContext';
@@ -261,6 +262,8 @@ export default function GlobalMapScreen() {
     const shapeSourceRef = useRef<any>(null);
     const animationStates = useRef<Map<string, AnimationState>>(new Map());
     const animationFrameId = useRef<number | null>(null);
+    const boxBearings = useRef<Map<string, number>>(new Map()); // per-box bearing tracking
+    const RiderIcon = require('../../../assets/Rider.jpg');
 
     useEffect(() => {
         if (MAPBOX_TOKEN) {
@@ -345,33 +348,59 @@ export default function GlobalMapScreen() {
         }
     }, [filteredBoxes, cameraCenter]);
 
+    // EMA smoothing per-box for GPS jitter reduction
+    const emaSmoothStates = useRef<Map<string, [number, number]>>(new Map());
+    const EMA_ALPHA = 0.4; // 0 = full smooth (laggy), 1 = no smooth (raw)
+
     // Animation Loop
     useEffect(() => {
         const updateAnimationTargets = () => {
             filteredBoxes.forEach(box => {
-                const target: [number, number] = [box.lng, box.lat];
+                // EMA smooth the raw coords before animation
+                let smoothedTarget: [number, number] = [box.lng, box.lat];
+                const prevSmoothed = emaSmoothStates.current.get(box.id);
+                if (prevSmoothed) {
+                    smoothedTarget = [
+                        EMA_ALPHA * box.lng + (1 - EMA_ALPHA) * prevSmoothed[0],
+                        EMA_ALPHA * box.lat + (1 - EMA_ALPHA) * prevSmoothed[1],
+                    ];
+                }
+                emaSmoothStates.current.set(box.id, smoothedTarget);
+
+                // Compute bearing from previous → current position
+                const prevTarget = animationStates.current.get(box.id)?.target;
+                if (prevTarget) {
+                    const dist = Math.abs(smoothedTarget[0] - prevTarget[0]) + Math.abs(smoothedTarget[1] - prevTarget[1]);
+                    if (dist > 0.00005) { // ~5m threshold
+                        const dLng = smoothedTarget[0] - prevTarget[0];
+                        const dLat = smoothedTarget[1] - prevTarget[1];
+                        const angle = (Math.atan2(dLng, dLat) * 180) / Math.PI;
+                        boxBearings.current.set(box.id, angle);
+                    }
+                }
+
                 let state = animationStates.current.get(box.id);
 
                 if (!state) {
                     // New marker
                     animationStates.current.set(box.id, {
-                        current: target,
-                        target: target,
-                        start: target,
+                        current: smoothedTarget,
+                        target: smoothedTarget,
+                        start: smoothedTarget,
                         startTime: Date.now()
                     });
-                } else if (state.target[0] !== target[0] || state.target[1] !== target[1]) {
+                } else if (state.target[0] !== smoothedTarget[0] || state.target[1] !== smoothedTarget[1]) {
                     // Update target
                     // Teleport if too far (> 500m approx 0.005 deg)
-                    const dist = Math.abs(state.current[0] - target[0]) + Math.abs(state.current[1] - target[1]);
+                    const dist = Math.abs(state.current[0] - smoothedTarget[0]) + Math.abs(state.current[1] - smoothedTarget[1]);
                     if (dist > 0.005) {
-                        state.current = target;
-                        state.start = target;
-                        state.target = target;
+                        state.current = smoothedTarget;
+                        state.start = smoothedTarget;
+                        state.target = smoothedTarget;
                         state.startTime = Date.now();
                     } else {
                         state.start = state.current;
-                        state.target = target;
+                        state.target = smoothedTarget;
                         state.startTime = Date.now();
                     }
                 }
@@ -406,6 +435,7 @@ export default function GlobalMapScreen() {
                 state.current = [currentLng, currentLat];
 
                 // 2. Build Feature
+                const boxBearing = boxBearings.current.get(id) ?? 0;
                 features.push({
                     type: 'Feature',
                     id: id,
@@ -414,7 +444,8 @@ export default function GlobalMapScreen() {
                         status: box.status,
                         alert: box.alert,
                         color: getStatusColor(box.status, box.alert),
-                        selected: id === selectedBoxId
+                        selected: id === selectedBoxId,
+                        bearing: boxBearing,
                     },
                     geometry: {
                         type: 'Point',
@@ -560,31 +591,51 @@ export default function GlobalMapScreen() {
                 >
                     <MapboxGL.Camera zoomLevel={cameraZoom} centerCoordinate={cameraCenter} />
 
-                    {/* Performance Optimized ShapeSource + CircleLayer */}
+                    {/* Rider icon image registration */}
+                    <MapboxGL.Images images={{ 'rider-icon': RiderIcon }} />
+
+                    {/* Performance Optimized ShapeSource + SymbolLayer with rider icon */}
                     <MapboxGL.ShapeSource
                         id="hardware-source"
                         ref={shapeSourceRef}
                         shape={{ type: 'FeatureCollection', features: [] }}
                         onPress={(e) => {
-                            // Handle press on a feature
                             const feature = e.features[0];
                             if (feature && feature.properties?.id) {
                                 selectBox(feature.properties.id);
                             }
                         }}
                     >
+                        {/* Status ring behind icon */}
                         <MapboxGL.CircleLayer
-                            id="hardware-circles"
+                            id="hardware-status-ring"
                             style={{
                                 circleColor: ['get', 'color'],
                                 circleRadius: [
                                     'interpolate', ['linear'], ['zoom'],
-                                    10, 5,
-                                    15, ['case', ['get', 'selected'], 18, 12]
+                                    10, 8,
+                                    15, ['case', ['get', 'selected'], 24, 18]
                                 ],
                                 circleStrokeWidth: 2,
                                 circleStrokeColor: '#ffffff',
+                                circleOpacity: 0.35,
                                 circlePitchAlignment: 'map'
+                            }}
+                        />
+                        {/* Rider icon marker */}
+                        <MapboxGL.SymbolLayer
+                            id="hardware-icons"
+                            style={{
+                                iconImage: 'rider-icon',
+                                iconSize: [
+                                    'interpolate', ['linear'], ['zoom'],
+                                    10, 0.15,
+                                    15, ['case', ['get', 'selected'], 0.45, 0.3]
+                                ],
+                                iconRotate: ['get', 'bearing'],
+                                iconRotationAlignment: 'map',
+                                iconAllowOverlap: true,
+                                iconIgnorePlacement: true,
                             }}
                         />
                     </MapboxGL.ShapeSource>
