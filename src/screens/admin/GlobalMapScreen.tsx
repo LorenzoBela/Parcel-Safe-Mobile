@@ -591,54 +591,80 @@ export default function GlobalMapScreen() {
                 >
                     <MapboxGL.Camera zoomLevel={cameraZoom} centerCoordinate={cameraCenter} />
 
-                    {/* Rider icon image registration */}
-                    <MapboxGL.Images images={{ 'rider-icon': RiderIcon }} />
-
-                    {/* Performance Optimized ShapeSource + SymbolLayer with rider icon */}
-                    <MapboxGL.ShapeSource
-                        id="hardware-source"
-                        ref={shapeSourceRef}
-                        shape={{ type: 'FeatureCollection', features: [] }}
-                        onPress={(e) => {
-                            const feature = e.features[0];
-                            if (feature && feature.properties?.id) {
-                                selectBox(feature.properties.id);
-                            }
-                        }}
-                    >
-                        {/* Status ring behind icon */}
-                        <MapboxGL.CircleLayer
-                            id="hardware-status-ring"
-                            style={{
-                                circleColor: ['get', 'color'],
-                                circleRadius: [
-                                    'interpolate', ['linear'], ['zoom'],
-                                    10, 8,
-                                    15, ['case', ['get', 'selected'], 24, 18]
-                                ],
-                                circleStrokeWidth: 2,
-                                circleStrokeColor: '#ffffff',
-                                circleOpacity: 0.35,
-                                circlePitchAlignment: 'map'
-                            }}
-                        />
-                        {/* Rider icon marker */}
-                        <MapboxGL.SymbolLayer
-                            id="hardware-icons"
-                            style={{
-                                iconImage: 'rider-icon',
-                                iconSize: [
-                                    'interpolate', ['linear'], ['zoom'],
-                                    10, 0.15,
-                                    15, ['case', ['get', 'selected'], 0.45, 0.3]
-                                ],
-                                iconRotate: ['get', 'bearing'],
-                                iconRotationAlignment: 'map',
-                                iconAllowOverlap: true,
-                                iconIgnorePlacement: true,
-                            }}
-                        />
-                    </MapboxGL.ShapeSource>
+                    {/* Per-box rider markers — same style as tracking pages */}
+                    {filteredBoxes.map((box) => {
+                        const anim = animationStates.current.get(box.id);
+                        const coord = anim?.current ?? [box.lng, box.lat];
+                        const bng = boxBearings.current.get(box.id) ?? 0;
+                        const color = getStatusColor(box.status, box.alert);
+                        const isSelected = box.id === selectedBoxId;
+                        return (
+                            <MapboxGL.PointAnnotation
+                                key={box.id}
+                                id={`box-${box.id}`}
+                                coordinate={coord}
+                                anchor={{ x: 0.5, y: 0.5 }}
+                                onSelected={() => selectBox(box.id)}
+                            >
+                                <View style={{
+                                    width: isSelected ? 64 : 52,
+                                    height: isSelected ? 64 : 52,
+                                    justifyContent: 'center',
+                                    alignItems: 'center',
+                                    transform: [{ rotate: `${bng}deg` }],
+                                }}>
+                                    {/* Status ring */}
+                                    <View style={{
+                                        position: 'absolute',
+                                        width: isSelected ? 64 : 52,
+                                        height: isSelected ? 64 : 52,
+                                        borderRadius: isSelected ? 32 : 26,
+                                        backgroundColor: color + '40',
+                                        borderWidth: 2,
+                                        borderColor: color,
+                                    }} />
+                                    {/* Rider image */}
+                                    <View style={{
+                                        width: isSelected ? 48 : 38,
+                                        height: isSelected ? 48 : 38,
+                                        borderRadius: isSelected ? 24 : 19,
+                                        backgroundColor: 'white',
+                                        borderWidth: 2,
+                                        borderColor: '#0f172a',
+                                        overflow: 'hidden',
+                                        justifyContent: 'center',
+                                        alignItems: 'center',
+                                        zIndex: 20,
+                                    }}>
+                                        <Image
+                                            source={RiderIcon}
+                                            style={{
+                                                width: isSelected ? 44 : 34,
+                                                height: isSelected ? 44 : 34,
+                                                borderRadius: isSelected ? 22 : 17,
+                                            }}
+                                            resizeMode="cover"
+                                        />
+                                    </View>
+                                    {/* Direction cone */}
+                                    <View style={{
+                                        position: 'absolute',
+                                        top: isSelected ? -6 : -8,
+                                        left: isSelected ? 25 : 19,
+                                        width: 0,
+                                        height: 0,
+                                        borderLeftWidth: 6,
+                                        borderLeftColor: 'transparent',
+                                        borderRightWidth: 6,
+                                        borderRightColor: 'transparent',
+                                        borderBottomWidth: 10,
+                                        borderBottomColor: 'rgba(15, 23, 42, 0.9)',
+                                        zIndex: 10,
+                                    }} />
+                                </View>
+                            </MapboxGL.PointAnnotation>
+                        );
+                    })}
 
                 </MapboxGL.MapView>
             ) : (
