@@ -8,6 +8,7 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useTheme } from 'react-native-paper'; // Import useTheme
 import { triggerDeliverySync } from '../services/deliverySyncService';
 
+import AuthLoadingScreen from '../screens/auth/AuthLoadingScreen';
 import LoginScreen from '../screens/auth/LoginScreen';
 import RegisterScreen from '../screens/auth/RegisterScreen';
 import OTPScreen from '../screens/auth/OTPScreen';
@@ -213,7 +214,8 @@ export default function AppNavigator() {
 
     return (
         <NavigationContainer>
-            <Stack.Navigator id="RootStack" initialRouteName="Login" screenOptions={{ headerShown: false }}>
+            <Stack.Navigator id="RootStack" initialRouteName="AuthLoading" screenOptions={{ headerShown: false }}>
+                <Stack.Screen name="AuthLoading" component={AuthLoadingScreen} />
                 <Stack.Screen name="Login" component={LoginScreen} />
                 <Stack.Screen name="Register" component={RegisterScreen} />
                 <Stack.Screen name="DevRoleSelection" component={DevRoleSelectionScreen} />

@@ -163,9 +163,10 @@ export default function SettingsScreen() {
             <Text style={[styles.sectionTitle, { color: c.textSec }]}>SUPPORT</Text>
             <View style={[styles.section, { backgroundColor: c.card, borderColor: c.border }]}>
                 <SettingsRow icon="help-circle-outline" label="Help Center" c={c} onPress={() => navigation.navigate('HelpCenter')} />
-                {profile?.role === 'RIDER' && (
-                    <SettingsRow icon="face-agent" label="Rider Support" c={c} onPress={() => navigation.navigate('RiderSupport')} />
-                )}
+                {((role && ['rider', 'admin'].includes(role.toLowerCase())) ||
+                    (profile?.role && ['rider', 'admin'].includes(profile.role.toLowerCase()))) && (
+                        <SettingsRow icon="face-agent" label="Rider Support" c={c} onPress={() => navigation.navigate('RiderSupport')} />
+                    )}
                 <SettingsRow icon="file-document-outline" label="Terms of Service" c={c} onPress={() => navigation.navigate('TermsOfService')} />
                 <SettingsRow icon="shield-check-outline" label="Privacy Policy" c={c} onPress={() => navigation.navigate('PrivacyPolicy')} />
             </View>
