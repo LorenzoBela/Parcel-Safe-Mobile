@@ -263,6 +263,7 @@ export default function GlobalMapScreen() {
     const animationStates = useRef<Map<string, AnimationState>>(new Map());
     const animationFrameId = useRef<number | null>(null);
     const boxBearings = useRef<Map<string, number>>(new Map()); // per-box bearing tracking
+    const markerRefs = useRef<Map<string, any>>(new Map()); // per-box PointAnnotation refs for refresh
     const RiderIcon = require('../../../assets/Rider.jpg');
 
     useEffect(() => {
@@ -602,32 +603,25 @@ export default function GlobalMapScreen() {
                             <MapboxGL.PointAnnotation
                                 key={box.id}
                                 id={`box-${box.id}`}
+                                ref={(ref: any) => {
+                                    if (ref) markerRefs.current.set(box.id, ref);
+                                }}
                                 coordinate={coord}
                                 anchor={{ x: 0.5, y: 0.5 }}
                                 onSelected={() => selectBox(box.id)}
                             >
                                 <View style={{
-                                    width: isSelected ? 64 : 52,
-                                    height: isSelected ? 64 : 52,
+                                    width: isSelected ? 64 : 56,
+                                    height: isSelected ? 64 : 56,
                                     justifyContent: 'center',
                                     alignItems: 'center',
                                     transform: [{ rotate: `${bng}deg` }],
                                 }}>
-                                    {/* Status ring */}
+                                    {/* Rider image circle — matches AnimatedRiderMarker style */}
                                     <View style={{
-                                        position: 'absolute',
-                                        width: isSelected ? 64 : 52,
-                                        height: isSelected ? 64 : 52,
-                                        borderRadius: isSelected ? 32 : 26,
-                                        backgroundColor: color + '40',
-                                        borderWidth: 2,
-                                        borderColor: color,
-                                    }} />
-                                    {/* Rider image */}
-                                    <View style={{
-                                        width: isSelected ? 48 : 38,
-                                        height: isSelected ? 48 : 38,
-                                        borderRadius: isSelected ? 24 : 19,
+                                        width: isSelected ? 60 : 56,
+                                        height: isSelected ? 60 : 56,
+                                        borderRadius: isSelected ? 30 : 28,
                                         backgroundColor: 'white',
                                         borderWidth: 2,
                                         borderColor: '#0f172a',
@@ -635,22 +629,32 @@ export default function GlobalMapScreen() {
                                         justifyContent: 'center',
                                         alignItems: 'center',
                                         zIndex: 20,
+                                        shadowColor: '#000',
+                                        shadowOffset: { width: 0, height: 2 },
+                                        shadowOpacity: 0.3,
+                                        shadowRadius: 4,
+                                        elevation: 6,
                                     }}>
                                         <Image
                                             source={RiderIcon}
                                             style={{
-                                                width: isSelected ? 44 : 34,
-                                                height: isSelected ? 44 : 34,
-                                                borderRadius: isSelected ? 22 : 17,
+                                                width: isSelected ? 56 : 52,
+                                                height: isSelected ? 56 : 52,
+                                                borderRadius: isSelected ? 28 : 26,
                                             }}
                                             resizeMode="cover"
+                                            fadeDuration={0}
+                                            onLoad={() => {
+                                                const ref = markerRefs.current.get(box.id);
+                                                if (ref) ref.refresh();
+                                            }}
                                         />
                                     </View>
                                     {/* Direction cone */}
                                     <View style={{
                                         position: 'absolute',
-                                        top: isSelected ? -6 : -8,
-                                        left: isSelected ? 25 : 19,
+                                        top: -12,
+                                        left: isSelected ? 26 : 22,
                                         width: 0,
                                         height: 0,
                                         borderLeftWidth: 6,
