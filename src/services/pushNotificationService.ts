@@ -242,12 +242,10 @@ async function registerTokenWithServer(fcmToken: string): Promise<void> {
             return;
         }
 
-        // Get the API base URL from environment
-        const apiBaseUrl = process.env.EXPO_PUBLIC_TRACKING_WEB_BASE_URL || process.env.EXPO_PUBLIC_API_URL;
-        if (!apiBaseUrl) {
-            console.warn('[FCM] No API base URL configured, skipping server registration');
-            return;
-        }
+        // Get the API base URL from environment (hardcoded fallback matches production URL)
+        const apiBaseUrl = process.env.EXPO_PUBLIC_TRACKING_WEB_BASE_URL
+            || process.env.EXPO_PUBLIC_API_URL
+            || 'https://parcel-safe.vercel.app';
 
         const response = await fetch(`${apiBaseUrl}/api/notifications/register`, {
             method: 'POST',

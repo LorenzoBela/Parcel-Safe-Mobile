@@ -132,7 +132,10 @@ import { supabase } from '../../services/supabaseClient'; // EC-Fix: Session res
 
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAppTheme } from '../../context/ThemeContext';
+import { useExitAppConfirmation } from '../../hooks/useExitAppConfirmation';
+import ExitConfirmationModal from '../../components/modals/ExitConfirmationModal';
 import { StatusBar } from 'expo-status-bar';
+import { PremiumAlert } from '../../services/PremiumAlertService';
 
 // ── Uber-style dual palette ──
 const lightC = {
@@ -157,6 +160,7 @@ const darkC = {
 };
 
 export default function RiderDashboard() {
+    const { showExitModal, setShowExitModal, handleExit } = useExitAppConfirmation();
     const navigation = useNavigation<any>();
     const theme = useTheme();
     const { isDarkMode } = useAppTheme();
@@ -608,7 +612,7 @@ export default function RiderDashboard() {
             try {
                 const { needsAction, info } = await checkOemProtection();
                 if (needsAction && info) {
-                    Alert.alert(
+                    PremiumAlert.alert(
                         `${info.name} Battery Optimization`,
                         `Your ${info.name} device may kill background apps. To ensure reliable GPS tracking during deliveries:\n\n${info.instructions}`,
                         [
@@ -683,13 +687,13 @@ export default function RiderDashboard() {
 
             // Show alert on low battery
             if (state?.lowBatteryWarning && !state?.criticalBatteryWarning) {
-                Alert.alert(
+                PremiumAlert.alert(
                     'Low Battery Warning',
                     `Box battery is at ${state.percentage}%. Consider completing current delivery soon.`,
                     [{ text: 'OK' }]
                 );
             } else if (state?.criticalBatteryWarning) {
-                Alert.alert(
+                PremiumAlert.alert(
                     '⚠️ Critical Battery',
                     `Box battery is critically low at ${state.percentage}%! Delivery may fail if battery dies.`,
                     [{ text: 'Understood' }]
@@ -703,7 +707,7 @@ export default function RiderDashboard() {
 
             // Show critical alert on tamper detection
             if (state?.detected) {
-                Alert.alert(
+                PremiumAlert.alert(
                     '🚨 SECURITY ALERT',
                     'Unauthorized access detected on your assigned box! The box is now in lockdown mode. Contact support immediately.',
                     [{ text: 'Contact Support', style: 'destructive' }]
@@ -734,7 +738,7 @@ export default function RiderDashboard() {
                 const timeDelta = (location.timestamp - lastGpsLocationRef.current.timestamp) / 1000;
                 if (timeDelta > 0 && isSpeedAnomaly(distanceMeters, timeDelta)) {
                     setGpsSpoofWarning(true);
-                    Alert.alert(
+                    PremiumAlert.alert(
                         '⚠️ GPS Anomaly Detected',
                         'Unusual location jump detected. This may indicate GPS issues or spoofing.',
                         [{ text: 'Dismiss', onPress: () => setGpsSpoofWarning(false) }]
@@ -754,7 +758,7 @@ export default function RiderDashboard() {
         const unsubscribeKeypad = subscribeToKeypad(boxIdForMonitoring, (state) => {
             setKeypadState(state);
             if (state?.is_stuck) {
-                Alert.alert(
+                PremiumAlert.alert(
                     '⚠️ Keypad Malfunction',
                     `Key '${state.stuck_key}' is stuck! You may need to use App Unlock for OTP.`,
                     [{ text: 'OK' }]
@@ -766,7 +770,7 @@ export default function RiderDashboard() {
         const unsubscribeHinge = subscribeToHinge(boxIdForMonitoring, (state) => {
             setHingeState(state);
             if (state?.status === 'DAMAGED') {
-                Alert.alert(
+                PremiumAlert.alert(
                     '🚨 PHYSICAL DAMAGE DETECTED',
                     'Door sensor mismatch detected while locked. Inspect box immediately!',
                     [{ text: 'Contact Support', style: 'destructive' }]
@@ -942,14 +946,14 @@ export default function RiderDashboard() {
                 setTokenStatus(status);
             },
             onRefreshFailed: (attempts) => {
-                Alert.alert(
+                PremiumAlert.alert(
                     '⚠️ Session Issue',
                     `Authentication refresh failed after ${attempts} attempts. Please re-login if issues persist.`,
                     [{ text: 'OK' }]
                 );
             },
             onForceRelogin: () => {
-                Alert.alert(
+                PremiumAlert.alert(
                     '🔒 Session Expired',
                     'Your session has expired. Please log in again.',
                     [{ text: 'Log In', onPress: () => navigation.navigate('Login') }]
@@ -965,7 +969,7 @@ export default function RiderDashboard() {
         const unsubscribePower = subscribeToPower(boxIdForMonitoring, (state) => {
             setPowerState(state);
             if (state?.solenoid_blocked) {
-                Alert.alert(
+                PremiumAlert.alert(
                     '🔋 Low Battery Alert',
                     `Box battery is critically low (${state.voltage.toFixed(1)}V). Unlock is disabled until charged.`,
                     [{ text: 'OK' }]
@@ -994,7 +998,7 @@ export default function RiderDashboard() {
 
         // GUARDRAIL: Rider must have a paired box
         if (!isPaired || !boxIdForMonitoring) {
-            Alert.alert(
+            PremiumAlert.alert(
                 'No Box Paired',
                 'You must pair with a Smart Box before accepting orders to ensure safety and tracking.',
                 [{ text: 'OK', onPress: () => navigation.navigate('BoxPairing') }]
@@ -1048,7 +1052,7 @@ export default function RiderDashboard() {
             setShowTripPreview(true);
         } else {
             // Booking was already accepted by another rider (race condition handled)
-            Alert.alert(
+            PremiumAlert.alert(
                 'Order Unavailable',
                 'This delivery was already accepted by another rider.',
                 [{ text: 'OK' }]
@@ -1068,7 +1072,7 @@ export default function RiderDashboard() {
     // EC-32: Handle Cancellation Submit
     const handleCancellationSubmit = async (reason: CancellationReason, details: string) => {
         if (!nextDelivery) {
-            Alert.alert('Error', 'No active delivery to cancel');
+            PremiumAlert.alert('Error', 'No active delivery to cancel');
             return;
         }
         setCancelLoading(true);
@@ -1095,10 +1099,10 @@ export default function RiderDashboard() {
                     pickupAddress: nextDelivery.address,
                 });
             } else {
-                Alert.alert('Cancellation Failed', result.error || 'Unknown error');
+                PremiumAlert.alert('Cancellation Failed', result.error || 'Unknown error');
             }
         } catch (err) {
-            Alert.alert('Error', 'An unexpected error occurred');
+            PremiumAlert.alert('Error', 'An unexpected error occurred');
         } finally {
             setCancelLoading(false);
         }
@@ -1257,7 +1261,7 @@ export default function RiderDashboard() {
         let { status } = await Location.requestForegroundPermissionsAsync();
         if (status !== 'granted') {
             setLocationName('Permission denied');
-            Alert.alert('Permission to access location was denied');
+            PremiumAlert.alert('Permission to access location was denied');
             return;
         }
 
@@ -1365,7 +1369,7 @@ export default function RiderDashboard() {
     const toggleLock = () => {
         if (!boxIdForMonitoring) return;
 
-        Alert.alert(
+        PremiumAlert.alert(
             isLocked ? "Unlock Box?" : "Lock Box?",
             isLocked ? "Are you sure you want to unlock the box?" : "Ensure the box is closed before locking.",
             [
@@ -1464,6 +1468,12 @@ export default function RiderDashboard() {
                 state={reassignmentState}
                 type={getReassignmentType(reassignmentState, riderId)}
                 onAcknowledge={handleReassignmentAcknowledge}
+            />
+
+            <ExitConfirmationModal
+                visible={showExitModal}
+                onDismiss={() => setShowExitModal(false)}
+                onConfirm={handleExit}
             />
 
             {/* Attractive Header */}
@@ -1720,7 +1730,7 @@ export default function RiderDashboard() {
                         label="Box Status"
                         onPress={() => {
                             if (!isPaired || !pairedBoxId) {
-                                Alert.alert('Pair Required', 'Scan your box QR to access controls.');
+                                PremiumAlert.alert('Pair Required', 'Scan your box QR to access controls.');
                                 navigation.navigate('PairBox');
                                 return;
                             }

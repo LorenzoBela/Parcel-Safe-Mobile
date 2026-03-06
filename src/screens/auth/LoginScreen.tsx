@@ -15,6 +15,7 @@ import { Text } from 'react-native-paper';
 import { useNavigation } from '@react-navigation/native';
 import useAuthStore from '../../store/authStore';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { PremiumAlert } from '../../services/PremiumAlertService';
 
 // Uber-inspired minimalist colors (matching RoleSelectionScreen)
 const COLORS = {
@@ -78,7 +79,7 @@ export default function LoginScreen() {
                 errorMessage = `Login failed: ${error.message}`;
             }
 
-            Alert.alert(
+            PremiumAlert.alert(
                 'Authentication Error',
                 errorMessage,
                 [

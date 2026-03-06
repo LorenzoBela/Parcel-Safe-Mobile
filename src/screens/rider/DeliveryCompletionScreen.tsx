@@ -18,6 +18,7 @@ interface CompletionRouteParams {
 }
 
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { PremiumAlert } from '../../services/PremiumAlertService';
 
 export default function DeliveryCompletionScreen() {
     const navigation = useNavigation<any>();
@@ -102,7 +103,7 @@ export default function DeliveryCompletionScreen() {
         if (deliveryId) {
             return true;
         }
-        Alert.alert('Missing Delivery', 'Delivery ID is missing. Returning to dashboard.');
+        PremiumAlert.alert('Missing Delivery', 'Delivery ID is missing. Returning to dashboard.');
         navigation.navigate('RiderDashboard');
         return false;
     };
@@ -120,7 +121,7 @@ export default function DeliveryCompletionScreen() {
                 setPickupPhotoUrl(null);
             }
         } catch (e) {
-            Alert.alert('Camera Error', 'Unable to capture pickup photo right now.');
+            PremiumAlert.alert('Camera Error', 'Unable to capture pickup photo right now.');
         }
     };
 
@@ -128,7 +129,7 @@ export default function DeliveryCompletionScreen() {
         if (!requireDeliveryId()) return;
 
         if (!pickupPhotoUri) {
-            Alert.alert('Photo Required', 'Please capture a pickup photo before confirming pickup.');
+            PremiumAlert.alert('Photo Required', 'Please capture a pickup photo before confirming pickup.');
             return;
         }
 
@@ -142,7 +143,7 @@ export default function DeliveryCompletionScreen() {
             });
 
             if (!uploadResult.success) {
-                Alert.alert('Upload Failed', 'Pickup photo upload failed. Please retry.');
+                PremiumAlert.alert('Upload Failed', 'Pickup photo upload failed. Please retry.');
                 return;
             }
             setPickupPhotoUrl(uploadResult.url || null);
@@ -155,7 +156,7 @@ export default function DeliveryCompletionScreen() {
                 pickup_photo_url: uploadResult.url,
             });
             if (!ok) {
-                Alert.alert('Failed', 'Could not update pickup status.');
+                PremiumAlert.alert('Failed', 'Could not update pickup status.');
                 return;
             }
             setStatus('IN_TRANSIT');
@@ -174,7 +175,7 @@ export default function DeliveryCompletionScreen() {
                 in_transit_at: Date.now(),
             });
             if (!fallbackDone) {
-                Alert.alert('Failed', 'Could not auto-fix pickup step.');
+                PremiumAlert.alert('Failed', 'Could not auto-fix pickup step.');
                 return;
             }
         }
@@ -183,7 +184,7 @@ export default function DeliveryCompletionScreen() {
             arrived_at: Date.now(),
         });
         if (!ok) {
-            Alert.alert('Failed', 'Could not mark arrival.');
+            PremiumAlert.alert('Failed', 'Could not mark arrival.');
             return;
         }
         setStatus('ARRIVED');
@@ -193,7 +194,7 @@ export default function DeliveryCompletionScreen() {
         if (!requireDeliveryId()) return;
 
         if (!proofPhotoUri) {
-            Alert.alert('Proof Required', 'Capture a proof photo before completing the delivery.');
+            PremiumAlert.alert('Proof Required', 'Capture a proof photo before completing the delivery.');
             return;
         }
 
@@ -206,7 +207,7 @@ export default function DeliveryCompletionScreen() {
                     in_transit_at: Date.now(),
                 });
                 if (!pickupOk) {
-                    Alert.alert('Failed', 'Could not auto-fix pickup step.');
+                    PremiumAlert.alert('Failed', 'Could not auto-fix pickup step.');
                     return;
                 }
             }
@@ -217,7 +218,7 @@ export default function DeliveryCompletionScreen() {
                     arrived_confirmed_fallback: true,
                 });
                 if (!arrivedOk) {
-                    Alert.alert('Failed', 'Could not auto-fix arrival step.');
+                    PremiumAlert.alert('Failed', 'Could not auto-fix arrival step.');
                     return;
                 }
             }
@@ -235,7 +236,7 @@ export default function DeliveryCompletionScreen() {
                         proof_photo_upload_failed_at: Date.now(),
                         proof_photo_upload_error: uploadResult.error || 'Unknown error',
                     });
-                    Alert.alert('Proof Upload Failed', 'Proof photo is required. Please retry.');
+                    PremiumAlert.alert('Proof Upload Failed', 'Proof photo is required. Please retry.');
                     return;
                 } else {
                     setProofPhotoUrl(uploadResult.url || null);
@@ -247,7 +248,7 @@ export default function DeliveryCompletionScreen() {
             });
 
             if (!completed) {
-                Alert.alert('Failed', 'Could not complete delivery.');
+                PremiumAlert.alert('Failed', 'Could not complete delivery.');
                 return;
             }
 
@@ -356,7 +357,7 @@ export default function DeliveryCompletionScreen() {
                 await markRiderAvailable(riderId);
             }
 
-            Alert.alert('Delivery Completed', 'All required delivery states are now satisfied.', [
+            PremiumAlert.alert('Delivery Completed', 'All required delivery states are now satisfied.', [
                 {
                     text: 'Back to Dashboard',
                     onPress: () => navigation.navigate('RiderDashboard'),
@@ -380,7 +381,7 @@ export default function DeliveryCompletionScreen() {
                 setProofPhotoUrl(null);
             }
         } catch (e) {
-            Alert.alert('Camera Error', 'Unable to capture photo right now.');
+            PremiumAlert.alert('Camera Error', 'Unable to capture photo right now.');
         }
     };
 

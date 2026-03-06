@@ -17,6 +17,9 @@ import {
 import { supabase } from '../../services/supabaseClient';
 import useAuthStore from '../../store/authStore';
 import { fetchWeather, weatherBackgroundImages, WeatherData } from '../../services/weatherService';
+import { useExitAppConfirmation } from '../../hooks/useExitAppConfirmation';
+import ExitConfirmationModal from '../../components/modals/ExitConfirmationModal';
+import { PremiumAlert } from '../../services/PremiumAlertService';
 
 // ─── Colors ─────────────────────────────────────────────────────────────────────
 type StatusBarStyle = 'dark-content' | 'light-content';
@@ -70,6 +73,7 @@ function statusColor(status: string): string {
 
 // ─── Component ──────────────────────────────────────────────────────────────────
 export default function CustomerDashboard() {
+    const { showExitModal, setShowExitModal, handleExit } = useExitAppConfirmation();
     const navigation = useNavigation<any>();
     const { isDarkMode } = useAppTheme();
     const c = isDarkMode ? darkC : lightC;
@@ -110,7 +114,7 @@ export default function CustomerDashboard() {
             const baseUrl = process.env.EXPO_PUBLIC_TRACKING_WEB_BASE_URL || 'https://parcel-safe.vercel.app';
             const shareUrl = `${baseUrl}/track/${token}`;
             await Share.share({ message: `Track your Parcel-Safe delivery here: ${shareUrl}`, url: shareUrl, title: 'Track Parcel' });
-        } catch (error: any) { Alert.alert(error.message); }
+        } catch (error: any) { PremiumAlert.alert(error.message); }
     };
 
     // ─── Clock ──────────────────────────────────────────────────────────────
@@ -445,6 +449,12 @@ export default function CustomerDashboard() {
                     <Text style={{ color: c.textSec }}>No proof image available.</Text>
                 </Modal>
             </Portal>
+
+            <ExitConfirmationModal
+                visible={showExitModal}
+                onDismiss={() => setShowExitModal(false)}
+                onConfirm={handleExit}
+            />
         </View>
     );
 }

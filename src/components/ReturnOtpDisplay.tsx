@@ -10,8 +10,9 @@ import { View, StyleSheet, TouchableOpacity } from 'react-native';
 import { Text, Surface, IconButton, useTheme } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import * as Clipboard from 'expo-clipboard';
-import { Alert } from 'react-native';
+
 import { getReturnOtpRemainingHours } from '../services/cancellationService';
+import { PremiumAlert } from '../services/PremiumAlertService';
 
 interface ReturnOtpDisplayProps {
     otp: string;
@@ -48,7 +49,7 @@ export default function ReturnOtpDisplay({
     const handleCopy = async () => {
         await Clipboard.setStringAsync(otp);
         setCopied(true);
-        Alert.alert('Copied!', 'OTP copied to clipboard');
+        PremiumAlert.alert('Copied!', 'OTP copied to clipboard');
         onCopy?.();
         setTimeout(() => setCopied(false), 3000);
     };

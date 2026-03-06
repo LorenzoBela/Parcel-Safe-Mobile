@@ -209,7 +209,7 @@ class LocationRedundancyManager {
             } else if (this.state.source === 'phone' || !this.state.isBoxOnline) {
                 // EC-FIX: Loopback - Update UI with phone location from Firebase
                 // This ensures the rider sees exactly what the customer sees
-                if (location.source === 'phone' || location.source === 'phone_background') {
+                if (src === 'phone' || src === 'phone_background') {
                     this.updateState({
                         lastLocation: location,
                         source: 'phone'

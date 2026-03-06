@@ -19,6 +19,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getFirebaseDatabase, ref, set, serverTimestamp, onValue, off } from './firebaseClient';
 import { update } from 'firebase/database';
 import { offlineQueueService } from './offlineQueueService';
+import { PremiumAlert } from '../services/PremiumAlertService';
 
 // Native RTDB — preferred for lock-screen/background reliability on Android.
 // Falls back to Firebase JS SDK when unavailable.
@@ -622,7 +623,7 @@ class BackgroundLocationManager {
                     PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS
                 );
                 if (granted !== PermissionsAndroid.RESULTS.GRANTED) {
-                    Alert.alert(
+                    PremiumAlert.alert(
                         'Notification Required',
                         'Parcel-Safe requires notification permissions to securely track your location in the background. Without it, tracking may fail.',
                         [{ text: 'OK' }]
@@ -671,7 +672,7 @@ class BackgroundLocationManager {
             if (isOptimized) {
                 // We use a Promise to pause execution until the user responds to the alert
                 await new Promise<void>((resolve) => {
-                    Alert.alert(
+                    PremiumAlert.alert(
                         'Background Location Tracking',
                         'To ensure your location is tracked even when your phone is locked, please disable Battery Optimization for Parcel-Safe.',
                         [

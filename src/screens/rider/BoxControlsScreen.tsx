@@ -71,6 +71,7 @@ const PAIRED_BOX_CACHE_KEY_PREFIX = 'parcelSafe:lastPairedBoxId:';
 const DEMO_BOX_ID = 'BOX_001';
 
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { PremiumAlert } from '../../services/PremiumAlertService';
 
 export default function BoxControlsScreen() {
     const navigation = useNavigation();
@@ -281,10 +282,10 @@ export default function BoxControlsScreen() {
                 // setIsLocked(false); // Managed by boxState
                 addLog("Face ID Verified - Box Unlocked", "success");
             } else if (status === 'TIMEOUT_REMOVE_HELMET') {
-                Alert.alert("Face Scan Failed", "Please remove helmet and try again.");
+                PremiumAlert.alert("Face Scan Failed", "Please remove helmet and try again.");
                 addLog("Face Scan Timeout - Helmet detected?", "warning");
             } else if (status === 'FAILED_USE_OTP') {
-                Alert.alert("Face Scan Failed", "Please use OTP to unlock.");
+                PremiumAlert.alert("Face Scan Failed", "Please use OTP to unlock.");
                 addLog("Face Scan Failed - Use OTP", "error");
             }
         });
@@ -368,13 +369,13 @@ export default function BoxControlsScreen() {
 
     const toggleLock = () => {
         if (!isPaired) {
-            Alert.alert('Pair Required', 'Scan your box QR to unlock controls.');
+            PremiumAlert.alert('Pair Required', 'Scan your box QR to unlock controls.');
             navigation.navigate('PairBox' as never);
             return;
         }
         // EC-90: Block unlock if solenoid is blocked due to low voltage
         if (isLocked && powerState?.solenoid_blocked) {
-            Alert.alert(
+            PremiumAlert.alert(
                 '🔋 Low Voltage',
                 `Battery voltage too low (${powerState.voltage.toFixed(1)}V). Cannot unlock until battery is charged.`,
                 [{ text: 'OK' }]
@@ -384,7 +385,7 @@ export default function BoxControlsScreen() {
 
         // EC-96: Block unlock if solenoid is overheated
         if (lockHealth?.overheated) {
-            Alert.alert(
+            PremiumAlert.alert(
                 '🔥 System Overheated',
                 'Lock mechanism is too hot. Please wait for it to cool down.',
                 [{ text: 'OK' }]
@@ -402,7 +403,7 @@ export default function BoxControlsScreen() {
     };
 
     const handleEmergencyOpen = () => {
-        Alert.alert(
+        PremiumAlert.alert(
             "Emergency Open",
             "This will force the lock open and trigger an incident report. Continue?",
             [
@@ -423,7 +424,7 @@ export default function BoxControlsScreen() {
     };
 
     const handleReboot = () => {
-        Alert.alert(
+        PremiumAlert.alert(
             "Reboot System",
             "This sends a reboot command to the GPS/LTE board via Firebase. The box will go offline for ~30 seconds while the modem restarts.",
             [
@@ -450,7 +451,7 @@ export default function BoxControlsScreen() {
     };
 
     const handleReportStolen = () => {
-        Alert.alert(
+        PremiumAlert.alert(
             "Report Stolen/Missing",
             "Are you sure you want to report this box as stolen or missing? This will trigger an immediate lockdown and alert administrators.",
             [
@@ -494,7 +495,7 @@ export default function BoxControlsScreen() {
 
                         } catch (error) {
                             addLog("Failed to report stolen box", "error");
-                            Alert.alert("Error", "Could not send report. Please check connection.");
+                            PremiumAlert.alert("Error", "Could not send report. Please check connection.");
                         }
                     }
                 }
@@ -504,7 +505,7 @@ export default function BoxControlsScreen() {
 
     // EC-04: Reset OTP Lockout
     const handleResetLockout = async () => {
-        Alert.alert(
+        PremiumAlert.alert(
             "Reset Lockout",
             "This will clear the OTP lockout and allow new attempts. Use only after verifying the customer's identity.",
             [
@@ -515,10 +516,10 @@ export default function BoxControlsScreen() {
                         try {
                             await resetLockout(boxId);
                             addLog("OTP Lockout reset successfully", "success");
-                            Alert.alert("Success", "Lockout has been reset. Customer can now retry OTP.");
+                            PremiumAlert.alert("Success", "Lockout has been reset. Customer can now retry OTP.");
                         } catch (error) {
                             addLog("Failed to reset lockout", "error");
-                            Alert.alert("Error", "Failed to reset lockout. Try again.");
+                            PremiumAlert.alert("Error", "Failed to reset lockout. Try again.");
                         }
                     }
                 }
@@ -529,13 +530,13 @@ export default function BoxControlsScreen() {
     // EC-02: BLE OTP Transfer
     const handleBleTransfer = async () => {
         if (!isPaired) {
-            Alert.alert('Pair Required', 'Scan your box QR before sending OTP over BLE.');
+            PremiumAlert.alert('Pair Required', 'Scan your box QR before sending OTP over BLE.');
             navigation.navigate('PairBox' as never);
             return;
         }
 
         if (!activeDeliveryId || !activeOtpCode || activeOtpCode.length < 6) {
-            Alert.alert(
+            PremiumAlert.alert(
                 'OTP Not Ready',
                 'No active OTP found for this box. Make sure a delivery is assigned and OTP has been issued.'
             );
@@ -631,7 +632,7 @@ export default function BoxControlsScreen() {
     // EC-97: Face Unlock Handler
     const handleFaceUnlock = async () => {
         if (lockHealth?.overheated) {
-            Alert.alert('🔥 System Overheated', 'Wait for cool down.');
+            PremiumAlert.alert('🔥 System Overheated', 'Wait for cool down.');
             return;
         }
 

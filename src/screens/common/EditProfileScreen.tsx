@@ -5,6 +5,7 @@ import { useNavigation } from '@react-navigation/native';
 import { supabase } from '../../services/supabaseClient';
 import LocationPicker, { LocationData } from '../../components/LocationPicker';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { PremiumAlert } from '../../services/PremiumAlertService';
 
 export default function EditProfileScreen() {
     const theme = useTheme();
@@ -63,7 +64,7 @@ export default function EditProfileScreen() {
             }
         } catch (error: any) {
             console.error('Error fetching profile:', error);
-            Alert.alert('Error', 'Failed to load profile data.');
+            PremiumAlert.alert('Error', 'Failed to load profile data.');
         } finally {
             setLoading(false);
         }
@@ -98,12 +99,12 @@ export default function EditProfileScreen() {
 
             if (error) throw error;
 
-            Alert.alert('Success', 'Profile updated successfully!');
+            PremiumAlert.alert('Success', 'Profile updated successfully!');
             navigation.goBack();
 
         } catch (error: any) {
             console.error('Error updating profile:', error);
-            Alert.alert('Error', error.message || 'Failed to update profile.');
+            PremiumAlert.alert('Error', error.message || 'Failed to update profile.');
         } finally {
             setSaving(false);
         }

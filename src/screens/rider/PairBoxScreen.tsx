@@ -28,6 +28,7 @@ const PAIRED_BOX_CACHE_KEY_PREFIX = 'parcelSafe:lastPairedBoxId:';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { parseUTCString } from '../../utils/date';
 import { useAppTheme } from '../../context/ThemeContext';
+import { PremiumAlert } from '../../services/PremiumAlertService';
 
 const lightC = {
     bg: '#F7F7F8', card: '#FFFFFF', text: '#111111', textSec: '#6B6B6B', textTer: '#9E9E9E',
@@ -86,7 +87,7 @@ export default function PairBoxScreen() {
             if (event.type === 'EXPIRED') {
                 setExpirationWarning(false);
                 setDriftWarning(false);
-                Alert.alert(
+                PremiumAlert.alert(
                     'Session Expired',
                     `Your pairing with Box ${event.boxId} has expired and has been automatically removed.`,
                 );
@@ -98,7 +99,7 @@ export default function PairBoxScreen() {
                 const distKm = event.distanceMeters
                     ? `${(event.distanceMeters / 1000).toFixed(1)} km`
                     : 'far';
-                Alert.alert(
+                PremiumAlert.alert(
                     'Pairing Removed — Too Far',
                     `Your pairing with Box ${event.boxId} was automatically removed because you and the box are ${distKm} apart.`,
                 );
@@ -132,7 +133,7 @@ export default function PairBoxScreen() {
 
             const parsed = parsePairingQr(data);
             if (!parsed?.boxId) {
-                Alert.alert('Invalid QR', 'Unable to read a box ID from this code.');
+                PremiumAlert.alert('Invalid QR', 'Unable to read a box ID from this code.');
                 return;
             }
 
@@ -155,12 +156,12 @@ export default function PairBoxScreen() {
         if (!scannedPayload?.boxId) return;
 
         if (!authedUserId) {
-            Alert.alert('Not Logged In', 'Please log in to pair a box.');
+            PremiumAlert.alert('Not Logged In', 'Please log in to pair a box.');
             return;
         }
 
         if (authedRole && authedRole === 'customer') {
-            Alert.alert('Wrong Account', 'Please log in with a rider or admin account to pair a box.');
+            PremiumAlert.alert('Wrong Account', 'Please log in with a rider or admin account to pair a box.');
             return;
         }
 
@@ -200,10 +201,10 @@ export default function PairBoxScreen() {
                 skipProximityCheck: isAdmin,
             });
             setDriftWarning(false);
-            Alert.alert('Paired', `Box ${scannedPayload.boxId} is now linked to your account.`);
+            PremiumAlert.alert('Paired', `Box ${scannedPayload.boxId} is now linked to your account.`);
         } catch (error) {
             const message = error instanceof Error ? error.message : 'Please try scanning again.';
-            Alert.alert('Pairing Failed', message);
+            PremiumAlert.alert('Pairing Failed', message);
         } finally {
             setIsPairing(false);
         }
@@ -213,7 +214,7 @@ export default function PairBoxScreen() {
         const boxIdToUnpair = scannedPayload?.boxId || pairingState?.box_id;
         if (!boxIdToUnpair || !authedUserId) return;
 
-        Alert.alert(
+        PremiumAlert.alert(
             'Unpair Box',
             `Unpair Box ${boxIdToUnpair} from your account?`,
             [
@@ -229,10 +230,10 @@ export default function PairBoxScreen() {
                             stopBackgroundLocation();
                             setScannedPayload(null);
                             setScanLocked(false);
-                            Alert.alert('Unpaired', `Box ${boxIdToUnpair} is no longer linked to your account.`);
+                            PremiumAlert.alert('Unpaired', `Box ${boxIdToUnpair} is no longer linked to your account.`);
                         } catch (error) {
                             const message = error instanceof Error ? error.message : 'Please try again.';
-                            Alert.alert('Unpair Failed', message);
+                            PremiumAlert.alert('Unpair Failed', message);
                         } finally {
                             setIsPairing(false);
                         }

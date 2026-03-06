@@ -7,6 +7,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAppTheme } from '../../context/ThemeContext';
 import { supabase } from '../../services/supabaseClient';
 import { parseUTCString } from '../../utils/date';
+import { PremiumAlert } from '../../services/PremiumAlertService';
 
 // ─── Colors ─────────────────────────────────────────────────────────────────────
 const light = {
@@ -88,9 +89,9 @@ export default function ReportScreen() {
     };
 
     const handleSubmit = async () => {
-        if (!selectedOrder) { Alert.alert('Missing Info', 'Please select the order.'); return; }
-        if (!selectedCategory) { Alert.alert('Missing Info', 'Please select an issue category.'); return; }
-        if (!description.trim()) { Alert.alert('Missing Info', 'Please describe the issue.'); return; }
+        if (!selectedOrder) { PremiumAlert.alert('Missing Info', 'Please select the order.'); return; }
+        if (!selectedCategory) { PremiumAlert.alert('Missing Info', 'Please select an issue category.'); return; }
+        if (!description.trim()) { PremiumAlert.alert('Missing Info', 'Please describe the issue.'); return; }
         setLoading(true);
         try {
             const { data: { user } } = await supabase.auth.getUser();
@@ -100,9 +101,9 @@ export default function ReportScreen() {
                 category: selectedCategory, description: description.trim(), status: 'OPEN',
             });
             if (error) throw error;
-            Alert.alert('Report Submitted', 'We\'ll investigate shortly.', [{ text: 'OK', onPress: () => navigation.goBack() }]);
+            PremiumAlert.alert('Report Submitted', 'We\'ll investigate shortly.', [{ text: 'OK', onPress: () => navigation.goBack() }]);
         } catch {
-            Alert.alert('Error', 'Failed to submit. Please try again.');
+            PremiumAlert.alert('Error', 'Failed to submit. Please try again.');
         } finally { setLoading(false); }
     };
 

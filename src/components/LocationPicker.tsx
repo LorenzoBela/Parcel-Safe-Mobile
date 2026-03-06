@@ -5,6 +5,7 @@ import * as Location from 'expo-location';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { SafeMapView, isMapboxNativeAvailable } from './map/MapboxWrapper';
 import Mapbox from '@rnmapbox/maps';
+import { PremiumAlert } from '../services/PremiumAlertService';
 
 interface LocationPickerProps {
     visible: boolean;
@@ -81,7 +82,7 @@ export default function LocationPicker({
         try {
             const { status } = await Location.requestForegroundPermissionsAsync();
             if (status !== 'granted') {
-                Alert.alert('Permission Denied', 'Please enable location permissions to use this feature.');
+                PremiumAlert.alert('Permission Denied', 'Please enable location permissions to use this feature.');
                 return;
             }
 
@@ -196,7 +197,7 @@ export default function LocationPicker({
                 setAddress(item.name + (item.address ? `, ${item.address}` : ''));
             }
         } catch (error) {
-            Alert.alert("Error", "Could not fetch location details.");
+            PremiumAlert.alert("Error", "Could not fetch location details.");
         }
     };
 
@@ -211,7 +212,7 @@ export default function LocationPicker({
 
     const handleConfirm = () => {
         if (!address) {
-            Alert.alert('No Address', 'Please select a location on the map or enter an address manually.');
+            PremiumAlert.alert('No Address', 'Please select a location on the map or enter an address manually.');
             return;
         }
         onLocationSelected({

@@ -108,6 +108,7 @@ interface RouteParams {
 }
 
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { PremiumAlert } from '../../services/PremiumAlertService';
 
 export default function ArrivalScreen() {
     const navigation = useNavigation<any>();
@@ -207,7 +208,7 @@ export default function ArrivalScreen() {
         const unsubscribeLockout = subscribeToLockout(params.boxId, (state) => {
             setLockoutState(state);
             if (state?.active) {
-                Alert.alert(
+                PremiumAlert.alert(
                     '🔒 OTP Lockout Active',
                     `Too many failed OTP attempts. Box is locked for ${Math.ceil((state.expires_at - Date.now()) / 60000)} minutes.`,
                     [{ text: 'OK' }]
@@ -219,7 +220,7 @@ export default function ArrivalScreen() {
         const unsubscribeBattery = subscribeToBattery(params.boxId, (state) => {
             setBatteryState(state);
             if (state?.criticalBatteryWarning) {
-                Alert.alert(
+                PremiumAlert.alert(
                     '⚠️ Critical Battery',
                     `Box battery is critically low (${state.percentage}%). Complete delivery quickly!`,
                     [{ text: 'OK' }]
@@ -238,7 +239,7 @@ export default function ArrivalScreen() {
                         tamper_lockdown: Boolean(state.lockdown),
                     });
                 }
-                Alert.alert(
+                PremiumAlert.alert(
                     'SECURITY ALERT',
                     'Box tamper detected! The box is now in lockdown mode. Contact support.',
                     [{ text: 'Contact Support', style: 'destructive' }]
@@ -250,7 +251,7 @@ export default function ArrivalScreen() {
         const unsubscribeLowLight = subscribeToLowLight(params.boxId, (state) => {
             setLowLightState(state);
             if (state && isLowLightFallbackRequired(state)) {
-                Alert.alert(
+                PremiumAlert.alert(
                     '📷 Low Light Condition',
                     'Camera cannot detect face due to poor lighting. Alternative verification will be required.',
                     [{ text: 'OK' }]
@@ -356,11 +357,11 @@ export default function ArrivalScreen() {
         if (!arrivedAt || !riderId) return;
 
         if (!isGracePeriodExpired(arrivedAt)) {
-            Alert.alert('Grace Period Active', 'You must wait for the full grace period before marking a no-show.');
+            PremiumAlert.alert('Grace Period Active', 'You must wait for the full grace period before marking a no-show.');
             return;
         }
 
-        Alert.alert(
+        PremiumAlert.alert(
             'Confirm No-Show',
             'This will cancel the delivery and apply a penalty to the customer. This action cannot be undone.',
             [
@@ -374,13 +375,13 @@ export default function ArrivalScreen() {
                         setNoShowLoading(false);
 
                         if (result.success) {
-                            Alert.alert(
+                            PremiumAlert.alert(
                                 '✅ No-Show Confirmed',
                                 'The delivery has been cancelled. You are now available for new orders.',
                                 [{ text: 'OK', onPress: () => navigation.goBack() }]
                             );
                         } else {
-                            Alert.alert('Error', result.error || 'Failed to mark no-show. Please try again.');
+                            PremiumAlert.alert('Error', result.error || 'Failed to mark no-show. Please try again.');
                         }
                     },
                 },
@@ -432,7 +433,7 @@ export default function ArrivalScreen() {
         const startPhoneTracking = async () => {
             const { status } = await Location.requestForegroundPermissionsAsync();
             if (status !== 'granted') {
-                Alert.alert('Permission Denied', 'Phone location is required to verify arrival.');
+                PremiumAlert.alert('Permission Denied', 'Phone location is required to verify arrival.');
                 return;
             }
 
@@ -659,11 +660,11 @@ export default function ArrivalScreen() {
     // EC-11: Return with package
     const handleReturn = async () => {
         if (!canInitiateReturn(waitTimerState, Date.now())) {
-            Alert.alert('Please Wait', 'You must wait the full 5 minutes before returning.');
+            PremiumAlert.alert('Please Wait', 'You must wait the full 5 minutes before returning.');
             return;
         }
 
-        Alert.alert(
+        PremiumAlert.alert(
             'Confirm Return',
             'Are you sure you want to return with the package? The customer will be notified.',
             [
@@ -685,7 +686,7 @@ export default function ArrivalScreen() {
     // EC-02: BLE OTP Transfer
     const handleBleTransfer = async () => {
         if (!deliveryOtp) {
-            Alert.alert('OTP Unavailable', 'Could not retrieve the delivery OTP. Please try again.');
+            PremiumAlert.alert('OTP Unavailable', 'Could not retrieve the delivery OTP. Please try again.');
             return;
         }
 
@@ -771,10 +772,10 @@ export default function ArrivalScreen() {
                     pickupLng: params.pickupLng,
                 });
             } else {
-                Alert.alert('Cancellation Failed', result.error || 'Unknown error');
+                PremiumAlert.alert('Cancellation Failed', result.error || 'Unknown error');
             }
         } catch (err) {
-            Alert.alert('Error', 'An unexpected error occurred');
+            PremiumAlert.alert('Error', 'An unexpected error occurred');
         } finally {
             setCancelLoading(false);
         }
@@ -819,7 +820,7 @@ export default function ArrivalScreen() {
         setShowReassignmentModal(false);
         if (type === 'outgoing') {
             // Delivery reassigned AWAY from this rider
-            Alert.alert(
+            PremiumAlert.alert(
                 'Delivery Reassigned',
                 'This delivery has been assigned to another rider. Returning to dashboard.',
                 [{ text: 'OK', onPress: () => navigation.navigate('RiderDashboard') }]

@@ -3,7 +3,7 @@ import { render, fireEvent, act } from '@testing-library/react-native';
 import ReturnOtpDisplay from '../../components/ReturnOtpDisplay';
 import { Provider as PaperProvider } from 'react-native-paper';
 import * as Clipboard from 'expo-clipboard';
-import { Alert } from 'react-native';
+import { PremiumAlert } from '../../services/PremiumAlertService';
 
 // Mock clipboard
 jest.mock('expo-clipboard', () => ({
@@ -11,7 +11,7 @@ jest.mock('expo-clipboard', () => ({
 }));
 
 // Mock Alert
-jest.spyOn(Alert, 'alert');
+jest.spyOn(PremiumAlert, 'alert');
 
 // Mock Service
 jest.mock('../../services/cancellationService', () => ({
@@ -69,7 +69,7 @@ describe('ReturnOtpDisplay', () => {
         });
 
         expect(Clipboard.setStringAsync).toHaveBeenCalledWith('123456');
-        expect(Alert.alert).toHaveBeenCalledWith('Copied!', 'OTP copied to clipboard');
+        expect(PremiumAlert.alert).toHaveBeenCalledWith('Copied!', 'OTP copied to clipboard');
         expect(mockProps.onCopy).toHaveBeenCalled();
     });
 
@@ -88,7 +88,7 @@ describe('ReturnOtpDisplay', () => {
         });
 
         expect(Clipboard.setStringAsync).toHaveBeenCalledWith('222333');
-        expect(Alert.alert).toHaveBeenCalledWith('Copied!', 'OTP copied to clipboard');
+        expect(PremiumAlert.alert).toHaveBeenCalledWith('Copied!', 'OTP copied to clipboard');
     });
 
     it('hides validity in compact mode when showValidity is false', () => {

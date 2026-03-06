@@ -15,6 +15,7 @@ import { Platform, AppState, AppStateStatus, Linking, Alert } from 'react-native
 import * as Notifications from 'expo-notifications';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { scheduleDeliveryReminderNotification } from './pushNotificationService';
+import { PremiumAlert } from '../services/PremiumAlertService';
 
 // Native modules - conditionally imported to prevent startup crashes
 let NetInfo: any = null;
@@ -727,7 +728,7 @@ export async function requestDisableBatteryOptimization(): Promise<void> {
         if (hasRequested) return; // Don't ask again if already requested
 
         // Show explanation dialog first
-        Alert.alert(
+        PremiumAlert.alert(
             "Enable Background Running",
             "This app requires background location access to track deliveries even when the screen is off.\n\nPlease select 'Allow' or 'Unrestricted' in the next screen.",
             [

@@ -17,6 +17,7 @@ import * as Location from 'expo-location';
 import * as ImagePicker from 'expo-image-picker';
 import { markPackageRetrieved, subscribeToCancellation, CancellationState } from '../../services/cancellationService';
 import { uploadReturnPhoto } from '../../services/proofPhotoService';
+import { PremiumAlert } from '../../services/PremiumAlertService';
 import {
     subscribeToDeliveryProof,
     subscribeToCamera,
@@ -192,7 +193,7 @@ export default function ReturnPackageScreen() {
         if (url) {
             Linking.canOpenURL(url).then((ok) => {
                 if (ok) Linking.openURL(url);
-                else Alert.alert('Error', 'Unable to open navigation app');
+                else PremiumAlert.alert('Error', 'Unable to open navigation app');
             });
         }
     };
@@ -200,7 +201,7 @@ export default function ReturnPackageScreen() {
     // ── Step 1 → 2: Geofence-gated arrival confirmation ────────────────────────
     const handleConfirmArrival = () => {
         if (!isInsideGeofence) {
-            Alert.alert(
+            PremiumAlert.alert(
                 'Not Within Range',
                 `You must be within ${GEOFENCE_RADIUS_M} m of the pickup location to proceed.\n\nCurrent distance: ${formatDistance()}`,
             );
@@ -213,7 +214,7 @@ export default function ReturnPackageScreen() {
     const handleCapturePhoto = async () => {
         const { status } = await ImagePicker.requestCameraPermissionsAsync();
         if (status !== 'granted') {
-            Alert.alert('Permission Required', 'Camera access is needed to capture the sender photo.');
+            PremiumAlert.alert('Permission Required', 'Camera access is needed to capture the sender photo.');
             return;
         }
         const result = await ImagePicker.launchCameraAsync({
@@ -230,7 +231,7 @@ export default function ReturnPackageScreen() {
     // ── Fallback: upload phone photo then complete ──────────────────────────────────
     const handleUploadAndComplete = async () => {
         if (!photoUri) {
-            Alert.alert('Photo Required', 'Please capture a fallback photo first.');
+            PremiumAlert.alert('Photo Required', 'Please capture a fallback photo first.');
             return;
         }
         setCurrentStep('UPLOADING');
@@ -317,19 +318,19 @@ export default function ReturnPackageScreen() {
                                     ? `Within range (${formatDistance()}) — tap Confirm Arrival`
                                     : `Still ${formatDistance()} away — must be within ${GEOFENCE_RADIUS_M} m`
                             )}
-                        {currentStep === 'PHOTO_CAPTURE' && (
-                            hardwareSuccess
-                                ? 'Box captured sender photo ✔  Completing return…'
-                                : cameraFailed
-                                    ? 'Box camera failed — use phone camera as fallback'
-                                    : boxOtpValidated && faceDetected
-                                        ? 'OTP verified & face detected ✔  Finalising…'
-                                    : boxOtpValidated
-                                        ? 'OTP verified ✔  Waiting for face detection…'
-                                    : lockEvent && !lockEvent.otp_valid
-                                        ? '❌ Wrong OTP — ask sender to check their code and retry'
-                                        : 'Waiting for sender to enter Return OTP on the box…'
-                        )}
+                            {currentStep === 'PHOTO_CAPTURE' && (
+                                hardwareSuccess
+                                    ? 'Box captured sender photo ✔  Completing return…'
+                                    : cameraFailed
+                                        ? 'Box camera failed — use phone camera as fallback'
+                                        : boxOtpValidated && faceDetected
+                                            ? 'OTP verified & face detected ✔  Finalising…'
+                                            : boxOtpValidated
+                                                ? 'OTP verified ✔  Waiting for face detection…'
+                                                : lockEvent && !lockEvent.otp_valid
+                                                    ? '❌ Wrong OTP — ask sender to check their code and retry'
+                                                    : 'Waiting for sender to enter Return OTP on the box…'
+                            )}
                             {currentStep === 'UPLOADING' && 'Saving verification photo to secure storage…'}
                             {currentStep === 'COMPLETED' && 'Package returned successfully. Your job is complete.'}
                         </Text>
@@ -384,11 +385,11 @@ export default function ReturnPackageScreen() {
                                         ? '✅ Box unlocked — sender photo captured automatically'
                                         : boxOtpValidated && faceDetected
                                             ? '🔓 OTP verified & face detected ✔  Finalising…'
-                                        : boxOtpValidated
-                                            ? '🔓 OTP verified ✔  Waiting for face detection…'
-                                        : lockEvent && !lockEvent?.otp_valid
-                                            ? '❌ Wrong OTP — ask sender to check their code'
-                                            : '🔒 Waiting for sender to enter Return OTP on the box…'}
+                                            : boxOtpValidated
+                                                ? '🔓 OTP verified ✔  Waiting for face detection…'
+                                                : lockEvent && !lockEvent?.otp_valid
+                                                    ? '❌ Wrong OTP — ask sender to check their code'
+                                                    : '🔒 Waiting for sender to enter Return OTP on the box…'}
                                 </Text>
                             </View>
                         )}

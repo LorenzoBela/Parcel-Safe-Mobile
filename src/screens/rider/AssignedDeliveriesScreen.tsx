@@ -36,6 +36,7 @@ const formatTimeWithHeuristic = (timeStr: string) => {
 };
 
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { PremiumAlert } from '../../services/PremiumAlertService';
 
 export default function AssignedDeliveriesScreen() {
     const theme = useTheme();
@@ -81,7 +82,7 @@ export default function AssignedDeliveriesScreen() {
 
             if (error) {
                 console.error('Error fetching deliveries:', error);
-                Alert.alert('Error', 'Failed to fetch deliveries');
+                PremiumAlert.alert('Error', 'Failed to fetch deliveries');
             } else {
                 console.log('Fetched deliveries data:', JSON.stringify(data, null, 2)); // DEBUG LOG
 
@@ -166,7 +167,7 @@ export default function AssignedDeliveriesScreen() {
 
     const openGoogleMaps = (lat, lng, address) => {
         if (!lat || !lng) {
-            Alert.alert('Error', 'Location coordinates missing for this delivery.');
+            PremiumAlert.alert('Error', 'Location coordinates missing for this delivery.');
             return;
         }
         const url = Platform.select({
@@ -205,13 +206,13 @@ export default function AssignedDeliveriesScreen() {
             if (result.success) {
                 setShowCancelModal(false);
                 setSelectedDelivery(null);
-                Alert.alert('Success', 'Delivery cancelled successfully.');
+                PremiumAlert.alert('Success', 'Delivery cancelled successfully.');
                 fetchDeliveries(); // Refresh list
             } else {
-                Alert.alert('Error', result.error || 'Cancellation failed');
+                PremiumAlert.alert('Error', result.error || 'Cancellation failed');
             }
         } catch (error) {
-            Alert.alert('Error', 'An unexpected error occurred');
+            PremiumAlert.alert('Error', 'An unexpected error occurred');
         } finally {
             setCancelLoading(false);
         }
@@ -425,7 +426,7 @@ export default function AssignedDeliveriesScreen() {
                                         });
                                     }
                                     options.push({ text: 'Cancel', onPress: () => {} });
-                                    Alert.alert('Who do you want to call?', undefined, options);
+                                    PremiumAlert.alert('Who do you want to call?', undefined, options);
                                 }}
                             >
                                 Call

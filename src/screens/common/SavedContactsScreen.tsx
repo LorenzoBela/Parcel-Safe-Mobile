@@ -5,6 +5,7 @@ import { useNavigation } from '@react-navigation/native';
 import { supabase } from '../../services/supabaseClient';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { PremiumAlert } from '../../services/PremiumAlertService';
 
 interface SavedContact {
     id: string;
@@ -71,7 +72,7 @@ export default function SavedContactsScreen() {
             setContacts(newContacts);
             return true;
         } catch (error: any) {
-            Alert.alert('Error', error.message || 'Failed to save contact.');
+            PremiumAlert.alert('Error', error.message || 'Failed to save contact.');
             return false;
         }
     };
@@ -84,12 +85,12 @@ export default function SavedContactsScreen() {
 
     const handleAddOrUpdate = async () => {
         if (!name.trim() || !phone.trim()) {
-            Alert.alert('Missing Fields', 'Please enter both name and phone number.');
+            PremiumAlert.alert('Missing Fields', 'Please enter both name and phone number.');
             return;
         }
 
         if (phone.length !== 11 || !phone.startsWith('09')) {
-            Alert.alert('Invalid Phone', 'Phone must be 11 digits starting with 09.');
+            PremiumAlert.alert('Invalid Phone', 'Phone must be 11 digits starting with 09.');
             return;
         }
 
@@ -117,7 +118,7 @@ export default function SavedContactsScreen() {
     };
 
     const handleDelete = (id: string) => {
-        Alert.alert(
+        PremiumAlert.alert(
             'Delete Contact',
             'Are you sure you want to delete this contact?',
             [

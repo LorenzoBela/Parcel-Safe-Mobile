@@ -6,6 +6,7 @@ import SwipeConfirmButton from '../../../components/SwipeConfirmButton';
 import { uploadDeliveryProofPhoto } from '../../../services/proofPhotoService';
 import { updateDeliveryStatus } from '../../../services/riderMatchingService';
 import { subscribeToDeliveryProof, DeliveryProofState, subscribeToBoxState, BoxState, subscribeToCamera, CameraState, subscribeToLockEvents, LockEvent } from '../../../services/firebaseClient';
+import { PremiumAlert } from '../../../services/PremiumAlertService';
 
 interface DropoffVerificationProps {
     deliveryId: string;
@@ -155,7 +156,7 @@ export default function DropoffVerification({
                 setFallbackPhotoUri(result.assets[0].uri);
             }
         } catch (e) {
-            Alert.alert('Camera Error', 'Unable to capture fallback photo.');
+            PremiumAlert.alert('Camera Error', 'Unable to capture fallback photo.');
         }
     };
 
@@ -168,7 +169,7 @@ export default function DropoffVerification({
 
         // ━━━ SECURITY CHECK: Box must have validated OTP ━━━
         if (!boxOtpValidated) {
-            Alert.alert(
+            PremiumAlert.alert(
                 'OTP Not Verified',
                 'The customer must enter the OTP on the physical box before delivery can be completed.',
                 [{ text: 'OK' }]
@@ -177,7 +178,7 @@ export default function DropoffVerification({
         }
 
         if (!hardwareSuccess && !fallbackPhotoUri) {
-            Alert.alert('Cannot Complete', 'Hardware verification pending. If the box camera failed, please capture a fallback photo.');
+            PremiumAlert.alert('Cannot Complete', 'Hardware verification pending. If the box camera failed, please capture a fallback photo.');
             return;
         }
 
@@ -191,7 +192,7 @@ export default function DropoffVerification({
                 });
 
                 if (!uploadResult.success) {
-                    Alert.alert('Upload Failed', 'Fallback photo upload failed. Please retry.');
+                    PremiumAlert.alert('Upload Failed', 'Fallback photo upload failed. Please retry.');
                     return;
                 }
 
@@ -206,7 +207,7 @@ export default function DropoffVerification({
                 });
             }
 
-            Alert.alert('Delivery Completed', 'Package delivered successfully.');
+            PremiumAlert.alert('Delivery Completed', 'Package delivered successfully.');
             onDeliveryCompleted();
         } finally {
             setIsLoading(false);

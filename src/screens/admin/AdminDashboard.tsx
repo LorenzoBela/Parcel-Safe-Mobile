@@ -15,6 +15,9 @@ import { fetchWeather, WeatherData } from '../../services/weatherService';
 import { NetworkStatusBanner } from '../../components';
 import { HardwareByBoxId, subscribeToAllHardware } from '../../services/firebaseClient';
 import { useAppTheme } from '../../context/ThemeContext';
+import { useExitAppConfirmation } from '../../hooks/useExitAppConfirmation';
+import ExitConfirmationModal from '../../components/modals/ExitConfirmationModal';
+import { PremiumAlert } from '../../services/PremiumAlertService';
 
 // ─── Dual-mode Color Palette ────────────────────────────────────────────────────
 
@@ -90,6 +93,7 @@ function deriveHardwareStatus(hw: HardwareByBoxId[string] | null): string {
 // ─── Component ──────────────────────────────────────────────────────────────────
 
 export default function AdminDashboard() {
+    const { showExitModal, setShowExitModal, handleExit } = useExitAppConfirmation();
     const navigation = useNavigation<any>();
     const { isDarkMode } = useAppTheme();
     const c = isDarkMode ? darkColors : lightColors;
@@ -163,16 +167,16 @@ export default function AdminDashboard() {
 
     const copyPairingPayload = async () => {
         if (!pairingPayload) {
-            Alert.alert('Missing Box ID', 'Enter a box ID to generate a payload.');
+            PremiumAlert.alert('Missing Box ID', 'Enter a box ID to generate a payload.');
             return;
         }
         await Clipboard.setStringAsync(pairingPayload);
-        Alert.alert('Copied', 'Pairing payload copied to clipboard.');
+        PremiumAlert.alert('Copied', 'Pairing payload copied to clipboard.');
     };
 
     const sharePairingPayload = async () => {
         if (!pairingPayload) {
-            Alert.alert('Missing Box ID', 'Enter a box ID to generate a payload.');
+            PremiumAlert.alert('Missing Box ID', 'Enter a box ID to generate a payload.');
             return;
         }
         await Share.share({ message: pairingPayload });
@@ -180,7 +184,7 @@ export default function AdminDashboard() {
 
     const shareQrImage = async () => {
         if (!pairingPayload || !qrRef.current?.toDataURL) {
-            Alert.alert('QR Not Ready', 'Generate a QR first.');
+            PremiumAlert.alert('QR Not Ready', 'Generate a QR first.');
             return;
         }
         qrRef.current.toDataURL(async (data: string) => {
@@ -210,11 +214,11 @@ export default function AdminDashboard() {
 
     const handleOverrideDelivery = async () => {
         if (!trackingInput.trim()) {
-            Alert.alert('Error', 'Please enter a tracking number or delivery ID');
+            PremiumAlert.alert('Error', 'Please enter a tracking number or delivery ID');
             return;
         }
         if (!reasonInput.trim()) {
-            Alert.alert('Error', 'Please provide a reason for manual completion');
+            PremiumAlert.alert('Error', 'Please provide a reason for manual completion');
             return;
         }
 
@@ -222,18 +226,18 @@ export default function AdminDashboard() {
 
         const delivery = await getDeliveryByIdOrTracking(trackingInput.trim());
         if (!delivery) {
-            Alert.alert('Not Found', 'No delivery found with that tracking number');
+            PremiumAlert.alert('Not Found', 'No delivery found with that tracking number');
             setIsProcessing(false);
             return;
         }
 
         if (delivery.status === 'COMPLETED') {
-            Alert.alert('Already Complete', 'This delivery is already marked as completed');
+            PremiumAlert.alert('Already Complete', 'This delivery is already marked as completed');
             setIsProcessing(false);
             return;
         }
 
-        Alert.alert(
+        PremiumAlert.alert(
             'Confirm Override',
             `Mark delivery ${delivery.tracking_number} as COMPLETED?\n\nReason: ${reasonInput}`,
             [
@@ -247,11 +251,11 @@ export default function AdminDashboard() {
                         setOverrideModalVisible(false);
 
                         if (success) {
-                            Alert.alert('Success', 'Delivery marked as complete');
+                            PremiumAlert.alert('Success', 'Delivery marked as complete');
                             setTrackingInput('');
                             setReasonInput('');
                         } else {
-                            Alert.alert('Error', 'Failed to update delivery. Please try again.');
+                            PremiumAlert.alert('Error', 'Failed to update delivery. Please try again.');
                         }
                     }
                 }
@@ -403,24 +407,6 @@ export default function AdminDashboard() {
                         </TouchableOpacity>
                     ))}
                 </View>
-
-                {/* ── Push Test Button ────────────────────────────────────────── */}
-                <TouchableOpacity
-                    style={[styles.pushTestBtn, { borderColor: c.border }]}
-                    activeOpacity={0.7}
-                    onPress={async () => {
-                        try {
-                            const baseUrl = process.env.EXPO_PUBLIC_TRACKING_WEB_BASE_URL || process.env.EXPO_PUBLIC_API_URL || 'https://parcel-safe.vercel.app';
-                            await fetch(`${baseUrl}/api/notifications/promo`, { method: 'POST' });
-                            Alert.alert('Sent', 'Test push notification triggered!');
-                        } catch (e: any) {
-                            Alert.alert('Error', `Failed: ${e.message}`);
-                        }
-                    }}
-                >
-                    <MaterialCommunityIcons name="bell-ring-outline" size={18} color={c.accent} />
-                    <Text style={[styles.pushTestLabel, { color: c.accent }]}>Send Push Test</Text>
-                </TouchableOpacity>
 
                 {/* ── Recent Alerts ───────────────────────────────────────────── */}
                 <View style={styles.sectionHeader}>
@@ -643,6 +629,12 @@ export default function AdminDashboard() {
                     </ScrollView>
                 </Modal>
             </Portal>
+
+            <ExitConfirmationModal
+                visible={showExitModal}
+                onDismiss={() => setShowExitModal(false)}
+                onConfirm={handleExit}
+            />
         </View>
     );
 }
@@ -868,22 +860,6 @@ const styles = StyleSheet.create({
         color: '#FFFFFF',
         fontSize: 10,
         fontWeight: '700',
-    },
-
-    // Push test
-    pushTestBtn: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'center',
-        gap: 8,
-        paddingVertical: 14,
-        borderRadius: 12,
-        borderWidth: 1,
-        marginBottom: 24,
-    },
-    pushTestLabel: {
-        fontSize: 14,
-        fontWeight: '600',
     },
 
     // Alerts

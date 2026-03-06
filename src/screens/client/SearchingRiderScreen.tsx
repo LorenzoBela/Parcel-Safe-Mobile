@@ -19,6 +19,7 @@ import {
     startOngoingNotification,
 } from '../../services/pushNotificationService';
 import useAuthStore from '../../store/authStore';
+import { PremiumAlert } from '../../services/PremiumAlertService';
 
 // 5 minutes in milliseconds - adjusted for reliability
 const SEARCH_TIMEOUT_MS = 5 * 60 * 1000;
@@ -263,7 +264,7 @@ export default function SearchingRiderScreen() {
     }, [searchFailed]);
 
     const handleCancel = () => {
-        Alert.alert(
+        PremiumAlert.alert(
             'Cancel Booking',
             'Are you sure you want to cancel?',
             [

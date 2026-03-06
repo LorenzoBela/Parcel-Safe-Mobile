@@ -4,6 +4,7 @@ import { Text, Card, Button, useTheme, List, TextInput, Divider, IconButton } fr
 import { useNavigation } from '@react-navigation/native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useAppTheme } from '../../context/ThemeContext';
+import { PremiumAlert } from '../../services/PremiumAlertService';
 
 const lightC = {
     bg: '#F7F7F8', card: '#FFFFFF', text: '#111111', textSec: '#6B6B6B', textTer: '#9E9E9E',
@@ -33,10 +34,10 @@ export default function RiderSupportScreen() {
 
     const handleSubmitTicket = () => {
         if (!message.trim()) {
-            Alert.alert("Empty Message", "Please describe your issue.");
+            PremiumAlert.alert("Empty Message", "Please describe your issue.");
             return;
         }
-        Alert.alert("Ticket Submitted", "Admin has been notified. We will contact you shortly.");
+        PremiumAlert.alert("Ticket Submitted", "Admin has been notified. We will contact you shortly.");
         setMessage('');
     };
 
@@ -121,7 +122,7 @@ export default function RiderSupportScreen() {
                     descriptionStyle={{ color: c.textSec }}
                     left={props => <List.Icon {...props} icon="cube-scan" color={c.textSec} />}
                     right={props => <List.Icon {...props} icon="chevron-right" color={c.textTer} />}
-                    onPress={() => Alert.alert("Tip", "Ensure Bluetooth is on and you are within 2 meters of the box.")}
+                    onPress={() => PremiumAlert.alert("Tip", "Ensure Bluetooth is on and you are within 2 meters of the box.")}
                 />
                 <View style={{ height: 1, backgroundColor: c.divider, marginHorizontal: 16 }} />
                 <List.Item

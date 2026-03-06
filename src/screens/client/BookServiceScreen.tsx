@@ -68,6 +68,7 @@ const normalizePhoneInput = (value: string) => {
 const isValidPhoneNumber = (value: string) => /^09\d{9}$/.test(value.trim());
 
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { PremiumAlert } from '../../services/PremiumAlertService';
 
 export default function BookServiceScreen() {
     const navigation = useNavigation<any>();
@@ -725,12 +726,12 @@ export default function BookServiceScreen() {
                     };
                 } else {
                     console.error("Google Places Details API failed:", data.error?.message);
-                    Alert.alert("Error", "Could not retrieve exact location coordinates.");
+                    PremiumAlert.alert("Error", "Could not retrieve exact location coordinates.");
                     return;
                 }
             } catch (e) {
                 console.error("Failed to retrieve place details from Google", e);
-                Alert.alert("Error", "Network error while fetching location details.");
+                PremiumAlert.alert("Error", "Network error while fetching location details.");
                 return;
             }
         }
@@ -768,7 +769,7 @@ export default function BookServiceScreen() {
 
     const handleSaveSuggestion = async (item: MapboxSuggestion) => {
         if (!userId) {
-            Alert.alert('Sign In Required', 'Please sign in to save addresses.');
+            PremiumAlert.alert('Sign In Required', 'Please sign in to save addresses.');
             return;
         }
 
@@ -822,13 +823,13 @@ export default function BookServiceScreen() {
             .eq('id', userId);
 
         if (error) {
-            Alert.alert('Save Failed', 'Unable to save this address right now.');
+            PremiumAlert.alert('Save Failed', 'Unable to save this address right now.');
             return;
         }
 
         setSavedAddresses(nextSavedAddresses);
         setActiveTab('saved');
-        Alert.alert('Saved', 'Address has been added to your saved addresses.');
+        PremiumAlert.alert('Saved', 'Address has been added to your saved addresses.');
     };
 
     const calculateRoute = async () => {
@@ -921,33 +922,33 @@ export default function BookServiceScreen() {
 
     const handleConfirm = async () => {
         if (!pickupCoords || !dropoffCoords) {
-            Alert.alert('Missing Location', 'Please select both Pickup and Dropoff locations.');
+            PremiumAlert.alert('Missing Location', 'Please select both Pickup and Dropoff locations.');
             return;
         }
 
         if (!routeData) {
-            Alert.alert('Calculating Route', 'Please wait while we calculate your route.');
+            PremiumAlert.alert('Calculating Route', 'Please wait while we calculate your route.');
             return;
         }
 
         if (!senderName.trim() || !senderPhone.trim() || !recipientName.trim() || !recipientPhone.trim()) {
-            Alert.alert('Missing Details', 'Please fill in all contact names and phones before booking.');
+            PremiumAlert.alert('Missing Details', 'Please fill in all contact names and phones before booking.');
             return;
         }
 
         if (!isValidPhoneNumber(senderPhone) || !isValidPhoneNumber(recipientPhone)) {
-            Alert.alert('Invalid Phone Number', 'Phone numbers must start with 09 and be exactly 11 digits.');
+            PremiumAlert.alert('Invalid Phone Number', 'Phone numbers must start with 09 and be exactly 11 digits.');
             return;
         }
 
         if (senderName.trim().toLowerCase() === recipientName.trim().toLowerCase() && senderPhone.trim() === recipientPhone.trim()) {
-            Alert.alert('Same Contact', 'Sender and receiver cannot be the same person with the same number.');
+            PremiumAlert.alert('Same Contact', 'Sender and receiver cannot be the same person with the same number.');
             return;
         }
 
         // Block new bookings if there is already an active one
         if (hasActiveBooking) {
-            Alert.alert(
+            PremiumAlert.alert(
                 'Active Delivery Exists',
                 'You already have an active delivery in progress. Please wait for it to complete before creating a new booking.'
             );
@@ -959,7 +960,7 @@ export default function BookServiceScreen() {
             const activeBooking = await checkActiveBookings(userId);
             if (activeBooking) {
                 setHasActiveBooking(true);
-                Alert.alert(
+                PremiumAlert.alert(
                     'Active Delivery Exists',
                     'You already have an active delivery in progress. Please wait for it to complete before creating a new booking.'
                 );

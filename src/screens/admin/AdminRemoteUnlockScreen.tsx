@@ -6,6 +6,7 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { triggerAdminOverride } from '../../services/adminOverrideService';
 import { getCurrentUser } from '../../services/supabaseClient';
 import { useAppTheme } from '../../context/ThemeContext';
+import { PremiumAlert } from '../../services/PremiumAlertService';
 
 const lightC = {
     bg: '#FFFFFF', card: '#F6F6F6', card2: '#EEEEEE', border: '#E5E5EA',
@@ -32,11 +33,11 @@ export default function AdminRemoteUnlockScreen() {
 
     const handleUnlock = async () => {
         if (!boxId.trim()) {
-            Alert.alert('Error', 'Please enter a Box ID');
+            PremiumAlert.alert('Error', 'Please enter a Box ID');
             return;
         }
         if (!reason.trim()) {
-            Alert.alert('Error', 'Please provide a reason for the override');
+            PremiumAlert.alert('Error', 'Please provide a reason for the override');
             return;
         }
 
@@ -52,7 +53,7 @@ export default function AdminRemoteUnlockScreen() {
             setBoxId('');
             setReason('');
         } catch (error: any) {
-            Alert.alert('Error', `Failed to trigger unlock: ${error.message}`);
+            PremiumAlert.alert('Error', `Failed to trigger unlock: ${error.message}`);
         } finally {
             setIsSubmitting(false);
         }

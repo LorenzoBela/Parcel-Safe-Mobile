@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, StyleSheet, Modal, Linking, Alert, Platform } from 'react-native';
+import { View, StyleSheet, Modal, Linking, Platform } from 'react-native';
 import { Text, Button, Surface, useTheme, Divider, IconButton, Avatar } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 

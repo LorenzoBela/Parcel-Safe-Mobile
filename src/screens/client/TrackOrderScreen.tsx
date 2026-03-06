@@ -86,6 +86,7 @@ function mapStatusToCancellationStatus(status: string | undefined): DeliveryStat
 }
 
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { PremiumAlert } from '../../services/PremiumAlertService';
 
 const RiderImage = require('../../../assets/Rider.jpg');
 const ArrowHeadImage = require('../../../assets/arrow_head.png');
@@ -459,7 +460,7 @@ export default function TrackOrderScreen() {
 
     useEffect(() => {
         if (!deliveryId) {
-            Alert.alert('Missing Delivery', 'Unable to open tracking without a valid delivery.', [
+            PremiumAlert.alert('Missing Delivery', 'Unable to open tracking without a valid delivery.', [
                 { text: 'Go Back', onPress: () => navigation.goBack() },
             ]);
             return;
@@ -560,7 +561,7 @@ export default function TrackOrderScreen() {
     const copyReturnOtp = async () => {
         if (cancellation?.returnOtp) {
             await Clipboard.setStringAsync(cancellation.returnOtp);
-            Alert.alert('Copied', 'Return OTP copied to clipboard');
+            PremiumAlert.alert('Copied', 'Return OTP copied to clipboard');
         }
     };
 
@@ -569,7 +570,7 @@ export default function TrackOrderScreen() {
         setCancelLoading(true);
         try {
             if (!customerId) {
-                Alert.alert('Authentication Required', 'Please log in again to manage this delivery.');
+                PremiumAlert.alert('Authentication Required', 'Please log in again to manage this delivery.');
                 setCancelLoading(false);
                 return;
             }
@@ -593,10 +594,10 @@ export default function TrackOrderScreen() {
                     refundStatus: result.refundStatus,
                 });
             } else {
-                Alert.alert('Cancellation Failed', result.error || 'Unable to cancel order');
+                PremiumAlert.alert('Cancellation Failed', result.error || 'Unable to cancel order');
             }
         } catch (err) {
-            Alert.alert('Error', 'An unexpected error occurred');
+            PremiumAlert.alert('Error', 'An unexpected error occurred');
         } finally {
             setCancelLoading(false);
         }
@@ -605,7 +606,7 @@ export default function TrackOrderScreen() {
     const handleShareTracking = async () => {
         const token = delivery?.share_token || params.shareToken;
         if (!token) {
-            Alert.alert('Share Unavailable', 'Tracking link is not ready yet.');
+            PremiumAlert.alert('Share Unavailable', 'Tracking link is not ready yet.');
             return;
         }
 
@@ -640,13 +641,13 @@ export default function TrackOrderScreen() {
                 setRatingSubmitted(true);
                 setShowRatingModal(false);
                 setDelivery(prev => prev ? { ...prev, rating: ratingScore } : prev);
-                Alert.alert('Success', 'Thank you for your rating!');
+                PremiumAlert.alert('Success', 'Thank you for your rating!');
             } else {
-                Alert.alert('Error', data.error || 'Failed to submit rating.');
+                PremiumAlert.alert('Error', data.error || 'Failed to submit rating.');
             }
         } catch (err) {
             console.error('Rating submission error:', err);
-            Alert.alert('Error', 'An unexpected error occurred while submitting your rating.');
+            PremiumAlert.alert('Error', 'An unexpected error occurred while submitting your rating.');
         } finally {
             setIsRatingSubmitting(false);
         }
@@ -1242,7 +1243,7 @@ export default function TrackOrderScreen() {
                                     size={24}
                                     onPress={() => {
                                         if (!riderDetails.phone) {
-                                            Alert.alert('Unavailable', 'Rider phone number is not available yet.');
+                                            PremiumAlert.alert('Unavailable', 'Rider phone number is not available yet.');
                                             return;
                                         }
                                         Linking.openURL(`tel:${riderDetails.phone}`);
@@ -1256,7 +1257,7 @@ export default function TrackOrderScreen() {
                                     size={24}
                                     onPress={() => {
                                         if (!riderDetails.phone) {
-                                            Alert.alert('Unavailable', 'Rider phone number is not available yet.');
+                                            PremiumAlert.alert('Unavailable', 'Rider phone number is not available yet.');
                                             return;
                                         }
                                         Linking.openURL(`sms:${riderDetails.phone}`);
@@ -1321,7 +1322,7 @@ export default function TrackOrderScreen() {
                                     style={styles.viewOtpBtn}
                                     icon="headset"
                                     buttonColor={theme.colors.error}
-                                    onPress={() => Alert.alert('Support', 'Please contact support at support@parcel-safe.app or call +63 XXX XXX XXXX.')}
+                                    onPress={() => PremiumAlert.alert('Support', 'Please contact support at support@parcel-safe.app or call +63 XXX XXX XXXX.')}
                                 >
                                     Contact Support
                                 </Button>

@@ -5,6 +5,7 @@ import * as ImagePicker from 'expo-image-picker';
 import SwipeConfirmButton from '../../../components/SwipeConfirmButton';
 import { uploadPickupPhoto } from '../../../services/proofPhotoService';
 import { updateDeliveryStatus } from '../../../services/riderMatchingService';
+import { PremiumAlert } from '../../../services/PremiumAlertService';
 
 interface PickupVerificationProps {
     deliveryId: string;
@@ -59,18 +60,18 @@ export default function PickupVerification({
                 setPickupPhotoUri(result.assets[0].uri);
             }
         } catch (e) {
-            Alert.alert('Camera Error', 'Unable to capture pickup photo right now.');
+            PremiumAlert.alert('Camera Error', 'Unable to capture pickup photo right now.');
         }
     };
 
     const handlePickupSwipe = async () => {
         if (!isInsideGeoFence) {
-            Alert.alert('Location Required', 'Move inside the pickup geofence before confirming pickup.');
+            PremiumAlert.alert('Location Required', 'Move inside the pickup geofence before confirming pickup.');
             return;
         }
 
         if (!pickupPhotoUri) {
-            Alert.alert('Photo Required', 'Please capture a pickup photo before confirming pickup.');
+            PremiumAlert.alert('Photo Required', 'Please capture a pickup photo before confirming pickup.');
             return;
         }
 
@@ -83,7 +84,7 @@ export default function PickupVerification({
             });
 
             if (!uploadResult.success) {
-                Alert.alert('Upload Failed', 'Pickup photo upload failed. Please retry.');
+                PremiumAlert.alert('Upload Failed', 'Pickup photo upload failed. Please retry.');
                 return;
             }
 
@@ -94,11 +95,11 @@ export default function PickupVerification({
             });
 
             if (!success) {
-                Alert.alert('Action Failed', 'Unable to confirm pickup right now.');
+                PremiumAlert.alert('Action Failed', 'Unable to confirm pickup right now.');
                 return;
             }
 
-            Alert.alert('Pickup Confirmed', 'Package marked as picked up.');
+            PremiumAlert.alert('Pickup Confirmed', 'Package marked as picked up.');
             onPickupConfirmed();
         } finally {
             setIsLoading(false);

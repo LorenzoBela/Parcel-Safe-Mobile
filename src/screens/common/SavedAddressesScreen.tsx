@@ -6,6 +6,7 @@ import { supabase } from '../../services/supabaseClient';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import LocationPicker, { LocationData } from '../../components/LocationPicker';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { PremiumAlert } from '../../services/PremiumAlertService';
 
 interface SavedAddress {
     id: string;
@@ -83,14 +84,14 @@ export default function SavedAddressesScreen() {
             setAddresses(newAddresses);
             return true;
         } catch (error: any) {
-            Alert.alert('Error', error.message || 'Failed to save address.');
+            PremiumAlert.alert('Error', error.message || 'Failed to save address.');
             return false;
         }
     };
 
     const handleAddOrUpdate = async () => {
         if (!label || !addressText) {
-            Alert.alert('Missing Fields', 'Please enter a label and address.');
+            PremiumAlert.alert('Missing Fields', 'Please enter a label and address.');
             return;
         }
 
@@ -136,7 +137,7 @@ export default function SavedAddressesScreen() {
     };
 
     const handleDelete = (id: string) => {
-        Alert.alert(
+        PremiumAlert.alert(
             'Delete Address',
             'Are you sure you want to delete this address?',
             [

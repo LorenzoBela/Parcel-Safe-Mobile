@@ -104,6 +104,16 @@ export function stopTokenRefreshService(): void {
  */
 export async function checkTokenHealth(): Promise<TokenHealthState> {
     const auth = getAuth();
+
+    // EC-Fix: Wait for Firebase auth to finish hydrating from AsyncStorage
+    try {
+        if (typeof auth.authStateReady === 'function') {
+            await auth.authStateReady();
+        }
+    } catch (e) {
+        console.warn('[EC-89] authStateReady error', e);
+    }
+
     const user = auth.currentUser;
 
     if (!user) {

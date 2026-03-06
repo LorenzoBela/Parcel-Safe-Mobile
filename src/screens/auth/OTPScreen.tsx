@@ -14,6 +14,7 @@ import { subscribeToDisplay, subscribeToBoxState, getFirebaseDatabase } from '..
 import { ref, onValue, off, set } from 'firebase/database';
 import { supabase } from '../../services/supabaseClient';
 import { generateOTP } from '../../utils/tokenUtils';
+import { PremiumAlert } from '../../services/PremiumAlertService';
 
 const CELL_COUNT = 6;
 
@@ -109,11 +110,11 @@ export default function OTPScreen() {
     /** Generate a new OTP and update Supabase — reflects on both web and mobile */
     const handleRegenerateOtp = useCallback(async () => {
         if (!deliveryId) {
-            Alert.alert('Error', 'No delivery ID available.');
+            PremiumAlert.alert('Error', 'No delivery ID available.');
             return;
         }
 
-        Alert.alert(
+        PremiumAlert.alert(
             'Generate New Code',
             'This will invalidate the current code and create a new one. Continue?',
             [
@@ -136,7 +137,7 @@ export default function OTPScreen() {
 
                             if (error) {
                                 console.error('[OTPScreen] Failed to regenerate OTP:', error);
-                                Alert.alert('Error', 'Failed to generate new code. Please try again.');
+                                PremiumAlert.alert('Error', 'Failed to generate new code. Please try again.');
                             } else {
                                 setOtpCode(newOtp);
                                 // Write to Firebase (Nervous System — real-time sync to web)
@@ -150,7 +151,7 @@ export default function OTPScreen() {
                             }
                         } catch (e) {
                             console.error('[OTPScreen] OTP regeneration exception:', e);
-                            Alert.alert('Error', 'Something went wrong. Please try again.');
+                            PremiumAlert.alert('Error', 'Something went wrong. Please try again.');
                         } finally {
                             setIsRegenerating(false);
                         }

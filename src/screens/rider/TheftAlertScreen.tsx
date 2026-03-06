@@ -19,6 +19,7 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import dayjs from 'dayjs';
 import relativeTime from 'dayjs/plugin/relativeTime';
 import useAuthStore from '../../store/authStore';
+import { PremiumAlert } from '../../services/PremiumAlertService';
 import {
     subscribeToTheftStatus,
     reportTheft,
@@ -65,7 +66,7 @@ export default function TheftAlertScreen() {
 
     // Report theft handler
     const handleReportTheft = async () => {
-        Alert.alert(
+        PremiumAlert.alert(
             '🚨 Report Box Stolen',
             'Are you sure you want to report your box as stolen? This will alert the admin team and begin tracking.',
             [
@@ -77,7 +78,7 @@ export default function TheftAlertScreen() {
                         try {
                             setReporting(true);
                             await reportTheft(boxId, riderId, notes || undefined);
-                            Alert.alert(
+                            PremiumAlert.alert(
                                 '✅ Theft Reported',
                                 'Your box has been marked as stolen. The admin team has been notified and tracking is active.',
                                 [{ text: 'OK' }]
@@ -85,7 +86,7 @@ export default function TheftAlertScreen() {
                             setShowNotesInput(false);
                             setNotes('');
                         } catch (error) {
-                            Alert.alert('Error', 'Failed to report theft. Please try again.');
+                            PremiumAlert.alert('Error', 'Failed to report theft. Please try again.');
                         } finally {
                             setReporting(false);
                         }
@@ -107,7 +108,7 @@ export default function TheftAlertScreen() {
                 title: `Theft Evidence - Box ${boxId}`,
             });
         } catch (error) {
-            Alert.alert('Error', 'Failed to export evidence. Please try again.');
+            PremiumAlert.alert('Error', 'Failed to export evidence. Please try again.');
         } finally {
             setExportingEvidence(false);
         }

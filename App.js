@@ -8,6 +8,7 @@ import { AppState, Alert } from 'react-native';
 import AppNavigator from './src/navigation/AppNavigator';
 import { configureGoogleSignIn } from './src/services/auth';
 import { ThemeProvider, useAppTheme } from './src/context/ThemeContext';
+import GlobalPremiumAlert from './src/components/modals/GlobalPremiumAlert';
 
 // Conditionally import modules
 let Notifications = null;
@@ -15,6 +16,14 @@ let initializeBackgroundServices = null;
 let onBackgroundEvent = null;
 let initializeOrderListener = null;
 let onNewOrder = null;
+
+// Push notification + promo service handles (dev builds only)
+let setupNotificationChannels = null;
+let registerForPushNotifications = null;
+let onTokenRefresh = null;
+let setupFCMForegroundHandler = null;
+let initializeScheduledPromos = null;
+let supabase = null;
 
 try {
   Notifications = require('expo-notifications');
@@ -38,6 +47,20 @@ try {
   // if (__DEV__) console.log('[App] Native modules not available - requires dev build');
 }
 
+try {
+  const notifService = require('./src/services/pushNotificationService');
+  const promoService = require('./src/services/scheduledPromoService');
+  const supabaseModule = require('./src/services/supabaseClient');
+  setupNotificationChannels = notifService.setupNotificationChannels;
+  registerForPushNotifications = notifService.registerForPushNotifications;
+  onTokenRefresh = notifService.onTokenRefresh;
+  setupFCMForegroundHandler = notifService.setupFCMForegroundHandler;
+  initializeScheduledPromos = promoService.initializeScheduledPromos;
+  supabase = supabaseModule.supabase;
+} catch (error) {
+  // if (__DEV__) console.log('[App] Notification services not available - requires dev build');
+}
+
 const AppContent = () => {
   const { theme } = useAppTheme();
   const [appState, setAppState] = useState(AppState.currentState);
@@ -48,6 +71,22 @@ const AppContent = () => {
 
     // Initialize background services when app starts (deferred to not block first render)
     const initializeServices = async () => {
+      // Register FCM push token for ALL roles (customer, rider, admin)
+      // Runs BEFORE background-services guard so customers always get a token
+      if (setupNotificationChannels && registerForPushNotifications) {
+        try {
+          await setupNotificationChannels();
+          await registerForPushNotifications();
+        } catch (e) {
+          if (__DEV__) console.warn('[App] Push notification init failed:', e);
+        }
+      }
+
+      // Start 2-hourly on-device promo ads (6 AM – midnight, no server needed)
+      if (initializeScheduledPromos) {
+        initializeScheduledPromos().catch(console.error);
+      }
+
       if (!initializeBackgroundServices) {
         if (__DEV__) console.log('[App] Background services not available - requires dev build');
         return;
@@ -88,6 +127,22 @@ const AppContent = () => {
         );
         cleanupFunctions.push(() => notificationResponseSubscription.remove());
 
+        // FCM foreground handler — shows heads-up notification when app is open
+        if (setupFCMForegroundHandler) {
+          const unsubForeground = setupFCMForegroundHandler();
+          cleanupFunctions.push(unsubForeground);
+        }
+
+        // Token refresh — re-registers with server when the OS rotates the FCM token
+        if (onTokenRefresh) {
+          const unsubTokenRefresh = onTokenRefresh((_newToken) => {
+            if (registerForPushNotifications) {
+              registerForPushNotifications().catch(console.error);
+            }
+          });
+          cleanupFunctions.push(unsubTokenRefresh);
+        }
+
         // if (__DEV__) console.log('[App] Background services initialized successfully');
       } catch (error) {
         if (__DEV__) console.error('[App] Failed to initialize background services:', error);
@@ -106,6 +161,21 @@ const AppContent = () => {
       initializeServices();
     }, 100);
 
+    // Re-register FCM token on fresh login — covers all roles (customer, rider, admin)
+    let authUnsubscribe = null;
+    if (supabase) {
+      const { data: { subscription: authSub } } = supabase.auth.onAuthStateChange((event, session) => {
+        if (event === 'SIGNED_IN' && session) {
+          if (setupNotificationChannels && registerForPushNotifications) {
+            setupNotificationChannels()
+              .then(() => registerForPushNotifications())
+              .catch(console.error);
+          }
+        }
+      });
+      authUnsubscribe = authSub;
+    }
+
     // Monitor app state changes
     const subscription = AppState.addEventListener('change', nextAppState => {
       if (appState.match(/inactive|background/) && nextAppState === 'active') {
@@ -119,6 +189,7 @@ const AppContent = () => {
     return () => {
       if (timeoutId) clearTimeout(timeoutId);
       subscription.remove();
+      if (authUnsubscribe) authUnsubscribe.unsubscribe();
 
       // execution safety: reverse order cleanup
       [...cleanupFunctions].reverse().forEach(cleanup => {
@@ -134,6 +205,7 @@ const AppContent = () => {
   return (
     <PaperProvider theme={theme}>
       <AppNavigator />
+      <GlobalPremiumAlert />
     </PaperProvider>
   );
 };
