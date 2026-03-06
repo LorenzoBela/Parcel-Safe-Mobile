@@ -282,8 +282,8 @@ export const CONFIG = {
     /** Deferred updates disabled */
     DEFERRED_UPDATES_INTERVAL_MS: 0,
 
-    /** Health check interval (ms) */
-    HEALTH_CHECK_INTERVAL_MS: 60000,
+    /** Health check interval (ms) — kept tight so the watchdog reacts quickly */
+    HEALTH_CHECK_INTERVAL_MS: 30000,
 
     /** Maximum time without location update before alert (ms) */
     LOCATION_STALE_THRESHOLD_MS: 120000, // 2 minutes
@@ -304,8 +304,14 @@ export const CONFIG = {
      *  Prevents Firebase from going completely stale while the rider is waiting. */
     STATIONARY_HEARTBEAT_INTERVAL_MS: 30000, // 30 seconds
 
-    /** Time without a valid GPS fix before declaring signal lost (ms) */
-    SIGNAL_LOST_THRESHOLD_MS: 120000, // 2 minutes
+    /** Time without a valid GPS fix before declaring signal lost and firing a recovery probe (ms) */
+    SIGNAL_LOST_THRESHOLD_MS: 45000, // 45 seconds — fast enough to catch indoor→outdoor transitions
+
+    /** Minimum interval between active re-triangulation attempts when there is no fix (ms) */
+    NO_FIX_RETRY_INTERVAL_MS: 15000, // try a fresh fix every 15 s while signal is absent
+
+    /** Background task zombie threshold: restart the task if no update received for this long (ms) */
+    ZOMBIE_STALE_THRESHOLD_MS: 180000, // 3 minutes
 };
 
 const ANDROID_FGS_RETRY_BACKOFF_MS = 30000; // 30 s — short enough to recover quickly after the OS reinitialises SharedPreferences
@@ -388,6 +394,31 @@ async function restoreBoxId(): Promise<string | null> {
     }
 }
 
+/** AsyncStorage key for persisting the last known good GPS fix so heartbeats survive JS runtime restarts. */
+const LAST_KNOWN_LOCATION_KEY = 'parcelSafe:lastKnownLocation';
+
+/**
+ * Restore last known location from AsyncStorage into the in-memory variable.
+ * Call this when the JS runtime restarts and lastWrittenLocation is null.
+ */
+async function restoreLastKnownLocation(): Promise<void> {
+    if (lastWrittenLocation) return; // already in memory — nothing to do
+    try {
+        const stored = await AsyncStorage.getItem(LAST_KNOWN_LOCATION_KEY);
+        if (stored) {
+            lastWrittenLocation = JSON.parse(stored);
+            if (__DEV__) console.log('[EC-15] Last known location restored from AsyncStorage');
+        }
+    } catch (e) {
+        console.error('[EC-15] Failed to restore last known location:', e);
+    }
+}
+
+/** Persist last known location to AsyncStorage (fire-and-forget). */
+function persistLastKnownLocation(loc: { lat: number; lng: number; timestamp: number }): void {
+    AsyncStorage.setItem(LAST_KNOWN_LOCATION_KEY, JSON.stringify(loc)).catch(() => { });
+}
+
 // ---- Feature 3: Accuracy Filter state ----
 let accuracyRejectCount = 0;
 
@@ -433,6 +464,8 @@ function isStationaryDrift(location: Location.LocationObject): boolean {
 // ---- Feature 7: Signal Loss Recovery state ----
 let lastValidFixTime = Date.now();
 let lastBackgroundTaskUpdateTimestamp: number | null = null;
+/** Tracks the last time we actively attempted a one-shot GPS fix during a no-fix interval */
+let lastNoFixRetryAttemptTime = 0;
 
 // Define the background task (expo-task-manager)
 TaskManager.defineTask(CONFIG.TASK_NAME, async ({ data, error }) => {
@@ -455,6 +488,8 @@ TaskManager.defineTask(CONFIG.TASK_NAME, async ({ data, error }) => {
             return; // No active delivery — nothing to write
         }
         console.log('[EC-15] boxId restored from AsyncStorage:', currentBoxId);
+        // Also restore last known location so the no-fix heartbeat can work immediately
+        await restoreLastKnownLocation();
     }
 
     const { locations } = data as { locations: Location.LocationObject[] };
@@ -523,9 +558,11 @@ TaskManager.defineTask(CONFIG.TASK_NAME, async ({ data, error }) => {
                 lng: location.coords.longitude,
                 timestamp: Date.now(),
             };
+            persistLastKnownLocation(lastWrittenLocation);
 
             // Record valid fix time for signal loss detection
             lastValidFixTime = Date.now();
+            persistValidFixTime();
             lastBackgroundTaskUpdateTimestamp = Date.now();
 
             // Write phone network status (rate-limited)
@@ -561,8 +598,154 @@ TaskManager.defineTask(CONFIG.TASK_NAME, async ({ data, error }) => {
                 console.error('[EC-15] Failed to queue background location:', queueError);
             }
         }
+    } else {
+        // GPS task fired but provided no locations — device can't get a fix
+        // (indoors, tunnel, dense urban canyon, standstill with no satellites locked).
+        // Restore last known position from storage if needed, then re-send it as a
+        // heartbeat so Firebase never goes fully stale while the rider can't triangulate.
+        await restoreLastKnownLocation();
+
+        const msSinceLastWrite = lastWrittenLocation
+            ? Date.now() - lastWrittenLocation.timestamp
+            : Infinity;
+
+        if (lastWrittenLocation && msSinceLastWrite >= CONFIG.STATIONARY_HEARTBEAT_INTERVAL_MS) {
+            try {
+                const updates: Record<string, any> = {};
+                const timestampSentinel = getTimestampSentinel();
+                cumulativeDataBytes += 200;
+
+                updates[`/locations/${currentBoxId}/phone`] = {
+                    latitude: lastWrittenLocation.lat,
+                    longitude: lastWrittenLocation.lng,
+                    accuracy: null,
+                    altitude: null,
+                    speed: 0,
+                    heading: 0,
+                    timestamp: Date.now(),
+                    verified_at: timestampSentinel,
+                    source: 'phone_background',
+                    gps_degraded: true,
+                    no_fix: true,
+                };
+                updates[`/hardware/${currentBoxId}/phone_status/data_bytes`] = cumulativeDataBytes;
+
+                await writeMultiPathUpdates(updates);
+                await writeBackgroundStatusBestEffort(currentBoxId, {
+                    lastUpdate: timestampSentinel,
+                    source: 'phone_background',
+                    signal_lost: false,
+                    gps_degraded: true,
+                    no_fix: true,
+                });
+
+                lastWrittenLocation = { ...lastWrittenLocation, timestamp: Date.now() };
+                persistLastKnownLocation(lastWrittenLocation);
+                lastBackgroundTaskUpdateTimestamp = Date.now();
+                console.log(`[EC-15] ↺ No-fix heartbeat | box=${currentBoxId} | last known: ${lastWrittenLocation.lat.toFixed(5)},${lastWrittenLocation.lng.toFixed(5)}`);
+            } catch (e) {
+                console.warn('[EC-15] No-fix heartbeat write failed (non-fatal):', e);
+            }
+        } else if (!lastWrittenLocation) {
+            console.warn('[EC-15] Task fired with no locations and no last known position — cannot heartbeat yet');
+        }
+
+        // ── Active re-triangulation while there is no fix ───────────────────
+        // Try a fast one-shot fix using cell/WiFi first (Accuracy.Low is near-instant
+        // indoors), then fall back to Balanced. Both have a hard 8-second timeout so
+        // they never stall the background task.
+        // Rate-limited to NO_FIX_RETRY_INTERVAL_MS so we don't spam the GPS chip.
+        const now = Date.now();
+        const timeSinceRetry = now - lastNoFixRetryAttemptTime;
+        if (timeSinceRetry >= CONFIG.NO_FIX_RETRY_INTERVAL_MS) {
+            lastNoFixRetryAttemptTime = now;
+
+            // Helper: attempt a one-shot fix with a hard 8-second timeout.
+            // The timeout is applied INSIDE the helper so that a hung
+            // getCurrentPositionAsync is rejected internally and never becomes
+            // an orphaned promise that could write stale data after we've moved on.
+            const attemptFix = async (accuracy: Location.LocationAccuracy): Promise<boolean> => {
+                try {
+                    const freshFix = await Promise.race([
+                        Location.getCurrentPositionAsync({ accuracy }),
+                        new Promise<never>((_, reject) => setTimeout(() => reject(new Error('timeout')), 8000)),
+                    ]) as Location.LocationObject;
+                    const freshAcc = freshFix.coords.accuracy ?? 999;
+                    const isLowAccuracy = freshAcc > CONFIG.ACCURACY_REJECT_THRESHOLD_M;
+                    const updates: Record<string, any> = {};
+                    const ts = getTimestampSentinel();
+                    cumulativeDataBytes += 500;
+                    updates[`/locations/${currentBoxId}/phone`] = {
+                        latitude: freshFix.coords.latitude,
+                        longitude: freshFix.coords.longitude,
+                        accuracy: freshFix.coords.accuracy ?? null,
+                        altitude: freshFix.coords.altitude ?? null,
+                        speed: freshFix.coords.speed ?? 0,
+                        heading: freshFix.coords.heading ?? 0,
+                        timestamp: Date.now(),
+                        verified_at: ts,
+                        source: 'phone_background',
+                        gps_degraded: isLowAccuracy,
+                        recovered: true,
+                    };
+                    updates[`/hardware/${currentBoxId}/phone_status/data_bytes`] = cumulativeDataBytes;
+                    await writeMultiPathUpdates(updates);
+                    await writeBackgroundStatusBestEffort(currentBoxId, {
+                        lastUpdate: ts,
+                        source: 'phone_background',
+                        signal_lost: false,
+                        gps_degraded: isLowAccuracy,
+                        recovered: true,
+                    });
+                    lastWrittenLocation = { lat: freshFix.coords.latitude, lng: freshFix.coords.longitude, timestamp: Date.now() };
+                    persistLastKnownLocation(lastWrittenLocation);
+                    lastValidFixTime = Date.now();
+                    persistValidFixTime();
+                    lastBackgroundTaskUpdateTimestamp = Date.now();
+                    console.log(`[EC-15] ✓ Re-triangulated! acc=${freshAcc.toFixed(0)}m accuracy=${accuracy} | ${freshFix.coords.latitude.toFixed(5)},${freshFix.coords.longitude.toFixed(5)}`);
+                    return true;
+                } catch {
+                    return false;
+                }
+            };
+
+            // Stage 1: cell/WiFi only — near-instant even indoors
+            const fixedLow = await attemptFix(Location.Accuracy.Low);
+
+            if (!fixedLow) {
+                // Stage 2: balanced (GPS + cell + WiFi) — better outdoors
+                const fixedBalanced = await attemptFix(Location.Accuracy.Balanced);
+                if (!fixedBalanced) {
+                    console.log(`[EC-15] ✗ Re-triangulation failed both stages — will retry in ${CONFIG.NO_FIX_RETRY_INTERVAL_MS / 1000}s`);
+                }
+            }
+        }
     }
 });
+
+/** AsyncStorage key for persisting lastValidFixTime across JS runtime restarts */
+const LAST_VALID_FIX_KEY = 'parcelSafe:lastValidFixTime';
+
+/** Persist lastValidFixTime so the recovery watchdog starts immediately after a JS kill/restart */
+function persistValidFixTime(): void {
+    AsyncStorage.setItem(LAST_VALID_FIX_KEY, lastValidFixTime.toString()).catch(() => { });
+}
+
+/** Restore lastValidFixTime from AsyncStorage (called at service start) */
+async function restoreValidFixTime(): Promise<void> {
+    try {
+        const stored = await AsyncStorage.getItem(LAST_VALID_FIX_KEY);
+        if (stored) {
+            const parsed = parseInt(stored, 10);
+            if (!isNaN(parsed) && parsed > 0) {
+                lastValidFixTime = parsed;
+                if (__DEV__) console.log('[EC-15] lastValidFixTime restored:', new Date(parsed).toISOString());
+            }
+        }
+    } catch (e) {
+        console.error('[EC-15] Failed to restore lastValidFixTime:', e);
+    }
+}
 
 // ==================== Background Location Manager Class ====================
 
@@ -579,6 +762,8 @@ class BackgroundLocationManager {
 
     private listeners: Set<StateChangeCallback> = new Set();
     private healthCheckInterval: NodeJS.Timeout | null = null;
+    private signalRecoveryInterval: NodeJS.Timeout | null = null;
+    private isSignalRecoveryInFlight = false;
     private appStateSubscription: any = null;
     private unsubscribeBoxGps: (() => void) | null = null;
     private foregroundWatchSubscription: Location.LocationSubscription | null = null;
@@ -756,6 +941,8 @@ class BackgroundLocationManager {
         this.updateState({ status: 'STARTING' });
         currentBoxId = sanitizedBoxId;
         await persistBoxId(sanitizedBoxId);
+        await restoreValidFixTime();
+        await restoreLastKnownLocation();
 
         // Check permissions
         console.log('[EC-15] Checking location permissions...');
@@ -896,6 +1083,7 @@ class BackgroundLocationManager {
                 // Start supporting machinery — the health-check will retry native BGS once
                 // the backoff window expires.
                 this.startHealthCheck();
+                this.startSignalRecoveryWatchdog();
                 this.subscribeToAppState();
                 this.subscribeToBoxGpsStatus(sanitizedBoxId);
                 if (AppState.currentState === 'active') {
@@ -915,6 +1103,7 @@ class BackgroundLocationManager {
 
             // Start monitoring
             this.startHealthCheck();
+            this.startSignalRecoveryWatchdog();
             this.subscribeToAppState();
             this.subscribeToBoxGpsStatus(sanitizedBoxId);
             if (AppState.currentState === 'active') {
@@ -961,6 +1150,7 @@ class BackgroundLocationManager {
 
         // Clean up
         this.stopHealthCheck();
+        this.stopSignalRecoveryWatchdog();
         this.unsubscribeFromAppState();
         this.stopForegroundWatcher();
         this.stopForegroundHeartbeat();
@@ -1042,7 +1232,7 @@ class BackgroundLocationManager {
             // Check if task is registered but not producing output (zombie state)
             const effectiveLastUpdate = lastBackgroundTaskUpdateTimestamp ?? this.state.lastLocationTimestamp;
             const timeSinceUpdate = effectiveLastUpdate ? Date.now() - effectiveLastUpdate : Number.MAX_SAFE_INTEGER;
-            if (timeSinceUpdate > 180000) { // 3 minutes — stale zombie
+            if (timeSinceUpdate > CONFIG.ZOMBIE_STALE_THRESHOLD_MS) {
                 console.warn(`[EC-15] Background task stale (${Math.round(timeSinceUpdate / 1000)}s). Restarting...`);
                 await this.stop();
                 await this.start(sanitizedBoxId);
@@ -1060,14 +1250,18 @@ class BackgroundLocationManager {
         if (!sanitizedCurrentBoxId || this.state.status !== 'RUNNING') return;
 
         try {
-            const location = await Location.getCurrentPositionAsync({
-                accuracy: CONFIG.ACCURACY,
-            });
+            const location = await Promise.race([
+                Location.getCurrentPositionAsync({ accuracy: CONFIG.ACCURACY }),
+                new Promise<never>((_, reject) => setTimeout(() => reject(new Error('timeout')), 10000)),
+            ]) as Location.LocationObject;
 
             // Write directly to Firebase — NOT through offlineQueueService.
             // offlineQueueService breaks in Android Doze mode (same fix as background task).
             const updates: Record<string, any> = {};
             const timestampSentinel = getTimestampSentinel();
+            const isLowAccuracy = (location.coords.accuracy ?? 999) > CONFIG.ACCURACY_REJECT_THRESHOLD_M;
+
+            cumulativeDataBytes += 500;
 
             updates[`/locations/${sanitizedCurrentBoxId}/phone`] = {
                 latitude: location.coords.latitude,
@@ -1079,7 +1273,9 @@ class BackgroundLocationManager {
                 timestamp: Date.now(),
                 verified_at: timestampSentinel,
                 source: 'phone_foreground',
+                gps_degraded: isLowAccuracy,
             };
+            updates[`/hardware/${sanitizedCurrentBoxId}/phone_status/data_bytes`] = cumulativeDataBytes;
 
             await writeMultiPathUpdates(updates);
             await writeBackgroundStatusBestEffort(sanitizedCurrentBoxId, {
@@ -1087,11 +1283,21 @@ class BackgroundLocationManager {
                 source: 'phone_foreground',
                 accuracy: location.coords.accuracy,
                 signal_lost: false,
+                gps_degraded: isLowAccuracy,
             });
-            lastBackgroundTaskUpdateTimestamp = Date.now();
+            const now = Date.now();
+            lastBackgroundTaskUpdateTimestamp = now;
+            lastWrittenLocation = {
+                lat: location.coords.latitude,
+                lng: location.coords.longitude,
+                timestamp: now,
+            };
+            lastValidFixTime = now;
+            persistLastKnownLocation(lastWrittenLocation);
+            persistValidFixTime();
 
             this.updateState({
-                lastLocationTimestamp: Date.now(),
+                lastLocationTimestamp: now,
                 totalUpdatesCount: this.state.totalUpdatesCount + 1,
             });
 
@@ -1122,7 +1328,8 @@ class BackgroundLocationManager {
                 // Location is stale - check if box GPS is available as fallback
                 if (!this.state.boxGpsAvailable) {
                     console.warn('[EC-15] Both phone and box GPS appear to be down');
-                    await this.logServiceEvent(currentBoxId!, 'GPS_BOTH_DOWN');
+                    const staleBoxId = sanitizeBoxId(currentBoxId);
+                    if (staleBoxId) await this.logServiceEvent(staleBoxId, 'GPS_BOTH_DOWN');
                 }
             }
 
@@ -1140,6 +1347,60 @@ class BackgroundLocationManager {
                     });
                 } catch (e) {
                     console.warn('[EC-15] Failed to write signal_lost status (non-fatal):', e);
+                }
+
+                // Attempt a one-shot fix — will succeed the moment the device
+                // regains satellites (e.g. rider steps outside after being indoors).
+                // Two-stage: cell/WiFi first (fast, works indoors), then GPS+cell.
+                // Both stages have 8-second hard timeouts to prevent hanging the health-check.
+                const tryRecoveryFix = async (accuracy: Location.LocationAccuracy): Promise<Location.LocationObject | null> => {
+                    try {
+                        return await Promise.race([
+                            Location.getCurrentPositionAsync({ accuracy }),
+                            new Promise<never>((_, reject) => setTimeout(() => reject(new Error('timeout')), 8000)),
+                        ]) as Location.LocationObject;
+                    } catch {
+                        return null;
+                    }
+                };
+                let recoveryFix = await tryRecoveryFix(Location.Accuracy.Low);
+                if (!recoveryFix) recoveryFix = await tryRecoveryFix(Location.Accuracy.Balanced);
+                if (recoveryFix) {
+                    const acc = recoveryFix.coords.accuracy ?? 999;
+                    const isLowAccuracy = acc > CONFIG.ACCURACY_REJECT_THRESHOLD_M;
+                    const recoveryUpdates: Record<string, any> = {};
+                    const ts = getTimestampSentinel();
+                    cumulativeDataBytes += 500;
+                    recoveryUpdates[`/locations/${sanitizedCurrentBoxId}/phone`] = {
+                        latitude: recoveryFix.coords.latitude,
+                        longitude: recoveryFix.coords.longitude,
+                        accuracy: recoveryFix.coords.accuracy ?? null,
+                        altitude: recoveryFix.coords.altitude ?? null,
+                        speed: recoveryFix.coords.speed ?? 0,
+                        heading: recoveryFix.coords.heading ?? 0,
+                        timestamp: Date.now(),
+                        verified_at: ts,
+                        source: 'phone_background',
+                        gps_degraded: isLowAccuracy,
+                        recovery: true,
+                    };
+                    recoveryUpdates[`/hardware/${sanitizedCurrentBoxId}/phone_status/data_bytes`] = cumulativeDataBytes;
+                    await writeMultiPathUpdates(recoveryUpdates);
+                    await writeBackgroundStatusBestEffort(sanitizedCurrentBoxId, {
+                        lastUpdate: ts,
+                        source: 'phone_background',
+                        signal_lost: false,
+                        gps_degraded: isLowAccuracy,
+                        recovery: true,
+                    });
+                    lastWrittenLocation = { lat: recoveryFix.coords.latitude, lng: recoveryFix.coords.longitude, timestamp: Date.now() };
+                    persistLastKnownLocation(lastWrittenLocation);
+                    lastValidFixTime = Date.now();
+                    persistValidFixTime();
+                    lastBackgroundTaskUpdateTimestamp = Date.now();
+                    console.log(`[EC-15] ✓ Signal recovered! Fix written | acc=${acc.toFixed(0)}m`);
+                } else {
+                    console.warn('[EC-15] Signal still lost — recovery fix attempt failed (will retry next health check)');
                 }
             }
 
@@ -1176,6 +1437,119 @@ class BackgroundLocationManager {
             clearInterval(this.healthCheckInterval);
             this.healthCheckInterval = null;
         }
+    }
+
+    /**
+     * Signal Recovery Watchdog — the last line of defence.
+     * Runs every CONFIG.NO_FIX_RETRY_INTERVAL_MS (15s) entirely on the JS side,
+     * independent of the OS background task. If the background task stops firing
+     * (Doze mode, OEM killer, indoor dead zone), this loop keeps trying to get a
+     * fresh GPS/cell/WiFi fix and write it to Firebase. It NEVER stops while the
+     * service is RUNNING — there is no threshold that gates it off.
+     *
+     * Strategy per cycle:
+     *   1. If a real fix came in recently (from the bg task), skip — no double-work.
+     *   2. Try Accuracy.Low (cell towers / WiFi — near-instant, works indoors).
+     *   3. If Low fails, try Accuracy.Balanced (GPS + cell + WiFi).
+     *   4. Both have hard 8s timeouts so they can never stall the interval.
+     *   5. On success: write to Firebase, update lastValidFixTime, persist it.
+     *   6. On fail: log and wait for the next cycle — never gives up.
+     */
+    private startSignalRecoveryWatchdog(): void {
+        if (this.signalRecoveryInterval) return; // already running
+
+        const tryFix = async (accuracy: Location.LocationAccuracy): Promise<Location.LocationObject | null> => {
+            try {
+                return await Promise.race([
+                    Location.getCurrentPositionAsync({ accuracy }),
+                    new Promise<never>((_, reject) => setTimeout(() => reject(new Error('timeout')), 8000)),
+                ]) as Location.LocationObject;
+            } catch {
+                return null;
+            }
+        };
+
+        this.signalRecoveryInterval = setInterval(async () => {
+            if (this.isSignalRecoveryInFlight) return;
+            if (this.state.status !== 'RUNNING') return;
+
+            const boxId = sanitizeBoxId(currentBoxId);
+            if (!boxId) return;
+
+            // Back off if the background task is already delivering fresh fixes.
+            // "Fresh" = a real fix written within the last NO_FIX_RETRY_INTERVAL_MS.
+            const msSinceLastFix = Date.now() - lastValidFixTime;
+            if (msSinceLastFix < CONFIG.NO_FIX_RETRY_INTERVAL_MS) return;
+
+            this.isSignalRecoveryInFlight = true;
+            try {
+                // Stage 1: cell/WiFi only — near-instant even indoors
+                let fix = await tryFix(Location.Accuracy.Low);
+
+                // Stage 2: GPS + cell + WiFi — better outdoors, fallback
+                if (!fix) {
+                    fix = await tryFix(Location.Accuracy.Balanced);
+                }
+
+                if (!fix) {
+                    console.log(`[EC-15][watchdog] No fix yet — will retry in ${CONFIG.NO_FIX_RETRY_INTERVAL_MS / 1000}s`);
+                    return;
+                }
+
+                const acc = fix.coords.accuracy ?? 999;
+                const isLowAccuracy = acc > CONFIG.ACCURACY_REJECT_THRESHOLD_M;
+                const ts = getTimestampSentinel();
+                cumulativeDataBytes += 500;
+
+                const updates: Record<string, any> = {};
+                updates[`/locations/${boxId}/phone`] = {
+                    latitude: fix.coords.latitude,
+                    longitude: fix.coords.longitude,
+                    accuracy: fix.coords.accuracy ?? null,
+                    altitude: fix.coords.altitude ?? null,
+                    speed: fix.coords.speed ?? 0,
+                    heading: fix.coords.heading ?? 0,
+                    timestamp: Date.now(),
+                    verified_at: ts,
+                    source: 'phone_background',
+                    gps_degraded: isLowAccuracy,
+                    watchdog: true,
+                };
+                updates[`/hardware/${boxId}/phone_status/data_bytes`] = cumulativeDataBytes;
+
+                await writeMultiPathUpdates(updates);
+                await writeBackgroundStatusBestEffort(boxId, {
+                    lastUpdate: ts,
+                    source: 'phone_background',
+                    signal_lost: false,
+                    gps_degraded: isLowAccuracy,
+                    watchdog: true,
+                });
+
+                lastWrittenLocation = { lat: fix.coords.latitude, lng: fix.coords.longitude, timestamp: Date.now() };
+                persistLastKnownLocation(lastWrittenLocation);
+                lastValidFixTime = Date.now();
+                persistValidFixTime();
+                lastBackgroundTaskUpdateTimestamp = Date.now();
+                lastNoFixRetryAttemptTime = Date.now(); // avoid double-attempt from bg task's else block
+
+                console.log(`[EC-15][watchdog] ✓ Fix written | acc=${acc.toFixed(0)}m | ${fix.coords.latitude.toFixed(5)},${fix.coords.longitude.toFixed(5)}`);
+            } catch (e) {
+                console.warn('[EC-15][watchdog] Write failed (non-fatal):', e);
+            } finally {
+                this.isSignalRecoveryInFlight = false;
+            }
+        }, CONFIG.NO_FIX_RETRY_INTERVAL_MS);
+
+        console.log('[EC-15] Signal recovery watchdog started');
+    }
+
+    private stopSignalRecoveryWatchdog(): void {
+        if (this.signalRecoveryInterval) {
+            clearInterval(this.signalRecoveryInterval);
+            this.signalRecoveryInterval = null;
+        }
+        this.isSignalRecoveryInFlight = false;
     }
 
     private subscribeToAppState(): void {
@@ -1290,6 +1664,8 @@ class BackgroundLocationManager {
                             timestamp: now,
                         };
                         lastValidFixTime = now;
+                        persistLastKnownLocation(lastWrittenLocation);
+                        persistValidFixTime();
 
                         const phoneStatus = await collectPhoneNetworkStatus(
                             { accuracy: location.coords.accuracy, altitude: location.coords.altitude },

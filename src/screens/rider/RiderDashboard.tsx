@@ -647,23 +647,16 @@ export default function RiderDashboard() {
 
         const trackingBoxId = (isPaired && pairedBoxId) ? pairedBoxId : activeDeliveryBoxId;
 
-        if (isOnline && trackingBoxId && ((isPaired && pairedBoxId) || hasActiveDeliveryTracking)) {
-            console.log('[RiderDashboard] Online tracking active for box:', trackingBoxId);
+        // Track whenever there is a box to track — isOnline does NOT gate location.
+        // isOnline only controls the rider's availability in the new-order matching pool.
+        if (trackingBoxId) {
+            console.log('[RiderDashboard] trackingBoxId present — tracking always on:', trackingBoxId);
             startMonitoring(trackingBoxId);
             activateTracking();
-
-            // Start the background location service — this is what actually
-            // writes phone GPS to Firebase every 3 seconds.
-            // The service's start() handles deduplication internally:
-            // if already running with same boxId, it returns true immediately.
             startBackgroundLocation(trackingBoxId);
-        } else if (!isOnline) {
-            console.log('[RiderDashboard] Rider is offline - Deactivating Tracking');
-            deactivateTracking();
-            stopMonitoring();
-            stopBackgroundLocation();
-        } else if (!isPaired && !hasActiveDeliveryTracking) {
-            console.log('[RiderDashboard] Not paired and no active delivery - stopping tracking/background location');
+        } else {
+            // No box associated at all — nothing to track
+            console.log('[RiderDashboard] No trackingBoxId — stopping tracking');
             deactivateTracking();
             stopMonitoring();
             stopBackgroundLocation();
@@ -875,7 +868,7 @@ export default function RiderDashboard() {
     }, [isOnline, riderId, hasActiveDelivery]);
 
     useEffect(() => {
-        if (!isOnline || !riderId) {
+        if (!riderId) {
             return;
         }
 
