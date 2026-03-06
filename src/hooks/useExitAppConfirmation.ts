@@ -1,6 +1,7 @@
 import { useCallback, useState } from 'react';
 import { BackHandler } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
+import RNExitApp from 'react-native-exit-app';
 import { stopBackgroundLocation } from '../services/backgroundLocationService';
 import { stopBackgroundServices } from '../services/backgroundServiceManager';
 
@@ -33,10 +34,16 @@ export const useExitAppConfirmation = () => {
         } catch (error) {
             console.warn('[useExitAppConfirmation] Error stopping services:', error);
         } finally {
-            // Completely kill the app
-            BackHandler.exitApp();
+            // Completely kill the app process so it removes the interactive state from Recents
+            try {
+                RNExitApp.exitApp();
+            } catch (error) {
+                // Fallback if the native module isn't linked yet
+                BackHandler.exitApp();
+            }
         }
     };
 
     return { showExitModal, setShowExitModal, handleExit };
 };
+

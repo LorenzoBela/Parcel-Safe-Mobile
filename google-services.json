@@ -39,6 +39,14 @@
           }
         },
         {
+          "client_id": "535049149934-j50d4pjrjpplb05spdklqp5lkj1raucd.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.parcel.safe",
+            "certificate_hash": "72955868f0e0c0a1fa8d9d750e233df86d36da25"
+          }
+        },
+        {
           "client_id": "535049149934-ts7a7b7id7ukvi84n55sschfe31vqjp8.apps.googleusercontent.com",
           "client_type": 1,
           "android_info": {
