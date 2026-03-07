@@ -32,11 +32,7 @@ try {
 import IncomingOrderModal from '../../components/IncomingOrderModal';
 import TripPreviewModal from '../../components/modals/TripPreviewModal';
 import {
-    startBackgroundLocation,
-    stopBackgroundLocation,
-    isBackgroundLocationRunning,
     setTrackingPhase,
-    checkAndRecoverBackgroundLocation,
 } from '../../services/backgroundLocationService';
 import { checkOemProtection, markOemProtectionDone } from '../../services/oemProtection';
 
@@ -161,7 +157,7 @@ const darkC = {
 };
 
 export default function RiderDashboard() {
-    const { showExitModal, setShowExitModal, handleExit } = useExitAppConfirmation();
+    const { showExitModal, setShowExitModal, handleExit } = useExitAppConfirmation({ stopServicesOnExit: false });
     const navigation = useNavigation<any>();
     const theme = useTheme();
     const { isDarkMode } = useAppTheme();
@@ -392,17 +388,22 @@ export default function RiderDashboard() {
     const [powerState, setPowerState] = useState<PowerState | null>(null);
 
     // Active delivery tracking
+    const [activeDelivery, setActiveDelivery] = useState<any>(null);
     const [hasActiveDelivery, setHasActiveDelivery] = useState(false);
+    const [hasResolvedInitialActiveDelivery, setHasResolvedInitialActiveDelivery] = useState(false);
+    const [hasResolvedPairingState, setHasResolvedPairingState] = useState(false);
 
     const isPaired = isPairingActive(pairingState);
     const pairedBoxId = sanitizeBoxId(pairingState?.box_id);
     const pairingModeLabel = pairingState?.mode === 'ONE_TIME' ? 'One-time' : 'Session';
     const boxIdForMonitoring = pairedBoxId;
+    const activeDeliveryBoxId = sanitizeBoxId(activeDelivery?.assigned_box_id || activeDelivery?.box_id);
+    const trackedBoxId = (isPaired && pairedBoxId) ? pairedBoxId : activeDeliveryBoxId;
 
     // Keep the ref in sync so the foreground watcher callback can access current boxId
     useEffect(() => {
-        activeBoxIdRef.current = (isPaired && isOnline && pairedBoxId) ? pairedBoxId : null;
-    }, [isPaired, isOnline, pairedBoxId]);
+        activeBoxIdRef.current = trackedBoxId;
+    }, [trackedBoxId]);
 
     // EC-Fix: Auto-restore session if authStore is empty but Firebase Auth is active
     // This prevents "Rider ID Required" errors after reloading the app
@@ -444,52 +445,6 @@ export default function RiderDashboard() {
 
         restoreSession();
     }, [riderId]);
-
-    const [activeDelivery, setActiveDelivery] = useState<any>(null);
-
-    // EC-FIX: Automatically manage tracking lifecycle based on active delivery
-    // Moved here to ensure activeDelivery is defined
-    useEffect(() => {
-        if (activeDelivery) {
-            const boxId = sanitizeBoxId(activeDelivery.assigned_box_id || activeDelivery.box_id);
-            if (boxId) {
-                console.log('[RiderDashboard] Starting monitoring for box:', boxId);
-                startMonitoring(boxId);
-
-                // Activate tracking immediately for active deliveries
-                // We track even if just assigned, to show rider approaching pickup
-                if (activeDelivery.status && activeDelivery.status !== 'COMPLETED' && activeDelivery.status !== 'CANCELLED') {
-                    console.log('[RiderDashboard] Activating tracking');
-                    activateTracking();
-
-                    // EC-15: Proactively start background location so GPS continues
-                    // even if the rider closes the app or switches to another app.
-                    if (!isBackgroundLocationRunning()) {
-                        console.log('[RiderDashboard] Starting background location proactively');
-                        startBackgroundLocation(boxId);
-                        setTrackingPhase('TRANSIT');
-                    }
-                }
-
-                // Stop background service when delivery ends — BUT only if
-                // the rider is not paired. If paired, keep tracking regardless
-                // of delivery status (rider should always be trackable when paired).
-                if (activeDelivery.status === 'COMPLETED' || activeDelivery.status === 'CANCELLED') {
-                    if (!isPaired) {
-                        console.log('[RiderDashboard] Delivery ended + not paired, stopping background location');
-                        stopBackgroundLocation();
-                    } else {
-                        console.log('[RiderDashboard] Delivery ended but still paired, keeping background location active');
-                    }
-                }
-            }
-        } else {
-            // No active delivery
-            // We do NOT deactivate tracking here anymore, because we want to stay visible
-            // while waiting for orders (if online).
-        }
-    }, [activeDelivery?.id, activeDelivery?.status, activeDelivery?.assigned_box_id]);
-
     // Dynamic delivery state — populated from real sources when available
     const nextDelivery = useMemo(() => activeDelivery ? {
         id: activeDelivery.id,
@@ -555,11 +510,15 @@ export default function RiderDashboard() {
 
     // Check for active deliveries
     const checkActiveDeliveries = useCallback(async () => {
-        if (!riderId) return;
+        if (!riderId) {
+            setHasResolvedInitialActiveDelivery(false);
+            return;
+        }
         try {
             const { supabase } = await import('../../services/supabaseClient');
             if (!supabase) {
                 setHasActiveDelivery(false);
+                setActiveDelivery(null);
                 return;
             }
             const { data, error } = await supabase
@@ -580,30 +539,20 @@ export default function RiderDashboard() {
             console.error('[RiderDashboard] Failed to check active deliveries:', err);
             setHasActiveDelivery(false);
             setActiveDelivery(null);
+        } finally {
+            setHasResolvedInitialActiveDelivery(true);
         }
     }, [riderId]);
 
     useEffect(() => {
+        if (!riderId) return;
+
+        setHasResolvedInitialActiveDelivery(false);
         checkActiveDeliveries();
         // Re-check every 30 seconds
         const interval = setInterval(checkActiveDeliveries, 30000);
         return () => clearInterval(interval);
-    }, [checkActiveDeliveries]);
-
-    // EC-15: Heartbeat Watchdog — auto-recover background location on app resume
-    useEffect(() => {
-        const handleAppStateChange = (nextState: import('react-native').AppStateStatus) => {
-            if (nextState === 'active' && activeDelivery) {
-                const boxId = sanitizeBoxId(activeDelivery.assigned_box_id || activeDelivery.box_id);
-                if (boxId) {
-                    checkAndRecoverBackgroundLocation(boxId);
-                }
-            }
-        };
-
-        const sub = AppState.addEventListener('change', handleAppStateChange);
-        return () => sub.remove();
-    }, [activeDelivery?.id]);
+    }, [riderId, checkActiveDeliveries]);
 
     // EC-15: OEM Kill Protection — show one-time dialog for aggressive manufacturers
     useEffect(() => {
@@ -638,15 +587,13 @@ export default function RiderDashboard() {
     //    the actual Firebase writes come from the background location service.
     //    NOTE: Race condition is now fixed in stop(), so we safely call it when unpaired. ──
     useEffect(() => {
-        const activeDeliveryBoxId = sanitizeBoxId(activeDelivery?.assigned_box_id || activeDelivery?.box_id);
-        const hasActiveDeliveryTracking = Boolean(
-            activeDeliveryBoxId
-            && activeDelivery?.status
-            && activeDelivery.status !== 'COMPLETED'
-            && activeDelivery.status !== 'CANCELLED'
-        );
-
         const trackingBoxId = (isPaired && pairedBoxId) ? pairedBoxId : activeDeliveryBoxId;
+        const isTrackingContextPending = (
+            isRestoringSession
+            || !riderId
+            || !hasResolvedInitialActiveDelivery
+            || !hasResolvedPairingState
+        );
 
         // Track whenever there is a box to track — isOnline does NOT gate location.
         // isOnline only controls the rider's availability in the new-order matching pool.
@@ -654,15 +601,30 @@ export default function RiderDashboard() {
             console.log('[RiderDashboard] trackingBoxId present — tracking always on:', trackingBoxId);
             startMonitoring(trackingBoxId);
             activateTracking();
-            startBackgroundLocation(trackingBoxId);
         } else {
+            if (isTrackingContextPending) {
+                console.log('[RiderDashboard] Tracking context still hydrating — preserving current background service state');
+                return;
+            }
+
             // No box associated at all — nothing to track
-            console.log('[RiderDashboard] No trackingBoxId — stopping tracking');
+            console.log('[RiderDashboard] No trackingBoxId after hydration — stopping tracking');
             deactivateTracking();
             stopMonitoring();
-            stopBackgroundLocation();
         }
-    }, [isOnline, isPaired, pairedBoxId, activeDelivery?.id, activeDelivery?.status, activeDelivery?.assigned_box_id, activeDelivery?.box_id]);
+    }, [
+        isOnline,
+        isPaired,
+        pairedBoxId,
+        activeDelivery?.id,
+        activeDelivery?.status,
+        activeDelivery?.assigned_box_id,
+        activeDelivery?.box_id,
+        isRestoringSession,
+        riderId,
+        hasResolvedInitialActiveDelivery,
+        hasResolvedPairingState,
+    ]);
 
     // Auto-start monitoring for hardware state (read-only subscriptions)
     useEffect(() => {
@@ -773,7 +735,6 @@ export default function RiderDashboard() {
         });
 
         return () => {
-            deactivateTracking();
             unsubscribeBox();
             unsubscribeBattery();
             unsubscribeTamper();
@@ -908,9 +869,16 @@ export default function RiderDashboard() {
     }, [boxIdForMonitoring]);
 
     useEffect(() => {
-        if (!riderId) return;
+        if (!riderId) {
+            setHasResolvedPairingState(false);
+            setPairingState(null);
+            return;
+        }
+
+        setHasResolvedPairingState(false);
         const unsubscribe = subscribeToRiderPairing(riderId, (state) => {
             setPairingState(isPairingActive(state) ? state : null);
+            setHasResolvedPairingState(true);
         });
         return unsubscribe;
     }, [riderId]);

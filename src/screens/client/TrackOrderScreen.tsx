@@ -45,6 +45,11 @@ import timezone from 'dayjs/plugin/timezone';
 dayjs.extend(utc);
 dayjs.extend(timezone);
 
+const formatSpeed = (speedMs: number | undefined | null) => {
+    if (speedMs == null || speedMs < 0) return '0 km/h';
+    return `${Math.round(speedMs * 3.6)} km/h`;
+};
+
 interface TrackRouteParams {
     bookingId: string;
     riderId?: string;
@@ -140,7 +145,7 @@ export default function TrackOrderScreen() {
     const [showCancelModal, setShowCancelModal] = useState(false);
     const [cancelLoading, setCancelLoading] = useState(false);
     const [delivery, setDelivery] = useState<DeliveryRecord | null>(null);
-    const [riderLiveLocation, setRiderLiveLocation] = useState<{ lat: number; lng: number; lastUpdated: number } | null>(null);
+    const [riderLiveLocation, setRiderLiveLocation] = useState<{ lat: number; lng: number; speed?: number; lastUpdated: number } | null>(null);
     const [boxLiveLocation, setBoxLiveLocation] = useState<{ lat: number; lng: number; lastUpdated: number } | null>(null);
     const [routeCoordinates, setRouteCoordinates] = useState<number[][] | null>(null);
     const [completedRouteCoords, setCompletedRouteCoords] = useState<number[][] | null>(null); // P1: traveled route
@@ -443,6 +448,7 @@ export default function TrackOrderScreen() {
                         setRiderLiveLocation({
                             lat: riderLoc.lat,
                             lng: riderLoc.lng,
+                            speed: riderLoc.speed,
                             lastUpdated: riderLoc.lastUpdated,
                         });
                         console.log('[TrackOrder] Pre-fetched rider location:', riderLoc.lat, riderLoc.lng);
@@ -489,6 +495,7 @@ export default function TrackOrderScreen() {
                 setRiderLiveLocation({
                     lat: location.lat,
                     lng: location.lng,
+                    speed: location.speed,
                     lastUpdated: location.lastUpdated || Date.now()
                 });
             });
@@ -554,6 +561,7 @@ export default function TrackOrderScreen() {
             setRiderLiveLocation({
                 lat: location.lat,
                 lng: location.lng,
+                speed: location.speed,
                 lastUpdated: location.lastUpdated || Date.now()
             });
         });
@@ -1185,6 +1193,14 @@ export default function TrackOrderScreen() {
                                             ? `${Math.round(distanceToTarget * 1000)}m away`
                                             : `${distanceToTarget.toFixed(1)}km away`}
                                     </Text>
+                                )}
+                                {riderLiveLocation?.speed != null && (
+                                    <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4 }}>
+                                        <MaterialCommunityIcons name="speedometer" size={12} color="rgba(255,255,255,0.85)" />
+                                        <Text style={{ color: 'rgba(255,255,255,0.85)', fontSize: 11, fontWeight: '600', marginLeft: 4 }}>
+                                            {formatSpeed(riderLiveLocation.speed)}
+                                        </Text>
+                                    </View>
                                 )}
                             </Surface>
                         )}

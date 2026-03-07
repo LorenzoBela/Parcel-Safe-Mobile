@@ -40,6 +40,7 @@ type BoxMarker = {
     id: string;
     lat: number;
     lng: number;
+    speed?: number;
     alert: boolean;
     status: string;
     gpsSource?: string;
@@ -163,6 +164,11 @@ function formatCoord(val: number, isLat: boolean): string {
     const abs = Math.abs(val);
     const dir = isLat ? (val >= 0 ? 'N' : 'S') : (val >= 0 ? 'E' : 'W');
     return `${abs.toFixed(5)}° ${dir}`;
+}
+
+function formatSpeed(speedMs: number | undefined | null): string {
+    if (speedMs == null || speedMs < 0) return '0 km/h';
+    return `${Math.round(speedMs * 3.6)} km/h`;
 }
 
 // ==================== Sub-components ====================
@@ -301,6 +307,7 @@ export default function GlobalMapScreen() {
                     id: boxId,
                     lat: typeof location?.latitude === 'number' ? location.latitude : NaN,
                     lng: typeof location?.longitude === 'number' ? location.longitude : NaN,
+                    speed: typeof location?.speed === 'number' ? location.speed : undefined,
                     alert,
                     status,
                     gpsSource: location?.source,
@@ -576,6 +583,10 @@ export default function GlobalMapScreen() {
                             <MaterialCommunityIcons name="clock-outline" size={14} color="#F59E0B" />
                             <Text style={[styles.diagPillText, { color: uiText }]}>{formatTimeAgo(selectedBox.lastUpdated || selectedBox.timestamp)}</Text>
                         </View>
+                        <View style={[styles.diagPill, { backgroundColor: uiPill }]}>
+                            <MaterialCommunityIcons name="speedometer" size={14} color={uiAccent} />
+                            <Text style={[styles.diagPillText, { color: uiText }]}>{formatSpeed(selectedBox.speed)}</Text>
+                        </View>
                     </View>
                 </Card.Content>
             </Card>
@@ -792,6 +803,16 @@ export default function GlobalMapScreen() {
                                                     />
                                                     <Text style={[styles.listItemMetaText, { color: uiTextSec }]}>
                                                         {box.connection ?? '—'}
+                                                    </Text>
+                                                </View>
+                                                <View style={styles.listItemMeta}>
+                                                    <MaterialCommunityIcons
+                                                        name="speedometer"
+                                                        size={12}
+                                                        color={uiTextSec}
+                                                    />
+                                                    <Text style={[styles.listItemMetaText, { color: uiTextSec }]}>
+                                                        {formatSpeed(box.speed)}
                                                     </Text>
                                                 </View>
                                                 <View style={styles.listItemMeta}>

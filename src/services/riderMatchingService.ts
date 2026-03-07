@@ -18,11 +18,11 @@ const API_BASE_URL = process.env.EXPO_PUBLIC_TRACKING_WEB_BASE_URL || 'https://p
 
 /** Map a delivery status to the NotificationType expected by /api/notifications/send */
 const STATUS_TO_NOTIFICATION_TYPE: Record<string, string> = {
-    ASSIGNED:   'ORDER_ACCEPTED',
+    ASSIGNED: 'ORDER_ACCEPTED',
     IN_TRANSIT: 'PARCEL_PICKED_UP',
-    ARRIVED:    'RIDER_ARRIVED',
-    COMPLETED:  'DELIVERY_COMPLETED',
-    CANCELLED:  'ORDER_CANCELLED_BY_RIDER',
+    ARRIVED: 'RIDER_ARRIVED',
+    COMPLETED: 'DELIVERY_COMPLETED',
+    CANCELLED: 'ORDER_CANCELLED_BY_RIDER',
 };
 
 /**
@@ -145,6 +145,7 @@ export interface DeliveryRecord {
 export interface RiderLiveLocation {
     lat: number;
     lng: number;
+    speed?: number;
     lastUpdated: number;
 }
 
@@ -966,6 +967,7 @@ export function subscribeToRiderLocation(
         callback({
             lat: data.lat,
             lng: data.lng,
+            speed: data.speed,
             lastUpdated: data.last_updated || Date.now(),
         });
     });
@@ -994,6 +996,7 @@ export async function getInitialRiderLocation(
         return {
             lat: data.lat,
             lng: data.lng,
+            speed: data.speed,
             lastUpdated: data.last_updated || Date.now(),
         };
     } catch (error) {
