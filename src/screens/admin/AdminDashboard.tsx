@@ -398,7 +398,7 @@ export default function AdminDashboard() {
                 <Text style={[styles.sectionTitle, { color: c.textPrimary }]}>System Management</Text>
                 <View style={styles.actionsGrid}>
                     {quickActions.map((a, i) => (
-                        <Animated.View key={i} style={actionsStagger[i]?.style}>
+                        <Animated.View key={i} style={[styles.actionTileWrapper, actionsStagger[i]?.style]}>
                         <TouchableOpacity
                             style={[styles.actionTile, { backgroundColor: c.card, borderColor: c.border }]}
                             onPress={a.onPress}
@@ -833,12 +833,15 @@ const styles = StyleSheet.create({
         justifyContent: 'space-between',
         marginBottom: 20,
     },
-    actionTile: {
+    actionTileWrapper: {
         width: '31%',
+        marginBottom: 12,
+    },
+    actionTile: {
+        width: '100%',
         borderRadius: 14,
         paddingVertical: 20,
         alignItems: 'center',
-        marginBottom: 12,
         borderWidth: 1,
     },
     actionIconWrap: {

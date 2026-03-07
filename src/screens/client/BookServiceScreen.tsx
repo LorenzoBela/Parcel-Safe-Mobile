@@ -99,6 +99,10 @@ export default function BookServiceScreen() {
     const [pickupCoords, setPickupCoords] = useState<{ latitude: number; longitude: number } | null>(null);
     const [dropoffCoords, setDropoffCoords] = useState<{ latitude: number; longitude: number } | null>(null);
 
+    // Pending (staged) location — set by any map drag/pan, committed only on Confirm
+    const [pendingCoords, setPendingCoords] = useState<{ latitude: number; longitude: number } | null>(null);
+    const [pendingAddress, setPendingAddress] = useState<string>('');
+
     // Saved Addresses
     const [savedAddresses, setSavedAddresses] = useState<any[]>([]);
 
@@ -197,6 +201,10 @@ export default function BookServiceScreen() {
     const lastFetchedCoordinate = React.useRef<{ lat: number; lng: number } | null>(null);
     const lastGeocodedCoordinate = React.useRef<{ lat: number; lng: number, address: string } | null>(null);
     const lastHapticNodeId = React.useRef<string | null>(null);
+    // In-flight geocode dedup: if two callers hit reverseGeocodeGoogle concurrently for the
+    // same coordinates (e.g. handleRecenter + handleRegionChange race), the second caller
+    // gets the same Promise instead of firing a second API request.
+    const geocodeInFlightRef = React.useRef<{ lat: number; lng: number; promise: Promise<string | null> } | null>(null);
     // Prevents the auto-open from re-firing every time isMapVisible toggles (back-button loop fix)
     const hasAutoOpenedForRoute = React.useRef(false);
 
@@ -220,37 +228,44 @@ export default function BookServiceScreen() {
     };
 
     // Helper to reverse geocode using Google (much better exact address resolution)
-    const reverseGeocodeGoogle = async (lat: number, lng: number): Promise<string | null> => {
-        if (!GOOGLE_MAPS_TOKEN) return null;
+    const reverseGeocodeGoogle = (lat: number, lng: number): Promise<string | null> => {
+        if (!GOOGLE_MAPS_TOKEN) return Promise.resolve(null);
 
-        // Hyper-aggressive Reverse Geocoding Cache:
-        // If the user only shifted the map by less than 20 meters and didn't snap, 
-        // they are effectively looking at the same building/street segment.
-        // Save $0.005 per micro-drag by reusing the last address.
+        // 1. Resolved cache: same building/street within 20 m — reuse stored address, zero API cost.
         if (lastGeocodedCoordinate.current) {
-            const dist = getDistance(
-                lat, lng,
-                lastGeocodedCoordinate.current.lat, lastGeocodedCoordinate.current.lng
-            );
-            if (dist < 20) {
-                return lastGeocodedCoordinate.current.address;
-            }
+            const dist = getDistance(lat, lng, lastGeocodedCoordinate.current.lat, lastGeocodedCoordinate.current.lng);
+            if (dist < 20) return Promise.resolve(lastGeocodedCoordinate.current.address);
         }
 
-        try {
-            const url = `https://maps.googleapis.com/maps/api/geocode/json?latlng=${lat},${lng}&key=${GOOGLE_MAPS_TOKEN}&result_type=street_address|premise|subpremise|point_of_interest`;
-            const response = await fetch(url);
-            const data = await response.json();
-
-            if (data.results && data.results.length > 0) {
-                const formattedAddress = data.results[0].formatted_address;
-                lastGeocodedCoordinate.current = { lat, lng, address: formattedAddress };
-                return formattedAddress;
-            }
-        } catch (error) {
-            console.error("Google Reverse Geocode Error", error);
+        // 2. In-flight dedup: if a request is already running for nearby coords, share its Promise
+        //    instead of firing a second API call (protects against concurrent callers like
+        //    handleRecenter + handleRegionChange hitting the same GPS position simultaneously).
+        if (geocodeInFlightRef.current) {
+            const dist = getDistance(lat, lng, geocodeInFlightRef.current.lat, geocodeInFlightRef.current.lng);
+            if (dist < 20) return geocodeInFlightRef.current.promise;
         }
-        return null;
+
+        const promise = (async () => {
+            try {
+                const url = `https://maps.googleapis.com/maps/api/geocode/json?latlng=${lat},${lng}&key=${GOOGLE_MAPS_TOKEN}&result_type=street_address|premise|subpremise|point_of_interest`;
+                const response = await fetch(url);
+                const data = await response.json();
+                if (data.results && data.results.length > 0) {
+                    const formattedAddress = data.results[0].formatted_address;
+                    lastGeocodedCoordinate.current = { lat, lng, address: formattedAddress };
+                    return formattedAddress as string;
+                }
+            } catch (error) {
+                console.error('Google Reverse Geocode Error', error);
+            } finally {
+                // Clear in-flight ref so the next call (different location) goes through normally
+                geocodeInFlightRef.current = null;
+            }
+            return null;
+        })();
+
+        geocodeInFlightRef.current = { lat, lng, promise };
+        return promise;
     };
 
     const fetchNearbyNodesGoogle = async (lat: number, lng: number) => {
@@ -320,37 +335,21 @@ export default function BookServiceScreen() {
     useEffect(() => {
         (async () => {
             let { status } = await Location.requestForegroundPermissionsAsync();
-            if (status !== 'granted') {
-                return;
-            }
+            if (status !== 'granted') return;
 
-            let location = await Location.getCurrentPositionAsync({});
+            // Last-known position is instant (device cache, no API cost); fresh fix only as fallback
+            let location = await Location.getLastKnownPositionAsync({ maxAge: 30000, requiredAccuracy: 150 });
+            if (!location) {
+                location = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+            }
 
             // Auto-set pickup to current location initially
             setPickupCoords(location.coords);
 
-            // Reverse geocode current location using Google for best address accuracy
+            // Reverse geocode — uses the in-flight dedup so a simultaneous handleRecenter call
+            // (if the user taps GPS before this resolves) won't fire a second API request
             const poiName = await reverseGeocodeGoogle(location.coords.latitude, location.coords.longitude);
-            if (poiName) {
-                setPickupText(poiName);
-            } else {
-                // Fallback to Expo if Mapbox fails or returns nothing (unlikely)
-                try {
-                    let address = await Location.reverseGeocodeAsync({
-                        latitude: location.coords.latitude,
-                        longitude: location.coords.longitude
-                    });
-                    if (address && address.length > 0) {
-                        const { city, region, name, street } = address[0];
-                        const locString = street || name || city || 'Current Location';
-                        setPickupText(locString);
-                    } else {
-                        setPickupText('Current Location');
-                    }
-                } catch (e) {
-                    setPickupText('Current Location');
-                }
-            }
+            setPickupText(poiName || 'Current Location');
         })();
     }, []);
 
@@ -546,11 +545,8 @@ export default function BookServiceScreen() {
             longitude: e.geometry.coordinates[0],
         };
 
-        if (activeField === 'pickup') {
-            setPickupText("Locating...");
-        } else {
-            setDropoffText("Locating...");
-        }
+        // Show "Locating..." in the pending address while we resolve asynchronously
+        setPendingAddress('Locating...');
 
         // Fetch nearby POI nodes around this new location for the map (runs in background)
         fetchNearbyNodesGoogle(rawCoords.latitude, rawCoords.longitude);
@@ -595,12 +591,8 @@ export default function BookServiceScreen() {
             lastHapticNodeId.current = null;
         }
 
-        // Save the final (road- or POI-snapped) coordinates
-        if (activeField === 'pickup') {
-            setPickupCoords(finalCoords);
-        } else {
-            setDropoffCoords(finalCoords);
-        }
+        // Stage the final (road- or POI-snapped) coordinates as pending — not committed yet
+        setPendingCoords(finalCoords);
 
         // Reverse geocode unless a POI already gave us a name
         if (!addressText) {
@@ -608,11 +600,7 @@ export default function BookServiceScreen() {
             addressText = poiName || `${finalCoords.latitude.toFixed(4)}, ${finalCoords.longitude.toFixed(4)}`;
         }
 
-        if (activeField === 'pickup') {
-            setPickupText(addressText);
-        } else {
-            setDropoffText(addressText);
-        }
+        setPendingAddress(addressText);
     };
 
     const handleRegionIsChanging = (e: any) => {
@@ -645,60 +633,58 @@ export default function BookServiceScreen() {
         }
     };
 
-    const handleMapPress = async (e: any) => {
-        const coords = {
-            latitude: e.geometry.coordinates[1],
-            longitude: e.geometry.coordinates[0],
-        };
+    const handleMapPress = (e: any) => {
+        // Tapping the map centers the camera on the tapped point.
+        // Actual coord/address resolution happens in handleRegionChange after the camera settles.
+        const lng = e.geometry.coordinates[0];
+        const lat = e.geometry.coordinates[1];
+
         setSuggestions([]);
         setSearchError(null);
 
-        // Animate camera to the pressed location
         cameraRef.current?.setCamera({
-            centerCoordinate: [coords.longitude, coords.latitude],
-            animationDuration: 1000,
+            centerCoordinate: [lng, lat],
+            animationDuration: 600,
             animationMode: 'flyTo',
         });
+    };
 
-        // Snap to nearest drivable road so the rider has a reachable waypoint
-        const snappedRoad = await snapToNearestRoad(coords.latitude, coords.longitude);
-        coords.latitude = snappedRoad.latitude;
-        coords.longitude = snappedRoad.longitude;
+    // Commits the staged pending location to the active field.
+    const handleConfirmPendingLocation = () => {
+        if (!pendingCoords || pendingAddress === 'Locating...') return;
 
-        // Optimistic update - show coordinates first then loading
-        let addressText = "Locating...";
+        const finalAddress = pendingAddress || `${pendingCoords.latitude.toFixed(4)}, ${pendingCoords.longitude.toFixed(4)}`;
 
         if (activeField === 'pickup') {
-            setPickupCoords(snappedRoad);
-            setPickupText(addressText);
-
-            // Auto-focus dropoff after a short delay
+            setPickupCoords(pendingCoords);
+            setPickupText(finalAddress);
+            // Auto-advance to dropoff after confirming pickup
             setTimeout(() => {
                 setActiveField('dropoff');
                 dropoffInputRef.current?.focus();
-            }, 800);
+            }, 300);
         } else {
-            setDropoffCoords(snappedRoad);
-            setDropoffText(addressText);
+            setDropoffCoords(pendingCoords);
+            setDropoffText(finalAddress);
         }
 
-        // Use Google for POI-aware reverse geocoding
-        const poiName = await reverseGeocodeGoogle(coords.latitude, coords.longitude);
+        setPendingCoords(null);
+        setPendingAddress('');
+    };
 
-        if (poiName) {
-            addressText = poiName;
-        } else {
-            addressText = `${coords.latitude.toFixed(4)}, ${coords.longitude.toFixed(4)}`;
+    // Discards the staged pending location and flies back to the already-confirmed pin.
+    const handleCancelPendingLocation = () => {
+        setPendingCoords(null);
+        setPendingAddress('');
+        const existing = activeField === 'pickup' ? pickupCoords : dropoffCoords;
+        if (existing) {
+            cameraRef.current?.setCamera({
+                centerCoordinate: [existing.longitude, existing.latitude],
+                zoomLevel: 16,
+                animationDuration: 600,
+                animationMode: 'flyTo',
+            });
         }
-
-        if (activeField === 'pickup') {
-            setPickupText(addressText);
-        } else {
-            setDropoffText(addressText);
-        }
-
-        // Fetch new nodes
-        fetchNearbyNodesGoogle(coords.latitude, coords.longitude);
     };
 
     const handleSelectSuggestion = async (item: MapboxSuggestion) => {
@@ -894,6 +880,13 @@ export default function BookServiceScreen() {
         calculateRoute();
     }, [pickupCoords, dropoffCoords, MAPBOX_TOKEN]);
 
+    // Clear any staged pending location whenever the active field or map visibility changes,
+    // so stale pending state from a previous field can never bleed through.
+    useEffect(() => {
+        setPendingCoords(null);
+        setPendingAddress('');
+    }, [activeField, isMapVisible]);
+
     // Auto-fit camera to frame the full route when the preview is shown in map view.
     // Auto-opens the map once when route becomes ready from the search flow (typing addresses).
     // Uses a ref guard so pressing the back button doesn't re-trigger the open (loop fix).
@@ -995,28 +988,44 @@ export default function BookServiceScreen() {
         });
     };
 
-    // Add the FAB handler for strictly just recentering (no input change)
+    // FAB: recenters camera AND stages current location as pending so user can confirm it
     const handleRecenter = async () => {
         let { status } = await Location.requestForegroundPermissionsAsync();
         if (status !== 'granted') return;
 
-        let location = await Location.getCurrentPositionAsync({});
+        // Try cached last-known first (instant), fall back to a fresh balanced-accuracy fix
+        let location = await Location.getLastKnownPositionAsync({ maxAge: 15000, requiredAccuracy: 100 });
+        if (!location) {
+            location = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+        }
         const coords = location.coords;
 
         cameraRef.current?.setCamera({
             centerCoordinate: [coords.longitude, coords.latitude],
             zoomLevel: 15,
-            animationDuration: 1000,
+            animationDuration: 600,
+        });
+
+        // Stage as pending so the user just needs to tap Confirm
+        setPendingCoords({ latitude: coords.latitude, longitude: coords.longitude });
+        setPendingAddress('Locating...');
+        // Reverse geocode in the background
+        reverseGeocodeGoogle(coords.latitude, coords.longitude).then((name) => {
+            setPendingAddress(name || `${coords.latitude.toFixed(4)}, ${coords.longitude.toFixed(4)}`);
         });
     };
 
     // Existing handler: Sets Pickup to Current Location AND Centers
     const handleSetPickupToCurrent = async () => {
-        setPickupText("Locating...");
+        setPickupText('Locating...');
         let { status } = await Location.requestForegroundPermissionsAsync();
         if (status !== 'granted') return;
 
-        let location = await Location.getCurrentPositionAsync({});
+        // Try cached last-known first (instant), fall back to a fresh balanced-accuracy fix
+        let location = await Location.getLastKnownPositionAsync({ maxAge: 15000, requiredAccuracy: 100 });
+        if (!location) {
+            location = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+        }
         const coords = location.coords;
 
         setPickupCoords(coords);
@@ -1025,23 +1034,18 @@ export default function BookServiceScreen() {
         cameraRef.current?.setCamera({
             centerCoordinate: [coords.longitude, coords.latitude],
             zoomLevel: 15,
-            animationDuration: 1000,
+            animationDuration: 600,
         });
 
         // Use Google Reverse Geocode
         const poiName = await reverseGeocodeGoogle(coords.latitude, coords.longitude);
-        if (poiName) {
-            setPickupText(poiName);
-        } else {
-            // Fallback
-            setPickupText('Current Location');
-        }
+        setPickupText(poiName || 'Current Location');
 
         // Auto-advance
         setTimeout(() => {
             setActiveField('dropoff');
             dropoffInputRef.current?.focus();
-        }, 800);
+        }, 600);
     };
 
     const pageAnim = useEntryAnimation(0);
@@ -1216,9 +1220,9 @@ export default function BookServiceScreen() {
                                 </MapboxGL.PointAnnotation>
                             ))}
 
-                            {/* Pickup marker — locked (always visible) once route is confirmed,
-                                hidden only while actively dragging to reposition the pickup pin */}
-                            {pickupCoords && (activeField !== 'pickup' || !!routeData) && (
+                            {/* Pickup marker — always shown when coords exist so the user can see
+                                the confirmed pin while re-positioning (crosshair shows proposed new spot) */}
+                            {pickupCoords && (
                                 <MapboxGL.PointAnnotation
                                     id="pickup-marker"
                                     coordinate={[pickupCoords.longitude, pickupCoords.latitude]}
@@ -1230,8 +1234,9 @@ export default function BookServiceScreen() {
                                 </MapboxGL.PointAnnotation>
                             )}
 
-                            {/* Dropoff marker — same locking logic */}
-                            {dropoffCoords && (activeField !== 'dropoff' || !!routeData) && (
+                            {/* Dropoff marker — same: always visible so the user sees the original
+                                pin alongside the crosshair when re-positioning */}
+                            {dropoffCoords && (
                                 <MapboxGL.PointAnnotation
                                     id="dropoff-marker"
                                     coordinate={[dropoffCoords.longitude, dropoffCoords.latitude]}
@@ -1277,16 +1282,18 @@ export default function BookServiceScreen() {
                         </View>
                     )}
 
-                    <TouchableOpacity style={[styles.backButton, { backgroundColor: theme.colors.surface, top: 10 + insets.top }]} onPress={() => setIsMapVisible(false)}>
-                        <MaterialCommunityIcons name="arrow-left" size={24} color={theme.colors.onSurface} />
-                    </TouchableOpacity>
-
-                    <TouchableOpacity
-                        style={[styles.floatingActionBtn, { backgroundColor: theme.colors.surface, bottom: 180 + insets.bottom }]}
-                        onPress={handleRecenter}
-                    >
-                        <MaterialCommunityIcons name="crosshairs-gps" size={24} color={theme.colors.primary} />
-                    </TouchableOpacity>
+                    {/* Top overlay bar: back button (left) + GPS recenter button (right) */}
+                    <View style={[styles.mapTopBar, { top: 10 + insets.top }]} pointerEvents="box-none">
+                        <TouchableOpacity style={[styles.backButton, { backgroundColor: theme.colors.surface }]} onPress={() => setIsMapVisible(false)}>
+                            <MaterialCommunityIcons name="arrow-left" size={24} color={theme.colors.onSurface} />
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                            style={[styles.backButton, { backgroundColor: theme.colors.surface }]}
+                            onPress={handleRecenter}
+                        >
+                            <MaterialCommunityIcons name="crosshairs-gps" size={24} color={theme.colors.primary} />
+                        </TouchableOpacity>
+                    </View>
 
                     {/* --- BOTTOM PANEL --- */}
                     {routeData && pickupCoords && dropoffCoords ? (
@@ -1393,18 +1400,47 @@ export default function BookServiceScreen() {
                             )}
                         </View>
                     ) : (
-                        // Single-pin selection panel (original)
+                        // Single-pin selection panel — shows pending location until confirmed
                         <View style={[styles.bottomMapActionPanel, { bottom: 20 + insets.bottom }]}>
                             <View style={{ backgroundColor: 'white', padding: 16, borderRadius: 16, elevation: 4, shadowColor: '#000', shadowOpacity: 0.1, shadowRadius: 4, shadowOffset: { width: 0, height: 2 }, marginBottom: 12 }}>
                                 <Text variant="labelMedium" style={{ color: '#757575', marginBottom: 4 }}>
                                     {activeField === 'pickup' ? 'SELECT PICKUP LOCATION' : 'SELECT DROPOFF LOCATION'}
                                 </Text>
-                                <Text variant="titleMedium" style={{ fontWeight: 'bold', color: '#424242' }} numberOfLines={2}>
-                                    {activeField === 'pickup' ? (pickupText || 'Locating...') : (dropoffText || 'Locating...')}
+                                <Text variant="titleMedium" style={{ fontWeight: 'bold', color: pendingCoords ? '#212121' : '#9e9e9e' }} numberOfLines={2}>
+                                    {pendingCoords
+                                        ? (pendingAddress || 'Locating...')
+                                        : (activeField === 'pickup' ? (pickupText || 'Pan or tap to select') : (dropoffText || 'Pan or tap to select'))}
                                 </Text>
+                                {/* Warn the user when they are about to replace an already-confirmed pin */}
+                                {pendingCoords && ((activeField === 'pickup' && !!pickupCoords) || (activeField === 'dropoff' && !!dropoffCoords)) && (
+                                    <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 8, gap: 4 }}>
+                                        <MaterialCommunityIcons name="alert-circle-outline" size={14} color="#f59e0b" />
+                                        <Text style={{ fontSize: 11, color: '#f59e0b', fontWeight: '600' }}>
+                                            This will replace your current {activeField} location
+                                        </Text>
+                                    </View>
+                                )}
                             </View>
-                            <Button mode="contained" onPress={() => setIsMapVisible(false)} style={{ borderRadius: 8, backgroundColor: '#000' }} textColor="#FFF" contentStyle={{ paddingVertical: 8 }}>
-                                Confirm Location
+
+                            {/* Keep Current Location — only shown when repositioning an existing pin */}
+                            {pendingCoords && ((activeField === 'pickup' && !!pickupCoords) || (activeField === 'dropoff' && !!dropoffCoords)) && (
+                                <TouchableOpacity
+                                    style={{ borderRadius: 8, borderWidth: 1.5, borderColor: '#757575', paddingVertical: 10, alignItems: 'center', marginBottom: 8, backgroundColor: 'white' }}
+                                    onPress={handleCancelPendingLocation}
+                                >
+                                    <Text style={{ color: '#424242', fontWeight: '600', fontSize: 13 }}>Keep Current Location</Text>
+                                </TouchableOpacity>
+                            )}
+
+                            <Button
+                                mode="contained"
+                                onPress={handleConfirmPendingLocation}
+                                disabled={!pendingCoords || pendingAddress === 'Locating...'}
+                                style={{ borderRadius: 8, backgroundColor: (!pendingCoords || pendingAddress === 'Locating...') ? '#bdbdbd' : '#000' }}
+                                textColor="#FFF"
+                                contentStyle={{ paddingVertical: 8 }}
+                            >
+                                {pendingAddress === 'Locating...' ? 'Locating…' : 'Confirm Location'}
                             </Button>
                         </View>
                     )}
@@ -1734,15 +1770,21 @@ const styles = StyleSheet.create({
         borderRadius: 8,
     },
     backButton: {
-        position: 'absolute',
-        top: 50,
-        left: 15,
-        width: 40,
-        height: 40,
-        borderRadius: 20,
+        width: 44,
+        height: 44,
+        borderRadius: 22,
         alignItems: 'center',
         justifyContent: 'center',
         elevation: 4,
+        zIndex: 20,
+    },
+    mapTopBar: {
+        position: 'absolute',
+        left: 12,
+        right: 12,
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
         zIndex: 20,
     },
     suggestionsContainer: {
