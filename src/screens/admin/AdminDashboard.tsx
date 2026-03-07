@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { View, StyleSheet, ScrollView, TouchableOpacity, Alert, Share, StatusBar } from 'react-native';
+import { View, StyleSheet, ScrollView, TouchableOpacity, Alert, Share, StatusBar, Animated } from 'react-native';
+import { useEntryAnimation, useStaggerAnimation } from '../../hooks/useEntryAnimation';
 import { Text, Modal, Portal, TextInput, Chip, Divider } from 'react-native-paper';
 import { useNavigation } from '@react-navigation/native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -312,14 +313,18 @@ export default function AdminDashboard() {
         { icon: 'check-circle-outline', label: 'Complete Del.', onPress: () => setOverrideModalVisible(true) },
         { icon: 'qrcode-scan', label: 'Pair QR', onPress: openPairQrModal },
     ];
-
+    const headerAnim = useEntryAnimation(0);
+    const metricsAnim = useEntryAnimation(60);
+    const hardwareAnim = useEntryAnimation(110);
+    const pairingAnim = useEntryAnimation(160);
+    const actionsStagger = useStaggerAnimation(6, 45, 170);
     // ─── Render ─────────────────────────────────────────────────────────────────
     return (
         <View style={[styles.container, { backgroundColor: c.bg }]}>
             <StatusBar barStyle={c.statusBar} backgroundColor={c.bg} />
 
             {/* ── Header ─────────────────────────────────────────────────────── */}
-            <View style={[styles.header, { backgroundColor: c.bg }]}>
+            <Animated.View style={[styles.header, { backgroundColor: c.bg }, headerAnim.style]}>
                 <View>
                     <Text style={[styles.greeting, { color: c.textPrimary }]}>Admin Overview</Text>
                     <Text style={[styles.dateLabel, { color: c.textSecondary }]}>
@@ -332,7 +337,7 @@ export default function AdminDashboard() {
                         <Text style={[styles.weatherTemp, { color: c.textPrimary }]}>{weather.temp}</Text>
                     </View>
                 )}
-            </View>
+            </Animated.View>
 
             <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
 
@@ -340,14 +345,15 @@ export default function AdminDashboard() {
                 <NetworkStatusBanner />
 
                 {/* ── Stat Metrics Row ────────────────────────────────────────── */}
-                <View style={styles.metricsRow}>
+                <Animated.View style={[styles.metricsRow, metricsAnim.style]}>
                     <MetricTile value={hardwareSummary.total} label="Boxes" c={c} />
                     <MetricTile value={hardwareSummary.online} label="Online" c={c} valueColor={c.green} />
                     <MetricTile value={hardwareSummary.tamper} label="Tamper" c={c} valueColor={hardwareSummary.tamper > 0 ? c.red : c.textSecondary} />
                     <MetricTile value={hardwareSummary.offline} label="Offline" c={c} valueColor={hardwareSummary.offline > 0 ? c.orange : c.textSecondary} />
-                </View>
+                </Animated.View>
 
                 {/* ── Live Hardware Card ──────────────────────────────────────── */}
+                <Animated.View style={hardwareAnim.style}>
                 <View style={[styles.section, { backgroundColor: c.card, borderColor: c.border }]}>
                     <View style={styles.sectionHeader}>
                         <Text style={[styles.sectionTitle, { color: c.textPrimary, marginBottom: 0 }]}>Live Hardware</Text>
@@ -363,8 +369,10 @@ export default function AdminDashboard() {
                         <Pill icon="wifi" label={`WiFi ${hardwareSummary.wifi}`} c={c} />
                     </View>
                 </View>
+                </Animated.View>
 
                 {/* ── Paired Box Status ───────────────────────────────────────── */}
+                <Animated.View style={pairingAnim.style}>
                 <View style={[styles.pairingCard, { backgroundColor: c.card, borderColor: c.border }]}>
                     <View style={{ flex: 1 }}>
                         <Text style={[styles.pairingTitle, { color: c.textPrimary }]}>Paired Box</Text>
@@ -384,13 +392,14 @@ export default function AdminDashboard() {
                         <Text style={styles.pairingBtnText}>Pair</Text>
                     </TouchableOpacity>
                 </View>
+                </Animated.View>
 
                 {/* ── Quick Actions Grid ──────────────────────────────────────── */}
                 <Text style={[styles.sectionTitle, { color: c.textPrimary }]}>System Management</Text>
                 <View style={styles.actionsGrid}>
                     {quickActions.map((a, i) => (
+                        <Animated.View key={i} style={actionsStagger[i]?.style}>
                         <TouchableOpacity
-                            key={i}
                             style={[styles.actionTile, { backgroundColor: c.card, borderColor: c.border }]}
                             onPress={a.onPress}
                             activeOpacity={0.7}
@@ -405,6 +414,7 @@ export default function AdminDashboard() {
                             </View>
                             <Text style={[styles.actionLabel, { color: c.textSecondary }]}>{a.label}</Text>
                         </TouchableOpacity>
+                        </Animated.View>
                     ))}
                 </View>
 

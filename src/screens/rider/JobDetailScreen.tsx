@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { View, StyleSheet, ScrollView, Dimensions, Linking } from 'react-native';
+import { View, StyleSheet, ScrollView, Dimensions, Linking, Animated } from 'react-native';
+import { useEntryAnimation, useScalePopAnimation } from '../../hooks/useEntryAnimation';
 import { Text, Card, Button, Chip, useTheme, IconButton, Surface, Divider } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useNavigation, useRoute } from '@react-navigation/native';
@@ -186,8 +187,10 @@ export default function JobDetailScreen() {
         return d.format('h:mm A');
     };
 
+    const screenAnim = useEntryAnimation(0);
+
     return (
-        <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
+        <Animated.View style={[styles.container, { backgroundColor: theme.colors.background }, screenAnim.style]}>
             {/* Header */}
             <Surface style={[styles.header, { backgroundColor: theme.colors.surface, paddingTop: insets.top + 10 }]} elevation={2}>
                 <IconButton
@@ -453,7 +456,7 @@ export default function JobDetailScreen() {
                     </Button>
                 )}
             </Surface>
-        </View >
+        </Animated.View >
     );
 }
 

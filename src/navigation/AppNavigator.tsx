@@ -1,7 +1,7 @@
 import React, { useEffect } from 'react';
 import { StyleSheet } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
-import { createStackNavigator } from '@react-navigation/stack';
+import { createStackNavigator, CardStyleInterpolators } from '@react-navigation/stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 
@@ -214,7 +214,7 @@ export default function AppNavigator() {
 
     return (
         <NavigationContainer>
-            <Stack.Navigator id="RootStack" initialRouteName="AuthLoading" screenOptions={{ headerShown: false }}>
+            <Stack.Navigator id="RootStack" initialRouteName="AuthLoading" screenOptions={{ headerShown: false, cardStyleInterpolator: CardStyleInterpolators.forFadeFromCenter }}>
                 <Stack.Screen name="AuthLoading" component={AuthLoadingScreen} />
                 <Stack.Screen name="Login" component={LoginScreen} />
                 <Stack.Screen name="Register" component={RegisterScreen} />

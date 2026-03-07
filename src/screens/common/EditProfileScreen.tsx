@@ -1,5 +1,6 @@
 ﻿import React, { useState, useEffect } from 'react';
-import { View, StyleSheet, ScrollView, Alert, KeyboardAvoidingView, Platform } from 'react-native';
+import { View, Animated, StyleSheet, ScrollView, Alert, KeyboardAvoidingView, Platform } from 'react-native';
+import { useEntryAnimation } from '../../hooks/useEntryAnimation';
 import { TextInput, Button, useTheme, Surface, Text } from 'react-native-paper';
 import { useNavigation } from '@react-navigation/native';
 import { supabase } from '../../services/supabaseClient';
@@ -110,7 +111,10 @@ export default function EditProfileScreen() {
         }
     };
 
+    const screenAnim = useEntryAnimation(0);
+
     return (
+        <Animated.View style={[{ flex: 1 }, screenAnim.style]}>
         <KeyboardAvoidingView
             style={[styles.container, { backgroundColor: theme.colors.background }]}
             behavior={Platform.OS === 'ios' ? 'padding' : undefined}
@@ -222,6 +226,7 @@ export default function EditProfileScreen() {
                 title="Select Home Address"
             />
         </KeyboardAvoidingView>
+        </Animated.View>
     );
 }
 

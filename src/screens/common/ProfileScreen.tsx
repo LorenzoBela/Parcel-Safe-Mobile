@@ -1,5 +1,6 @@
 import React, { useState, useCallback } from 'react';
-import { View, StyleSheet, ScrollView, RefreshControl, TouchableOpacity, StatusBar } from 'react-native';
+import { View, Animated, StyleSheet, ScrollView, RefreshControl, TouchableOpacity, StatusBar } from 'react-native';
+import { useEntryAnimation } from '../../hooks/useEntryAnimation';
 import { useFocusEffect } from '@react-navigation/native';
 import { supabase } from '../../services/supabaseClient';
 import { Text, Avatar } from 'react-native-paper';
@@ -91,7 +92,10 @@ export default function ProfileScreen() {
         setRefreshing(false);
     }, []);
 
+    const screenAnim = useEntryAnimation(0);
+
     return (
+        <Animated.View style={[{ flex: 1 }, screenAnim.style]}>
         <ScrollView
             style={[styles.container, { backgroundColor: c.bg }]}
             contentContainerStyle={{ paddingBottom: insets.bottom + 60, paddingTop: insets.top + 8 }}
@@ -141,6 +145,7 @@ export default function ProfileScreen() {
                 />
             </View>
         </ScrollView>
+        </Animated.View>
     );
 }
 

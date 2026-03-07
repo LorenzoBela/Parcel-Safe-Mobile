@@ -69,6 +69,7 @@ const isValidPhoneNumber = (value: string) => /^09\d{9}$/.test(value.trim());
 
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { PremiumAlert } from '../../services/PremiumAlertService';
+import { useEntryAnimation } from '../../hooks/useEntryAnimation';
 
 export default function BookServiceScreen() {
     const navigation = useNavigation<any>();
@@ -1043,8 +1044,10 @@ export default function BookServiceScreen() {
         }, 800);
     };
 
+    const pageAnim = useEntryAnimation(0);
+
     return (
-        <View style={styles.container}>
+        <Animated.View style={[styles.container, pageAnim.style]}>
             {bookingStep === 'contacts' ? (
                 // --- CONTACTS STEP ---
                 <View style={[styles.contactStepContainer, { paddingTop: insets.top }]}>
@@ -1638,7 +1641,7 @@ export default function BookServiceScreen() {
                     </View>
                 </View>
             )}
-        </View>
+        </Animated.View>
     );
 }
 

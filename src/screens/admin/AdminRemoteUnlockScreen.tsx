@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { View, StyleSheet, Alert, KeyboardAvoidingView, Platform, ScrollView, TouchableOpacity, StatusBar } from 'react-native';
+import { View, Animated, StyleSheet, Alert, KeyboardAvoidingView, Platform, ScrollView, TouchableOpacity, StatusBar } from 'react-native';
+import { useEntryAnimation } from '../../hooks/useEntryAnimation';
 import { Text, TextInput, IconButton } from 'react-native-paper';
 import { useNavigation } from '@react-navigation/native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -59,7 +60,10 @@ export default function AdminRemoteUnlockScreen() {
         }
     };
 
+    const screenAnim = useEntryAnimation(0);
+
     return (
+        <Animated.View style={[{ flex: 1 }, screenAnim.style]}>
         <KeyboardAvoidingView
             style={[styles.container, { backgroundColor: c.bg }]}
             behavior={Platform.OS === 'ios' ? 'padding' : undefined}
@@ -135,6 +139,7 @@ export default function AdminRemoteUnlockScreen() {
                 ) : null}
             </ScrollView>
         </KeyboardAvoidingView>
+        </Animated.View>
     );
 }
 

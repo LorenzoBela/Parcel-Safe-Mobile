@@ -8,6 +8,7 @@ import {
     useColorScheme,
     StatusBar
 } from 'react-native';
+import { useEntryAnimation, useStaggerAnimation } from '../../hooks/useEntryAnimation';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Text, useTheme } from 'react-native-paper';
 import { useNavigation } from '@react-navigation/native';
@@ -75,6 +76,9 @@ export default function RoleSelectionScreen() {
     // Get first name only for cleaner display
     const firstName = user?.name?.split(' ')[0] || 'there';
 
+    const headerAnim = useEntryAnimation(0);
+    const cardAnims = useStaggerAnimation(3, 60, 80);
+
     return (
         <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
             <StatusBar
@@ -83,7 +87,7 @@ export default function RoleSelectionScreen() {
             />
 
             {/* Header Section */}
-            <View style={styles.header}>
+            <Animated.View style={[styles.header, headerAnim.style]}>
                 <View style={styles.avatarContainer}>
                     {user?.photo ? (
                         <Image
@@ -107,7 +111,7 @@ export default function RoleSelectionScreen() {
                 <Text style={[styles.name, { color: colors.text }]}>
                     {firstName}
                 </Text>
-            </View>
+            </Animated.View>
 
             {/* Dashboard Selection */}
             <View style={styles.content}>
@@ -118,28 +122,34 @@ export default function RoleSelectionScreen() {
                 <View style={styles.optionsContainer}>
                     {/* Admin - Only for Admins */}
                     {isAdmin && (
-                        <DashboardCard
-                            {...DASHBOARD_OPTIONS.admin}
-                            colors={colors}
-                            onPress={() => handleNavigation('AdminApp')}
-                        />
+                        <Animated.View style={cardAnims[0].style}>
+                            <DashboardCard
+                                {...DASHBOARD_OPTIONS.admin}
+                                colors={colors}
+                                onPress={() => handleNavigation('AdminApp')}
+                            />
+                        </Animated.View>
                     )}
 
                     {/* Rider - For Admins and Riders */}
                     {(isAdmin || isRider) && (
-                        <DashboardCard
-                            {...DASHBOARD_OPTIONS.rider}
-                            colors={colors}
-                            onPress={() => handleNavigation('RiderApp')}
-                        />
+                        <Animated.View style={cardAnims[1].style}>
+                            <DashboardCard
+                                {...DASHBOARD_OPTIONS.rider}
+                                colors={colors}
+                                onPress={() => handleNavigation('RiderApp')}
+                            />
+                        </Animated.View>
                     )}
 
                     {/* Customer - For Everyone */}
-                    <DashboardCard
-                        {...DASHBOARD_OPTIONS.customer}
-                        colors={colors}
-                        onPress={() => handleNavigation('CustomerApp')}
-                    />
+                    <Animated.View style={cardAnims[2].style}>
+                        <DashboardCard
+                            {...DASHBOARD_OPTIONS.customer}
+                            colors={colors}
+                            onPress={() => handleNavigation('CustomerApp')}
+                        />
+                    </Animated.View>
                 </View>
             </View>
 

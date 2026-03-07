@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { View, StyleSheet, ScrollView, TouchableOpacity, ImageBackground, StatusBar, Alert, RefreshControl, Share } from 'react-native';
+import { View, StyleSheet, ScrollView, TouchableOpacity, ImageBackground, StatusBar, Alert, RefreshControl, Share, Animated } from 'react-native';
+import { useEntryAnimation, useStaggerAnimation } from '../../hooks/useEntryAnimation';
 import { Text, Avatar, Portal, Modal, IconButton } from 'react-native-paper';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -213,6 +214,11 @@ export default function CustomerDashboard() {
         return 'Good Evening';
     };
 
+    const greetAnim = useEntryAnimation(0);
+    const deliveryAnim = useEntryAnimation(60);
+    const actionsAnim = useEntryAnimation(110);
+    const activityAnim = useStaggerAnimation(3, 60, 160);
+
     // ═══════════════════════════════════════════════════════════════════════
     //  RENDER
     // ═══════════════════════════════════════════════════════════════════════
@@ -257,7 +263,7 @@ export default function CustomerDashboard() {
                 refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
             >
                 {/* Greeting */}
-                <View style={styles.greetRow}>
+                <Animated.View style={[styles.greetRow, greetAnim.style]}>
                     <View style={{ flex: 1 }}>
                         <Text style={[styles.greetLabel, { color: c.textSec }]}>{getGreeting()}</Text>
                         <Text style={[styles.greetName, { color: c.text }]}>{firstName}</Text>
@@ -269,7 +275,7 @@ export default function CustomerDashboard() {
                             <Text style={[styles.avatarLetter, { color: c.bg }]}>{firstName.charAt(0)}</Text>
                         </View>
                     )}
-                </View>
+                </Animated.View>
 
                 {/* Banners */}
                 <NetworkStatusBanner />
@@ -296,6 +302,7 @@ export default function CustomerDashboard() {
                 )}
 
                 {/* ── Active Delivery Card ───────────────────────────────── */}
+                <Animated.View style={deliveryAnim.style}>
                 <Text style={[styles.sectionTitle, { color: c.text }]}>Active Delivery</Text>
                 {activeDelivery ? (
                     <View style={[styles.deliveryCard, { backgroundColor: c.card, borderColor: c.border }]}>
@@ -356,8 +363,10 @@ export default function CustomerDashboard() {
                         <Text style={[styles.emptySub, { color: c.textTer }]}>Book a service to get started</Text>
                     </View>
                 )}
+                </Animated.View>
 
                 {/* ── Book Action ────────────────────────────────────────── */}
+                <Animated.View style={actionsAnim.style}>
                 <TouchableOpacity
                     style={[styles.bookCard, { backgroundColor: c.accent }]}
                     onPress={() => navigation.navigate('BookService')}
@@ -378,14 +387,17 @@ export default function CustomerDashboard() {
                     <QuickAction icon="history" label="History" c={c} onPress={() => navigation.navigate('DeliveryLog')} />
                     <QuickAction icon="file-document-outline" label="Report" c={c} onPress={() => navigation.navigate('Report')} />
                 </View>
+                </Animated.View>
 
                 {/* ── Recent Activity ────────────────────────────────────── */}
                 <Text style={[styles.sectionTitle, { color: c.text }]}>Recent Activity</Text>
                 {recentActivity.length > 0 ? (
-                    recentActivity.map((a) => {
+                    recentActivity.map((a, idx) => {
                         const sc = statusColor(a.status);
+                        const rowAnim = activityAnim[Math.min(idx, activityAnim.length - 1)];
                         return (
-                            <View key={a.id} style={[styles.activityRow, { backgroundColor: c.card, borderColor: c.border }]}>
+                            <Animated.View key={a.id} style={rowAnim.style}>
+                            <View style={[styles.activityRow, { backgroundColor: c.card, borderColor: c.border }]}>
                                 <View style={[styles.activityDot, { backgroundColor: sc + '22' }]}>
                                     <View style={[styles.activityDotInner, { backgroundColor: sc }]} />
                                 </View>
@@ -398,6 +410,7 @@ export default function CustomerDashboard() {
                                     <Text style={[styles.activityDate, { color: c.textTer }]}>{a.date}</Text>
                                 </View>
                             </View>
+                            </Animated.View>
                         );
                     })
                 ) : (

@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { View, StyleSheet, FlatList, TouchableOpacity, ScrollView, RefreshControl, ActivityIndicator, StatusBar, TextInput } from 'react-native';
+import { View, StyleSheet, FlatList, TouchableOpacity, ScrollView, RefreshControl, ActivityIndicator, StatusBar, TextInput, Animated } from 'react-native';
+import { useEntryAnimation } from '../../hooks/useEntryAnimation';
 import { Text } from 'react-native-paper';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -172,12 +173,15 @@ export default function DeliveryLogScreen() {
         );
     };
 
+    const headerAnim = useEntryAnimation(0);
+    const listAnim = useEntryAnimation(60);
+
     return (
         <View style={[styles.container, { backgroundColor: c.bg }]}>
             <StatusBar barStyle={isDarkMode ? 'light-content' : 'dark-content'} />
 
             {/* Header */}
-            <View style={[styles.header, { backgroundColor: c.bg, paddingTop: insets.top + 10 }]}>
+            <Animated.View style={[styles.header, { backgroundColor: c.bg, paddingTop: insets.top + 10 }, headerAnim.style]}>
                 <Text style={[styles.title, { color: c.text }]}>History</Text>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
                     {selectedFilter !== 'All' && (
@@ -199,7 +203,7 @@ export default function DeliveryLogScreen() {
                         />
                     </TouchableOpacity>
                 </View>
-            </View>
+            </Animated.View>
 
             {/* Search */}
             <View style={[styles.searchRow, { backgroundColor: c.search, marginHorizontal: 16, borderRadius: 10 }]}>

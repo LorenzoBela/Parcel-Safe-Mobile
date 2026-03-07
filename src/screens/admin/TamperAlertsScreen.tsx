@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useMemo, useRef } from 'react';
-import { View, StyleSheet, FlatList, Dimensions, TouchableOpacity, StatusBar } from 'react-native';
+import { View, Animated, StyleSheet, FlatList, Dimensions, TouchableOpacity, StatusBar } from 'react-native';
+import { useEntryAnimation } from '../../hooks/useEntryAnimation';
 import { Text, ActivityIndicator } from 'react-native-paper';
 import { useNavigation } from '@react-navigation/native';
 import MapboxGL from '../../components/map/MapboxWrapper';
@@ -143,8 +144,10 @@ export default function TamperAlertsScreen() {
         })),
     };
 
+    const screenAnim = useEntryAnimation(0);
+
     return (
-        <View style={[styles.container, { backgroundColor: c.bg }]}>
+        <Animated.View style={[styles.container, { backgroundColor: c.bg }, screenAnim.style]}>
             <StatusBar barStyle={isDarkMode ? 'light-content' : 'dark-content'} backgroundColor={c.bg} />
 
             <View style={styles.mapContainer}>
@@ -217,7 +220,7 @@ export default function TamperAlertsScreen() {
                     />
                 )}
             </View>
-        </View>
+        </Animated.View>
     );
 }
 

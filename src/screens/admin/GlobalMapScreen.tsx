@@ -6,6 +6,7 @@ import {
 } from 'react-native';
 import { Text, Surface, Card, Chip, IconButton } from 'react-native-paper';
 import { useAppTheme } from '../../context/ThemeContext';
+import { useEntryAnimation } from '../../hooks/useEntryAnimation';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import MapboxGL from '../../components/map/MapboxWrapper';
@@ -581,8 +582,10 @@ export default function GlobalMapScreen() {
         );
     };
 
+    const screenAnim = useEntryAnimation(0);
+
     return (
-        <View style={styles.container}>
+        <Animated.View style={[styles.container, screenAnim.style]}>
             {MAPBOX_TOKEN ? (
                 <MapboxGL.MapView
                     style={styles.map}
@@ -829,7 +832,7 @@ export default function GlobalMapScreen() {
                     </ScrollView>
                 </View>
             ) : null}
-        </View>
+        </Animated.View>
     );
 }
 

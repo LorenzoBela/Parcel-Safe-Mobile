@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { View, StyleSheet, ScrollView, Switch, ImageBackground, Alert, RefreshControl, TouchableOpacity, Dimensions, Linking, Platform, AppState } from 'react-native';
+import { View, StyleSheet, ScrollView, Switch, ImageBackground, Alert, RefreshControl, TouchableOpacity, Dimensions, Linking, Platform, AppState, Animated } from 'react-native';
+import { useEntryAnimation, useStaggerAnimation } from '../../hooks/useEntryAnimation';
 import { Text, Card, Button, Avatar, ProgressBar, MD3Colors, Chip, useTheme, IconButton } from 'react-native-paper';
 import { useNavigation } from '@react-navigation/native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -1425,6 +1426,12 @@ export default function RiderDashboard() {
         </TouchableOpacity>
     );
 
+    const statusToggleAnim = useEntryAnimation(0);
+    const gpsCardAnim = useEntryAnimation(55);
+    const pairingAnim = useEntryAnimation(100);
+    const actionsAnim = useStaggerAnimation(4, 45, 145);
+    const jobAnim = useEntryAnimation(215);
+
     return (
         <View style={[styles.container, { backgroundColor: c.bg }]}>
             <StatusBar style={isDarkMode ? 'light' : 'dark'} />
@@ -1639,6 +1646,7 @@ export default function RiderDashboard() {
                 )}
 
                 {/* Status Toggle - EC-ENHANCE: Clear Offline/Online distinction */}
+                <Animated.View style={statusToggleAnim.style}>
                 <View style={[styles.statusToggleContainer, { backgroundColor: c.card, borderColor: c.border, borderWidth: 1 }]}>
                     <View style={styles.statusContainer}>
                         <View style={[styles.statusDot, { backgroundColor: isOnline ? c.greenText : c.textTer }]} />
@@ -1653,8 +1661,10 @@ export default function RiderDashboard() {
                     </View>
                     <Switch value={isOnline} onValueChange={setIsOnline} trackColor={{ true: c.accent, false: c.search }} thumbColor={isDarkMode ? c.text : c.bg} />
                 </View>
+                </Animated.View>
 
                 {/* GPS Connection Status Indicator */}
+                <Animated.View style={gpsCardAnim.style}>
                 <View style={[styles.gpsStatusCard, { backgroundColor: c.card, borderColor: c.border, borderWidth: 1 }]}>
                     <View style={styles.gpsStatusRow}>
                         <View style={[
@@ -1687,8 +1697,10 @@ export default function RiderDashboard() {
                         )}
                     </View>
                 </View>
+                </Animated.View>
 
                 {/* Pairing Status */}
+                <Animated.View style={pairingAnim.style}>
                 <View style={[styles.pairingCard, { backgroundColor: c.card, borderColor: c.border, borderWidth: 1 }]}>
                     <View style={styles.pairingRow}>
                         <View style={styles.pairingInfo}>
@@ -1715,8 +1727,10 @@ export default function RiderDashboard() {
                         </Button>
                     </View>
                 </View>
+                </Animated.View>
 
                 {/* Quick Actions */}
+                <Animated.View style={actionsAnim[0].style}>
                 <View style={styles.actionsGrid}>
                     <QuickAction
                         icon="cube-outline"
@@ -1735,8 +1749,10 @@ export default function RiderDashboard() {
                     <QuickAction icon="face-agent" label="Support" onPress={() => navigation.navigate('RiderSupport')} color={c.accent} />
                     <QuickAction icon="cog" label="Settings" onPress={() => navigation.navigate('RiderSettings')} color={c.accent} />
                 </View>
+                </Animated.View>
 
                 {/* Next Delivery Card */}
+                <Animated.View style={jobAnim.style}>
                 <Text variant="titleMedium" style={[styles.sectionTitle, { color: c.text }]}>Current Job</Text>
                 {nextDelivery ? (
                     <Card style={[styles.jobCard, { backgroundColor: c.card, borderColor: c.border, borderWidth: 1 }]} mode="contained" onPress={() => navigation.navigate('JobDetail', { job: nextDelivery })}>
@@ -1995,6 +2011,7 @@ export default function RiderDashboard() {
                         </Card.Content>
                     </Card>
                 )}
+                </Animated.View>
 
                 {/* Smart Box Status */}
                 <Text variant="titleMedium" style={[styles.sectionTitle, { color: c.text }]}>Box Status</Text>

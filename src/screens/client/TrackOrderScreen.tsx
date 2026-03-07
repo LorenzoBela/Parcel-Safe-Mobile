@@ -87,6 +87,7 @@ function mapStatusToCancellationStatus(status: string | undefined): DeliveryStat
 
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { PremiumAlert } from '../../services/PremiumAlertService';
+import { useEntryAnimation } from '../../hooks/useEntryAnimation';
 
 const RiderImage = require('../../../assets/Rider.jpg');
 const ArrowHeadImage = require('../../../assets/arrow_head.png');
@@ -898,8 +899,10 @@ export default function TrackOrderScreen() {
         { steps: 64, units: 'kilometers' }
     );
 
+    const screenAnim = useEntryAnimation(0);
+
     return (
-        <View style={styles.container}>
+        <Animated.View style={[styles.container, screenAnim.style]}>
             {/* Loading Overlay — shown until real location is fetched */}
             {isMapLoading && (
                 <View style={styles.loadingOverlay}>
@@ -1526,7 +1529,7 @@ export default function TrackOrderScreen() {
                     </Surface>
                 </View>
             </Modal>
-        </View>
+        </Animated.View>
     );
 }
 

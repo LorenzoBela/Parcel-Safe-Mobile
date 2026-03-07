@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { View, StyleSheet, Image, ScrollView, Dimensions, Linking, TouchableOpacity, StatusBar } from 'react-native';
+import { View, Animated, StyleSheet, Image, ScrollView, Dimensions, Linking, TouchableOpacity, StatusBar } from 'react-native';
+import { useEntryAnimation } from '../../hooks/useEntryAnimation';
 import { Text } from 'react-native-paper';
 import {
     subscribeToPhotoAuditLog,
@@ -48,7 +49,10 @@ export default function PhotoAuditScreen({ route }: any) {
         </View>
     );
 
+    const screenAnim = useEntryAnimation(0);
+
     return (
+        <Animated.View style={[{ flex: 1 }, screenAnim.style]}>
         <ScrollView style={[styles.container, { backgroundColor: c.bg }]}>
             <StatusBar barStyle={isDarkMode ? 'light-content' : 'dark-content'} backgroundColor={c.bg} />
 
@@ -80,6 +84,7 @@ export default function PhotoAuditScreen({ route }: any) {
                 </ScrollView>
             )}
         </ScrollView>
+        </Animated.View>
     );
 }
 

@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import circle from '@turf/circle';
-import { View, StyleSheet, ScrollView, Image, Dimensions, Linking } from 'react-native';
+import { View, Animated, StyleSheet, ScrollView, Image, Dimensions, Linking } from 'react-native';
+import { useEntryAnimation } from '../../hooks/useEntryAnimation';
 import { Text, Card, Button, useTheme, Chip, Surface, IconButton } from 'react-native-paper';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -244,8 +245,10 @@ export default function DeliveryDetailScreen() {
         console.log('[DeliveryDetail] Delivery Data Fare:', deliveryData.estimated_fare);
     }, [pickupGeofenceCircle, dropoffGeofenceCircle, deliveryData]);
 
+    const screenAnim = useEntryAnimation(0);
+
     return (
-        <View style={styles.container}>
+        <Animated.View style={[styles.container, screenAnim.style]}>
             <View style={styles.header}>
                 <IconButton icon="arrow-left" onPress={() => navigation.goBack()} />
                 <Text variant="titleLarge" style={styles.headerTitle}>Delivery Details</Text>
@@ -598,7 +601,7 @@ export default function DeliveryDetailScreen() {
                     Contact Support
                 </Button>
             </ScrollView >
-        </View >
+        </Animated.View >
     );
 }
 

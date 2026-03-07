@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { View, StyleSheet, Alert, ScrollView } from 'react-native';
+import { View, StyleSheet, Alert, ScrollView, Animated } from 'react-native';
+import { useEntryAnimation, useScalePopAnimation } from '../../hooks/useEntryAnimation';
 import { Text, Button, Card, Avatar } from 'react-native-paper';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import SwipeConfirmButton from '../../components/SwipeConfirmButton';
@@ -385,9 +386,15 @@ export default function DeliveryCompletionScreen() {
         }
     };
 
+    const iconPop = useScalePopAnimation(0);
+    const contentAnim = useEntryAnimation(80);
+
     return (
         <ScrollView contentContainerStyle={[styles.container, { paddingTop: Math.max(insets.top, 20), paddingBottom: insets.bottom + 20 }]}>
+            <Animated.View style={iconPop.style}>
             <Avatar.Icon size={88} icon={isCompleted ? 'check-circle' : 'package-variant-closed-check'} style={styles.icon} color="white" />
+            </Animated.View>
+            <Animated.View style={contentAnim.style}>
             <Text variant="headlineMedium" style={styles.title}>Delivery Flow Checkpoint</Text>
             <Text variant="bodyMedium" style={styles.subtitle}>Current status: {status}</Text>
 
@@ -503,6 +510,7 @@ export default function DeliveryCompletionScreen() {
             <Button mode="outlined" onPress={() => navigation.navigate('RiderDashboard')} style={styles.backButton}>
                 Back to Dashboard
             </Button>
+            </Animated.View>
         </ScrollView>
     );
 }

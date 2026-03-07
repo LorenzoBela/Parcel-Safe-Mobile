@@ -9,6 +9,7 @@ import {
     Dimensions,
     Text,
 } from 'react-native';
+import { usePulseAnimation } from '../../hooks/useEntryAnimation';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -80,6 +81,8 @@ export default function AuthLoadingScreen() {
 
     const isDark = colorScheme === 'dark';
     const colors = isDark ? COLORS.dark : COLORS.light;
+
+    const logoPulse = usePulseAnimation(0.5, 800);
 
     // Progress animation
     const progressAnim = useRef(new Animated.Value(0)).current;
@@ -207,9 +210,9 @@ export default function AuthLoadingScreen() {
 
             {/* Logo / Branding */}
             <View style={styles.brandSection}>
-                <View style={[styles.logoBox, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+                <Animated.View style={[styles.logoBox, { backgroundColor: colors.surface, borderColor: colors.border }, logoPulse.style]}>
                     <MaterialCommunityIcons name="package-variant-closed" size={36} color={colors.text} />
-                </View>
+                </Animated.View>
                 <Text style={[styles.appName, { color: colors.text }]}>Parcel Safe</Text>
                 <Text style={[styles.tagline, { color: colors.textSecondary }]}>
                     Smart Delivery. Zero Hassle.

@@ -16,6 +16,7 @@ import { useNavigation } from '@react-navigation/native';
 import useAuthStore from '../../store/authStore';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { PremiumAlert } from '../../services/PremiumAlertService';
+import { useEntryAnimation } from '../../hooks/useEntryAnimation';
 
 // Uber-inspired minimalist colors (matching RoleSelectionScreen)
 const COLORS = {
@@ -47,6 +48,10 @@ export default function LoginScreen() {
 
     const isDark = colorScheme === 'dark';
     const colors = isDark ? COLORS.dark : COLORS.light;
+
+    const branding = useEntryAnimation(0);
+    const welcome = useEntryAnimation(80);
+    const bottom = useEntryAnimation(160);
 
     const handleGoogleSignIn = async () => {
         try {
@@ -101,7 +106,7 @@ export default function LoginScreen() {
             {/* Main Content */}
             <View style={styles.content}>
                 {/* Branding Section */}
-                <View style={styles.brandingSection}>
+                <Animated.View style={[styles.brandingSection, branding.style]}>
                     <View style={[styles.logoContainer, { backgroundColor: colors.surface }]}>
                         <MaterialCommunityIcons
                             name="package-variant-closed"
@@ -117,21 +122,21 @@ export default function LoginScreen() {
                     <Text style={[styles.tagline, { color: colors.textSecondary }]}>
                         Secure delivery management
                     </Text>
-                </View>
+                </Animated.View>
 
                 {/* Welcome Section */}
-                <View style={styles.welcomeSection}>
+                <Animated.View style={[styles.welcomeSection, welcome.style]}>
                     <Text style={[styles.welcomeTitle, { color: colors.text }]}>
                         Get started
                     </Text>
                     <Text style={[styles.welcomeSubtitle, { color: colors.textSecondary }]}>
                         Sign in to track, manage, and secure your deliveries
                     </Text>
-                </View>
+                </Animated.View>
             </View>
 
             {/* Bottom Section */}
-            <View style={styles.bottomSection}>
+            <Animated.View style={[styles.bottomSection, bottom.style]}>
                 {/* Google Sign-In Button */}
                 <GoogleSignInButton
                     onPress={handleGoogleSignIn}
@@ -150,7 +155,7 @@ export default function LoginScreen() {
                 <Text style={[styles.termsText, { color: colors.textSecondary }]}>
                     By continuing, you agree to our Terms of Service and Privacy Policy
                 </Text>
-            </View>
+            </Animated.View>
         </SafeAreaView>
     );
 }

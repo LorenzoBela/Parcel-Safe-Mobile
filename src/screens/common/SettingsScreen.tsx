@@ -1,5 +1,6 @@
 import React, { useState, useCallback } from 'react';
-import { View, StyleSheet, ScrollView, TouchableOpacity, StatusBar } from 'react-native';
+import { View, Animated, StyleSheet, ScrollView, TouchableOpacity, StatusBar } from 'react-native';
+import { useEntryAnimation } from '../../hooks/useEntryAnimation';
 import { Text, Switch, Avatar, Button } from 'react-native-paper';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { useAppTheme } from '../../context/ThemeContext';
@@ -104,7 +105,10 @@ export default function SettingsScreen() {
         }
     };
 
+    const screenAnim = useEntryAnimation(0);
+
     return (
+        <Animated.View style={[{ flex: 1 }, screenAnim.style]}>
         <ScrollView
             style={[styles.container, { backgroundColor: c.bg }]}
             contentContainerStyle={{ paddingTop: insets.top + 8, paddingBottom: insets.bottom + 60 }}
@@ -191,6 +195,7 @@ export default function SettingsScreen() {
 
             <Text style={[styles.version, { color: c.textTer }]}>App Version 1.0.1</Text>
         </ScrollView>
+        </Animated.View>
     );
 }
 

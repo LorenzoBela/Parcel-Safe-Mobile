@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { View, StyleSheet, ScrollView, Alert, TouchableOpacity, Modal } from 'react-native';
+import { View, Animated, StyleSheet, ScrollView, Alert, TouchableOpacity, Modal } from 'react-native';
+import { useEntryAnimation } from '../../hooks/useEntryAnimation';
 import { Text, Card, Button, Surface, ProgressBar, useTheme, IconButton, Divider, Portal, ActivityIndicator } from 'react-native-paper';
 import LottieView from 'lottie-react-native';
 import { useAppTheme } from '../../context/ThemeContext';
@@ -644,8 +645,10 @@ export default function BoxControlsScreen() {
         }
     };
 
+    const screenAnim = useEntryAnimation(0);
+
     return (
-        <View style={[styles.container, { backgroundColor: c.bg }]}>
+        <Animated.View style={[styles.container, { backgroundColor: c.bg }, screenAnim.style]}>
             <ScrollView contentContainerStyle={[styles.scrollContent, { paddingTop: Math.max(insets.top, 20), paddingBottom: insets.bottom + 20 }]}>
 
                 {!isPaired && (
@@ -1203,7 +1206,7 @@ export default function BoxControlsScreen() {
                     </Surface>
                 </View>
             </Modal>
-        </View >
+        </Animated.View>
     );
 }
 

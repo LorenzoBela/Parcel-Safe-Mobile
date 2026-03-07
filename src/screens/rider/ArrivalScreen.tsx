@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { View, StyleSheet, Alert, ScrollView, Platform, Linking } from 'react-native';
+import { View, StyleSheet, Alert, ScrollView, Platform, Linking, Animated } from 'react-native';
+import { useEntryAnimation } from '../../hooks/useEntryAnimation';
 import { Text, Button, Card, TextInput, Portal, Modal, IconButton } from 'react-native-paper';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import * as Location from 'expo-location';
@@ -1003,8 +1004,11 @@ export default function ArrivalScreen() {
         );
     };
 
+    const screenAnim = useEntryAnimation(0);
+
     return (
         <ScrollView style={styles.container} contentContainerStyle={[styles.content, { paddingTop: Math.max(insets.top, 20), paddingBottom: insets.bottom + 20 }]}>
+            <Animated.View style={screenAnim.style}>
             {/* Critical Security Alerts (Full Width) */}
             {tamperState?.detected && (
                 <Card style={styles.tamperBanner}>
@@ -1278,6 +1282,7 @@ export default function ArrivalScreen() {
                 type={getReassignmentType(reassignmentState, riderId)}
                 onAcknowledge={handleReassignmentAcknowledge}
             />
+            </Animated.View>
         </ScrollView>
     );
 }

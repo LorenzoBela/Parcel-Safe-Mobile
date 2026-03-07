@@ -1,5 +1,6 @@
 import React from 'react';
-import { StyleSheet, ScrollView, View } from 'react-native';
+import { Animated, StyleSheet, ScrollView, View } from 'react-native';
+import { useEntryAnimation } from '../../hooks/useEntryAnimation';
 import { Text, List, Button, useTheme, Card, Divider } from 'react-native-paper';
 import { useNavigation } from '@react-navigation/native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -10,6 +11,7 @@ export default function HelpCenterScreen() {
     const navigation = useNavigation();
 
     const insets = useSafeAreaInsets();
+    const screenAnim = useEntryAnimation(0);
 
     const FAQs = [
         {
@@ -27,6 +29,7 @@ export default function HelpCenterScreen() {
     ];
 
     return (
+        <Animated.View style={[{ flex: 1 }, screenAnim.style]}>
         <ScrollView
             style={[styles.container, { backgroundColor: theme.colors.background }]}
             contentContainerStyle={{
@@ -78,6 +81,7 @@ export default function HelpCenterScreen() {
             </Button>
             <View style={{ height: 20 }} />
         </ScrollView>
+        </Animated.View>
     );
 }
 

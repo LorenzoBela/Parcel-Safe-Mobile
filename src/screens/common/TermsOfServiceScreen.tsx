@@ -1,13 +1,16 @@
 import React from 'react';
-import { StyleSheet, ScrollView, View } from 'react-native';
+import { Animated, StyleSheet, ScrollView, View } from 'react-native';
+import { useEntryAnimation } from '../../hooks/useEntryAnimation';
 import { Text, Button, useTheme } from 'react-native-paper';
 import { useNavigation } from '@react-navigation/native';
 
 export default function TermsOfServiceScreen() {
     const theme = useTheme();
     const navigation = useNavigation();
+    const screenAnim = useEntryAnimation(0);
 
     return (
+        <Animated.View style={[{ flex: 1 }, screenAnim.style]}>
         <ScrollView style={[styles.container, { backgroundColor: theme.colors.background }]}>
             <View style={styles.content}>
                 <Text variant="headlineMedium" style={[styles.title, { color: theme.colors.onSurface }]}>Terms of Service</Text>
@@ -39,6 +42,7 @@ export default function TermsOfServiceScreen() {
                 <View style={{ height: 40 }} />
             </View>
         </ScrollView>
+        </Animated.View>
     );
 }
 

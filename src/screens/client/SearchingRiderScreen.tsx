@@ -20,6 +20,7 @@ import {
 } from '../../services/pushNotificationService';
 import useAuthStore from '../../store/authStore';
 import { PremiumAlert } from '../../services/PremiumAlertService';
+import { useEntryAnimation } from '../../hooks/useEntryAnimation';
 
 // 5 minutes in milliseconds - adjusted for reliability
 const SEARCH_TIMEOUT_MS = 5 * 60 * 1000;
@@ -301,9 +302,11 @@ export default function SearchingRiderScreen() {
         setRetryTrigger(prev => prev + 1); // Trigger the effect again
     };
 
+    const contentAnim = useEntryAnimation(0);
+
     return (
         <View style={styles.container}>
-            <View style={styles.content}>
+            <Animated.View style={[styles.content, contentAnim.style]}>
 
                 {/* Radar/Pulse Animation Container */}
                 <View style={styles.radarContainer}>
@@ -385,7 +388,7 @@ export default function SearchingRiderScreen() {
                     </View>
                 </View>
 
-            </View>
+            </Animated.View>
 
             <View style={styles.footer}>
                 {searchFailed ? (

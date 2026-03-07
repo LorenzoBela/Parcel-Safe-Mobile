@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { View, StyleSheet, FlatList, TouchableOpacity, RefreshControl, Linking, Platform, Alert } from 'react-native';
+import { View, StyleSheet, FlatList, TouchableOpacity, RefreshControl, Linking, Platform, Alert, Animated } from 'react-native';
+import { useEntryAnimation } from '../../hooks/useEntryAnimation';
 import { Text, Card, Button, Chip, Searchbar, Surface, useTheme, IconButton, Badge } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
@@ -494,8 +495,10 @@ export default function AssignedDeliveriesScreen() {
         </Card>
     );
 
+    const headerAnim = useEntryAnimation(0);
+
     return (
-        <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
+        <Animated.View style={[styles.container, { backgroundColor: theme.colors.background }, headerAnim.style]}>
             <View style={[styles.header, { backgroundColor: theme.colors.surface, paddingTop: Math.max(insets.top, 20) }]}>
                 <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
                     <View>
@@ -639,7 +642,7 @@ export default function AssignedDeliveriesScreen() {
                 onSubmit={handleCancellationSubmit}
                 loading={cancelLoading}
             />
-        </View>
+        </Animated.View>
     );
 }
 

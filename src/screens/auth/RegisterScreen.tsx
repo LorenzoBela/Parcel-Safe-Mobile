@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
-import { View, StyleSheet, KeyboardAvoidingView, Platform, TouchableOpacity, ScrollView } from 'react-native';
+import { View, StyleSheet, KeyboardAvoidingView, Platform, TouchableOpacity, ScrollView, Animated } from 'react-native';
 import { Text, TextInput, Button, useTheme } from 'react-native-paper';
 import { useNavigation } from '@react-navigation/native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { useEntryAnimation } from '../../hooks/useEntryAnimation';
 
 export default function RegisterScreen() {
     const navigation = useNavigation<any>();
@@ -15,6 +16,9 @@ export default function RegisterScreen() {
     const [secureTextEntry, setSecureTextEntry] = useState(true);
     const [confirmSecureTextEntry, setConfirmSecureTextEntry] = useState(true);
     const [loading, setLoading] = useState(false);
+
+    const logoAnim = useEntryAnimation(0);
+    const formAnim = useEntryAnimation(80);
 
     const handleRegister = () => {
         if (!name || !email || !password || !confirmPassword) {
@@ -45,7 +49,7 @@ export default function RegisterScreen() {
         >
             <ScrollView contentContainerStyle={styles.contentContainer}>
                 {/* Logo Section */}
-                <View style={styles.logoContainer}>
+                <Animated.View style={[styles.logoContainer, logoAnim.style]}>
                     <MaterialCommunityIcons name="account-plus" size={80} color={theme.colors.primary} />
                     <Text variant="headlineMedium" style={[styles.title, { color: theme.colors.primary }]}>
                         Join Parcel-Safe
@@ -53,10 +57,10 @@ export default function RegisterScreen() {
                     <Text variant="bodyMedium" style={styles.subtitle}>
                         Create your account
                     </Text>
-                </View>
+                </Animated.View>
 
                 {/* Input Section */}
-                <View style={styles.inputContainer}>
+                <Animated.View style={[styles.inputContainer, formAnim.style]}>
                     <TextInput
                         label="Full Name"
                         value={name}
@@ -98,7 +102,7 @@ export default function RegisterScreen() {
                         secureTextEntry={confirmSecureTextEntry}
                         style={styles.input}
                     />
-                </View>
+                </Animated.View>
 
                 {/* Button Section */}
                 <Button

@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { View, StyleSheet, ScrollView, Alert, TouchableOpacity } from 'react-native';
+import { View, Animated, StyleSheet, ScrollView, Alert, TouchableOpacity } from 'react-native';
+import { useEntryAnimation } from '../../hooks/useEntryAnimation';
 import { Text, Button, useTheme, Surface, IconButton, TextInput, Portal, Modal, Divider } from 'react-native-paper';
 import { useNavigation } from '@react-navigation/native';
 import { supabase } from '../../services/supabaseClient';
@@ -153,8 +154,10 @@ export default function SavedContactsScreen() {
         setPhone('');
     };
 
+    const screenAnim = useEntryAnimation(0);
+
     return (
-        <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
+        <Animated.View style={[styles.container, { backgroundColor: theme.colors.background }, screenAnim.style]}>
             <ScrollView contentContainerStyle={[styles.scrollContent, { paddingTop: insets.top + 20, paddingBottom: 100 + insets.bottom }]}>
                 {loading ? (
                     <Text style={{ textAlign: 'center', marginTop: 20 }}>Loading contacts...</Text>
@@ -232,7 +235,7 @@ export default function SavedContactsScreen() {
                     </View>
                 </Modal>
             </Portal>
-        </View>
+        </Animated.View>
     );
 }
 

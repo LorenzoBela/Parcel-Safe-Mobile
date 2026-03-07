@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { View, StyleSheet, FlatList, TouchableOpacity, RefreshControl, ActivityIndicator } from 'react-native';
+import { View, StyleSheet, FlatList, TouchableOpacity, RefreshControl, ActivityIndicator, Animated } from 'react-native';
+import { useEntryAnimation } from '../../hooks/useEntryAnimation';
 import { Text, Chip, Searchbar, useTheme, IconButton } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
@@ -277,8 +278,10 @@ export default function DeliveryRecordsScreen() {
         </TouchableOpacity>
     );
 
+    const screenAnim = useEntryAnimation(0);
+
     return (
-        <View style={[styles.container, { backgroundColor: c.bg }]}>
+        <Animated.View style={[styles.container, { backgroundColor: c.bg }, screenAnim.style]}>
             <View style={[styles.header, { backgroundColor: c.card, borderBottomWidth: 1, borderBottomColor: c.border }]}>
                 <View style={styles.headerTop}>
                     <IconButton icon="arrow-left" iconColor={c.text} onPress={() => navigation.goBack()} />
@@ -376,7 +379,7 @@ export default function DeliveryRecordsScreen() {
                     />
                 )}
             </View>
-        </View>
+        </Animated.View>
     );
 }
 

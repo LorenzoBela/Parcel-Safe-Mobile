@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { View, StyleSheet, TouchableOpacity, Alert } from 'react-native';
+import { View, StyleSheet, TouchableOpacity, Alert, Animated } from 'react-native';
 import { Text, Button, Surface, IconButton, useTheme, Portal, ActivityIndicator } from 'react-native-paper';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { useEntryAnimation, useScalePopAnimation } from '../../hooks/useEntryAnimation';
 import {
     CodeField,
     Cursor,
@@ -30,6 +31,9 @@ export default function OTPScreen() {
     const [displayStatus, setDisplayStatus] = useState<'OK' | 'DEGRADED' | 'FAILED'>('OK');
     const [showBleModal, setShowBleModal] = useState(false);
     const [isRegenerating, setIsRegenerating] = useState(false);
+
+    const contentAnim = useEntryAnimation(0);
+    const iconPop = useScalePopAnimation(60);
 
     // CodeField props — hooks must be called unconditionally at top level
     const blurRef = useBlurOnFulfill({ value: otpCode, cellCount: CELL_COUNT });
@@ -172,14 +176,16 @@ export default function OTPScreen() {
                 <View style={{ width: 40 }} />
             </View>
 
-            <View style={styles.content}>
-                <Surface style={[styles.iconSurface, { backgroundColor: isArrived ? theme.colors.primaryContainer : theme.colors.surfaceDisabled }]} elevation={4}>
-                    <MaterialCommunityIcons
-                        name={isArrived ? "shield-check" : "shield-lock"}
-                        size={60}
-                        color={isArrived ? theme.colors.primary : theme.colors.onSurfaceDisabled}
-                    />
-                </Surface>
+            <Animated.View style={[styles.content, contentAnim.style]}>
+                <Animated.View style={iconPop.style}>
+                    <Surface style={[styles.iconSurface, { backgroundColor: isArrived ? theme.colors.primaryContainer : theme.colors.surfaceDisabled }]} elevation={4}>
+                        <MaterialCommunityIcons
+                            name={isArrived ? "shield-check" : "shield-lock"}
+                            size={60}
+                            color={isArrived ? theme.colors.primary : theme.colors.onSurfaceDisabled}
+                        />
+                    </Surface>
+                </Animated.View>
 
                 <Text variant="headlineSmall" style={[styles.title, { color: theme.colors.onSurface }]}>
                     {isArrived ? "Verify Receipt" : "Rider Approaching"}
@@ -268,7 +274,7 @@ export default function OTPScreen() {
                         Unlock with Bluetooth
                     </Button>
                 )}
-            </View>
+            </Animated.View>
 
             {/* EC-86: BLE unlock modal */}
             <CustomerBleUnlockModal

@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { View, StyleSheet, ScrollView, Alert, TouchableOpacity } from 'react-native';
+import { View, Animated, StyleSheet, ScrollView, Alert, TouchableOpacity } from 'react-native';
+import { useEntryAnimation } from '../../hooks/useEntryAnimation';
 import { Text, Button, useTheme, Surface, IconButton, TextInput, Portal, Modal, Divider, Checkbox } from 'react-native-paper';
 import { useNavigation } from '@react-navigation/native';
 import { supabase } from '../../services/supabaseClient';
@@ -182,8 +183,10 @@ export default function SavedAddressesScreen() {
         setLocationCoords(null);
     };
 
+    const screenAnim = useEntryAnimation(0);
+
     return (
-        <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
+        <Animated.View style={[styles.container, { backgroundColor: theme.colors.background }, screenAnim.style]}>
             <ScrollView contentContainerStyle={[styles.scrollContent, { paddingTop: insets.top + 20, paddingBottom: 100 + insets.bottom }]}>
                 {loading ? (
                     <Text style={{ textAlign: 'center', marginTop: 20 }}>Loading addresses...</Text>
@@ -329,7 +332,7 @@ export default function SavedAddressesScreen() {
                 }
                 title="Select Address"
             />
-        </View>
+        </Animated.View>
     );
 }
 
