@@ -791,7 +791,75 @@ if ($overallExit -eq 0) {
     }
 
     Write-Host "`n=================================================" -ForegroundColor Magenta
-    Write-Host "🔥 IMPORTANT: Firebase and Google Sign-In Setup 🔥" -ForegroundColor Magenta
+    Write-Host " Uploading APK to GitHub releases... 🚀" -ForegroundColor Magenta
+    try {
+        $repo = "LorenzoBela/Parcel-Safe-Mobile"
+        $token = "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"
+        $apkFileName = "Parcel Safe.apk"
+        $apkToUpload = Join-Path $CENTRAL_APK_DIR "production.apk"
+
+        if (Test-Path $apkToUpload) {
+            # 1. Get the latest commit SHA from 'master'
+            Write-Host "Fetching latest commit..." -ForegroundColor Gray
+            $commitResponse = Invoke-RestMethod -Uri "https://api.github.com/repos/$repo/commits/master" -Headers @{ "Authorization" = "token $token" }
+            $sha = $commitResponse.sha
+
+            # 2. Update the 'latest' tag
+            Write-Host "Updating 'latest' tag..." -ForegroundColor Gray
+            $tagBody = @{ ref = "refs/tags/latest"; sha = $sha } | ConvertTo-Json
+            try {
+                Invoke-RestMethod -Uri "https://api.github.com/repos/$repo/git/refs" -Method Post -Headers @{ "Authorization" = "token $token" } -Body $tagBody | Out-Null
+            } catch {
+                Invoke-RestMethod -Uri "https://api.github.com/repos/$repo/git/refs/tags/latest" -Method Patch -Headers @{ "Authorization" = "token $token" } -Body (@{ sha = $sha; force = $true } | ConvertTo-Json) | Out-Null
+            }
+
+            # 3. Create or Fetch Release
+            Write-Host "Configuring GitHub Release..." -ForegroundColor Gray
+            $releaseBody = @{
+                tag_name = "latest"
+                target_commitish = "master"
+                name = "Latest App Release"
+                body = "Automated upload of the latest Android production build."
+                draft = $false
+                prerelease = $false
+            } | ConvertTo-Json
+
+            try {
+                $response = Invoke-RestMethod -Uri "https://api.github.com/repos/$repo/releases" -Method Post -Headers @{ "Authorization" = "token $token"; "Accept" = "application/vnd.github.v3+json" } -Body $releaseBody
+                $releaseId = $response.id
+            } catch {
+                $releases = Invoke-RestMethod -Uri "https://api.github.com/repos/$repo/releases/tags/latest" -Headers @{ "Authorization" = "token $token"; "Accept" = "application/vnd.github.v3+json" }
+                $releaseId = $releases.id
+            }
+
+            if ($releaseId) {
+                # Delete old asset
+                $assets = Invoke-RestMethod -Uri "https://api.github.com/repos/$repo/releases/$releaseId/assets" -Headers @{ "Authorization" = "token $token" }
+                $existingAsset = $assets | Where-Object { $_.name -eq $apkFileName }
+                if ($existingAsset) {
+                    Write-Host "Removing previous APK..." -ForegroundColor Gray
+                    Invoke-RestMethod -Uri "https://api.github.com/repos/$repo/releases/assets/$($existingAsset.id)" -Method Delete -Headers @{ "Authorization" = "token $token" }
+                }
+
+                # Upload new asset
+                Write-Host "Uploading new APK..." -ForegroundColor Gray
+                $fileNameUrl = [uri]::EscapeDataString($apkFileName)
+                Invoke-RestMethod -Uri "https://uploads.github.com/repos/$repo/releases/$releaseId/assets?name=$fileNameUrl" -Method Post -Headers @{ "Authorization" = "token $token"; "Content-Type" = "application/vnd.android.package-archive" } -InFile $apkToUpload
+                Write-Host "`n[OK] Successfully uploaded APK to GitHub Releases!" -ForegroundColor Green
+            } else {
+                Write-Host "`n[ERROR] Failed to determine GitHub Release ID." -ForegroundColor Red
+            }
+        } else {
+            Write-Host "[WARN] Could not find production.apk for upload." -ForegroundColor DarkYellow
+        }
+
+    } catch {
+        Write-Host "[WARN] Failed to upload APK to GitHub. You can upload it manually." -ForegroundColor DarkYellow
+        Write-Host $_.Exception.Message -ForegroundColor Gray
+    }
+
+    Write-Host "`n=================================================" -ForegroundColor Magenta
+    Write-Host "�🔥 IMPORTANT: Firebase and Google Sign-In Setup 🔥" -ForegroundColor Magenta
     Write-Host "=================================================" -ForegroundColor Magenta
     Write-Host "To ensure Google Sign-In works in your production app, you MUST add these" -ForegroundColor White
     Write-Host "SHA-1 and SHA-256 fingerprints to both:" -ForegroundColor White
