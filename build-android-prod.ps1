@@ -794,9 +794,31 @@ if ($overallExit -eq 0) {
     Write-Host " Uploading APK to GitHub releases... 🚀" -ForegroundColor Magenta
     try {
         $repo = "LorenzoBela/Parcel-Safe-Mobile"
-        $token = "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"
+        
+        # Load build secrets from .env.build if it exists
+        $envFile = Join-Path $SOURCE_DIR ".env.build"
+        if (Test-Path $envFile) {
+            Get-Content $envFile | Where-Object { $_ -match "^[^#]*=" } | ForEach-Object {
+                $name, $value = $_.Split('=', 2)
+                Set-Item -Path "env:\$name" -Value $value.Trim()
+            }
+        }
+
+        $token = $env:GITHUB_TOKEN
+        if ([string]::IsNullOrWhiteSpace($token)) {
+            Write-Host "`n[ERROR] GitHub Token (GITHUB_TOKEN) is not provided." -ForegroundColor Red
+            Write-Host "Please create a '.env.build' file in the mobile directory with GITHUB_TOKEN=your_token" -ForegroundColor Yellow
+            exit 1
+        }
+
         $apkFileName = "Parcel Safe.apk"
-        $apkToUpload = Join-Path $CENTRAL_APK_DIR "production.apk"
+        $productionApk = Join-Path $CENTRAL_APK_DIR "production.apk"
+        $apkToUpload = Join-Path $CENTRAL_APK_DIR $apkFileName
+
+        if (Test-Path $productionApk) {
+            Write-Host "Copying production.apk to '$apkFileName' locally..." -ForegroundColor Gray
+            Copy-Item -Path $productionApk -Destination $apkToUpload -Force
+        }
 
         if (Test-Path $apkToUpload) {
             # 1. Get the latest commit SHA from 'master'

@@ -32,6 +32,11 @@ yarn-error.*
 
 # local env files
 .env
+.env.build
+
+# Firebase Config (Article VI compliance)
+*google-services.json
+*GoogleService-Info.plist
 
 # typescript
 *.tsbuildinfo
