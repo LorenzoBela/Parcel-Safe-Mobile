@@ -6,7 +6,7 @@
  */
 
 import { getFirebaseDatabase } from './firebaseClient';
-import { ref, get, set, update, remove, onValue, off, onDisconnect, runTransaction } from 'firebase/database';
+import { ref, get, set, update, remove, onValue, off, onDisconnect, runTransaction, serverTimestamp } from 'firebase/database';
 import { showIncomingOrderNotification, cancelDeliveryReminderNotification } from './pushNotificationService';
 import statusUpdateService from './statusUpdateService';
 import { supabase } from './supabaseClient';
@@ -571,6 +571,7 @@ export async function acceptOrder(
         const acceptedAt = Date.now();
 
         const normalizedBoxId = typeof metadata?.boxId === 'string' ? metadata.boxId.trim() : '';
+        console.log(`[RiderMatching] acceptOrder: riderId=${riderId} bookingId=${bookingId} normalizedBoxId='${normalizedBoxId}'`);
         const hasValidBoxId = Boolean(
             normalizedBoxId
             && normalizedBoxId.toLowerCase() !== 'null'
@@ -679,6 +680,38 @@ export async function acceptOrder(
 
         await set(ref(db, `/deliveries/${bookingId}`), deliveryRecord);
 
+        // --- Fetch OTP + write to hardware node (MUST happen before Supabase sync) ---
+        // otp_code is only in Supabase, not in Firebase pending_bookings.
+        // We fetch it here independently so a Supabase sync failure can't block
+        // the hardware write.
+        let resolvedOtp = '';
+        if (supabase) {
+            try {
+                const { data: otpRow } = await supabase
+                    .from('deliveries')
+                    .select('otp_code')
+                    .eq('id', bookingId)
+                    .maybeSingle();
+                resolvedOtp = otpRow?.otp_code || '';
+            } catch (e) {
+                console.error('[RiderMatching] OTP pre-fetch failed:', e);
+            }
+        }
+        if (!resolvedOtp) resolvedOtp = generateOTP();
+
+        if (normalizedBoxId) {
+            try {
+                await update(ref(db, `hardware/${normalizedBoxId}`), {
+                    otp_code: resolvedOtp,
+                    delivery_id: bookingId,
+                    otp_issued_at: serverTimestamp(),
+                });
+                console.log(`[RiderMatching] Written OTP='${resolvedOtp}' to hardware/${normalizedBoxId}`);
+            } catch (hwErr) {
+                console.error('[RiderMatching] Failed to write to hardware node:', hwErr);
+            }
+        }
+
         await set(ref(db, `/share_tokens/${shareToken}`), {
             delivery_id: bookingId,
             created_at: booking.created_at || acceptedAt,
@@ -716,21 +749,9 @@ export async function acceptOrder(
                     }
                 }
 
-                // Fetch existing OTP from Supabase instead of generating a new one
-                // OTP is created once at booking time and must stay consistent
-                let existingOtp = '';
-                try {
-                    const { data: existingDelivery } = await supabase
-                        .from('deliveries')
-                        .select('otp_code')
-                        .eq('id', bookingId)
-                        .maybeSingle();
-                    existingOtp = existingDelivery?.otp_code || '';
-                } catch (e) {
-                    console.error('[RiderMatching] Failed to fetch existing OTP:', e);
-                }
-                // Only generate new OTP if none exists (should not happen in normal flow)
-                const finalOtp = existingOtp || generateOTP();
+                // OTP was already fetched and written to hardware above.
+                // Reuse it here for the Supabase upsert.
+                const finalOtp = resolvedOtp;
 
                 const upsertData: any = {
                     id: bookingId,

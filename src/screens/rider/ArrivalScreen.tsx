@@ -59,6 +59,9 @@ import {
     BatteryState,
     subscribeToTamper,
     TamperState,
+    // Lock Events (OTP + Face Detection from hardware)
+    subscribeToLockEvents,
+    LockEvent,
     // EC-97: Low-Light Detection
     subscribeToLowLight,
     LowLightState,
@@ -81,6 +84,7 @@ import {
     isReassignmentPending
 } from '../../services/deliveryReassignmentService';
 import { subscribeToDelivery, updateDeliveryStatus } from '../../services/riderMatchingService';
+import { showStatusNotification } from '../../services/pushNotificationService';
 import useAuthStore from '../../store/authStore';
 import PickupVerification from './components/PickupVerification';
 import DropoffVerification from './components/DropoffVerification';
@@ -177,6 +181,10 @@ export default function ArrivalScreen() {
     const tamperDeliveryFlaggedRef = useRef(false);
     const pickupArrivalNotifSentRef = useRef(false);
 
+    // Lock Events (OTP + Face Detection from hardware)
+    const [lockEvent, setLockEvent] = useState<LockEvent | null>(null);
+    const lockEventNotifiedRef = useRef(false);
+
     // EC-02: BLE Transfer State
     const [showBleModal, setShowBleModal] = useState(false);
     const [bleStatus, setBleStatus] = useState<'idle' | 'scanning' | 'connecting' | 'transferring' | 'success' | 'error'>('idle');
@@ -260,12 +268,50 @@ export default function ArrivalScreen() {
             }
         });
 
+        // Lock Events: Subscribe to OTP + Face Detection results from hardware
+        const unsubscribeLockEvent = subscribeToLockEvents(params.boxId, (event) => {
+            setLockEvent(event);
+            if (event && !lockEventNotifiedRef.current) {
+                lockEventNotifiedRef.current = true;
+                if (event.unlocked) {
+                    // OTP valid + face detected → box unlocked
+                    showStatusNotification(
+                        '🔓 Box Unlocked',
+                        'OTP verified & face detected — box has been unlocked successfully.',
+                        { deliveryId: params.deliveryId, type: 'LOCK_EVENT' }
+                    );
+                    PremiumAlert.alert(
+                        '🔓 Box Unlocked',
+                        'The recipient has verified the OTP and their face was captured. The box is now open.',
+                        [{ text: 'OK' }]
+                    );
+                } else if (event.otp_valid && !event.face_detected) {
+                    // OTP correct but no face
+                    showStatusNotification(
+                        '👤 Face Not Detected',
+                        'OTP was correct but no face detected. Box remains locked.',
+                        { deliveryId: params.deliveryId, type: 'LOCK_EVENT' }
+                    );
+                } else if (!event.otp_valid) {
+                    // Wrong OTP entered
+                    showStatusNotification(
+                        '🔒 Invalid OTP',
+                        'An incorrect OTP was entered on the box keypad.',
+                        { deliveryId: params.deliveryId, type: 'LOCK_EVENT' }
+                    );
+                }
+                // Reset after a brief delay to allow re-notification on next event
+                setTimeout(() => { lockEventNotifiedRef.current = false; }, 5000);
+            }
+        });
+
         return () => {
             unsubscribeBgLocation();
             unsubscribeLockout();
             unsubscribeBattery();
             unsubscribeTamper();
             unsubscribeLowLight();
+            unsubscribeLockEvent();
         };
     }, [params.boxId, params.deliveryId]);
 
@@ -1009,279 +1055,279 @@ export default function ArrivalScreen() {
     return (
         <ScrollView style={styles.container} contentContainerStyle={[styles.content, { paddingTop: Math.max(insets.top, 20), paddingBottom: insets.bottom + 20 }]}>
             <Animated.View style={screenAnim.style}>
-            {/* Critical Security Alerts (Full Width) */}
-            {tamperState?.detected && (
-                <Card style={styles.tamperBanner}>
-                    <Card.Content style={styles.bannerContent}>
-                        <Text style={styles.bannerIcon}>🚨</Text>
-                        <View style={{ flex: 1 }}>
-                            <Text style={styles.tamperTitle}>SECURITY ALERT</Text>
-                            <Text style={styles.tamperText}>Box tamper detected - Lockdown active</Text>
-                        </View>
-                    </Card.Content>
-                </Card>
-            )}
-
-            {/* System Status Pills */}
-            {renderSystemStatus()}
-
-            <Text variant="headlineMedium" style={styles.pageTitle}>
-                Arrival & Verification
-            </Text>
-
-            {/* Status Modals & Top Alerts */}
-            {lockoutState?.active && (
-                <View style={[styles.statusMessageContainer, styles.bgSubtleError, { marginTop: 16 }]}>
-                    <Text style={[styles.statusMessageText, styles.textError]}>
-                        🔒 Smart Box is locked out. Wait {Math.ceil((lockoutState.expires_at - Date.now()) / 60000)} minutes.
-                    </Text>
-                </View>
-            )}
-            {batteryState?.criticalBatteryWarning && (
-                <View style={[styles.statusMessageContainer, styles.bgSubtleError, { marginTop: 16 }]}>
-                    <Text style={[styles.statusMessageText, styles.textError]}>
-                        ⚠️ Smart Box Battery Critical ({batteryState.percentage}%)
-                    </Text>
-                </View>
-            )}
-            {tamperState?.detected && (
-                <View style={[styles.statusMessageContainer, styles.bgSubtleError, { marginTop: 16 }]}>
-                    <Text style={[styles.statusMessageText, styles.textError]}>
-                        🚨 TAMPER DETECTED! Box is in lockdown. Contact support.
-                    </Text>
-                </View>
-            )}
-
-            {/* Grace Period Countdown Card */}
-            {isDropoffPhase && deliveryStatus === 'ARRIVED' && arrivedAt && (
-                <Card style={[
-                    styles.gracePeriodCard,
-                    gracePeriodExpired ? styles.gracePeriodExpired : styles.gracePeriodActive
-                ]}>
-                    <Card.Content>
-                        <View style={styles.gracePeriodHeader}>
-                            <Text style={styles.gracePeriodIcon}>
-                                {gracePeriodExpired ? '⏰' : '⏳'}
-                            </Text>
+                {/* Critical Security Alerts (Full Width) */}
+                {tamperState?.detected && (
+                    <Card style={styles.tamperBanner}>
+                        <Card.Content style={styles.bannerContent}>
+                            <Text style={styles.bannerIcon}>🚨</Text>
                             <View style={{ flex: 1 }}>
-                                <Text style={styles.gracePeriodTitle}>
-                                    {gracePeriodExpired ? 'Grace Period Expired' : 'Grace Period Active'}
-                                </Text>
-                                <Text style={styles.gracePeriodSubtext}>
-                                    {gracePeriodExpired
-                                        ? 'Customer did not appear. You may mark as No-Show.'
-                                        : 'Waiting for customer to arrive at location...'}
-                                </Text>
+                                <Text style={styles.tamperTitle}>SECURITY ALERT</Text>
+                                <Text style={styles.tamperText}>Box tamper detected - Lockdown active</Text>
                             </View>
-                            <View style={styles.gracePeriodTimerBox}>
-                                <Text style={[
-                                    styles.gracePeriodTimer,
-                                    gracePeriodExpired && { color: '#dc2626' }
-                                ]}>
-                                    {gracePeriodDisplay}
-                                </Text>
-                                <Text style={styles.gracePeriodTimerLabel}>
-                                    {gracePeriodExpired ? 'EXPIRED' : 'remaining'}
-                                </Text>
-                            </View>
-                        </View>
+                        </Card.Content>
+                    </Card>
+                )}
 
-                        {gracePeriodExpired && (
-                            <Button
-                                mode="contained"
-                                onPress={handleMarkNoShow}
-                                loading={noShowLoading}
-                                disabled={noShowLoading}
-                                buttonColor="#dc2626"
-                                textColor="white"
-                                style={{ marginTop: 12, borderRadius: 8 }}
-                                icon="account-cancel"
-                            >
-                                Mark as Customer No-Show
-                            </Button>
-                        )}
-                    </Card.Content>
-                </Card>
-            )}
+                {/* System Status Pills */}
+                {renderSystemStatus()}
 
-            {(waitTimerState.status === 'WAITING' || waitTimerState.status === 'EXPIRED') ? (
-                renderWaitingUI()
-            ) : (
-                isPickupConfirmed ? (
-                    isReturning ? (
-                        // ── EC-32: Return Journey Card ──────────────────────────────────────────
-                        <Card style={{ margin: 16, borderRadius: 12 }} elevation={2}>
-                            <Card.Content>
-                                <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>
-                                    <Text variant="titleMedium" style={{ fontWeight: 'bold', flex: 1 }}>Return Journey</Text>
-                                    <Text style={{ fontSize: 24 }}>↩️</Text>
-                                </View>
-                                <Text variant="bodySmall" style={{ color: '#666', marginBottom: 4 }}>Return destination</Text>
-                                <Text variant="bodyMedium" style={{ fontWeight: '600', marginBottom: 16 }}>
-                                    {params.pickupAddress || params.targetAddress}
+                <Text variant="headlineMedium" style={styles.pageTitle}>
+                    Arrival & Verification
+                </Text>
+
+                {/* Status Modals & Top Alerts */}
+                {lockoutState?.active && (
+                    <View style={[styles.statusMessageContainer, styles.bgSubtleError, { marginTop: 16 }]}>
+                        <Text style={[styles.statusMessageText, styles.textError]}>
+                            🔒 Smart Box is locked out. Wait {Math.ceil((lockoutState.expires_at - Date.now()) / 60000)} minutes.
+                        </Text>
+                    </View>
+                )}
+                {batteryState?.criticalBatteryWarning && (
+                    <View style={[styles.statusMessageContainer, styles.bgSubtleError, { marginTop: 16 }]}>
+                        <Text style={[styles.statusMessageText, styles.textError]}>
+                            ⚠️ Smart Box Battery Critical ({batteryState.percentage}%)
+                        </Text>
+                    </View>
+                )}
+                {tamperState?.detected && (
+                    <View style={[styles.statusMessageContainer, styles.bgSubtleError, { marginTop: 16 }]}>
+                        <Text style={[styles.statusMessageText, styles.textError]}>
+                            🚨 TAMPER DETECTED! Box is in lockdown. Contact support.
+                        </Text>
+                    </View>
+                )}
+
+                {/* Grace Period Countdown Card */}
+                {isDropoffPhase && deliveryStatus === 'ARRIVED' && arrivedAt && (
+                    <Card style={[
+                        styles.gracePeriodCard,
+                        gracePeriodExpired ? styles.gracePeriodExpired : styles.gracePeriodActive
+                    ]}>
+                        <Card.Content>
+                            <View style={styles.gracePeriodHeader}>
+                                <Text style={styles.gracePeriodIcon}>
+                                    {gracePeriodExpired ? '⏰' : '⏳'}
                                 </Text>
-                                {distanceMeters !== null && (
-                                    <Text variant="bodySmall" style={{ color: '#888', marginBottom: 16 }}>
-                                        {distanceMeters < 1000
-                                            ? `${Math.round(distanceMeters)} m away`
-                                            : `${(distanceMeters / 1000).toFixed(1)} km away`}
+                                <View style={{ flex: 1 }}>
+                                    <Text style={styles.gracePeriodTitle}>
+                                        {gracePeriodExpired ? 'Grace Period Expired' : 'Grace Period Active'}
                                     </Text>
-                                )}
-                                <Button
-                                    mode="outlined"
-                                    icon="navigation"
-                                    onPress={handleNavigate}
-                                    style={{ marginBottom: 12, borderRadius: 8 }}
-                                >
-                                    Navigate to Pickup
-                                </Button>
+                                    <Text style={styles.gracePeriodSubtext}>
+                                        {gracePeriodExpired
+                                            ? 'Customer did not appear. You may mark as No-Show.'
+                                            : 'Waiting for customer to arrive at location...'}
+                                    </Text>
+                                </View>
+                                <View style={styles.gracePeriodTimerBox}>
+                                    <Text style={[
+                                        styles.gracePeriodTimer,
+                                        gracePeriodExpired && { color: '#dc2626' }
+                                    ]}>
+                                        {gracePeriodDisplay}
+                                    </Text>
+                                    <Text style={styles.gracePeriodTimerLabel}>
+                                        {gracePeriodExpired ? 'EXPIRED' : 'remaining'}
+                                    </Text>
+                                </View>
+                            </View>
+
+                            {gracePeriodExpired && (
                                 <Button
                                     mode="contained"
-                                    icon="package-variant-closed"
-                                    onPress={() => {
-                                        if (returnCancellationState?.returnOtp) {
-                                            navigation.navigate('ReturnPackage', {
-                                                deliveryId: params.deliveryId,
-                                                returnOtp: returnCancellationState.returnOtp,
-                                                pickupAddress: params.pickupAddress || params.targetAddress,
-                                                senderName: params.senderName || 'Sender',
-                                                pickupLat: params.pickupLat,
-                                                pickupLng: params.pickupLng,
-                                                boxId: params.boxId,
-                                            });
-                                        } else {
-                                            navigation.navigate('CancellationConfirmation', {
-                                                deliveryId: params.deliveryId,
-                                                returnOtp: '------',
-                                                reason: CancellationReason.OTHER,
-                                                senderName: params.senderName || 'Sender',
-                                                pickupAddress: params.pickupAddress || params.targetAddress,
-                                                pickupLat: params.pickupLat,
-                                                pickupLng: params.pickupLng,
-                                            });
-                                        }
-                                    }}
-                                    style={{ borderRadius: 8 }}
+                                    onPress={handleMarkNoShow}
+                                    loading={noShowLoading}
+                                    disabled={noShowLoading}
+                                    buttonColor="#dc2626"
+                                    textColor="white"
+                                    style={{ marginTop: 12, borderRadius: 8 }}
+                                    icon="account-cancel"
                                 >
-                                    Continue Return Process
+                                    Mark as Customer No-Show
                                 </Button>
-                            </Card.Content>
-                        </Card>
-                    ) : (
-                    <DropoffVerification
-                        deliveryId={params.deliveryId}
-                        boxId={params.boxId}
-                        targetAddress={params.dropoffAddress || params.targetAddress}
-                        recipientName={params.recipientName}
-                        customerPhone={params.customerPhone}
-                        deliveryNotes={params.deliveryNotes}
-                        deliveryStatus={deliveryStatus}
-                        isInsideGeoFence={isInsideGeoFence}
-                        distanceMeters={distanceMeters}
-                        isPhoneInside={isPhoneInside}
-                        isBoxInside={isBoxInside}
-                        isBoxOffline={isBoxOffline}
-                        onDeliveryCompleted={() => navigation.goBack()}
+                            )}
+                        </Card.Content>
+                    </Card>
+                )}
 
-                        onNavigate={handleNavigate}
-                        onShowBleModal={handleBleTransfer}
-                        onShowCancelModal={() => setShowCancelModal(true)}
-                        onShowCustomerNotHome={handleCustomerNotHome}
-                        isWaitTimerActive={false}
-                        canAutoArrive={geofenceTarget !== 'pickup'}
-                    />
-                    )
+                {(waitTimerState.status === 'WAITING' || waitTimerState.status === 'EXPIRED') ? (
+                    renderWaitingUI()
                 ) : (
-                    <PickupVerification
-                        deliveryId={params.deliveryId}
-                        boxId={params.boxId}
-                        targetAddress={params.pickupAddress || params.targetAddress}
-                        targetLat={params.pickupLat || params.targetLat}
-                        targetLng={params.pickupLng || params.targetLng}
-                        senderName={params.senderName}
-                        senderPhone={params.senderPhone}
-                        deliveryNotes={params.deliveryNotes}
-                        isInsideGeoFence={isInsideGeoFence}
-                        distanceMeters={distanceMeters}
-                        isPhoneInside={isPhoneInside}
-                        isBoxInside={isBoxInside}
-                        isBoxOffline={isBoxOffline}
-                        onPickupConfirmed={() => {
-                            // The Firebase listener will pick up the 'IN_TRANSIT' status change
-                            // and automatically switch to DropoffVerification. No navigation needed.
-                        }}
+                    isPickupConfirmed ? (
+                        isReturning ? (
+                            // ── EC-32: Return Journey Card ──────────────────────────────────────────
+                            <Card style={{ margin: 16, borderRadius: 12 }} elevation={2}>
+                                <Card.Content>
+                                    <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>
+                                        <Text variant="titleMedium" style={{ fontWeight: 'bold', flex: 1 }}>Return Journey</Text>
+                                        <Text style={{ fontSize: 24 }}>↩️</Text>
+                                    </View>
+                                    <Text variant="bodySmall" style={{ color: '#666', marginBottom: 4 }}>Return destination</Text>
+                                    <Text variant="bodyMedium" style={{ fontWeight: '600', marginBottom: 16 }}>
+                                        {params.pickupAddress || params.targetAddress}
+                                    </Text>
+                                    {distanceMeters !== null && (
+                                        <Text variant="bodySmall" style={{ color: '#888', marginBottom: 16 }}>
+                                            {distanceMeters < 1000
+                                                ? `${Math.round(distanceMeters)} m away`
+                                                : `${(distanceMeters / 1000).toFixed(1)} km away`}
+                                        </Text>
+                                    )}
+                                    <Button
+                                        mode="outlined"
+                                        icon="navigation"
+                                        onPress={handleNavigate}
+                                        style={{ marginBottom: 12, borderRadius: 8 }}
+                                    >
+                                        Navigate to Pickup
+                                    </Button>
+                                    <Button
+                                        mode="contained"
+                                        icon="package-variant-closed"
+                                        onPress={() => {
+                                            if (returnCancellationState?.returnOtp) {
+                                                navigation.navigate('ReturnPackage', {
+                                                    deliveryId: params.deliveryId,
+                                                    returnOtp: returnCancellationState.returnOtp,
+                                                    pickupAddress: params.pickupAddress || params.targetAddress,
+                                                    senderName: params.senderName || 'Sender',
+                                                    pickupLat: params.pickupLat,
+                                                    pickupLng: params.pickupLng,
+                                                    boxId: params.boxId,
+                                                });
+                                            } else {
+                                                navigation.navigate('CancellationConfirmation', {
+                                                    deliveryId: params.deliveryId,
+                                                    returnOtp: '------',
+                                                    reason: CancellationReason.OTHER,
+                                                    senderName: params.senderName || 'Sender',
+                                                    pickupAddress: params.pickupAddress || params.targetAddress,
+                                                    pickupLat: params.pickupLat,
+                                                    pickupLng: params.pickupLng,
+                                                });
+                                            }
+                                        }}
+                                        style={{ borderRadius: 8 }}
+                                    >
+                                        Continue Return Process
+                                    </Button>
+                                </Card.Content>
+                            </Card>
+                        ) : (
+                            <DropoffVerification
+                                deliveryId={params.deliveryId}
+                                boxId={params.boxId}
+                                targetAddress={params.dropoffAddress || params.targetAddress}
+                                recipientName={params.recipientName}
+                                customerPhone={params.customerPhone}
+                                deliveryNotes={params.deliveryNotes}
+                                deliveryStatus={deliveryStatus}
+                                isInsideGeoFence={isInsideGeoFence}
+                                distanceMeters={distanceMeters}
+                                isPhoneInside={isPhoneInside}
+                                isBoxInside={isBoxInside}
+                                isBoxOffline={isBoxOffline}
+                                onDeliveryCompleted={() => navigation.goBack()}
 
-                        onNavigate={handleNavigate}
-                    />
-                )
-            )}
+                                onNavigate={handleNavigate}
+                                onShowBleModal={handleBleTransfer}
+                                onShowCancelModal={() => setShowCancelModal(true)}
+                                onShowCustomerNotHome={handleCustomerNotHome}
+                                isWaitTimerActive={false}
+                                canAutoArrive={geofenceTarget !== 'pickup'}
+                            />
+                        )
+                    ) : (
+                        <PickupVerification
+                            deliveryId={params.deliveryId}
+                            boxId={params.boxId}
+                            targetAddress={params.pickupAddress || params.targetAddress}
+                            targetLat={params.pickupLat || params.targetLat}
+                            targetLng={params.pickupLng || params.targetLng}
+                            senderName={params.senderName}
+                            senderPhone={params.senderPhone}
+                            deliveryNotes={params.deliveryNotes}
+                            isInsideGeoFence={isInsideGeoFence}
+                            distanceMeters={distanceMeters}
+                            isPhoneInside={isPhoneInside}
+                            isBoxInside={isBoxInside}
+                            isBoxOffline={isBoxOffline}
+                            onPickupConfirmed={() => {
+                                // The Firebase listener will pick up the 'IN_TRANSIT' status change
+                                // and automatically switch to DropoffVerification. No navigation needed.
+                            }}
+
+                            onNavigate={handleNavigate}
+                        />
+                    )
+                )}
 
 
-            {/* Modals ... */}
-            {/* ... keeping existing modals ... */}
-            <Portal>
+                {/* Modals ... */}
+                {/* ... keeping existing modals ... */}
+                <Portal>
 
-                <Modal
-                    visible={showBleModal}
-                    onDismiss={closeBleModal}
-                    contentContainerStyle={styles.bleModal}
-                >
-                    <Text variant="titleLarge" style={{ marginBottom: 16, fontWeight: 'bold' }}>
-                        BLE OTP Transfer
-                    </Text>
+                    <Modal
+                        visible={showBleModal}
+                        onDismiss={closeBleModal}
+                        contentContainerStyle={styles.bleModal}
+                    >
+                        <Text variant="titleLarge" style={{ marginBottom: 16, fontWeight: 'bold' }}>
+                            BLE OTP Transfer
+                        </Text>
 
-                    <View style={styles.bleStatusContainer}>
-                        {(bleStatus === 'scanning' || bleStatus === 'connecting' || bleStatus === 'transferring') && (
-                            <Text style={styles.bleStatusIcon}>⏳</Text>
-                        )}
-                        {bleStatus === 'success' && <Text style={styles.bleStatusIcon}>✅</Text>}
-                        {bleStatus === 'error' && <Text style={styles.bleStatusIcon}>❌</Text>}
-                    </View>
+                        <View style={styles.bleStatusContainer}>
+                            {(bleStatus === 'scanning' || bleStatus === 'connecting' || bleStatus === 'transferring') && (
+                                <Text style={styles.bleStatusIcon}>⏳</Text>
+                            )}
+                            {bleStatus === 'success' && <Text style={styles.bleStatusIcon}>✅</Text>}
+                            {bleStatus === 'error' && <Text style={styles.bleStatusIcon}>❌</Text>}
+                        </View>
 
-                    <Text style={styles.bleStatusText}>
-                        {bleStatus === 'scanning' ? 'Scanning...' :
-                            bleStatus === 'connecting' ? 'Connecting...' :
-                                bleStatus === 'transferring' ? 'Transferring...' :
-                                    bleStatus === 'success' ? 'Success!' :
-                                        bleStatus === 'error' ? 'Failed' : 'Ready'}
-                    </Text>
-                    <Text style={styles.bleMessageText}>{bleMessage}</Text>
+                        <Text style={styles.bleStatusText}>
+                            {bleStatus === 'scanning' ? 'Scanning...' :
+                                bleStatus === 'connecting' ? 'Connecting...' :
+                                    bleStatus === 'transferring' ? 'Transferring...' :
+                                        bleStatus === 'success' ? 'Success!' :
+                                            bleStatus === 'error' ? 'Failed' : 'Ready'}
+                        </Text>
+                        <Text style={styles.bleMessageText}>{bleMessage}</Text>
 
-                    <View style={styles.bleActions}>
-                        {bleStatus === 'error' && (
-                            <Button mode="contained" onPress={handleBleTransfer}>
-                                Retry
+                        <View style={styles.bleActions}>
+                            {bleStatus === 'error' && (
+                                <Button mode="contained" onPress={handleBleTransfer}>
+                                    Retry
+                                </Button>
+                            )}
+                            {bleStatus === 'success' && (
+                                <Button mode="contained" onPress={closeBleModal} buttonColor="#22c55e">
+                                    Done
+                                </Button>
+                            )}
+                            <Button mode="outlined" onPress={closeBleModal} style={{ marginTop: 8 }}>
+                                {bleStatus === 'success' ? 'Close' : 'Cancel'}
                             </Button>
-                        )}
-                        {bleStatus === 'success' && (
-                            <Button mode="contained" onPress={closeBleModal} buttonColor="#22c55e">
-                                Done
-                            </Button>
-                        )}
-                        <Button mode="outlined" onPress={closeBleModal} style={{ marginTop: 8 }}>
-                            {bleStatus === 'success' ? 'Close' : 'Cancel'}
-                        </Button>
-                    </View>
-                </Modal>
-            </Portal>
+                        </View>
+                    </Modal>
+                </Portal>
 
 
 
-            {/* EC-32: Cancellation Modal */}
-            <CancellationModal
-                visible={showCancelModal}
-                onDismiss={() => setShowCancelModal(false)}
-                onSubmit={handleCancellationSubmit}
-                loading={cancelLoading}
-            />
+                {/* EC-32: Cancellation Modal */}
+                <CancellationModal
+                    visible={showCancelModal}
+                    onDismiss={() => setShowCancelModal(false)}
+                    onSubmit={handleCancellationSubmit}
+                    loading={cancelLoading}
+                />
 
-            {/* EC-78: Reassignment Alert Modal */}
-            <ReassignmentAlertModal
-                visible={showReassignmentModal}
-                state={reassignmentState}
-                type={getReassignmentType(reassignmentState, riderId)}
-                onAcknowledge={handleReassignmentAcknowledge}
-            />
+                {/* EC-78: Reassignment Alert Modal */}
+                <ReassignmentAlertModal
+                    visible={showReassignmentModal}
+                    state={reassignmentState}
+                    type={getReassignmentType(reassignmentState, riderId)}
+                    onAcknowledge={handleReassignmentAcknowledge}
+                />
             </Animated.View>
         </ScrollView>
     );

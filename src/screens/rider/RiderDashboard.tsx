@@ -986,6 +986,7 @@ export default function RiderDashboard() {
             return;
         }
 
+        console.log(`[ACCEPT] boxIdForMonitoring='${boxIdForMonitoring}' isPaired=${isPaired}`);
         const success = await acceptOrder(
             riderId,
             requestItem.data.bookingId,
