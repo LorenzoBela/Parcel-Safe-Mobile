@@ -28,7 +28,7 @@ const CONFIG = {
     HEARTBEAT_STALE_THRESHOLD: 30000,
 
     /** Phone GPS update interval when in fallback mode (ms) */
-    PHONE_GPS_INTERVAL: 8000,
+    PHONE_GPS_INTERVAL: 3000,
 
     /** Debounce time for source switching to prevent rapid toggling (ms) */
     RECONNECT_DEBOUNCE: 5000,
@@ -108,6 +108,27 @@ class LocationRedundancyManager {
         this.updateState({ powerState: 'STANDBY' });
         this.subscribeToBoxUpdates();
         this.startHeartbeatMonitor();
+    }
+
+    /**
+     * Seed the initial location from the GPS warmup service.
+     * Called before start() so the map immediately centers on the rider's
+     * real position instead of waiting for the first Firebase read.
+     */
+    seedInitialLocation(coords: { latitude: number; longitude: number; accuracy?: number }): void {
+        if (this.state.lastLocation) return; // Don't overwrite a real location
+
+        this.updateState({
+            lastLocation: {
+                latitude: coords.latitude,
+                longitude: coords.longitude,
+                speed: 0,
+                heading: 0,
+                timestamp: Date.now(),
+                source: 'phone',
+            },
+        });
+        console.log(`[Redundancy] Seeded initial location: ${coords.latitude.toFixed(5)}, ${coords.longitude.toFixed(5)}`);
     }
 
     /**

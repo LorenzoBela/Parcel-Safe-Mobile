@@ -35,6 +35,7 @@ import CancellationConfirmationScreen from '../screens/rider/CancellationConfirm
 import ReturnPackageScreen from '../screens/rider/ReturnPackageScreen';
 import JobDetailScreen from '../screens/rider/JobDetailScreen';
 import PairBoxScreen from '../screens/rider/PairBoxScreen';
+import RiderLoadingScreen from '../screens/rider/RiderLoadingScreen';
 
 import AdminDashboard from '../screens/admin/AdminDashboard';
 import GlobalMapScreen from '../screens/admin/GlobalMapScreen';
@@ -223,6 +224,7 @@ export default function AppNavigator() {
 
                 {/* Main App Flows (Tabs) */}
                 <Stack.Screen name="CustomerApp" component={CustomerNavigator} />
+                <Stack.Screen name="RiderLoading" component={RiderLoadingScreen} />
                 <Stack.Screen name="RiderApp" component={RiderNavigator} />
                 <Stack.Screen name="AdminApp" component={AdminNavigator} />
 

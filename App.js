@@ -10,6 +10,11 @@ import { configureGoogleSignIn } from './src/services/auth';
 import { ThemeProvider, useAppTheme } from './src/context/ThemeContext';
 import GlobalPremiumAlert from './src/components/modals/GlobalPremiumAlert';
 
+import * as SplashScreen from 'expo-splash-screen';
+
+// Keep splash screen visible while we initialize
+SplashScreen.preventAutoHideAsync();
+
 // Conditionally import modules
 let Notifications = null;
 let initializeBackgroundServices = null;
@@ -25,42 +30,6 @@ let setupFCMForegroundHandler = null;
 let initializeScheduledPromos = null;
 let supabase = null;
 
-try {
-  Notifications = require('expo-notifications');
-  const bgService = require('./src/services/backgroundServiceManager');
-  const orderService = require('./src/services/orderListenerService');
-
-  initializeBackgroundServices = bgService.initializeBackgroundServices;
-  onBackgroundEvent = bgService.onBackgroundEvent;
-  initializeOrderListener = orderService.initializeOrderListener;
-  onNewOrder = orderService.onNewOrder;
-
-  // Configure notification handler for foreground notifications
-  Notifications.setNotificationHandler({
-    handleNotification: async () => ({
-      shouldShowAlert: true,
-      shouldPlaySound: true,
-      shouldSetBadge: true,
-    }),
-  });
-} catch (error) {
-  // if (__DEV__) console.log('[App] Native modules not available - requires dev build');
-}
-
-try {
-  const notifService = require('./src/services/pushNotificationService');
-  const promoService = require('./src/services/scheduledPromoService');
-  const supabaseModule = require('./src/services/supabaseClient');
-  setupNotificationChannels = notifService.setupNotificationChannels;
-  registerForPushNotifications = notifService.registerForPushNotifications;
-  onTokenRefresh = notifService.onTokenRefresh;
-  setupFCMForegroundHandler = notifService.setupFCMForegroundHandler;
-  initializeScheduledPromos = promoService.initializeScheduledPromos;
-  supabase = supabaseModule.supabase;
-} catch (error) {
-  // if (__DEV__) console.log('[App] Notification services not available - requires dev build');
-}
-
 const AppContent = () => {
   const { theme } = useAppTheme();
   const [appState, setAppState] = useState(AppState.currentState);
@@ -71,7 +40,44 @@ const AppContent = () => {
 
     // Initialize background services when app starts (deferred to not block first render)
     const initializeServices = async () => {
-      // Register FCM push token for ALL roles (customer, rider, admin)
+      // 1. Inline require heavy modules here, AFTER the UI starts rendering
+      try {
+        Notifications = require('expo-notifications');
+        const bgService = require('./src/services/backgroundServiceManager');
+        const orderService = require('./src/services/orderListenerService');
+
+        initializeBackgroundServices = bgService.initializeBackgroundServices;
+        onBackgroundEvent = bgService.onBackgroundEvent;
+        initializeOrderListener = orderService.initializeOrderListener;
+        onNewOrder = orderService.onNewOrder;
+
+        // Configure notification handler for foreground notifications
+        Notifications.setNotificationHandler({
+          handleNotification: async () => ({
+            shouldShowAlert: true,
+            shouldPlaySound: true,
+            shouldSetBadge: true,
+          }),
+        });
+      } catch (error) {
+        // if (__DEV__) console.log('[App] Native modules not available - requires dev build');
+      }
+
+      try {
+        const notifService = require('./src/services/pushNotificationService');
+        const promoService = require('./src/services/scheduledPromoService');
+        const supabaseModule = require('./src/services/supabaseClient');
+        setupNotificationChannels = notifService.setupNotificationChannels;
+        registerForPushNotifications = notifService.registerForPushNotifications;
+        onTokenRefresh = notifService.onTokenRefresh;
+        setupFCMForegroundHandler = notifService.setupFCMForegroundHandler;
+        initializeScheduledPromos = promoService.initializeScheduledPromos;
+        supabase = supabaseModule.supabase;
+      } catch (error) {
+        // if (__DEV__) console.log('[App] Notification services not available - requires dev build');
+      }
+
+      // 2. Register FCM push token for ALL roles (customer, rider, admin)
       // Runs BEFORE background-services guard so customers always get a token
       if (setupNotificationChannels && registerForPushNotifications) {
         try {
@@ -180,6 +186,16 @@ const AppContent = () => {
     const subscription = AppState.addEventListener('change', nextAppState => {
       if (appState.match(/inactive|background/) && nextAppState === 'active') {
         if (__DEV__) console.log('[App] App has come to the foreground!');
+
+        // Re-warm GPS when returning from background — the chip may have powered down.
+        // resetWarmup() has a built-in 60s cooldown to prevent excessive warmups.
+        try {
+          const { resetWarmup, warmUpLocationServices } = require('./src/services/gpsWarmupService');
+          resetWarmup();
+          warmUpLocationServices();
+        } catch (e) {
+          // Non-fatal — warmup is best-effort
+        }
       } else if (nextAppState.match(/inactive|background/)) {
         // if (__DEV__) console.log('[App] App has gone to the background');
       }
@@ -211,9 +227,32 @@ const AppContent = () => {
 };
 
 export default function App() {
+  const [isReady, setIsReady] = useState(false);
+
   useEffect(() => {
-    configureGoogleSignIn();
+    async function prepare() {
+      try {
+        // 1. Configure Google Sign-In (absolutely required before anything else renders)
+        configureGoogleSignIn();
+
+        // 2. Artificially hold the splash screen for a tiny bit to let internal React navigation mount securely 
+        // We aren't awaiting heavy auth checks here because AuthLoadingScreen handles that smoothly.
+        await new Promise(resolve => setTimeout(resolve, 100));
+      } catch (e) {
+        console.warn(e);
+      } finally {
+        setIsReady(true);
+        // Hide the native splash screen now that JS is parsed and the tree is built
+        await SplashScreen.hideAsync();
+      }
+    }
+
+    prepare();
   }, []);
+
+  if (!isReady) {
+    return null; // Return null to let the native splash screen stay visible
+  }
 
   return (
     <SafeAreaProvider>
@@ -225,4 +264,3 @@ export default function App() {
     </SafeAreaProvider>
   );
 }
-

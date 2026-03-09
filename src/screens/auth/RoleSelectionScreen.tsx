@@ -67,7 +67,12 @@ export default function RoleSelectionScreen() {
     const colors = isDark ? COLORS.dark : COLORS.light;
 
     const handleNavigation = (targetApp: 'RiderApp' | 'CustomerApp' | 'AdminApp') => {
-        navigation.replace(targetApp);
+        if (targetApp === 'RiderApp') {
+            // Route through the warmup/loading screen first
+            navigation.replace('RiderLoading');
+        } else {
+            navigation.replace(targetApp);
+        }
     };
 
     const isAdmin = role === 'admin';

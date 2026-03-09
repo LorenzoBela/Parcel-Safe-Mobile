@@ -157,7 +157,7 @@ const darkC = {
 };
 
 export default function RiderDashboard() {
-    const { showExitModal, setShowExitModal, handleExit } = useExitAppConfirmation({ stopServicesOnExit: false });
+    const { showExitModal, setShowExitModal, handleExit } = useExitAppConfirmation();
     const navigation = useNavigation<any>();
     const theme = useTheme();
     const { isDarkMode } = useAppTheme();
@@ -249,10 +249,18 @@ export default function RiderDashboard() {
                         {
                             accuracy: Location.Accuracy.High,
                             timeInterval: 2000,
-                            distanceInterval: 10,
+                            distanceInterval: 0, // Fire on time interval alone — GPS is pre-warmed
                         },
                         (location) => {
                             setLocalPhoneLocation(location);
+
+                            // First-fix accuracy guard — reject garbage cell-tower/WiFi
+                            // readings that cause snap-back lines on the map.
+                            const accuracy = location.coords.accuracy ?? 999;
+                            if (accuracy > 100 && lastForegroundWriteRef.current === 0) {
+                                if (__DEV__) console.log(`[RiderDashboard] ✗ Skipping garbage first fix (acc=${accuracy.toFixed(0)}m)`);
+                                return;
+                            }
 
                             // Direct Firebase write — bulletproof fallback in case the
                             // background service task isn't firing (zombie/permission issue).
@@ -1615,254 +1623,229 @@ export default function RiderDashboard() {
 
                 {/* Status Toggle - EC-ENHANCE: Clear Offline/Online distinction */}
                 <Animated.View style={statusToggleAnim.style}>
-                <View style={[styles.statusToggleContainer, { backgroundColor: c.card, borderColor: c.border, borderWidth: 1 }]}>
-                    <View style={styles.statusContainer}>
-                        <View style={[styles.statusDot, { backgroundColor: isOnline ? c.greenText : c.textTer }]} />
-                        <View>
-                            <Text variant="titleMedium" style={[styles.statusText, { color: c.text }]}>
-                                {isOnline ? 'You are Online' : 'You are Offline'}
-                            </Text>
-                            <Text variant="bodySmall" style={{ color: c.textSec }}>
-                                {isOnline ? 'Receiving orders' : 'Browsing mode only'}
-                            </Text>
+                    <View style={[styles.statusToggleContainer, { backgroundColor: c.card, borderColor: c.border, borderWidth: 1 }]}>
+                        <View style={styles.statusContainer}>
+                            <View style={[styles.statusDot, { backgroundColor: isOnline ? c.greenText : c.textTer }]} />
+                            <View>
+                                <Text variant="titleMedium" style={[styles.statusText, { color: c.text }]}>
+                                    {isOnline ? 'You are Online' : 'You are Offline'}
+                                </Text>
+                                <Text variant="bodySmall" style={{ color: c.textSec }}>
+                                    {isOnline ? 'Receiving orders' : 'Browsing mode only'}
+                                </Text>
+                            </View>
                         </View>
+                        <Switch value={isOnline} onValueChange={setIsOnline} trackColor={{ true: c.accent, false: c.search }} thumbColor={isDarkMode ? c.text : c.bg} />
                     </View>
-                    <Switch value={isOnline} onValueChange={setIsOnline} trackColor={{ true: c.accent, false: c.search }} thumbColor={isDarkMode ? c.text : c.bg} />
-                </View>
                 </Animated.View>
 
                 {/* GPS Connection Status Indicator */}
                 <Animated.View style={gpsCardAnim.style}>
-                <View style={[styles.gpsStatusCard, { backgroundColor: c.card, borderColor: c.border, borderWidth: 1 }]}>
-                    <View style={styles.gpsStatusRow}>
-                        <View style={[
-                            styles.gpsStatusIcon,
-                            { backgroundColor: hasActiveDelivery ? getStatusColor(gpsSource, isBoxOnline) + '20' : c.search }
-                        ]}>
-                            <MaterialCommunityIcons
-                                name={hasActiveDelivery && gpsSource === 'box' ? 'access-point' : hasActiveDelivery && gpsSource === 'phone' ? 'cellphone' : 'access-point-off'}
-                                size={24}
-                                color={hasActiveDelivery ? getStatusColor(gpsSource, isBoxOnline) : c.textTer}
-                            />
+                    <View style={[styles.gpsStatusCard, { backgroundColor: c.card, borderColor: c.border, borderWidth: 1 }]}>
+                        <View style={styles.gpsStatusRow}>
+                            <View style={[
+                                styles.gpsStatusIcon,
+                                { backgroundColor: hasActiveDelivery ? getStatusColor(gpsSource, isBoxOnline) + '20' : c.search }
+                            ]}>
+                                <MaterialCommunityIcons
+                                    name={hasActiveDelivery && gpsSource === 'box' ? 'access-point' : hasActiveDelivery && gpsSource === 'phone' ? 'cellphone' : 'access-point-off'}
+                                    size={24}
+                                    color={hasActiveDelivery ? getStatusColor(gpsSource, isBoxOnline) : c.textTer}
+                                />
+                            </View>
+                            <View style={styles.gpsStatusInfo}>
+                                <Text variant="titleSmall" style={{ fontWeight: 'bold', color: c.text }}>GPS Tracking</Text>
+                                <Text variant="bodySmall" style={{ color: hasActiveDelivery ? (localPhoneLocation && gpsSource === 'none' ? c.orangeText : getStatusColor(gpsSource, isBoxOnline)) : c.textSec }}>
+                                    {hasActiveDelivery ?
+                                        (localPhoneLocation && gpsSource === 'none' ? 'Using Phone (Local Fallback)' : getStatusMessage(gpsSource, isBoxOnline))
+                                        : 'No Active Delivery'}
+                                </Text>
+                            </View>
+                            {phoneGpsActive && hasActiveDelivery && (
+                                <Chip
+                                    compact
+                                    icon="phone"
+                                    style={{ backgroundColor: c.orangeBg }}
+                                    textStyle={{ fontSize: 10, color: c.orangeText }}
+                                >
+                                    Fallback
+                                </Chip>
+                            )}
                         </View>
-                        <View style={styles.gpsStatusInfo}>
-                            <Text variant="titleSmall" style={{ fontWeight: 'bold', color: c.text }}>GPS Tracking</Text>
-                            <Text variant="bodySmall" style={{ color: hasActiveDelivery ? (localPhoneLocation && gpsSource === 'none' ? c.orangeText : getStatusColor(gpsSource, isBoxOnline)) : c.textSec }}>
-                                {hasActiveDelivery ?
-                                    (localPhoneLocation && gpsSource === 'none' ? 'Using Phone (Local Fallback)' : getStatusMessage(gpsSource, isBoxOnline))
-                                    : 'No Active Delivery'}
-                            </Text>
-                        </View>
-                        {phoneGpsActive && hasActiveDelivery && (
-                            <Chip
-                                compact
-                                icon="phone"
-                                style={{ backgroundColor: c.orangeBg }}
-                                textStyle={{ fontSize: 10, color: c.orangeText }}
-                            >
-                                Fallback
-                            </Chip>
-                        )}
                     </View>
-                </View>
                 </Animated.View>
 
                 {/* Pairing Status */}
                 <Animated.View style={pairingAnim.style}>
-                <View style={[styles.pairingCard, { backgroundColor: c.card, borderColor: c.border, borderWidth: 1 }]}>
-                    <View style={styles.pairingRow}>
-                        <View style={styles.pairingInfo}>
-                            <Text variant="titleSmall" style={{ fontWeight: 'bold', color: c.text }}>
-                                {isPaired ? 'Box Paired' : 'No Box Paired'}
-                            </Text>
-                            <Text variant="bodySmall" style={{ color: c.textSec }}>
-                                {isPaired && pairedBoxId
-                                    ? `Box ${pairedBoxId} • ${pairingModeLabel}`
-                                    : 'Scan a box QR to link controls and health data.'}
-                            </Text>
+                    <View style={[styles.pairingCard, { backgroundColor: c.card, borderColor: c.border, borderWidth: 1 }]}>
+                        <View style={styles.pairingRow}>
+                            <View style={styles.pairingInfo}>
+                                <Text variant="titleSmall" style={{ fontWeight: 'bold', color: c.text }}>
+                                    {isPaired ? 'Box Paired' : 'No Box Paired'}
+                                </Text>
+                                <Text variant="bodySmall" style={{ color: c.textSec }}>
+                                    {isPaired && pairedBoxId
+                                        ? `Box ${pairedBoxId} • ${pairingModeLabel}`
+                                        : 'Scan a box QR to link controls and health data.'}
+                                </Text>
+                            </View>
+                            <Button
+                                mode={isPaired ? 'outlined' : 'contained'}
+                                textColor={isPaired ? c.text : c.accentText}
+                                buttonColor={isPaired ? 'transparent' : c.accent}
+                                style={{ borderColor: isPaired ? c.border : 'transparent' }}
+                                onPress={() => {
+                                    // "Manage" is for pairing/unpairing; controls are available via Box Status.
+                                    navigation.navigate('PairBox');
+                                }}
+                            >
+                                {isPaired ? 'Manage' : 'Pair Box'}
+                            </Button>
                         </View>
-                        <Button
-                            mode={isPaired ? 'outlined' : 'contained'}
-                            textColor={isPaired ? c.text : c.accentText}
-                            buttonColor={isPaired ? 'transparent' : c.accent}
-                            style={{ borderColor: isPaired ? c.border : 'transparent' }}
-                            onPress={() => {
-                                // "Manage" is for pairing/unpairing; controls are available via Box Status.
-                                navigation.navigate('PairBox');
-                            }}
-                        >
-                            {isPaired ? 'Manage' : 'Pair Box'}
-                        </Button>
                     </View>
-                </View>
                 </Animated.View>
 
                 {/* Quick Actions */}
                 <Animated.View style={actionsAnim[0].style}>
-                <View style={styles.actionsGrid}>
-                    <QuickAction
-                        icon="cube-outline"
-                        label="Box Status"
-                        onPress={() => {
-                            if (!isPaired || !pairedBoxId) {
-                                PremiumAlert.alert('Pair Required', 'Scan your box QR to access controls.');
-                                navigation.navigate('PairBox');
-                                return;
-                            }
-                            navigation.navigate('BoxControls', { boxId: pairedBoxId });
-                        }}
-                        color={c.accent}
-                    />
-                    <QuickAction icon="history" label="History" onPress={() => navigation.navigate('DeliveryRecords')} color={c.accent} />
-                    <QuickAction icon="face-agent" label="Support" onPress={() => navigation.navigate('RiderSupport')} color={c.accent} />
-                    <QuickAction icon="cog" label="Settings" onPress={() => navigation.navigate('RiderSettings')} color={c.accent} />
-                </View>
+                    <View style={styles.actionsGrid}>
+                        <QuickAction
+                            icon="cube-outline"
+                            label="Box Status"
+                            onPress={() => {
+                                if (!isPaired || !pairedBoxId) {
+                                    PremiumAlert.alert('Pair Required', 'Scan your box QR to access controls.');
+                                    navigation.navigate('PairBox');
+                                    return;
+                                }
+                                navigation.navigate('BoxControls', { boxId: pairedBoxId });
+                            }}
+                            color={c.accent}
+                        />
+                        <QuickAction icon="history" label="History" onPress={() => navigation.navigate('DeliveryRecords')} color={c.accent} />
+                        <QuickAction icon="face-agent" label="Support" onPress={() => navigation.navigate('RiderSupport')} color={c.accent} />
+                        <QuickAction icon="cog" label="Settings" onPress={() => navigation.navigate('RiderSettings')} color={c.accent} />
+                    </View>
                 </Animated.View>
 
                 {/* Next Delivery Card */}
                 <Animated.View style={jobAnim.style}>
-                <Text variant="titleMedium" style={[styles.sectionTitle, { color: c.text }]}>Current Job</Text>
-                {nextDelivery ? (
-                    <Card style={[styles.jobCard, { backgroundColor: c.card, borderColor: c.border, borderWidth: 1 }]} mode="contained" onPress={() => navigation.navigate('JobDetail', { job: nextDelivery })}>
-                        <View style={styles.mapContainer}>
-                            {(lastLocation || riderLocation) && MAPBOX_TOKEN ? (
-                                <MapboxGL.MapView
-                                    style={styles.map}
-                                    logoEnabled={false}
-                                    attributionEnabled={false}
-                                    styleURL={MapboxGL.StyleURL.Street}
-                                    scrollEnabled={true}
-                                    pitchEnabled={true}
-                                    rotateEnabled={true}
-                                    zoomEnabled={true}
-                                >
-                                    <MapboxGL.Camera
-                                        bounds={{
-                                            ne: [
-                                                Math.max(lastLocation ? lastLocation.longitude : riderLocation!.coords.longitude, destination.longitude),
-                                                Math.max(lastLocation ? lastLocation.latitude : riderLocation!.coords.latitude, destination.latitude)
-                                            ],
-                                            sw: [
-                                                Math.min(lastLocation ? lastLocation.longitude : riderLocation!.coords.longitude, destination.longitude),
-                                                Math.min(lastLocation ? lastLocation.latitude : riderLocation!.coords.latitude, destination.latitude)
-                                            ],
-                                            paddingTop: 40,
-                                            paddingRight: 40,
-                                            paddingBottom: 40,
-                                            paddingLeft: 40
-                                        }}
-                                        animationMode="easeTo"
-                                        animationDuration={1000}
-                                    />
-
-                                    {/* Rider Location Marker */}
-                                    <AnimatedRiderMarker
-                                        latitude={lastLocation ? lastLocation.latitude : riderLocation!.coords.latitude}
-                                        longitude={lastLocation ? lastLocation.longitude : riderLocation!.coords.longitude}
-                                        rotation={riderLocation?.coords.heading || 0}
-                                    />
-
-                                    {/* Destination Marker */}
-                                    <MapboxGL.PointAnnotation
-                                        id="destination"
-                                        coordinate={[destination.longitude, destination.latitude]}
-                                        title="Destination"
+                    <Text variant="titleMedium" style={[styles.sectionTitle, { color: c.text }]}>Current Job</Text>
+                    {nextDelivery ? (
+                        <Card style={[styles.jobCard, { backgroundColor: c.card, borderColor: c.border, borderWidth: 1 }]} mode="contained" onPress={() => navigation.navigate('JobDetail', { job: nextDelivery })}>
+                            <View style={styles.mapContainer}>
+                                {(lastLocation || riderLocation) && MAPBOX_TOKEN ? (
+                                    <MapboxGL.MapView
+                                        style={styles.map}
+                                        logoEnabled={false}
+                                        attributionEnabled={false}
+                                        styleURL={MapboxGL.StyleURL.Street}
+                                        scrollEnabled={true}
+                                        pitchEnabled={true}
+                                        rotateEnabled={true}
+                                        zoomEnabled={true}
                                     >
-                                        <View style={{
-                                            width: 30,
-                                            height: 30,
-                                            borderRadius: 15,
-                                            backgroundColor: '#F44336',
-                                            justifyContent: 'center',
-                                            alignItems: 'center',
-                                            borderWidth: 3,
-                                            borderColor: 'white',
-                                            shadowColor: '#000',
-                                            shadowOffset: { width: 0, height: 2 },
-                                            shadowOpacity: 0.3,
-                                            shadowRadius: 3,
-                                            elevation: 5,
-                                        }}>
-                                            <MaterialCommunityIcons name="map-marker" size={20} color="white" />
-                                        </View>
-                                    </MapboxGL.PointAnnotation>
-
-                                    {/* Route Line - Actual Route from Mapbox Directions API */}
-                                    {routeGeometry && (
-                                        <MapboxGL.ShapeSource
-                                            id="route-line"
-                                            shape={{
-                                                type: 'Feature',
-                                                geometry: routeGeometry,
-                                                properties: {},
+                                        <MapboxGL.Camera
+                                            bounds={{
+                                                ne: [
+                                                    Math.max(lastLocation ? lastLocation.longitude : riderLocation!.coords.longitude, destination.longitude),
+                                                    Math.max(lastLocation ? lastLocation.latitude : riderLocation!.coords.latitude, destination.latitude)
+                                                ],
+                                                sw: [
+                                                    Math.min(lastLocation ? lastLocation.longitude : riderLocation!.coords.longitude, destination.longitude),
+                                                    Math.min(lastLocation ? lastLocation.latitude : riderLocation!.coords.latitude, destination.latitude)
+                                                ],
+                                                paddingTop: 40,
+                                                paddingRight: 40,
+                                                paddingBottom: 40,
+                                                paddingLeft: 40
                                             }}
+                                            animationMode="easeTo"
+                                            animationDuration={1000}
+                                        />
+
+                                        {/* Rider Location Marker */}
+                                        <AnimatedRiderMarker
+                                            latitude={lastLocation ? lastLocation.latitude : riderLocation!.coords.latitude}
+                                            longitude={lastLocation ? lastLocation.longitude : riderLocation!.coords.longitude}
+                                            rotation={riderLocation?.coords.heading || 0}
+                                        />
+
+                                        {/* Destination Marker */}
+                                        <MapboxGL.PointAnnotation
+                                            id="destination"
+                                            coordinate={[destination.longitude, destination.latitude]}
+                                            title="Destination"
                                         >
-                                            <MapboxGL.LineLayer
-                                                id="route-line-layer"
-                                                style={{
-                                                    lineColor: '#2196F3',
-                                                    lineWidth: 4,
-                                                    lineOpacity: 0.8,
+                                            <View style={{
+                                                width: 30,
+                                                height: 30,
+                                                borderRadius: 15,
+                                                backgroundColor: '#F44336',
+                                                justifyContent: 'center',
+                                                alignItems: 'center',
+                                                borderWidth: 3,
+                                                borderColor: 'white',
+                                                shadowColor: '#000',
+                                                shadowOffset: { width: 0, height: 2 },
+                                                shadowOpacity: 0.3,
+                                                shadowRadius: 3,
+                                                elevation: 5,
+                                            }}>
+                                                <MaterialCommunityIcons name="map-marker" size={20} color="white" />
+                                            </View>
+                                        </MapboxGL.PointAnnotation>
+
+                                        {/* Route Line - Actual Route from Mapbox Directions API */}
+                                        {routeGeometry && (
+                                            <MapboxGL.ShapeSource
+                                                id="route-line"
+                                                shape={{
+                                                    type: 'Feature',
+                                                    geometry: routeGeometry,
+                                                    properties: {},
                                                 }}
-                                            />
-                                        </MapboxGL.ShapeSource>
-                                    )}
-                                </MapboxGL.MapView>
-                            ) : (
-                                <View style={[styles.mapPlaceholder, { backgroundColor: c.search }]}>
-                                    <Text style={{ color: c.textSec }}>
-                                        {MAPBOX_TOKEN ? 'Loading Map...' : 'Map unavailable: configure MAPBOX_ACCESS_TOKEN'}
-                                    </Text>
-                                </View>
-                            )}
-                        </View>
-
-                        <Card.Content style={styles.jobContent}>
-                            <View style={styles.jobHeader}>
-                                <View style={{ flex: 1, marginRight: 8 }}>
-                                    <Text variant="titleMedium" style={{ fontWeight: 'bold', color: c.text }}>{nextDelivery.customer}</Text>
-                                    <Text variant="bodySmall" style={{ color: c.textSec }}>{nextDelivery.id}</Text>
-                                </View>
-                                <View style={{ alignItems: 'flex-end' }}>
-                                    <Chip icon="map-marker-distance" compact style={{ backgroundColor: c.search, marginBottom: 4 }} textStyle={{ color: c.text }}>{distance}</Chip>
-                                    <Chip compact style={{ backgroundColor: c.greenBg }} textStyle={{ fontSize: 10, color: c.greenText, fontWeight: 'bold' }}>{activeDelivery.status.replace(/_/g, ' ')}</Chip>
-                                </View>
-                            </View>
-
-                            <View style={[styles.divider, { backgroundColor: c.divider }]} />
-
-                            {/* Pickup Section */}
-                            <View style={{ marginBottom: 16 }}>
-                                <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
-                                    <View style={[styles.badge, { backgroundColor: c.blueBg, width: 24, height: 24, borderRadius: 12, marginRight: 8 }]}>
-                                        <MaterialCommunityIcons name="package-variant" size={14} color={c.blueText} />
+                                            >
+                                                <MapboxGL.LineLayer
+                                                    id="route-line-layer"
+                                                    style={{
+                                                        lineColor: '#2196F3',
+                                                        lineWidth: 4,
+                                                        lineOpacity: 0.8,
+                                                    }}
+                                                />
+                                            </MapboxGL.ShapeSource>
+                                        )}
+                                    </MapboxGL.MapView>
+                                ) : (
+                                    <View style={[styles.mapPlaceholder, { backgroundColor: c.search }]}>
+                                        <Text style={{ color: c.textSec }}>
+                                            {MAPBOX_TOKEN ? 'Loading Map...' : 'Map unavailable: configure MAPBOX_ACCESS_TOKEN'}
+                                        </Text>
                                     </View>
-                                    <Text variant="labelSmall" style={{ color: c.blueText, fontWeight: 'bold' }}>PICKUP</Text>
-                                </View>
-                                <View style={[styles.addressContainer, { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }]}>
-                                    <Text variant="bodyMedium" style={[styles.address, { flex: 1, marginBottom: 0, marginLeft: 0, color: c.text }]}>
-                                        {nextDelivery.pickupAddress || 'Pickup Address'}
-                                    </Text>
-                                    <IconButton
-                                        icon="navigation"
-                                        mode="contained"
-                                        containerColor={c.search}
-                                        iconColor={c.text}
-                                        size={20}
-                                        onPress={() => handleNavigate('PICKUP')}
-                                        style={{ margin: 0, marginLeft: 8 }}
-                                    />
-                                </View>
+                                )}
                             </View>
 
-                            {/* Conditional Dropoff/Return Section */}
-                            {['RETURNING', 'TAMPERED'].includes(activeDelivery.status) ? (
-                                <View style={{ marginBottom: 8 }}>
+                            <Card.Content style={styles.jobContent}>
+                                <View style={styles.jobHeader}>
+                                    <View style={{ flex: 1, marginRight: 8 }}>
+                                        <Text variant="titleMedium" style={{ fontWeight: 'bold', color: c.text }}>{nextDelivery.customer}</Text>
+                                        <Text variant="bodySmall" style={{ color: c.textSec }}>{nextDelivery.id}</Text>
+                                    </View>
+                                    <View style={{ alignItems: 'flex-end' }}>
+                                        <Chip icon="map-marker-distance" compact style={{ backgroundColor: c.search, marginBottom: 4 }} textStyle={{ color: c.text }}>{distance}</Chip>
+                                        <Chip compact style={{ backgroundColor: c.greenBg }} textStyle={{ fontSize: 10, color: c.greenText, fontWeight: 'bold' }}>{activeDelivery.status.replace(/_/g, ' ')}</Chip>
+                                    </View>
+                                </View>
+
+                                <View style={[styles.divider, { backgroundColor: c.divider }]} />
+
+                                {/* Pickup Section */}
+                                <View style={{ marginBottom: 16 }}>
                                     <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
-                                        <View style={[styles.badge, { backgroundColor: c.redBg, width: 24, height: 24, borderRadius: 12, marginRight: 8 }]}>
-                                            <MaterialCommunityIcons name="keyboard-return" size={14} color={c.redText} />
+                                        <View style={[styles.badge, { backgroundColor: c.blueBg, width: 24, height: 24, borderRadius: 12, marginRight: 8 }]}>
+                                            <MaterialCommunityIcons name="package-variant" size={14} color={c.blueText} />
                                         </View>
-                                        <Text variant="labelSmall" style={{ color: c.redText, fontWeight: 'bold' }}>RETURN DESTINATION</Text>
+                                        <Text variant="labelSmall" style={{ color: c.blueText, fontWeight: 'bold' }}>PICKUP</Text>
                                     </View>
                                     <View style={[styles.addressContainer, { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }]}>
                                         <Text variant="bodyMedium" style={[styles.address, { flex: 1, marginBottom: 0, marginLeft: 0, color: c.text }]}>
@@ -1879,106 +1862,131 @@ export default function RiderDashboard() {
                                         />
                                     </View>
                                 </View>
-                            ) : (
-                                <View style={{ marginBottom: 8 }}>
-                                    <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
-                                        <View style={[styles.badge, { backgroundColor: c.redBg, width: 24, height: 24, borderRadius: 12, marginRight: 8 }]}>
-                                            <MaterialCommunityIcons name="map-marker" size={14} color={c.redText} />
+
+                                {/* Conditional Dropoff/Return Section */}
+                                {['RETURNING', 'TAMPERED'].includes(activeDelivery.status) ? (
+                                    <View style={{ marginBottom: 8 }}>
+                                        <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
+                                            <View style={[styles.badge, { backgroundColor: c.redBg, width: 24, height: 24, borderRadius: 12, marginRight: 8 }]}>
+                                                <MaterialCommunityIcons name="keyboard-return" size={14} color={c.redText} />
+                                            </View>
+                                            <Text variant="labelSmall" style={{ color: c.redText, fontWeight: 'bold' }}>RETURN DESTINATION</Text>
                                         </View>
-                                        <Text variant="labelSmall" style={{ color: c.redText, fontWeight: 'bold' }}>DROPOFF</Text>
+                                        <View style={[styles.addressContainer, { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }]}>
+                                            <Text variant="bodyMedium" style={[styles.address, { flex: 1, marginBottom: 0, marginLeft: 0, color: c.text }]}>
+                                                {nextDelivery.pickupAddress || 'Pickup Address'}
+                                            </Text>
+                                            <IconButton
+                                                icon="navigation"
+                                                mode="contained"
+                                                containerColor={c.search}
+                                                iconColor={c.text}
+                                                size={20}
+                                                onPress={() => handleNavigate('PICKUP')}
+                                                style={{ margin: 0, marginLeft: 8 }}
+                                            />
+                                        </View>
                                     </View>
-                                    <View style={[styles.addressContainer, { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }]}>
-                                        <Text variant="bodyMedium" style={[styles.address, { flex: 1, marginBottom: 0, marginLeft: 0, color: c.text }]}>
-                                            {nextDelivery.address}
-                                        </Text>
-                                        <IconButton
-                                            icon="navigation"
-                                            mode="contained"
-                                            containerColor={c.search}
-                                            iconColor={c.text}
-                                            size={20}
-                                            onPress={() => handleNavigate('DROPOFF')}
-                                            style={{ margin: 0, marginLeft: 8 }}
-                                        />
+                                ) : (
+                                    <View style={{ marginBottom: 8 }}>
+                                        <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
+                                            <View style={[styles.badge, { backgroundColor: c.redBg, width: 24, height: 24, borderRadius: 12, marginRight: 8 }]}>
+                                                <MaterialCommunityIcons name="map-marker" size={14} color={c.redText} />
+                                            </View>
+                                            <Text variant="labelSmall" style={{ color: c.redText, fontWeight: 'bold' }}>DROPOFF</Text>
+                                        </View>
+                                        <View style={[styles.addressContainer, { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }]}>
+                                            <Text variant="bodyMedium" style={[styles.address, { flex: 1, marginBottom: 0, marginLeft: 0, color: c.text }]}>
+                                                {nextDelivery.address}
+                                            </Text>
+                                            <IconButton
+                                                icon="navigation"
+                                                mode="contained"
+                                                containerColor={c.search}
+                                                iconColor={c.text}
+                                                size={20}
+                                                onPress={() => handleNavigate('DROPOFF')}
+                                                style={{ margin: 0, marginLeft: 8 }}
+                                            />
+                                        </View>
+                                    </View>
+                                )}
+
+
+                                <View style={styles.jobMeta}>
+                                    <View style={styles.metaItem}>
+                                        <MaterialCommunityIcons name="clock-outline" size={16} color={c.textSec} />
+                                        <Text style={[styles.metaText, { color: c.textSec }]}>ETA: {nextDelivery.estimatedTime || '-- min'}</Text>
                                     </View>
                                 </View>
-                            )}
+                            </Card.Content>
 
-
-                            <View style={styles.jobMeta}>
-                                <View style={styles.metaItem}>
-                                    <MaterialCommunityIcons name="clock-outline" size={16} color={c.textSec} />
-                                    <Text style={[styles.metaText, { color: c.textSec }]}>ETA: {nextDelivery.estimatedTime || '-- min'}</Text>
-                                </View>
-                            </View>
-                        </Card.Content>
-
-                        <Card.Content style={styles.jobActions}>
-                            <Button
-                                mode="contained"
-                                style={{ width: '100%', borderRadius: 8, marginBottom: 12 }}
-                                contentStyle={{ height: 56 }}
-                                labelStyle={{ fontSize: 18, fontWeight: 'bold' }}
-                                onPress={() => {
-                                    const isPickup = !['PICKED_UP', 'IN_TRANSIT', 'ARRIVED', 'COMPLETED'].includes(activeDelivery.status);
-                                    navigation.navigate('Arrival', {
-                                        deliveryId: nextDelivery.id,
-                                        boxId: nextDelivery.boxId,
-                                        targetLat: isPickup ? (nextDelivery.snappedPickupLat ?? nextDelivery.pickupLat) : (nextDelivery.snappedDropoffLat ?? nextDelivery.dropoffLat),
-                                        targetLng: isPickup ? (nextDelivery.snappedPickupLng ?? nextDelivery.pickupLng) : (nextDelivery.snappedDropoffLng ?? nextDelivery.dropoffLng),
-                                        targetAddress: isPickup ? nextDelivery.pickupAddress : nextDelivery.address,
-                                        customerPhone: nextDelivery.phone,
-                                        senderName: (nextDelivery as any).sender_name || (activeDelivery as any)?.sender_name,
-                                        senderPhone: (nextDelivery as any).sender_phone || (activeDelivery as any)?.sender_phone,
-                                        recipientName: (nextDelivery as any).recipient_name || (activeDelivery as any)?.recipient_name,
-                                        deliveryNotes: (nextDelivery as any).delivery_notes || (activeDelivery as any)?.delivery_notes,
-                                        riderName: riderName,
-                                        pickupAddress: nextDelivery.pickupAddress,
-                                        pickupLat: nextDelivery.pickupLat,
-                                        pickupLng: nextDelivery.pickupLng,
-                                        dropoffAddress: nextDelivery.address,
-                                        dropoffLat: nextDelivery.dropoffLat,
-                                        dropoffLng: nextDelivery.dropoffLng,
-                                    });
-                                }}
-                                buttonColor={c.accent}
-                                textColor={c.accentText}
-                                icon="navigation"
-                            >
-                                {['PICKED_UP', 'IN_TRANSIT', 'ARRIVED'].includes(activeDelivery.status) ? 'Resume Trip' : 'Start Trip'}
-                            </Button>
-
-                            <Button
-                                mode="outlined"
-                                style={{ width: '100%', borderRadius: 8, borderColor: c.border, marginBottom: 12 }}
-                                onPress={() => navigation.navigate('JobDetail', { job: nextDelivery })}
-                                textColor={c.text}
-                                icon="file-document-outline"
-                            >
-                                View Job Details
-                            </Button>
-
-                            {!['RETURNING', 'CANCELLED', 'TAMPERED'].includes(activeDelivery.status) && (
+                            <Card.Content style={styles.jobActions}>
                                 <Button
-                                    mode="text"
-                                    style={{ width: '100%', borderRadius: 8 }}
-                                    onPress={() => setShowCancelModal(true)}
-                                    textColor={c.redText}
+                                    mode="contained"
+                                    style={{ width: '100%', borderRadius: 8, marginBottom: 12 }}
+                                    contentStyle={{ height: 56 }}
+                                    labelStyle={{ fontSize: 18, fontWeight: 'bold' }}
+                                    onPress={() => {
+                                        const isPickup = !['PICKED_UP', 'IN_TRANSIT', 'ARRIVED', 'COMPLETED'].includes(activeDelivery.status);
+                                        navigation.navigate('Arrival', {
+                                            deliveryId: nextDelivery.id,
+                                            boxId: nextDelivery.boxId,
+                                            targetLat: isPickup ? (nextDelivery.snappedPickupLat ?? nextDelivery.pickupLat) : (nextDelivery.snappedDropoffLat ?? nextDelivery.dropoffLat),
+                                            targetLng: isPickup ? (nextDelivery.snappedPickupLng ?? nextDelivery.pickupLng) : (nextDelivery.snappedDropoffLng ?? nextDelivery.dropoffLng),
+                                            targetAddress: isPickup ? nextDelivery.pickupAddress : nextDelivery.address,
+                                            customerPhone: nextDelivery.phone,
+                                            senderName: (nextDelivery as any).sender_name || (activeDelivery as any)?.sender_name,
+                                            senderPhone: (nextDelivery as any).sender_phone || (activeDelivery as any)?.sender_phone,
+                                            recipientName: (nextDelivery as any).recipient_name || (activeDelivery as any)?.recipient_name,
+                                            deliveryNotes: (nextDelivery as any).delivery_notes || (activeDelivery as any)?.delivery_notes,
+                                            riderName: riderName,
+                                            pickupAddress: nextDelivery.pickupAddress,
+                                            pickupLat: nextDelivery.pickupLat,
+                                            pickupLng: nextDelivery.pickupLng,
+                                            dropoffAddress: nextDelivery.address,
+                                            dropoffLat: nextDelivery.dropoffLat,
+                                            dropoffLng: nextDelivery.dropoffLng,
+                                        });
+                                    }}
+                                    buttonColor={c.accent}
+                                    textColor={c.accentText}
+                                    icon="navigation"
                                 >
-                                    Cancel Delivery
+                                    {['PICKED_UP', 'IN_TRANSIT', 'ARRIVED'].includes(activeDelivery.status) ? 'Resume Trip' : 'Start Trip'}
                                 </Button>
-                            )}
-                        </Card.Content>
-                    </Card>
-                ) : (
-                    <Card style={[styles.jobCard, { backgroundColor: c.search, borderColor: 'transparent', borderWidth: 0 }]} mode="contained">
-                        <Card.Content style={{ alignItems: 'center', paddingVertical: 32 }}>
-                            <MaterialCommunityIcons name="truck-delivery-outline" size={48} color={c.textTer} />
-                            <Text variant="bodyLarge" style={{ color: c.textSec, marginTop: 12 }}>No current job</Text>
-                            <Text variant="bodySmall" style={{ color: c.textTer, marginTop: 4 }}>Waiting for incoming orders</Text>
-                        </Card.Content>
-                    </Card>
-                )}
+
+                                <Button
+                                    mode="outlined"
+                                    style={{ width: '100%', borderRadius: 8, borderColor: c.border, marginBottom: 12 }}
+                                    onPress={() => navigation.navigate('JobDetail', { job: nextDelivery })}
+                                    textColor={c.text}
+                                    icon="file-document-outline"
+                                >
+                                    View Job Details
+                                </Button>
+
+                                {!['RETURNING', 'CANCELLED', 'TAMPERED'].includes(activeDelivery.status) && (
+                                    <Button
+                                        mode="text"
+                                        style={{ width: '100%', borderRadius: 8 }}
+                                        onPress={() => setShowCancelModal(true)}
+                                        textColor={c.redText}
+                                    >
+                                        Cancel Delivery
+                                    </Button>
+                                )}
+                            </Card.Content>
+                        </Card>
+                    ) : (
+                        <Card style={[styles.jobCard, { backgroundColor: c.search, borderColor: 'transparent', borderWidth: 0 }]} mode="contained">
+                            <Card.Content style={{ alignItems: 'center', paddingVertical: 32 }}>
+                                <MaterialCommunityIcons name="truck-delivery-outline" size={48} color={c.textTer} />
+                                <Text variant="bodyLarge" style={{ color: c.textSec, marginTop: 12 }}>No current job</Text>
+                                <Text variant="bodySmall" style={{ color: c.textTer, marginTop: 4 }}>Waiting for incoming orders</Text>
+                            </Card.Content>
+                        </Card>
+                    )}
                 </Animated.View>
 
                 {/* Smart Box Status */}

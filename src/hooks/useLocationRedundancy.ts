@@ -13,6 +13,7 @@ import {
     LocationSource,
 } from '../services/locationRedundancy';
 import { LocationData } from '../services/firebaseClient';
+import { getCachedWarmupFix } from '../services/gpsWarmupService';
 
 export interface UseLocationRedundancyResult {
     /** Current power state: SLEEP, STANDBY, or ACTIVE */
@@ -114,6 +115,12 @@ export function useLocationRedundancy(
     }, [boxId, autoActivate]);
 
     const startMonitoring = useCallback((id: string) => {
+        // Seed the warmup GPS fix so the map centers immediately
+        // instead of waiting for the first Firebase read.
+        const warmupFix = getCachedWarmupFix();
+        if (warmupFix) {
+            locationRedundancy.seedInitialLocation(warmupFix.coords);
+        }
         locationRedundancy.start(id);
     }, []);
 

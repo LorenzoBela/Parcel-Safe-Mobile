@@ -15,6 +15,7 @@ import { useNavigation } from '@react-navigation/native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import useAuthStore from '../../store/authStore';
 import { supabase } from '../../services/supabaseClient';
+import { warmUpLocationServices } from '../../services/gpsWarmupService';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -117,6 +118,12 @@ export default function AuthLoadingScreen() {
         }, 900);
 
         return () => clearInterval(interval);
+    }, []);
+
+    // GPS Warmup — fire as early as possible so the radio is hot by the time
+    // the rider reaches RiderDashboard. Runs in parallel with session restore.
+    useEffect(() => {
+        warmUpLocationServices();
     }, []);
 
     // Cycle ads with fade transition

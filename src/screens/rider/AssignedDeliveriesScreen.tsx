@@ -1,9 +1,10 @@
-import React, { useState } from 'react';
-import { View, StyleSheet, FlatList, TouchableOpacity, RefreshControl, Linking, Platform, Alert, Animated } from 'react-native';
-import { useEntryAnimation } from '../../hooks/useEntryAnimation';
-import { Text, Card, Button, Chip, Searchbar, Surface, useTheme, IconButton, Badge } from 'react-native-paper';
+import React, { useState, useMemo } from 'react';
+import { View, StyleSheet, FlatList, TouchableOpacity, RefreshControl, Linking, Platform, Alert, Animated, TextInput, Text, ListRenderItem } from 'react-native';
+import { useEntryAnimation, useStaggerAnimation } from '../../hooks/useEntryAnimation';
+import { Card, Button, Chip, Surface, IconButton, Badge } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
+import { useAppTheme } from '../../context/ThemeContext';
 import CancellationModal from '../../components/modals/CancellationModal';
 import { requestCancellation, CancellationReason } from '../../services/cancellationService';
 import useAuthStore from '../../store/authStore';
@@ -39,15 +40,40 @@ const formatTimeWithHeuristic = (timeStr: string) => {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { PremiumAlert } from '../../services/PremiumAlertService';
 
+const lightC = {
+    bg: '#FFFFFF', card: '#FFFFFF', search: '#F2F2F7',
+    text: '#000000', textSec: '#6B6B6B', textTer: '#AEAEB2',
+    border: '#E5E5EA', accent: '#000000', accentText: '#FFFFFF',
+    divider: '#F2F2F7',
+    greenBg: '#ECFDF5', greenText: '#059669',
+    redBg: '#FEF2F2', redText: '#DC2626',
+    orangeBg: '#FFF7ED', orangeText: '#EA580C',
+    blueBg: '#EFF6FF', blueText: '#2563EB',
+    pillBg: '#F2F2F7'
+};
+
+const darkC = {
+    bg: '#000000', card: '#1C1C1E', search: '#2C2C2E',
+    text: '#FFFFFF', textSec: '#8E8E93', textTer: '#636366',
+    border: '#38383A', accent: '#FFFFFF', accentText: '#000000',
+    divider: '#2C2C2E',
+    greenBg: '#052E16', greenText: '#4ADE80',
+    redBg: '#450A0A', redText: '#FCA5A5',
+    orangeBg: '#431407', orangeText: '#FDBA74',
+    blueBg: '#172554', blueText: '#93C5FD',
+    pillBg: '#1C1C1E'
+};
+
 export default function AssignedDeliveriesScreen() {
-    const theme = useTheme();
+    const { isDarkMode } = useAppTheme();
+    const c = isDarkMode ? darkC : lightC;
     const navigation = useNavigation<any>();
     const insets = useSafeAreaInsets();
     const [searchQuery, setSearchQuery] = useState('');
 
-    const [filter, setFilter] = useState('All'); // All, ASSIGNED, PENDING, IN_TRANSIT, ARRIVED, RETURNING, TAMPERED, COMPLETED, CANCELLED
-    const [dateFilter, setDateFilter] = useState('All'); // All, Today, Tomorrow, Week, Custom
-    const [showFilters, setShowFilters] = useState(false); // Collapsible filter state
+    const [filter, setFilter] = useState('All');
+    const [dateFilter, setDateFilter] = useState('All');
+    const [showFilters, setShowFilters] = useState(false);
 
     // Custom Date Range State
     const [customStartDate, setCustomStartDate] = useState<Date>(new Date());
@@ -58,7 +84,7 @@ export default function AssignedDeliveriesScreen() {
     const [refreshing, setRefreshing] = useState(false);
     const [viewMode, setViewMode] = useState<'list' | 'grid'>('list');
 
-    // EC-32: Cancellation State
+    // Cancellation State
     const [showCancelModal, setShowCancelModal] = useState(false);
     const [selectedDelivery, setSelectedDelivery] = useState<any>(null);
     const [cancelLoading, setCancelLoading] = useState(false);
@@ -85,18 +111,16 @@ export default function AssignedDeliveriesScreen() {
                 console.error('Error fetching deliveries:', error);
                 PremiumAlert.alert('Error', 'Failed to fetch deliveries');
             } else {
-                console.log('Fetched deliveries data:', JSON.stringify(data, null, 2)); // DEBUG LOG
-
                 const mapped = data.map((d: any) => ({
                     id: d.id,
                     trk: d.tracking_number,
                     status: d.status,
                     customer: d.customer?.full_name || 'Unknown',
                     phone: d.customer?.phone_number || 'N/A',
-                    address: d.dropoff_address, // Main address to show
+                    address: d.dropoff_address,
                     pickupAddress: d.pickup_address,
-                    lat: d.dropoff_lat, // For legacy support
-                    lng: d.dropoff_lng, // For legacy support
+                    lat: d.dropoff_lat,
+                    lng: d.dropoff_lng,
                     pickupLat: d.pickup_lat,
                     pickupLng: d.pickup_lng,
                     dropoffLat: d.dropoff_lat,
@@ -113,18 +137,16 @@ export default function AssignedDeliveriesScreen() {
                     fare: d.estimated_fare ? `₱${d.estimated_fare}` : '--',
                     earnings: d.estimated_fare ? `₱${d.estimated_fare}` : '--',
                     estimatedTime: (() => {
-                        // Mirror TrackingClient: compute durationSec from DB or estimate from distance
                         const durationSec: number | null = d.duration
                             ? d.duration
                             : d.distance
-                                ? Math.round((d.distance / 30) * 3600) // 30 km/h average
+                                ? Math.round((d.distance / 30) * 3600)
                                 : null;
                         if (!durationSec) return '-- min';
                         const mins = Math.round(durationSec / 60);
                         const display = mins >= 60
                             ? `${Math.floor(mins / 60)}h ${mins % 60}m`
                             : `${mins} min`;
-                        // Arrival clock time: now + durationSec (same as TrackingClient's etaArrivalTime)
                         const arrival = new Date(Date.now() + durationSec * 1000);
                         const arrivalStr = arrival.toLocaleTimeString('en-US', {
                             timeZone: 'Asia/Manila',
@@ -176,7 +198,6 @@ export default function AssignedDeliveriesScreen() {
             android: `geo:0,0?q=${lat},${lng}(${address})`
         });
 
-        // Fallback to web URL if scheme fails or for general compatibility
         const webUrl = `https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}`;
 
         Linking.canOpenURL(url || webUrl).then(supported => {
@@ -193,14 +214,13 @@ export default function AssignedDeliveriesScreen() {
 
         setCancelLoading(true);
         try {
-            // In a real app, use the actual delivery ID and box ID
             const result = await requestCancellation({
                 deliveryId: selectedDelivery.id,
-                boxId: 'BOX_001', // Ideally fetch from delivery or pairing state
+                boxId: 'BOX_001',
                 reason,
                 reasonDetails: details,
                 riderId: authedUserId ?? 'RIDER_001',
-                riderName: 'Juan Dela Cruz', // Ideally fetch from profile
+                riderName: 'Juan Dela Cruz',
                 currentStatus: selectedDelivery.status,
             });
 
@@ -208,7 +228,7 @@ export default function AssignedDeliveriesScreen() {
                 setShowCancelModal(false);
                 setSelectedDelivery(null);
                 PremiumAlert.alert('Success', 'Delivery cancelled successfully.');
-                fetchDeliveries(); // Refresh list
+                fetchDeliveries();
             } else {
                 PremiumAlert.alert('Error', result.error || 'Cancellation failed');
             }
@@ -224,13 +244,11 @@ export default function AssignedDeliveriesScreen() {
         if (selectedDate) {
             if (datePickerMode === 'start') {
                 setCustomStartDate(selectedDate);
-                // Auto adjust end date if it's before start date
                 if (dayjs(selectedDate).isAfter(dayjs(customEndDate))) {
                     setCustomEndDate(selectedDate);
                 }
             } else {
                 setCustomEndDate(selectedDate);
-                // Auto adjust start date if it's after end date
                 if (dayjs(selectedDate).isBefore(dayjs(customStartDate))) {
                     setCustomStartDate(selectedDate);
                 }
@@ -245,26 +263,35 @@ export default function AssignedDeliveriesScreen() {
 
     const getStatusColor = (status) => {
         switch (status) {
-            case 'ASSIGNED': return '#FF9800'; // Orange
-            case 'PENDING': return '#FFC107'; // Amber
-            case 'IN_TRANSIT': return '#2196F3'; // Blue
-            case 'ARRIVED': return '#03A9F4'; // Light Blue
-            case 'COMPLETED': return '#4CAF50'; // Green
-            case 'CANCELLED': return '#F44336'; // Red
-            case 'RETURNING': return '#FF9800'; // Orange
-            case 'TAMPERED': return '#9C27B0'; // Purple
-            default: return '#757575'; // Grey
+            case 'COMPLETED':
+            case 'RETURNED': return c.greenText;
+            case 'ASSIGNED':
+            case 'IN_TRANSIT': return c.blueText;
+            case 'PENDING':
+            case 'ARRIVED': return c.orangeText;
+            case 'CANCELLED': return c.textSec;
+            case 'TAMPERED':
+            case 'RETURNING': return c.redText;
+            default: return c.textSec;
         }
     };
 
-    const filteredDeliveries = deliveries.filter(item => {
+    const getStatusTheme = (status) => {
+        const color = getStatusColor(status);
+        let bg = color + '1A';
+        if (color === c.greenText) bg = c.greenBg;
+        else if (color === c.blueText) bg = c.blueBg;
+        else if (color === c.orangeText) bg = c.orangeBg;
+        else if (color === c.redText) bg = c.redBg;
+        return { bg, text: color };
+    };
+
+    const filteredDeliveries = useMemo(() => deliveries.filter(item => {
         const matchesSearch = item.trk.toLowerCase().includes(searchQuery.toLowerCase()) ||
             item.customer.toLowerCase().includes(searchQuery.toLowerCase());
 
         let matchesStatus = true;
-        if (filter === 'All') {
-            matchesStatus = true;
-        } else {
+        if (filter !== 'All') {
             matchesStatus = item.status === filter;
         }
 
@@ -277,7 +304,6 @@ export default function AssignedDeliveriesScreen() {
         } else if (dateFilter === 'Tomorrow') {
             matchesDate = itemDate.isSame(today.add(1, 'day'), 'day');
         } else if (dateFilter === 'Week') {
-            // Check if within current week (Sunday to Saturday)
             matchesDate = itemDate.isAfter(today.startOf('week').subtract(1, 'day')) && itemDate.isBefore(today.endOf('week').add(1, 'day'));
         } else if (dateFilter === 'Custom') {
             matchesDate = itemDate.isAfter(dayjs(customStartDate).subtract(1, 'day'), 'day') &&
@@ -285,251 +311,256 @@ export default function AssignedDeliveriesScreen() {
         }
 
         return matchesSearch && matchesStatus && matchesDate;
-    });
+    }), [deliveries, searchQuery, filter, dateFilter, customStartDate, customEndDate]);
 
-    const renderItem = ({ item }) => {
+    const listAnim = useStaggerAnimation(20, 60, 160);
+
+    const renderItem: ListRenderItem<any> = ({ item, index }) => {
         const isPickup = !['PICKED_UP', 'IN_TRANSIT', 'ARRIVED', 'COMPLETED', 'RETURNING', 'RETURNED'].includes(item.status);
+        const rowAnim = listAnim[Math.min(index, listAnim.length - 1)];
+        const sc = getStatusTheme(item.status);
 
         return (
-            <Card style={styles.card} mode="elevated" onPress={() => navigation.navigate('JobDetail', { job: { ...item, id: item.id } })}>
-                <Card.Content style={{ padding: 16 }}>
-                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16 }}>
-                        <View style={{ flex: 1, marginRight: 8 }}>
-                            <Text variant="titleMedium" style={{ fontWeight: 'bold' }}>{item.customer}</Text>
-                            <Text variant="bodySmall" style={{ color: '#666' }}>{item.trk}</Text>
-                        </View>
-                        <View style={{ alignItems: 'flex-end' }}>
-                            <Chip icon="map-marker-distance" compact style={{ backgroundColor: '#E3F2FD', marginBottom: 4 }}>{item.distance}</Chip>
-                            <Chip compact style={{ backgroundColor: '#E8F5E9' }} textStyle={{ fontSize: 10, color: '#2E7D32', fontWeight: 'bold' }}>{item.status.replace(/_/g, ' ')}</Chip>
-                        </View>
-                    </View>
-
-                    <View style={styles.divider} />
-
-                    {/* Pickup Section */}
-                    <View style={{ marginBottom: 16 }}>
-                        <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
-                            <View style={{ backgroundColor: '#E3F2FD', width: 24, height: 24, borderRadius: 12, marginRight: 8, justifyContent: 'center', alignItems: 'center' }}>
-                                <MaterialCommunityIcons name="package-variant" size={14} color="#2196F3" />
+            <Animated.View style={rowAnim.style}>
+                <View style={[styles.card, { backgroundColor: c.card, borderColor: c.border }]}>
+                    <TouchableOpacity activeOpacity={0.8} onPress={() => navigation.navigate('JobDetail', { job: { ...item, id: item.id } })}>
+                        <View style={{ padding: 16 }}>
+                            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16 }}>
+                                <View style={{ flex: 1, marginRight: 8 }}>
+                                    <Text style={{ fontSize: 16, fontWeight: '700', color: c.text }}>{item.customer}</Text>
+                                    <Text style={{ fontSize: 12, color: c.textSec, marginTop: 2 }}>{item.trk}</Text>
+                                </View>
+                                <View style={{ alignItems: 'flex-end', gap: 6 }}>
+                                    <View style={[styles.statusPill, { backgroundColor: c.pillBg }]}>
+                                        <Text style={{ fontSize: 11, fontWeight: '700', color: c.text }}>{item.distance}</Text>
+                                    </View>
+                                    <View style={[styles.statusPill, { backgroundColor: sc.bg }]}>
+                                        <Text style={{ fontSize: 11, fontWeight: '700', color: sc.text }}>{item.status.replace(/_/g, ' ')}</Text>
+                                    </View>
+                                </View>
                             </View>
-                            <Text variant="labelSmall" style={{ color: theme.colors.primary, fontWeight: 'bold' }}>PICKUP</Text>
-                        </View>
-                        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12, backgroundColor: '#F9F9F9', padding: 8, borderRadius: 8 }}>
-                            <Text variant="bodyMedium" style={{ color: '#444', marginLeft: 8, flex: 1 }}>
-                                {item.pickupAddress || 'Pickup Address'}
-                            </Text>
-                            <IconButton
-                                icon="navigation"
-                                mode="contained"
-                                containerColor={theme.colors.primaryContainer}
-                                iconColor={theme.colors.primary}
-                                size={20}
-                                onPress={() => openGoogleMaps(item.pickupLat, item.pickupLng, item.pickupAddress)}
-                                style={{ margin: 0, marginLeft: 8 }}
-                            />
-                        </View>
-                    </View>
 
-                    {/* Dropoff Section */}
-                    <View style={{ marginBottom: 8 }}>
-                        <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
-                            <View style={{ backgroundColor: '#FFEBEE', width: 24, height: 24, borderRadius: 12, marginRight: 8, justifyContent: 'center', alignItems: 'center' }}>
-                                <MaterialCommunityIcons name="map-marker" size={14} color="#F44336" />
+                            <View style={[styles.divider, { backgroundColor: c.divider }]} />
+
+                            {/* Pickup Section */}
+                            <View style={{ marginBottom: 16 }}>
+                                <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
+                                    <View style={styles.locationDotContainer}>
+                                        <MaterialCommunityIcons name="package-variant" size={14} color={c.textSec} />
+                                    </View>
+                                    <Text style={{ fontSize: 11, color: c.textSec, fontWeight: '700' }}>PICKUP</Text>
+                                </View>
+                                <View style={[styles.addressContainer, { backgroundColor: c.search }]}>
+                                    <Text style={{ fontSize: 14, color: c.text, flex: 1 }} numberOfLines={1}>
+                                        {item.pickupAddress || 'Pickup Address'}
+                                    </Text>
+                                    <TouchableOpacity
+                                        style={[styles.navBtn, { backgroundColor: c.bg }]}
+                                        onPress={() => openGoogleMaps(item.pickupLat, item.pickupLng, item.pickupAddress)}
+                                    >
+                                        <MaterialCommunityIcons name="navigation" size={18} color={c.text} />
+                                    </TouchableOpacity>
+                                </View>
                             </View>
-                            <Text variant="labelSmall" style={{ color: theme.colors.error, fontWeight: 'bold' }}>DROPOFF</Text>
-                        </View>
-                        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12, backgroundColor: '#F9F9F9', padding: 8, borderRadius: 8 }}>
-                            <Text variant="bodyMedium" style={{ color: '#444', marginLeft: 8, flex: 1 }}>
-                                {item.address}
-                            </Text>
-                            <IconButton
-                                icon="navigation"
-                                mode="contained"
-                                containerColor={theme.colors.errorContainer}
-                                iconColor={theme.colors.error}
-                                size={20}
-                                onPress={() => openGoogleMaps(item.dropoffLat, item.dropoffLng, item.address)}
-                                style={{ margin: 0, marginLeft: 8 }}
-                            />
-                        </View>
-                    </View>
 
-                    <View style={{ flexDirection: 'row', marginTop: 4 }}>
-                        {!['CANCELLED', 'COMPLETED'].includes(item.status) && (
-                            <View style={{ flexDirection: 'row', alignItems: 'center', marginRight: 16 }}>
-                                <MaterialCommunityIcons name="clock-outline" size={16} color="#666" />
-                                <Text style={{ marginLeft: 4, color: '#666', fontSize: 12, fontWeight: 'bold' }}>ETA: {item.estimatedTime || '-- min'}</Text>
+                            {/* Dropoff Section */}
+                            <View style={{ marginBottom: 12 }}>
+                                <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
+                                    <View style={styles.locationDotContainer}>
+                                        <MaterialCommunityIcons name="map-marker" size={14} color={c.redText} />
+                                    </View>
+                                    <Text style={{ fontSize: 11, color: c.textSec, fontWeight: '700' }}>DROPOFF</Text>
+                                </View>
+                                <View style={[styles.addressContainer, { backgroundColor: c.search }]}>
+                                    <Text style={{ fontSize: 14, color: c.text, flex: 1 }} numberOfLines={1}>
+                                        {item.address}
+                                    </Text>
+                                    <TouchableOpacity
+                                        style={[styles.navBtn, { backgroundColor: c.bg }]}
+                                        onPress={() => openGoogleMaps(item.dropoffLat, item.dropoffLng, item.address)}
+                                    >
+                                        <MaterialCommunityIcons name="navigation" size={18} color={c.text} />
+                                    </TouchableOpacity>
+                                </View>
                             </View>
-                        )}
-                        <View style={{ flexDirection: 'row', alignItems: 'center', marginRight: 16 }}>
-                            <MaterialCommunityIcons name="cash" size={16} color="#666" />
-                            <Text style={{ marginLeft: 4, color: '#666', fontSize: 12, fontWeight: 'bold' }}>{item.earnings}</Text>
+
+                            <View style={{ flexDirection: 'row', marginTop: 8, gap: 16 }}>
+                                {!['CANCELLED', 'COMPLETED'].includes(item.status) && (
+                                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                                        <MaterialCommunityIcons name="clock-outline" size={16} color={c.textSec} />
+                                        <Text style={{ marginLeft: 4, color: c.textSec, fontSize: 13, fontWeight: '600' }}>{item.estimatedTime || '-- min'}</Text>
+                                    </View>
+                                )}
+                                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                                    <MaterialCommunityIcons name="cash" size={16} color={c.textSec} />
+                                    <Text style={{ marginLeft: 4, color: c.textSec, fontSize: 13, fontWeight: '600' }}>{item.earnings}</Text>
+                                </View>
+                            </View>
                         </View>
-                    </View>
-                </Card.Content>
+                    </TouchableOpacity>
 
-                <Card.Actions style={[styles.cardActions, { flexDirection: 'column', paddingHorizontal: 16, paddingBottom: 16 }]}>
-                    {['ASSIGNED', 'PENDING', 'IN_TRANSIT', 'ARRIVED', 'RETURNING', 'TAMPERED'].includes(item.status) && (
-                        <Button
-                            mode="contained"
-                            style={{ width: '100%', borderRadius: 8, marginBottom: 8 }}
-                            contentStyle={{ height: 48 }}
-                            labelStyle={{ fontSize: 16, fontWeight: 'bold' }}
-                            onPress={() => {
-                                navigation.navigate('Arrival', {
-                                    deliveryId: item.id,
-                                    boxId: item.boxId,
-                                    targetLat: isPickup ? (item.snappedPickupLat ?? item.pickupLat) : (item.snappedDropoffLat ?? item.dropoffLat),
-                                    targetLng: isPickup ? (item.snappedPickupLng ?? item.pickupLng) : (item.snappedDropoffLng ?? item.dropoffLng),
-                                    targetAddress: isPickup ? item.pickupAddress : item.address,
-                                    customerPhone: item.phone,
-                                    senderName: item.senderName,
-                                    senderPhone: item.senderPhone,
-                                    recipientName: item.recipientName,
-                                    deliveryNotes: item.deliveryNotes,
-                                    // Both coordinates for dynamic geofence switching
-                                    pickupLat: item.snappedPickupLat ?? item.pickupLat,
-                                    pickupLng: item.snappedPickupLng ?? item.pickupLng,
-                                    pickupAddress: item.pickupAddress,
-                                    dropoffLat: item.snappedDropoffLat ?? item.dropoffLat,
-                                    dropoffLng: item.snappedDropoffLng ?? item.dropoffLng,
-                                    dropoffAddress: item.address,
-                                    // @ts-ignore
-                                    riderName: useAuthStore.getState().user?.fullName || 'Rider'
-                                });
-                            }}
-                            buttonColor={theme.colors.primary}
-                            icon="navigation"
-                        >
-                            {['IN_TRANSIT', 'ARRIVED', 'RETURNING', 'TAMPERED'].includes(item.status) ? 'Resume Trip' : 'Start Trip'}
-                        </Button>
-                    )}
-
-                    <View style={{ flexDirection: 'row', width: '100%', gap: 8 }}>
-                        {(item.senderPhone || (item.phone && item.phone !== 'N/A')) && (
-                            <Button
-                                mode="outlined"
-                                icon="phone"
-                                style={{ flex: 1, borderColor: theme.colors.primary }}
-                                textColor={theme.colors.primary}
+                    <View style={[styles.cardActions, { paddingHorizontal: 16, paddingBottom: 16 }]}>
+                        {['ASSIGNED', 'PENDING', 'IN_TRANSIT', 'ARRIVED', 'RETURNING', 'TAMPERED'].includes(item.status) && (
+                            <TouchableOpacity
+                                style={[styles.primaryBtn, { backgroundColor: c.accent, width: '100%', marginBottom: 10 }]}
                                 onPress={() => {
-                                    const options: { text: string; onPress: () => void }[] = [];
-                                    if (item.senderPhone) {
-                                        options.push({
-                                            text: `Sender${item.senderName ? ` (${item.senderName})` : ''}`,
-                                            onPress: () => Linking.openURL(`tel:${item.senderPhone}`),
-                                        });
-                                    }
-                                    if (item.phone && item.phone !== 'N/A') {
-                                        options.push({
-                                            text: `Recipient${item.recipientName ? ` (${item.recipientName})` : ''}`,
-                                            onPress: () => Linking.openURL(`tel:${item.phone}`),
-                                        });
-                                    }
-                                    options.push({ text: 'Cancel', onPress: () => {} });
-                                    PremiumAlert.alert('Who do you want to call?', undefined, options);
+                                    navigation.navigate('Arrival', {
+                                        deliveryId: item.id,
+                                        boxId: item.boxId,
+                                        targetLat: isPickup ? (item.snappedPickupLat ?? item.pickupLat) : (item.snappedDropoffLat ?? item.dropoffLat),
+                                        targetLng: isPickup ? (item.snappedPickupLng ?? item.pickupLng) : (item.snappedDropoffLng ?? item.dropoffLng),
+                                        targetAddress: isPickup ? item.pickupAddress : item.address,
+                                        customerPhone: item.phone,
+                                        senderName: item.senderName,
+                                        senderPhone: item.senderPhone,
+                                        recipientName: item.recipientName,
+                                        deliveryNotes: item.deliveryNotes,
+                                        pickupLat: item.snappedPickupLat ?? item.pickupLat,
+                                        pickupLng: item.snappedPickupLng ?? item.pickupLng,
+                                        pickupAddress: item.pickupAddress,
+                                        dropoffLat: item.snappedDropoffLat ?? item.dropoffLat,
+                                        dropoffLng: item.snappedDropoffLng ?? item.dropoffLng,
+                                        dropoffAddress: item.address,
+                                        riderName: (useAuthStore.getState() as any).user?.fullName || 'Rider'
+                                    });
                                 }}
+                                activeOpacity={0.8}
                             >
-                                Call
-                            </Button>
+                                <MaterialCommunityIcons name="navigation" size={18} color={c.bg} />
+                                <Text style={[styles.primaryBtnText, { color: c.bg }]}>
+                                    {['IN_TRANSIT', 'ARRIVED', 'RETURNING', 'TAMPERED'].includes(item.status) ? 'Resume Trip' : 'Start Trip'}
+                                </Text>
+                            </TouchableOpacity>
                         )}
 
-                        {['ASSIGNED', 'PENDING', 'IN_TRANSIT'].includes(item.status) && (
-                            <Button
-                                mode="contained"
-                                onPress={() => {
-                                    setSelectedDelivery(item);
-                                    setShowCancelModal(true);
-                                }}
-                                buttonColor={theme.colors.error}
-                                style={{ flex: 1 }}
+                        <View style={{ flexDirection: 'row', width: '100%', gap: 10 }}>
+                            {(item.senderPhone || (item.phone && item.phone !== 'N/A')) && (
+                                <TouchableOpacity
+                                    style={[styles.secondaryBtn, { borderColor: c.border, flex: 1 }]}
+                                    onPress={() => {
+                                        const options: any[] = [];
+                                        if (item.senderPhone) {
+                                            options.push({ text: `Sender${item.senderName ? ` (${item.senderName})` : ''}`, onPress: () => Linking.openURL(`tel:${item.senderPhone}`) });
+                                        }
+                                        if (item.phone && item.phone !== 'N/A') {
+                                            options.push({ text: `Recipient${item.recipientName ? ` (${item.recipientName})` : ''}`, onPress: () => Linking.openURL(`tel:${item.phone}`) });
+                                        }
+                                        options.push({ text: 'Cancel', style: 'cancel' });
+                                        PremiumAlert.alert('Who do you want to call?', undefined, options);
+                                    }}
+                                >
+                                    <MaterialCommunityIcons name="phone" size={16} color={c.text} />
+                                    <Text style={[styles.secondaryBtnText, { color: c.text }]}>Call</Text>
+                                </TouchableOpacity>
+                            )}
+
+                            {['ASSIGNED', 'PENDING', 'IN_TRANSIT'].includes(item.status) && (
+                                <TouchableOpacity
+                                    style={[styles.secondaryBtn, { backgroundColor: c.redBg, borderColor: 'transparent', flex: 1 }]}
+                                    onPress={() => {
+                                        setSelectedDelivery(item);
+                                        setShowCancelModal(true);
+                                    }}
+                                >
+                                    <MaterialCommunityIcons name="close" size={16} color={c.redText} />
+                                    <Text style={[styles.secondaryBtnText, { color: c.redText }]}>Cancel</Text>
+                                </TouchableOpacity>
+                            )}
+                        </View>
+
+                        {(item.status === 'COMPLETED' || item.status === 'CANCELLED') && (
+                            <TouchableOpacity
+                                style={[styles.secondaryBtn, { borderColor: c.border, width: '100%', marginTop: 10 }]}
+                                onPress={() => navigation.navigate('DeliveryDetail', { delivery: item })}
                             >
-                                Cancel
-                            </Button>
+                                <MaterialCommunityIcons name="history" size={16} color={c.text} />
+                                <Text style={[styles.secondaryBtnText, { color: c.text }]}>View History</Text>
+                            </TouchableOpacity>
                         )}
                     </View>
-
-                    {(item.status === 'COMPLETED' || item.status === 'CANCELLED') && (
-                        <Button
-                            mode="outlined"
-                            onPress={() => navigation.navigate('DeliveryDetail', { delivery: item })}
-                            style={{ width: '100%', marginTop: 8 }}
-                            icon="history"
-                        >
-                            View History
-                        </Button>
-                    )}
-                </Card.Actions>
-            </Card>
+                </View>
+            </Animated.View>
         );
     };
 
-    const renderGridItem = ({ item }) => (
-        <Card style={styles.gridCard} mode="elevated" onPress={() => {
-            navigation.navigate('JobDetail', { job: { ...item, id: item.id } });
-        }}>
-            <Card.Content style={{ padding: 12 }}>
-                <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 }}>
-                    <Badge size={16} style={{ backgroundColor: getStatusColor(item.status), alignSelf: 'flex-start', paddingHorizontal: 6 }}>
-                        {item.status.replace(/_/g, ' ')}
-                    </Badge>
-                </View>
+    const renderGridItem: ListRenderItem<any> = ({ item, index }) => {
+        const rowAnim = listAnim[Math.min(index, listAnim.length - 1)];
+        const sc = getStatusTheme(item.status);
 
-                <Text variant="titleSmall" style={{ fontWeight: 'bold' }} numberOfLines={1}>{item.customer}</Text>
-                <Text variant="bodySmall" style={{ fontSize: 10, color: theme.colors.onSurfaceVariant, marginBottom: 4 }} numberOfLines={1}>{item.trk}</Text>
+        return (
+            <Animated.View style={rowAnim.style}>
+                <TouchableOpacity activeOpacity={0.8} style={[styles.gridCard, { backgroundColor: c.card, borderColor: c.border }]} onPress={() => navigation.navigate('JobDetail', { job: { ...item, id: item.id } })}>
+                    <View style={{ padding: 12 }}>
+                        <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 10 }}>
+                            <View style={[styles.statusPill, { backgroundColor: sc.bg, alignSelf: 'flex-start' }]}>
+                                <Text style={{ fontSize: 10, fontWeight: '700', color: sc.text }}>{item.status.replace(/_/g, ' ')}</Text>
+                            </View>
+                        </View>
 
-                <View style={[styles.divider, { backgroundColor: theme.colors.outlineVariant }]} />
+                        <Text style={{ fontSize: 14, fontWeight: '700', color: c.text }} numberOfLines={1}>{item.customer}</Text>
+                        <Text style={{ fontSize: 11, color: c.textSec, marginBottom: 8 }} numberOfLines={1}>{item.trk}</Text>
 
-                <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
-                    <MaterialCommunityIcons name="map-marker" size={12} color={theme.colors.onSurfaceVariant} />
-                    <Text variant="bodySmall" numberOfLines={1} style={{ fontSize: 10, marginLeft: 2, flex: 1 }}>{item.address}</Text>
-                </View>
+                        <View style={[styles.divider, { backgroundColor: c.divider }]} />
 
-                <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 4 }}>
-                    <Text style={{ fontSize: 10, color: theme.colors.onSurfaceVariant }}>
-                        {dayjs(item.date).tz(PH_TIMEZONE).format('MM/DD')} • {item.time}
-                    </Text>
-                    <Text style={{ fontSize: 10, color: theme.colors.onSurfaceVariant }}>{item.distance} • {item.earnings}</Text>
-                </View>
-            </Card.Content>
-        </Card>
-    );
+                        <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
+                            <MaterialCommunityIcons name="map-marker" size={12} color={c.textSec} />
+                            <Text style={{ fontSize: 11, marginLeft: 4, flex: 1, color: c.textSec }} numberOfLines={1}>{item.address}</Text>
+                        </View>
+
+                        <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 4 }}>
+                            <Text style={{ fontSize: 11, color: c.textSec, fontWeight: '500' }}>
+                                {dayjs(item.date).tz(PH_TIMEZONE).format('M/D')} • {item.time}
+                            </Text>
+                            <Text style={{ fontSize: 11, color: c.textSec, fontWeight: '600' }}>{item.distance}</Text>
+                        </View>
+                    </View>
+                </TouchableOpacity>
+            </Animated.View>
+        );
+    };
 
     const headerAnim = useEntryAnimation(0);
 
     return (
-        <Animated.View style={[styles.container, { backgroundColor: theme.colors.background }, headerAnim.style]}>
-            <View style={[styles.header, { backgroundColor: theme.colors.surface, paddingTop: Math.max(insets.top, 20) }]}>
-                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+        <Animated.View style={[styles.container, { backgroundColor: c.bg }, headerAnim.style]}>
+            <View style={[styles.header, { backgroundColor: c.bg, borderBottomColor: c.border, paddingTop: Math.max(insets.top, 20) }]}>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
                     <View>
-                        <Text variant="headlineMedium" style={{ fontWeight: 'bold', color: theme.colors.onSurface }}>Assigned Deliveries</Text>
-                        <Text variant="bodyMedium" style={{ color: theme.colors.onSurfaceVariant }}>{dayjs().format('dddd, MMM D')}</Text>
+                        <Text style={{ fontSize: 26, fontWeight: '800', color: c.text }}>Assigned Deliveries</Text>
+                        <Text style={{ fontSize: 14, color: c.textSec, marginTop: 4 }}>{dayjs().format('dddd, MMM D')}</Text>
                     </View>
                     <View style={{ flexDirection: 'row', marginRight: 4 }}>
-                        <IconButton
-                            icon={viewMode === 'list' ? 'view-grid' : 'view-list'}
-                            onPress={() => setViewMode(viewMode === 'list' ? 'grid' : 'list')}
-                        />
-                        <IconButton
-                            icon={showFilters ? 'filter-off' : 'filter'}
-                            mode={showFilters ? 'contained' : 'outlined'}
-                            onPress={() => setShowFilters(!showFilters)}
-                        />
+                        <TouchableOpacity style={[styles.iconBtn, { backgroundColor: c.pillBg }]} onPress={() => setViewMode(viewMode === 'list' ? 'grid' : 'list')}>
+                            <MaterialCommunityIcons name={viewMode === 'list' ? 'view-grid' : 'view-list'} size={24} color={c.text} />
+                        </TouchableOpacity>
+                        <TouchableOpacity style={[styles.iconBtn, { backgroundColor: showFilters ? c.text : c.pillBg, marginLeft: 8 }]} onPress={() => setShowFilters(!showFilters)}>
+                            <MaterialCommunityIcons name={showFilters ? 'filter-off' : 'filter'} size={24} color={showFilters ? c.bg : c.text} />
+                        </TouchableOpacity>
                     </View>
                 </View>
 
-                <Searchbar
-                    placeholder="Search tracking # or customer"
-                    onChangeText={onChangeSearch}
-                    value={searchQuery}
-                    style={styles.searchbar}
-                    elevation={1}
-                />
+                <View style={[styles.searchContainer, { backgroundColor: c.search }]}>
+                    <MaterialCommunityIcons name="magnify" size={20} color={c.textSec} style={{ marginRight: 8 }} />
+                    <TextInput
+                        placeholder="Search tracking # or customer"
+                        placeholderTextColor={c.textTer}
+                        onChangeText={onChangeSearch}
+                        value={searchQuery}
+                        style={{ flex: 1, color: c.text, fontSize: 15, height: 40, padding: 0 }}
+                        clearButtonMode="while-editing"
+                        returnKeyType="search"
+                    />
+                    {searchQuery.length > 0 && Platform.OS === 'android' && (
+                        <TouchableOpacity onPress={() => onChangeSearch('')}>
+                            <MaterialCommunityIcons name="close-circle" size={18} color={c.textTer} />
+                        </TouchableOpacity>
+                    )}
+                </View>
 
                 {/* Collapsible Filters */}
                 {showFilters && (
-                    <View style={styles.filterSection}>
-                        <Text variant="labelMedium" style={{ marginBottom: 8, color: theme.colors.onSurfaceVariant }}>Status</Text>
+                    <View style={[styles.filterSection, { borderTopColor: c.divider }]}>
+                        <Text style={{ fontSize: 13, fontWeight: '600', color: c.textSec, marginBottom: 8, marginTop: 4 }}>Status</Text>
                         <View style={styles.filterRow}>
                             {[
                                 { key: 'All', label: 'All' },
@@ -541,64 +572,70 @@ export default function AssignedDeliveriesScreen() {
                                 { key: 'TAMPERED', label: 'Tampered' },
                                 { key: 'COMPLETED', label: 'Completed' },
                                 { key: 'CANCELLED', label: 'Cancelled' },
-                            ].map(({ key, label }) => (
-                                <Chip
-                                    key={key}
-                                    selected={filter === key}
-                                    onPress={() => setFilter(key)}
-                                    style={[
-                                        styles.filterChip,
-                                        filter === key && { backgroundColor: getStatusColor(key) + '33' },
-                                    ]}
-                                    selectedColor={getStatusColor(key)}
-                                    showSelectedOverlay
-                                >
-                                    {label}
-                                </Chip>
-                            ))}
+                            ].map(({ key, label }) => {
+                                const isSelected = filter === key;
+                                const stColor = isSelected && key !== 'All' ? getStatusColor(key) : c.text;
+                                return (
+                                    <TouchableOpacity
+                                        key={key}
+                                        onPress={() => setFilter(key)}
+                                        style={[
+                                            styles.plainChip,
+                                            { backgroundColor: isSelected ? (key === 'All' ? c.accent : stColor + '1A') : c.pillBg },
+                                        ]}
+                                    >
+                                        <Text style={{ fontSize: 13, fontWeight: '600', color: isSelected ? (key === 'All' ? c.bg : stColor) : c.textSec }}>
+                                            {label}
+                                        </Text>
+                                    </TouchableOpacity>
+                                );
+                            })}
                         </View>
 
                         <View style={{ height: 12 }} />
 
-                        <Text variant="labelMedium" style={{ marginBottom: 8, color: theme.colors.onSurfaceVariant }}>Date</Text>
+                        <Text style={{ fontSize: 13, fontWeight: '600', color: c.textSec, marginBottom: 8 }}>Date</Text>
                         <View style={styles.filterRow}>
                             {['All', 'Today', 'Tomorrow', 'Week', 'Custom'].map((dateOpt) => (
-                                <Chip
+                                <TouchableOpacity
                                     key={dateOpt}
-                                    selected={dateFilter === dateOpt}
                                     onPress={() => setDateFilter(dateOpt)}
-                                    style={styles.filterChip}
-                                    showSelectedOverlay
+                                    style={[
+                                        styles.plainChip,
+                                        { backgroundColor: dateFilter === dateOpt ? c.accent : c.pillBg },
+                                    ]}
                                 >
-                                    {dateOpt}
-                                </Chip>
+                                    <Text style={{ fontSize: 13, fontWeight: '600', color: dateFilter === dateOpt ? c.bg : c.textSec }}>
+                                        {dateOpt}
+                                    </Text>
+                                </TouchableOpacity>
                             ))}
                         </View>
 
                         {/* Custom Date Range Selection */}
                         {dateFilter === 'Custom' && (
-                            <View style={styles.customDateContainer}>
+                            <View style={[styles.customDateContainer, { backgroundColor: c.search }]}>
                                 <TouchableOpacity
-                                    style={[styles.dateInput, { borderColor: theme.colors.outline }]}
+                                    style={[styles.dateInput, { borderColor: c.border, backgroundColor: c.bg }]}
                                     onPress={() => showDateMode('start')}
                                 >
-                                    <Text variant="labelSmall" style={{ color: theme.colors.onSurfaceVariant }}>Start Date</Text>
-                                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                                        <MaterialCommunityIcons name="calendar" size={16} color={theme.colors.primary} style={{ marginRight: 4 }} />
-                                        <Text variant="bodyMedium">{dayjs(customStartDate).format('MMM D, YYYY')}</Text>
+                                    <Text style={{ fontSize: 11, color: c.textSec, fontWeight: '600' }}>Start Date</Text>
+                                    <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4 }}>
+                                        <MaterialCommunityIcons name="calendar" size={16} color={c.text} style={{ marginRight: 6 }} />
+                                        <Text style={{ fontSize: 14, color: c.text, fontWeight: '500' }}>{dayjs(customStartDate).format('MMM D, YYYY')}</Text>
                                     </View>
                                 </TouchableOpacity>
 
-                                <MaterialCommunityIcons name="arrow-right" size={20} color={theme.colors.onSurfaceVariant} style={{ marginHorizontal: 8 }} />
+                                <MaterialCommunityIcons name="arrow-right" size={20} color={c.textSec} style={{ marginHorizontal: 8 }} />
 
                                 <TouchableOpacity
-                                    style={[styles.dateInput, { borderColor: theme.colors.outline }]}
+                                    style={[styles.dateInput, { borderColor: c.border, backgroundColor: c.bg }]}
                                     onPress={() => showDateMode('end')}
                                 >
-                                    <Text variant="labelSmall" style={{ color: theme.colors.onSurfaceVariant }}>End Date</Text>
-                                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                                        <MaterialCommunityIcons name="calendar" size={16} color={theme.colors.primary} style={{ marginRight: 4 }} />
-                                        <Text variant="bodyMedium">{dayjs(customEndDate).format('MMM D, YYYY')}</Text>
+                                    <Text style={{ fontSize: 11, color: c.textSec, fontWeight: '600' }}>End Date</Text>
+                                    <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4 }}>
+                                        <MaterialCommunityIcons name="calendar" size={16} color={c.text} style={{ marginRight: 6 }} />
+                                        <Text style={{ fontSize: 14, color: c.text, fontWeight: '500' }}>{dayjs(customEndDate).format('MMM D, YYYY')}</Text>
                                     </View>
                                 </TouchableOpacity>
                             </View>
@@ -622,16 +659,16 @@ export default function AssignedDeliveriesScreen() {
             <FlatList
                 key={viewMode}
                 data={filteredDeliveries}
-                renderItem={viewMode === 'list' ? renderItem : renderGridItem}
+                renderItem={(info) => viewMode === 'list' ? renderItem(info) : renderGridItem(info)}
                 keyExtractor={item => item.id}
                 contentContainerStyle={styles.listContent}
                 refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
                 numColumns={viewMode === 'list' ? 1 : 2}
                 columnWrapperStyle={viewMode === 'grid' ? { justifyContent: 'space-between' } : undefined}
                 ListEmptyComponent={
-                    <View style={styles.emptyState}>
-                        <MaterialCommunityIcons name="package-variant-closed" size={64} color={theme.colors.onSurfaceVariant} />
-                        <Text variant="bodyLarge" style={{ color: theme.colors.onSurfaceVariant, marginTop: 16 }}>No deliveries found</Text>
+                    <View style={[styles.emptyCard, { backgroundColor: c.card, borderColor: c.border }]}>
+                        <MaterialCommunityIcons name="package-variant-closed" size={40} color={c.textTer} />
+                        <Text style={{ fontSize: 15, fontWeight: '600', color: c.textSec, marginTop: 10 }}>No deliveries found</Text>
                     </View>
                 }
             />
@@ -647,137 +684,30 @@ export default function AssignedDeliveriesScreen() {
 }
 
 const styles = StyleSheet.create({
-    container: {
-        flex: 1,
-    },
+    container: { flex: 1 },
     header: {
-        padding: 20,
-        paddingBottom: 10,
-        elevation: 4,
-        borderBottomLeftRadius: 24,
-        borderBottomRightRadius: 24,
-        zIndex: 1,
+        padding: 20, paddingBottom: 16,
+        borderBottomWidth: 1, zIndex: 1,
     },
-    searchbar: {
-        marginBottom: 10,
-        borderRadius: 10,
-        backgroundColor: '#f0f0f0'
-    },
-    filterSection: {
-        marginTop: 10,
-        paddingTop: 10,
-        borderTopWidth: 1,
-        borderTopColor: '#eee',
-    },
-    filterRow: {
-        flexDirection: 'row',
-        flexWrap: 'wrap',
-    },
-    filterChip: {
-        marginRight: 8,
-        marginBottom: 8,
-    },
-    customDateContainer: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        marginTop: 8,
-        marginBottom: 8,
-        padding: 8,
-        backgroundColor: '#f5f5f5',
-        borderRadius: 8,
-    },
-    dateInput: {
-        flex: 1,
-        borderWidth: 1,
-        borderRadius: 8,
-        padding: 8,
-        backgroundColor: 'white',
-    },
-    listContent: {
-        padding: 20,
-        paddingTop: 20,
-    },
-    card: {
-        marginBottom: 16,
-        borderRadius: 12,
-    },
-    cardHeader: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        marginBottom: 12,
-    },
-    trkContainer: {
-        flexDirection: 'row',
-        alignItems: 'center',
-    },
-    trkText: {
-        fontWeight: 'bold',
-        marginLeft: 8,
-    },
-    divider: {
-        height: 1,
-        backgroundColor: '#F0F0F0',
-        marginBottom: 12,
-    },
-    customerRow: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        marginBottom: 12,
-    },
-    avatarContainer: {
-        width: 40,
-        height: 40,
-        borderRadius: 20,
-        backgroundColor: '#E3F2FD',
-        justifyContent: 'center',
-        alignItems: 'center',
-        marginRight: 12,
-    },
-    avatarText: {
-        color: '#2196F3',
-        fontWeight: 'bold',
-        fontSize: 18,
-    },
-    addressContainer: {
-        flexDirection: 'row',
-        marginBottom: 12,
-        backgroundColor: '#F9F9F9',
-        padding: 8,
-        borderRadius: 8,
-    },
-    addressText: {
-        color: '#444',
-        marginLeft: 8,
-        flex: 1,
-    },
-    metaContainer: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-    },
-    metaItem: {
-        flexDirection: 'row',
-        alignItems: 'center',
-    },
-    metaText: {
-        color: '#888',
-        marginLeft: 4,
-        fontSize: 12,
-    },
-    cardActions: {
-        paddingHorizontal: 16,
-        paddingBottom: 16,
-        paddingTop: 0,
-    },
-    emptyState: {
-        justifyContent: 'center',
-        alignItems: 'center',
-        marginTop: 50,
-        opacity: 0.5
-    },
-    gridCard: {
-        marginBottom: 12,
-        borderRadius: 12,
-        width: '48%',
-    },
+    iconBtn: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
+    searchContainer: { flexDirection: 'row', alignItems: 'center', borderRadius: 14, paddingHorizontal: 16, marginTop: 4 },
+    filterSection: { marginTop: 16, paddingTop: 10, borderTopWidth: 1 },
+    filterRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+    plainChip: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 16 },
+    customDateContainer: { flexDirection: 'row', alignItems: 'center', marginTop: 12, padding: 12, borderRadius: 12 },
+    dateInput: { flex: 1, borderWidth: 1, borderRadius: 8, padding: 12 },
+    listContent: { padding: 16, paddingBottom: 100 },
+    card: { borderRadius: 16, borderWidth: 1, marginBottom: 16, overflow: 'hidden' },
+    gridCard: { width: '48%', borderRadius: 16, borderWidth: 1, marginBottom: 16, overflow: 'hidden' },
+    statusPill: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12 },
+    divider: { height: StyleSheet.hairlineWidth, marginVertical: 14 },
+    locationDotContainer: { width: 24, height: 24, borderRadius: 12, backgroundColor: 'rgba(0,0,0,0.05)', justifyContent: 'center', alignItems: 'center' },
+    addressContainer: { flexDirection: 'row', alignItems: 'center', padding: 8, paddingLeft: 12, borderRadius: 12 },
+    navBtn: { width: 34, height: 34, borderRadius: 17, justifyContent: 'center', alignItems: 'center' },
+    cardActions: { gap: 10, paddingTop: 0 },
+    primaryBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 14, borderRadius: 14, gap: 8 },
+    primaryBtnText: { fontSize: 15, fontWeight: '700' },
+    secondaryBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 12, borderRadius: 12, borderWidth: 1, gap: 6 },
+    secondaryBtnText: { fontSize: 13, fontWeight: '600' },
+    emptyCard: { alignItems: 'center', padding: 32, borderRadius: 16, borderWidth: 1, marginTop: 40 },
 });
