@@ -162,6 +162,12 @@ const darkC = {
 export default function RiderDashboard() {
     const { showExitModal, setShowExitModal, handleExit } = useExitAppConfirmation();
     const navigation = useNavigation<any>();
+    const [profile, setProfile] = useState<any>(null);
+
+    // Track the booking IDs that we have already notified the user about in this session
+    const notifiedBookingIds = useRef<Set<string>>(new Set());
+
+    // AppState management
     const theme = useTheme();
     const { isDarkMode } = useAppTheme();
     const c = isDarkMode ? darkC : lightC;
@@ -843,12 +849,16 @@ export default function RiderDashboard() {
                 if (requests.length > 0) {
                     setShowOrderModal(true);
                     const latestRequest = requests[0];
-                    showIncomingOrderNotification(
-                        latestRequest.data.pickupAddress,
-                        latestRequest.data.dropoffAddress,
-                        latestRequest.data.estimatedFare,
-                        latestRequest.data.bookingId
-                    );
+                    if (latestRequest.data.bookingId && !notifiedBookingIds.current.has(latestRequest.data.bookingId)) {
+                        // Track this booking ID so we don't notify again
+                        notifiedBookingIds.current.add(latestRequest.data.bookingId);
+                        showIncomingOrderNotification(
+                            latestRequest.data.pickupAddress,
+                            latestRequest.data.dropoffAddress,
+                            latestRequest.data.estimatedFare,
+                            latestRequest.data.bookingId
+                        );
+                    }
                 } else {
                     setShowOrderModal(false);
                 }

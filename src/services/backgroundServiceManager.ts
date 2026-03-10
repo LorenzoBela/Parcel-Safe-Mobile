@@ -14,7 +14,7 @@
 import { Platform, AppState, AppStateStatus, Linking, Alert } from 'react-native';
 import * as Notifications from 'expo-notifications';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { scheduleDeliveryReminderNotification, NOTIFICATION_CHANNELS } from './pushNotificationService';
+import { scheduleDeliveryReminderNotification, NOTIFICATION_CHANNELS, showIncomingOrderNotification } from './pushNotificationService';
 import { PremiumAlert } from '../services/PremiumAlertService';
 
 // Native modules - conditionally imported to prevent startup crashes
@@ -240,23 +240,12 @@ export async function handleBackgroundMessage(remoteMessage: any): Promise<void>
  */
 async function showOrderNotification(orderData: any): Promise<void> {
     try {
-        await Notifications.scheduleNotificationAsync({
-            content: {
-                title: '🚚 New Delivery Order!',
-                body: `Pickup: ${orderData.pickup_address || 'Loading...'}\nDelivery: ${orderData.delivery_address || 'Loading...'}`,
-                data: orderData,
-                sound: 'default',
-                priority: Notifications.AndroidNotificationPriority.MAX,
-                vibrate: [0, 400, 200, 400, 200, 400],
-                categoryIdentifier: 'ORDER_ACTIONS',
-            },
-            // channelId on the trigger is required on Android so the notification is routed
-            // through the MAX-importance channel (lockscreenVisibility PUBLIC + bypassDnd),
-            // which wakes the screen and vibrates even on the lock screen.
-            trigger: Platform.OS === 'android'
-                ? { channelId: BACKGROUND_CONFIG.CHANNELS.INCOMING_ORDER } as any
-                : null,
-        });
+        await showIncomingOrderNotification(
+            orderData.pickupAddress || orderData.pickup_address || 'Loading...',
+            orderData.dropoffAddress || orderData.delivery_address || 'Loading...',
+            orderData.estimatedFare ? parseFloat(orderData.estimatedFare) : (orderData.estimated_fare ? parseFloat(orderData.estimated_fare) : 0),
+            orderData.bookingId || orderData.deliveryId || orderData.id || 'unknown'
+        );
     } catch (error) {
         if (__DEV__) console.error('[BackgroundService] Notification error:', error);
     }

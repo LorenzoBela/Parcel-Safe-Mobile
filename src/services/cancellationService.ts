@@ -207,10 +207,14 @@ export async function requestCancellation(
     const isPickedUp = request.currentStatus && ['PICKED_UP', 'IN_TRANSIT', 'ARRIVED'].includes(request.currentStatus.toUpperCase());
     const newStatus = isPickedUp ? 'RETURNING' : 'CANCELLED';
 
-    // 4. Update delivery status (Firebase)
+    // 4. Update delivery status and cancellation context (Firebase)
     // IMPORTANT: If picked up, it goes to RETURNING. Otherwise, CANCELLED.
-    const deliveryRef = ref(database, `deliveries/${request.deliveryId}/status`);
-    await set(deliveryRef, newStatus);
+    const deliveryRef = ref(database, `deliveries/${request.deliveryId}`);
+    await update(deliveryRef, {
+      status: newStatus,
+      cancelled_by: 'rider',
+      cancellation_reason: formatCancellationReason(request.reason),
+    });
 
     // 5. Sync to Supabase
     if (supabase) {
@@ -218,6 +222,8 @@ export async function requestCancellation(
         .from('deliveries')
         .update({
           status: newStatus,
+          cancelled_by: 'rider',
+          cancellation_reason: formatCancellationReason(request.reason),
           updated_at: new Date().toISOString()
         })
         .eq('id', request.deliveryId);
@@ -506,9 +512,13 @@ export async function requestCustomerCancellation(
       cancelledAt: serverTimestamp(),
     });
 
-    // 2. Update delivery status
-    const deliveryRef = ref(database, `deliveries/${request.deliveryId}/status`);
-    await set(deliveryRef, DeliveryStatus.CANCELLED);
+    // 2. Update delivery status and cancellation context
+    const deliveryRef = ref(database, `deliveries/${request.deliveryId}`);
+    await update(deliveryRef, {
+      status: DeliveryStatus.CANCELLED,
+      cancelled_by: 'customer',
+      cancellation_reason: formatCustomerCancellationReason(request.reason),
+    });
 
     // 2.1 Update pending_bookings status if it exists (for rider matching)
     const pendingRef = ref(database, `pending_bookings/${request.deliveryId}`);
@@ -527,6 +537,8 @@ export async function requestCustomerCancellation(
         .from('deliveries')
         .update({
           status: 'CANCELLED',
+          cancelled_by: 'customer',
+          cancellation_reason: formatCustomerCancellationReason(request.reason),
           updated_at: new Date().toISOString()
         })
         .eq('id', request.deliveryId);

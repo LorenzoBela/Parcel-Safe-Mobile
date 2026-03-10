@@ -66,6 +66,15 @@ const withAndroidManifestHelpers = (config) => {
             bgActionService.$['tools:node'] = 'merge';
         }
 
+        // Add showWhenLocked and turnScreenOn to MainActivity for fullScreenIntent (Android 10+)
+        if (app.activity) {
+            const mainActivity = app.activity.find(a => a.$ && a.$['android:name'] === '.MainActivity');
+            if (mainActivity) {
+                mainActivity.$['android:showWhenLocked'] = 'true';
+                mainActivity.$['android:turnScreenOn'] = 'true';
+            }
+        }
+
         return config;
     });
 };

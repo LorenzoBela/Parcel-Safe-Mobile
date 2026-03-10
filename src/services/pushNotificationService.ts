@@ -15,8 +15,27 @@ import { Platform } from 'react-native';
 import notifee, { AndroidImportance, AndroidVisibility } from '@notifee/react-native';
 import { supabase } from './supabaseClient';
 
-// Notifee channel ID for incoming-order notifications (used for screen wake)
+// Notifee channel IDs — these must be created via notifee.createChannel() so that
+// notifee.displayNotification + fullScreenAction works reliably on all OEMs.
+// (expo-notifications and notifee share the same Android system channels, but notifee
+//  needs its own createChannel call to track them internally.)
 const NOTIFEE_INCOMING_ORDER_CHANNEL = 'incoming-order-notifee';
+const NOTIFEE_DELIVERY_STATUS_CHANNEL = 'delivery-status-notifee';
+const NOTIFEE_SECURITY_ALERTS_CHANNEL = 'security-alerts-notifee';
+const NOTIFEE_CANCELLATION_CHANNEL = 'cancellation-notifee';
+
+// Maps every channelId the server might send → the matching notifee-registered channel.
+// This handles both the current v2 IDs and any legacy IDs still in flight.
+const CHANNEL_TO_NOTIFEE: Record<string, string> = {
+    'incoming-order-v2': NOTIFEE_INCOMING_ORDER_CHANNEL,
+    'incoming-order': NOTIFEE_INCOMING_ORDER_CHANNEL,
+    'delivery-status-v2': NOTIFEE_DELIVERY_STATUS_CHANNEL,
+    'delivery-status': NOTIFEE_DELIVERY_STATUS_CHANNEL,
+    'security-alerts-v2': NOTIFEE_SECURITY_ALERTS_CHANNEL,
+    'security-alerts': NOTIFEE_SECURITY_ALERTS_CHANNEL,
+    'cancellation-v2': NOTIFEE_CANCELLATION_CHANNEL,
+    'cancellation': NOTIFEE_CANCELLATION_CHANNEL,
+};
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 // Conditionally import modules
@@ -125,7 +144,8 @@ export async function setupNotificationChannels(): Promise<void> {
     }
 
     try {
-        // Notifee channel for incoming orders — needed for fullScreenAction (screen wake).
+        // Notifee channels — all created here so notifee.displayNotification +
+        // fullScreenAction (screen-wake) works reliably for every notification type.
         // expo-notifications does not support fullScreenIntent; notifee does.
         try {
             await notifee.createChannel({
@@ -134,6 +154,36 @@ export async function setupNotificationChannels(): Promise<void> {
                 importance: AndroidImportance.HIGH,
                 vibration: true,
                 vibrationPattern: [0, 400, 200, 400, 200, 400],
+                sound: 'default',
+                visibility: AndroidVisibility.PUBLIC,
+                bypassDnd: true,
+            });
+            await notifee.createChannel({
+                id: NOTIFEE_DELIVERY_STATUS_CHANNEL,
+                name: 'Delivery Status (Wake Screen)',
+                importance: AndroidImportance.HIGH,
+                vibration: true,
+                vibrationPattern: [0, 300, 200, 300],
+                sound: 'default',
+                visibility: AndroidVisibility.PUBLIC,
+                bypassDnd: true,
+            });
+            await notifee.createChannel({
+                id: NOTIFEE_SECURITY_ALERTS_CHANNEL,
+                name: 'Security Alerts (Wake Screen)',
+                importance: AndroidImportance.HIGH,
+                vibration: true,
+                vibrationPattern: [0, 500, 250, 500, 250, 500],
+                sound: 'default',
+                visibility: AndroidVisibility.PUBLIC,
+                bypassDnd: true,
+            });
+            await notifee.createChannel({
+                id: NOTIFEE_CANCELLATION_CHANNEL,
+                name: 'Order Cancellations (Wake Screen)',
+                importance: AndroidImportance.HIGH,
+                vibration: true,
+                vibrationPattern: [0, 300, 200, 300],
                 sound: 'default',
                 visibility: AndroidVisibility.PUBLIC,
                 bypassDnd: true,
@@ -332,15 +382,7 @@ function setupFCMBackgroundHandler(): void {
             const channelId = data.channelId || NOTIFICATION_CHANNELS.DELIVERY_STATUS;
 
             if (checkNotificationsAvailable()) {
-                await Notifications.scheduleNotificationAsync({
-                    content: {
-                        title,
-                        body,
-                        data,
-                        sound: 'default',
-                    },
-                    trigger: { channelId },
-                });
+                await scheduleWakingNotification(title, body, data, channelId);
             }
         });
     } catch (error) {
@@ -365,15 +407,7 @@ export function setupFCMForegroundHandler(): () => void {
             const channelId = data.channelId || NOTIFICATION_CHANNELS.DELIVERY_STATUS;
 
             if (checkNotificationsAvailable()) {
-                await Notifications.scheduleNotificationAsync({
-                    content: {
-                        title,
-                        body,
-                        data,
-                        sound: 'default',
-                    },
-                    trigger: { channelId },
-                });
+                await scheduleWakingNotification(title, body, data, channelId);
             }
 
             // When customer receives ORDER_ACCEPTED foreground push, schedule 2-hr reminder
@@ -458,6 +492,48 @@ export async function saveTokenToDatabase(userId: string, token: string): Promis
 }
 
 /**
+ * Internal helper to schedule a notification that can wake the screen on Android.
+ */
+async function scheduleWakingNotification(title: string, body: string, data: any, channelId: string): Promise<string> {
+    if (Platform.OS === 'android') {
+        try {
+            // Always use a notifee-registered channel so fullScreenAction (screen wake)
+            // is guaranteed. Fall back to delivery-status if the ID is unrecognised.
+            const notifeeChannelId = CHANNEL_TO_NOTIFEE[channelId] ?? NOTIFEE_DELIVERY_STATUS_CHANNEL;
+            await notifee.displayNotification({
+                title,
+                body,
+                data,
+                android: {
+                    channelId: notifeeChannelId,
+                    importance: AndroidImportance.HIGH,
+                    pressAction: { id: 'default' },
+                    // fullScreenAction turns the screen on from the lock screen.
+                    // Requires USE_FULL_SCREEN_INTENT permission (declared in app.json).
+                    fullScreenAction: { id: 'default' },
+                    showTimestamp: true,
+                },
+            });
+            return 'NOTIFEE_NOTIF_ID';
+        } catch (error) {
+            console.warn('[scheduleWakingNotification] notifee failed, falling back to expo:', error);
+        }
+    }
+
+    // iOS or Android fallback
+    const id = await Notifications.scheduleNotificationAsync({
+        content: {
+            title,
+            body,
+            data,
+            sound: 'default',
+        },
+        trigger: Platform.OS === 'android' ? { channelId } as any : null,
+    });
+    return id;
+}
+
+/**
  * Show a local notification for incoming order
  */
 export async function showIncomingOrderNotification(
@@ -532,19 +608,12 @@ export async function showStatusNotification(
     }
 
     try {
-        const notificationId = await Notifications.scheduleNotificationAsync({
-            content: {
-                title,
-                body,
-                data: { ...data, type: 'STATUS_UPDATE' },
-                sound: 'default',
-            },
-            // channelId must be in the trigger on Android so the correct channel (HIGH importance)
-            // is used and the notification appears as a banner outside the app.
-            trigger: Platform.OS === 'android'
-                ? { channelId: NOTIFICATION_CHANNELS.DELIVERY_STATUS } as any
-                : null,
-        });
+        const notificationId = await scheduleWakingNotification(
+            title,
+            body,
+            { ...data, type: 'STATUS_UPDATE' },
+            NOTIFICATION_CHANNELS.DELIVERY_STATUS
+        );
         return notificationId;
     } catch (error) {
         console.warn('Failed to show status notification:', error);
