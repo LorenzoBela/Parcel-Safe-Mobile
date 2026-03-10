@@ -1,5 +1,5 @@
 import React, { useRef, useEffect, useState } from 'react';
-import { View, Image, Animated, Easing, StyleSheet } from 'react-native';
+import { View, Image, Animated, Easing, StyleSheet, Text } from 'react-native';
 import MapboxGL from './MapboxWrapper';
 
 // --- Configuration ---
@@ -10,6 +10,7 @@ interface AnimatedRiderMarkerProps {
     latitude: number;
     longitude: number;
     rotation?: number; // Heading in degrees (0 = North)
+    speed?: number; // Speed in m/s from Firebase
 }
 
 const RiderImage = require('../../../assets/Rider.jpg');
@@ -18,6 +19,7 @@ const AnimatedRiderMarker: React.FC<AnimatedRiderMarkerProps> = ({
     latitude,
     longitude,
     rotation = 0,
+    speed,
 }) => {
     // 1. Maintain the "current" animated coordinate in a Ref to avoid React render loop lag,
     //    but we need a State to force Mapbox to re-render the PointAnnotation.
@@ -130,32 +132,56 @@ const AnimatedRiderMarker: React.FC<AnimatedRiderMarkerProps> = ({
             ref={annotationRef}
             id="rider-marker-animated"
             coordinate={renderCoord}
-            anchor={{ x: 0.5, y: 0.5 }}
+            anchor={{ x: 0.5, y: 0.7 }}
         >
-            <View style={[styles.riderMarkerOuter, { transform: [{ rotate: `${renderRotation}deg` }] }]}>
-                {/* Image Container */}
-                <View style={[styles.riderMarkerCircle]}>
-                    <Image
-                        source={RiderImage}
-                        style={styles.riderMarkerImage}
-                        resizeMode="cover"
-                        fadeDuration={0}
-                        onLoad={() => {
-                            if (annotationRef.current) {
-                                annotationRef.current.refresh();
-                            }
-                        }}
-                    />
+            <View style={{ alignItems: 'center' }}>
+                {/* Speed Badge — counter-rotated to stay upright */}
+                <View style={[
+                    styles.speedBadge,
+                    { opacity: speed != null && speed >= 0 ? 1 : 0, transform: [{ rotate: `${-renderRotation}deg` }] }
+                ]}>
+                    <Text style={styles.speedBadgeText}>
+                        {speed != null && speed >= 0 ? Math.round(speed * 3.6) : 0} km/h
+                    </Text>
                 </View>
 
-                {/* Direction Cone - Fixed at top, orbits map by rotating container */}
-                <View style={styles.riderDirectionCone} />
+                <View style={[styles.riderMarkerOuter, { transform: [{ rotate: `${renderRotation}deg` }] }]}>
+                    {/* Image Container */}
+                    <View style={[styles.riderMarkerCircle]}>
+                        <Image
+                            source={RiderImage}
+                            style={styles.riderMarkerImage}
+                            resizeMode="cover"
+                            fadeDuration={0}
+                            onLoad={() => {
+                                if (annotationRef.current) {
+                                    annotationRef.current.refresh();
+                                }
+                            }}
+                        />
+                    </View>
+
+                    {/* Direction Cone - Fixed at top, orbits map by rotating container */}
+                    <View style={styles.riderDirectionCone} />
+                </View>
             </View>
         </MapboxGL.PointAnnotation>
     );
 };
 
 const styles = StyleSheet.create({
+    speedBadge: {
+        backgroundColor: 'rgba(15, 23, 42, 0.85)',
+        paddingHorizontal: 7,
+        paddingVertical: 2,
+        borderRadius: 999,
+        marginBottom: 2,
+    },
+    speedBadgeText: {
+        color: '#FFFFFF',
+        fontSize: 10,
+        fontWeight: '700',
+    },
     riderMarkerOuter: {
         width: 56,
         height: 56,

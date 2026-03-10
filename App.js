@@ -57,6 +57,8 @@ const AppContent = () => {
             shouldShowAlert: true,
             shouldPlaySound: true,
             shouldSetBadge: true,
+            shouldShowBanner: true,  // required on newer Expo SDK to show heads-up banner
+            shouldShowList: true,    // required to appear in notification centre
           }),
         });
       } catch (error) {

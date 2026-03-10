@@ -339,9 +339,14 @@ export default function ArrivalScreen() {
                     : new Date(delivery.arrived_at).getTime();
                 setArrivedAt(ts);
             }
+
+            // EC-Fix: sync OTP code from Firebase (now stored in delivery node)
+            if (delivery.otp_code) {
+                setDeliveryOtp(delivery.otp_code);
+            }
         });
 
-        // Fetch OTP from Supabase (source of truth for OTP)
+        // Fetch OTP from Supabase (fallback and initial load)
         const fetchOtp = async () => {
             try {
                 const { supabase } = await import('../../services/supabaseClient');

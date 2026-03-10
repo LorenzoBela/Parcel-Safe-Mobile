@@ -621,64 +621,81 @@ export default function GlobalMapScreen() {
                                     if (ref) markerRefs.current.set(box.id, ref);
                                 }}
                                 coordinate={coord}
-                                anchor={{ x: 0.5, y: 0.5 }}
+                                anchor={{ x: 0.5, y: 0.7 }}
                                 onSelected={() => selectBox(box.id)}
                             >
-                                <View style={{
-                                    width: isSelected ? 64 : 56,
-                                    height: isSelected ? 64 : 56,
-                                    justifyContent: 'center',
-                                    alignItems: 'center',
-                                    transform: [{ rotate: `${bng}deg` }],
-                                }}>
-                                    {/* Rider image circle — matches AnimatedRiderMarker style */}
+                                <View style={{ alignItems: 'center' }}>
+                                    {/* Speed Badge — counter-rotated to stay upright */}
                                     <View style={{
-                                        width: isSelected ? 60 : 56,
-                                        height: isSelected ? 60 : 56,
-                                        borderRadius: isSelected ? 30 : 28,
-                                        backgroundColor: 'white',
-                                        borderWidth: 2,
-                                        borderColor: '#0f172a',
-                                        overflow: 'hidden',
+                                        backgroundColor: 'rgba(15, 23, 42, 0.85)',
+                                        paddingHorizontal: 7,
+                                        paddingVertical: 2,
+                                        borderRadius: 999,
+                                        marginBottom: 2,
+                                        opacity: box.speed != null && box.speed >= 0 ? 1 : 0,
+                                        transform: [{ rotate: `${-bng}deg` }],
+                                    }}>
+                                        <Text style={{ color: '#fff', fontSize: 10, fontWeight: '700' }}>
+                                            {box.speed != null && box.speed >= 0 ? Math.round(box.speed * 3.6) : 0} km/h
+                                        </Text>
+                                    </View>
+
+                                    <View style={{
+                                        width: isSelected ? 64 : 56,
+                                        height: isSelected ? 64 : 56,
                                         justifyContent: 'center',
                                         alignItems: 'center',
-                                        zIndex: 20,
-                                        shadowColor: '#000',
-                                        shadowOffset: { width: 0, height: 2 },
-                                        shadowOpacity: 0.3,
-                                        shadowRadius: 4,
-                                        elevation: 6,
+                                        transform: [{ rotate: `${bng}deg` }],
                                     }}>
-                                        <Image
-                                            source={RiderIcon}
-                                            style={{
-                                                width: isSelected ? 56 : 52,
-                                                height: isSelected ? 56 : 52,
-                                                borderRadius: isSelected ? 28 : 26,
-                                            }}
-                                            resizeMode="cover"
-                                            fadeDuration={0}
-                                            onLoad={() => {
-                                                const ref = markerRefs.current.get(box.id);
-                                                if (ref) ref.refresh();
-                                            }}
-                                        />
+                                        {/* Rider image circle — matches AnimatedRiderMarker style */}
+                                        <View style={{
+                                            width: isSelected ? 60 : 56,
+                                            height: isSelected ? 60 : 56,
+                                            borderRadius: isSelected ? 30 : 28,
+                                            backgroundColor: 'white',
+                                            borderWidth: 2,
+                                            borderColor: '#0f172a',
+                                            overflow: 'hidden',
+                                            justifyContent: 'center',
+                                            alignItems: 'center',
+                                            zIndex: 20,
+                                            shadowColor: '#000',
+                                            shadowOffset: { width: 0, height: 2 },
+                                            shadowOpacity: 0.3,
+                                            shadowRadius: 4,
+                                            elevation: 6,
+                                        }}>
+                                            <Image
+                                                source={RiderIcon}
+                                                style={{
+                                                    width: isSelected ? 56 : 52,
+                                                    height: isSelected ? 56 : 52,
+                                                    borderRadius: isSelected ? 28 : 26,
+                                                }}
+                                                resizeMode="cover"
+                                                fadeDuration={0}
+                                                onLoad={() => {
+                                                    const ref = markerRefs.current.get(box.id);
+                                                    if (ref) ref.refresh();
+                                                }}
+                                            />
+                                        </View>
+                                        {/* Direction cone */}
+                                        <View style={{
+                                            position: 'absolute',
+                                            top: -12,
+                                            left: isSelected ? 26 : 22,
+                                            width: 0,
+                                            height: 0,
+                                            borderLeftWidth: 6,
+                                            borderLeftColor: 'transparent',
+                                            borderRightWidth: 6,
+                                            borderRightColor: 'transparent',
+                                            borderBottomWidth: 10,
+                                            borderBottomColor: 'rgba(15, 23, 42, 0.9)',
+                                            zIndex: 10,
+                                        }} />
                                     </View>
-                                    {/* Direction cone */}
-                                    <View style={{
-                                        position: 'absolute',
-                                        top: -12,
-                                        left: isSelected ? 26 : 22,
-                                        width: 0,
-                                        height: 0,
-                                        borderLeftWidth: 6,
-                                        borderLeftColor: 'transparent',
-                                        borderRightWidth: 6,
-                                        borderRightColor: 'transparent',
-                                        borderBottomWidth: 10,
-                                        borderBottomColor: 'rgba(15, 23, 42, 0.9)',
-                                        zIndex: 10,
-                                    }} />
                                 </View>
                             </MapboxGL.PointAnnotation>
                         );

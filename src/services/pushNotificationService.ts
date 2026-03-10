@@ -92,13 +92,15 @@ function ensureNotificationHandler(): void {
 }
 
 // Notification channels for Android (required for Android 8+)
+// NOTE: Android channel importance is immutable after creation — bump the version suffix
+// (e.g. promotions-v2 → promotions-v3) whenever importance/sound settings change.
 export const NOTIFICATION_CHANNELS = {
     INCOMING_ORDER: 'incoming-order',
     DELIVERY_STATUS: 'delivery-status',
     ONGOING_DELIVERY: 'ongoing-delivery',
     SECURITY_ALERTS: 'security-alerts',
     CANCELLATION: 'cancellation',
-    PROMOTIONS: 'promotions',
+    PROMOTIONS: 'promotions-v2', // v2: bumped to HIGH so promos show outside the app
 };
 
 /**
@@ -163,12 +165,18 @@ export async function setupNotificationChannels(): Promise<void> {
             enableVibrate: true,
         });
 
-        // Promotions channel (low priority, no vibration)
+        // Promotions channel — HIGH importance so the banner actually appears outside the app.
+        // The old 'promotions' channel (LOW) is deleted first because Android channel importance
+        // cannot be changed after creation; we use a new ID ('promotions-v2') instead.
+        try { await Notifications.deleteNotificationChannelAsync('promotions'); } catch { /* ignore */ }
         await Notifications.setNotificationChannelAsync(NOTIFICATION_CHANNELS.PROMOTIONS, {
             name: 'Promotions & Offers',
-            importance: Notifications.AndroidImportance.LOW,
-            sound: null,
-            enableVibrate: false,
+            importance: Notifications.AndroidImportance.HIGH,
+            sound: 'default',
+            vibrationPattern: [0, 250],
+            enableVibrate: true,
+            enableLights: true,
+            lightColor: '#FF6B00',
         });
     } catch (error) {
         console.warn('Failed to setup notification channels:', error);
@@ -434,7 +442,9 @@ export async function showIncomingOrderNotification(
                 priority: Notifications.AndroidNotificationPriority.MAX,
                 vibrate: [0, 250, 250, 250],
             },
-            trigger: null,
+            trigger: Platform.OS === 'android'
+                ? { channelId: NOTIFICATION_CHANNELS.INCOMING_ORDER } as any
+                : null,
         });
         return notificationId;
     } catch (error) {
@@ -464,7 +474,11 @@ export async function showStatusNotification(
                 data: { ...data, type: 'STATUS_UPDATE' },
                 sound: 'default',
             },
-            trigger: null,
+            // channelId must be in the trigger on Android so the correct channel (HIGH importance)
+            // is used and the notification appears as a banner outside the app.
+            trigger: Platform.OS === 'android'
+                ? { channelId: NOTIFICATION_CHANNELS.DELIVERY_STATUS } as any
+                : null,
         });
         return notificationId;
     } catch (error) {
@@ -621,14 +635,22 @@ export async function cancelDeliveryReminderNotification(): Promise<void> {
     }
 }
 
-// Delivery status types
+// Delivery status types — covers all Firebase delivery states used across the app
 export type DeliveryStatus =
     | 'RIDER_ASSIGNED'
     | 'EN_ROUTE_TO_PICKUP'
     | 'AT_PICKUP'
+    | 'PENDING'
+    | 'ASSIGNED'
+    | 'PICKED_UP'
     | 'IN_TRANSIT'
     | 'ARRIVED'
-    | 'COMPLETED';
+    | 'COMPLETED'
+    | 'CANCELLED'
+    | 'RETURNING'
+    | 'RETURNED'
+    | 'TAMPERED'
+    | 'FAILED';
 
 /**
  * Get notification title and body based on delivery status
@@ -636,6 +658,7 @@ export type DeliveryStatus =
 function getStatusContent(status: DeliveryStatus, additionalInfo?: string): { title: string; body: string } {
     switch (status) {
         case 'RIDER_ASSIGNED':
+        case 'ASSIGNED':
             return {
                 title: '✅ Rider Assigned',
                 body: additionalInfo || 'A rider has accepted your order!',
@@ -646,9 +669,10 @@ function getStatusContent(status: DeliveryStatus, additionalInfo?: string): { ti
                 body: additionalInfo || 'Rider is heading to pickup location',
             };
         case 'AT_PICKUP':
+        case 'PICKED_UP':
             return {
-                title: '📍 Rider at Pickup',
-                body: additionalInfo || 'Rider has arrived at pickup point',
+                title: '📦 Package Picked Up',
+                body: additionalInfo || 'Rider has collected your package',
             };
         case 'IN_TRANSIT':
             return {
@@ -664,6 +688,31 @@ function getStatusContent(status: DeliveryStatus, additionalInfo?: string): { ti
             return {
                 title: '✅ Delivery Complete',
                 body: additionalInfo || 'Your package has been delivered successfully!',
+            };
+        case 'CANCELLED':
+            return {
+                title: '❌ Delivery Cancelled',
+                body: additionalInfo || 'Your delivery has been cancelled.',
+            };
+        case 'RETURNING':
+            return {
+                title: '↩️ Package Returning',
+                body: additionalInfo || 'Rider is returning the package to sender.',
+            };
+        case 'RETURNED':
+            return {
+                title: '↩️ Package Returned',
+                body: additionalInfo || 'Package has been returned to sender.',
+            };
+        case 'TAMPERED':
+            return {
+                title: '⚠️ Security Alert',
+                body: additionalInfo || 'Tamper detected on your package!',
+            };
+        case 'FAILED':
+            return {
+                title: '⚠️ Delivery Failed',
+                body: additionalInfo || 'Delivery attempt failed. Please contact support.',
             };
         default:
             return {

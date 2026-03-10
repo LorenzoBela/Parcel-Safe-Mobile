@@ -140,6 +140,7 @@ export interface DeliveryRecord {
     sender_phone?: string;
     arrived_at?: number | string;
     cancellation_reason?: string;
+    otp_code?: string;
 }
 
 export interface RiderLiveLocation {
@@ -650,6 +651,23 @@ export async function acceptOrder(
             is_available: false,
         });
 
+        // --- Fetch OTP (MUST happen before Firebase delivery sync) ---
+        // otp_code is only in Supabase, not in Firebase pending_bookings.
+        let resolvedOtp = '';
+        if (supabase) {
+            try {
+                const { data: otpRow } = await supabase
+                    .from('deliveries')
+                    .select('otp_code')
+                    .eq('id', bookingId)
+                    .maybeSingle();
+                resolvedOtp = otpRow?.otp_code || '';
+            } catch (e) {
+                console.error('[RiderMatching] OTP pre-fetch failed:', e);
+            }
+        }
+        if (!resolvedOtp) resolvedOtp = generateOTP();
+
         const shareToken = booking.share_token || generateShareToken();
         const deliveryRecord: DeliveryRecord = {
             id: bookingId,
@@ -671,6 +689,7 @@ export async function acceptOrder(
             accepted_at: acceptedAt,
             updated_at: acceptedAt,
             estimated_fare: booking.estimated_fare || 0,
+            otp_code: resolvedOtp, // EC-Fix: Store OTP in Firebase delivery node too
         };
 
         if (booking.snapped_pickup_lat) deliveryRecord.snapped_pickup_lat = booking.snapped_pickup_lat;
@@ -680,24 +699,7 @@ export async function acceptOrder(
 
         await set(ref(db, `/deliveries/${bookingId}`), deliveryRecord);
 
-        // --- Fetch OTP + write to hardware node (MUST happen before Supabase sync) ---
-        // otp_code is only in Supabase, not in Firebase pending_bookings.
-        // We fetch it here independently so a Supabase sync failure can't block
-        // the hardware write.
-        let resolvedOtp = '';
-        if (supabase) {
-            try {
-                const { data: otpRow } = await supabase
-                    .from('deliveries')
-                    .select('otp_code')
-                    .eq('id', bookingId)
-                    .maybeSingle();
-                resolvedOtp = otpRow?.otp_code || '';
-            } catch (e) {
-                console.error('[RiderMatching] OTP pre-fetch failed:', e);
-            }
-        }
-        if (!resolvedOtp) resolvedOtp = generateOTP();
+        // Write OTP to hardware node
 
         if (normalizedBoxId) {
             try {

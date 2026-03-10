@@ -26,6 +26,7 @@ import {
     CustomerCancellationReason,
 } from '../../services/cancellationService';
 import statusUpdateService from '../../services/statusUpdateService';
+import { showStatusNotification, updateOngoingNotification } from '../../services/pushNotificationService';
 import * as Clipboard from 'expo-clipboard';
 import CustomerCancellationModal from '../../components/modals/CustomerCancellationModal';
 import useAuthStore from '../../store/authStore';
@@ -192,6 +193,8 @@ export default function TrackOrderScreen() {
 
     // Loop/Status Guard Ref
     const stopTracking = useRef(false);
+    // Track previous delivery status to detect changes and fire local notifications
+    const prevDeliveryStatus = useRef<string | null>(null);
 
     // --- P2: ETA Smoothing & Stale Data ---
     const smoothedEtaRef = useRef<number | null>(null);
@@ -480,6 +483,31 @@ export default function TrackOrderScreen() {
 
         const unsubscribeDelivery = subscribeToDelivery(deliveryId, (data) => {
             setDelivery(data);
+
+            // Fire a local notification whenever the delivery status changes.
+            // prevDeliveryStatus=null on first call so we skip the initial snapshot.
+            if (data?.status && prevDeliveryStatus.current !== null && data.status !== prevDeliveryStatus.current) {
+                const STATUS_MESSAGES: Record<string, { title: string; body: string }> = {
+                    ASSIGNED: { title: '✅ Rider Assigned', body: 'A rider has accepted your order and is on the way!' },
+                    PICKED_UP: { title: '📦 Package Picked Up', body: 'Your parcel has been collected by the rider.' },
+                    IN_TRANSIT: { title: '🚀 Package in Transit', body: 'Your parcel is on its way to the destination.' },
+                    ARRIVED: { title: '🎉 Rider Arrived!', body: 'Your rider has arrived at the destination.' },
+                    COMPLETED: { title: '✅ Delivery Complete', body: 'Your package has been delivered successfully!' },
+                    CANCELLED: { title: '❌ Delivery Cancelled', body: 'Your delivery has been cancelled.' },
+                    TAMPERED: { title: '⚠️ Security Alert', body: 'Tamper detected on your package! Please check immediately.' },
+                    RETURNING: { title: '↩️ Package Returning', body: 'Rider is returning the package to sender.' },
+                    RETURNED: { title: '↩️ Package Returned', body: 'Package has been returned to sender.' },
+                    FAILED: { title: '⚠️ Delivery Failed', body: 'Delivery attempt failed. Please contact support.' },
+                };
+                const msg = STATUS_MESSAGES[data.status];
+                if (msg) {
+                    showStatusNotification(msg.title, msg.body, { deliveryId, status: data.status })
+                        .catch(console.error);
+                    // Keep the ongoing sticky notification in the shade in sync
+                    updateOngoingNotification(data.status as any).catch(console.error);
+                }
+            }
+            prevDeliveryStatus.current = data?.status ?? null;
         });
 
         const initialRiderId = params.riderId;
@@ -977,6 +1005,7 @@ export default function TrackOrderScreen() {
                         latitude={riderMarkerLocation.latitude}
                         longitude={riderMarkerLocation.longitude}
                         rotation={riderBearing.current}
+                        speed={riderLiveLocation?.speed}
                     />
 
                     {/* Destination Marker */}

@@ -1769,6 +1769,7 @@ export default function RiderDashboard() {
                                             latitude={lastLocation ? lastLocation.latitude : riderLocation!.coords.latitude}
                                             longitude={lastLocation ? lastLocation.longitude : riderLocation!.coords.longitude}
                                             rotation={riderLocation?.coords.heading || 0}
+                                            speed={lastLocation?.speed ?? riderLocation?.coords.speed ?? undefined}
                                         />
 
                                         {/* Destination Marker */}
