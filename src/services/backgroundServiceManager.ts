@@ -14,7 +14,7 @@
 import { Platform, AppState, AppStateStatus, Linking, Alert } from 'react-native';
 import * as Notifications from 'expo-notifications';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { scheduleDeliveryReminderNotification } from './pushNotificationService';
+import { scheduleDeliveryReminderNotification, NOTIFICATION_CHANNELS } from './pushNotificationService';
 import { PremiumAlert } from '../services/PremiumAlertService';
 
 // Native modules - conditionally imported to prevent startup crashes
@@ -57,9 +57,9 @@ export const BACKGROUND_CONFIG = {
     /** Reconnection delay (ms) */
     RECONNECT_DELAY: 5000,
 
-    /** Notification channel IDs */
+    /** Notification channel IDs — kept in sync with NOTIFICATION_CHANNELS in pushNotificationService */
     CHANNELS: {
-        INCOMING_ORDER: 'incoming-order-critical',
+        INCOMING_ORDER: 'incoming-order-v2', // must match NOTIFICATION_CHANNELS.INCOMING_ORDER
         FOREGROUND_SERVICE: 'foreground-service',
         DELIVERY_STATUS: 'delivery-status',
     },
@@ -247,9 +247,15 @@ async function showOrderNotification(orderData: any): Promise<void> {
                 data: orderData,
                 sound: 'default',
                 priority: Notifications.AndroidNotificationPriority.MAX,
+                vibrate: [0, 400, 200, 400, 200, 400],
                 categoryIdentifier: 'ORDER_ACTIONS',
             },
-            trigger: null, // Show immediately
+            // channelId on the trigger is required on Android so the notification is routed
+            // through the MAX-importance channel (lockscreenVisibility PUBLIC + bypassDnd),
+            // which wakes the screen and vibrates even on the lock screen.
+            trigger: Platform.OS === 'android'
+                ? { channelId: BACKGROUND_CONFIG.CHANNELS.INCOMING_ORDER } as any
+                : null,
         });
     } catch (error) {
         if (__DEV__) console.error('[BackgroundService] Notification error:', error);

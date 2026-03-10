@@ -17,6 +17,7 @@ import { getFirebaseDatabase } from './firebaseClient';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
+import { NOTIFICATION_CHANNELS } from './pushNotificationService';
 
 // ==================== Configuration ====================
 
@@ -372,10 +373,15 @@ async function showOrderNotification(order: Order): Promise<void> {
                 data: { orderId: order.id, type: 'new_order' },
                 sound: 'default',
                 priority: Notifications.AndroidNotificationPriority.MAX,
-                vibrate: [0, 250, 250, 250],
+                vibrate: [0, 400, 200, 400, 200, 400],
                 badge: 1,
             },
-            trigger: null, // Show immediately
+            // channelId MUST be on the trigger for Android so the HIGH/MAX channel
+            // (with lockscreenVisibility PUBLIC + bypassDnd) is used instead of the
+            // silent default — critical for waking the phone on the lock screen.
+            trigger: Platform.OS === 'android'
+                ? { channelId: NOTIFICATION_CHANNELS.INCOMING_ORDER } as any
+                : null,
         });
         
         console.log('[OrderListener] Notification shown for order:', order.id);

@@ -12,7 +12,11 @@
  */
 
 import { Platform } from 'react-native';
+import notifee, { AndroidImportance, AndroidVisibility } from '@notifee/react-native';
 import { supabase } from './supabaseClient';
+
+// Notifee channel ID for incoming-order notifications (used for screen wake)
+const NOTIFEE_INCOMING_ORDER_CHANNEL = 'incoming-order-notifee';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 // Conditionally import modules
@@ -95,12 +99,12 @@ function ensureNotificationHandler(): void {
 // NOTE: Android channel importance is immutable after creation — bump the version suffix
 // (e.g. promotions-v2 → promotions-v3) whenever importance/sound settings change.
 export const NOTIFICATION_CHANNELS = {
-    INCOMING_ORDER: 'incoming-order',
-    DELIVERY_STATUS: 'delivery-status',
+    INCOMING_ORDER: 'incoming-order-v2',   // v2: lockscreenVisibility PUBLIC + bypassDnd
+    DELIVERY_STATUS: 'delivery-status-v2',  // v2: lockscreenVisibility PUBLIC + bypassDnd
     ONGOING_DELIVERY: 'ongoing-delivery',
-    SECURITY_ALERTS: 'security-alerts',
-    CANCELLATION: 'cancellation',
-    PROMOTIONS: 'promotions-v2', // v2: bumped to HIGH so promos show outside the app
+    SECURITY_ALERTS: 'security-alerts-v2',  // v2: lockscreenVisibility PUBLIC + bypassDnd
+    CANCELLATION: 'cancellation-v2',        // v2: lockscreenVisibility PUBLIC + bypassDnd
+    PROMOTIONS: 'promotions-v2',            // v2: bumped to HIGH so promos show outside the app
 };
 
 /**
@@ -121,22 +125,50 @@ export async function setupNotificationChannels(): Promise<void> {
     }
 
     try {
-        // High priority channel for incoming orders
+        // Notifee channel for incoming orders — needed for fullScreenAction (screen wake).
+        // expo-notifications does not support fullScreenIntent; notifee does.
+        try {
+            await notifee.createChannel({
+                id: NOTIFEE_INCOMING_ORDER_CHANNEL,
+                name: 'Incoming Orders (Wake Screen)',
+                importance: AndroidImportance.HIGH,
+                vibration: true,
+                vibrationPattern: [0, 400, 200, 400, 200, 400],
+                sound: 'default',
+                visibility: AndroidVisibility.PUBLIC,
+                bypassDnd: true,
+            });
+        } catch { /* ignore on non-Android or if already exists */ }
+
+        // expo-notifications channel kept for fallback / non-Android platforms.
+        // The old 'incoming-order' channel lacked lockscreenVisibility and bypassDnd;
+        // those settings are immutable after creation, so we delete it and recreate as v2.
+        try { await Notifications.deleteNotificationChannelAsync('incoming-order'); } catch { /* ignore */ }
         await Notifications.setNotificationChannelAsync(NOTIFICATION_CHANNELS.INCOMING_ORDER, {
             name: 'Incoming Orders',
             importance: Notifications.AndroidImportance.MAX,
-            vibrationPattern: [0, 250, 250, 250],
+            vibrationPattern: [0, 400, 200, 400, 200, 400], // long aggressive pattern
             lightColor: '#FF6B00',
             sound: 'default',
             enableVibrate: true,
             showBadge: true,
+            // CRITICAL for lock-screen wake: show full notification content on lock screen
+            lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
+            // Bypass Do Not Disturb — riders must hear new orders even with DND on
+            bypassDnd: true,
         });
 
-        // Status updates channel
+        // Status updates channel — v2: added lockscreenVisibility + bypassDnd
+        try { await Notifications.deleteNotificationChannelAsync('delivery-status'); } catch { /* ignore */ }
         await Notifications.setNotificationChannelAsync(NOTIFICATION_CHANNELS.DELIVERY_STATUS, {
             name: 'Delivery Status',
             importance: Notifications.AndroidImportance.HIGH,
+            vibrationPattern: [0, 300, 200, 300],
             sound: 'default',
+            enableVibrate: true,
+            showBadge: true,
+            lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
+            bypassDnd: true,
         });
 
         // Ongoing delivery channel (for persistent notifications)
@@ -146,23 +178,30 @@ export async function setupNotificationChannels(): Promise<void> {
             sound: null,
         });
 
-        // Security alerts channel (tamper, theft, geofence)
+        // Security alerts channel (tamper, theft, geofence) — v2: added lockscreenVisibility + bypassDnd
+        try { await Notifications.deleteNotificationChannelAsync('security-alerts'); } catch { /* ignore */ }
         await Notifications.setNotificationChannelAsync(NOTIFICATION_CHANNELS.SECURITY_ALERTS, {
             name: 'Security Alerts',
             importance: Notifications.AndroidImportance.MAX,
-            vibrationPattern: [0, 500, 250, 500],
+            vibrationPattern: [0, 500, 250, 500, 250, 500],
             lightColor: '#FF0000',
             sound: 'default',
             enableVibrate: true,
             showBadge: true,
+            lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
+            bypassDnd: true,
         });
 
-        // Cancellation channel
+        // Cancellation channel — v2: added lockscreenVisibility + bypassDnd
+        try { await Notifications.deleteNotificationChannelAsync('cancellation'); } catch { /* ignore */ }
         await Notifications.setNotificationChannelAsync(NOTIFICATION_CHANNELS.CANCELLATION, {
             name: 'Order Cancellations',
             importance: Notifications.AndroidImportance.HIGH,
             sound: 'default',
             enableVibrate: true,
+            vibrationPattern: [0, 300, 200, 300],
+            lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
+            bypassDnd: true,
         });
 
         // Promotions channel — HIGH importance so the banner actually appears outside the app.
@@ -432,6 +471,32 @@ export async function showIncomingOrderNotification(
         return 'SIMULATED_NOTIF_ID';
     }
 
+    // Use notifee on Android for fullScreenAction — this is the ONLY way to wake
+    // the screen from a locked state. expo-notifications does not support this.
+    if (Platform.OS === 'android') {
+        try {
+            await notifee.displayNotification({
+                title: '🚀 New Order Request!',
+                body: `Pickup: ${pickupAddress}\nDropoff: ${dropoffAddress}\nFare: ₱${estimatedFare.toFixed(2)}`,
+                data: { bookingId, type: 'INCOMING_ORDER' },
+                android: {
+                    channelId: NOTIFEE_INCOMING_ORDER_CHANNEL,
+                    importance: AndroidImportance.HIGH,
+                    sound: 'default',
+                    vibrationPattern: [0, 400, 200, 400, 200, 400],
+                    // fullScreenAction launches the app over the lock screen and TURNS THE SCREEN ON.
+                    // Requires USE_FULL_SCREEN_INTENT permission in app.json.
+                    fullScreenAction: { id: 'default' },
+                    pressAction: { id: 'default' },
+                },
+            });
+            return 'NOTIFEE_NOTIF';
+        } catch (error) {
+            console.warn('[showIncomingOrderNotification] notifee failed, falling back to expo:', error);
+        }
+    }
+
+    // iOS / fallback for Android if notifee fails
     try {
         const notificationId = await Notifications.scheduleNotificationAsync({
             content: {
@@ -440,7 +505,7 @@ export async function showIncomingOrderNotification(
                 data: { bookingId, type: 'INCOMING_ORDER' },
                 sound: 'default',
                 priority: Notifications.AndroidNotificationPriority.MAX,
-                vibrate: [0, 250, 250, 250],
+                vibrate: [0, 400, 200, 400, 200, 400],
             },
             trigger: Platform.OS === 'android'
                 ? { channelId: NOTIFICATION_CHANNELS.INCOMING_ORDER } as any

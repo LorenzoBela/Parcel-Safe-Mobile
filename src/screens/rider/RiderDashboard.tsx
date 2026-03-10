@@ -81,6 +81,7 @@ const sanitizeBoxId = (value: unknown): string | null => {
 };
 import {
     subscribeToRiderRequests,
+    subscribeToDelivery,
     acceptOrder,
     rejectOrder,
     updateRiderStatus,
@@ -91,6 +92,8 @@ import {
     registerForPushNotifications,
     setupNotificationChannels,
     showIncomingOrderNotification,
+    showStatusNotification,
+    NOTIFICATION_CHANNELS,
     addNotificationReceivedListener,
 } from '../../services/pushNotificationService';
 import CancellationModal from '../../components/modals/CancellationModal';
@@ -234,6 +237,8 @@ export default function RiderDashboard() {
     // Ref so the foreground watcher callback can access the current boxId without a stale closure
     const activeBoxIdRef = useRef<string | null>(null);
     const lastForegroundWriteRef = useRef<number>(0);
+    // Track previous delivery status so we can detect changes on the rider's side
+    const prevRiderDeliveryStatus = useRef<string | null>(null);
 
     // EC-FIX: Continuous Phone GPS Watchdog (Foreground)
     // This ensures we always have the REAL phone location available, even if the
@@ -372,6 +377,7 @@ export default function RiderDashboard() {
         dropoffLat: number;
         dropoffLng: number;
         bookingId: string;
+        customerName: string;
     } | null>(null);
     const authedUserId = useAuthStore((state: any) => state.user?.userId) as string | undefined;
     const authedUser = useAuthStore((state: any) => state.user) as any;
@@ -561,6 +567,40 @@ export default function RiderDashboard() {
         const interval = setInterval(checkActiveDeliveries, 30000);
         return () => clearInterval(interval);
     }, [riderId, checkActiveDeliveries]);
+
+    // Rider-side delivery status watcher — fires lock-screen notifications for events
+    // the rider didn't initiate (customer cancellation, box tamper, delivery confirmed).
+    useEffect(() => {
+        if (!activeDelivery?.id) {
+            prevRiderDeliveryStatus.current = null;
+            return;
+        }
+
+        const deliveryId = activeDelivery.id;
+
+        const unsubscribe = subscribeToDelivery(deliveryId, (data) => {
+            if (
+                data?.status &&
+                prevRiderDeliveryStatus.current !== null &&
+                data.status !== prevRiderDeliveryStatus.current
+            ) {
+                // Only notify the rider about statuses they didn't personally trigger.
+                const RIDER_ALERT_MESSAGES: Record<string, { title: string; body: string }> = {
+                    CANCELLED: { title: '❌ Order Cancelled', body: 'The customer has cancelled this delivery.' },
+                    TAMPERED: { title: '⚠️ Security Alert!', body: 'Box tamper detected on your active delivery!' },
+                    COMPLETED: { title: '✅ Delivery Confirmed', body: 'Customer confirmed delivery. Great work!' },
+                };
+                const msg = RIDER_ALERT_MESSAGES[data.status];
+                if (msg) {
+                    showStatusNotification(msg.title, msg.body, { deliveryId, status: data.status })
+                        .catch(console.error);
+                }
+            }
+            prevRiderDeliveryStatus.current = data?.status ?? null;
+        });
+
+        return unsubscribe;
+    }, [activeDelivery?.id]);
 
     // EC-15: OEM Kill Protection — show one-time dialog for aggressive manufacturers
     useEffect(() => {
