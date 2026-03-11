@@ -476,7 +476,59 @@ export async function sendOrderRequestToRider(
 }
 
 /**
- * Notify all nearby riders about a new booking
+ * Evaluate and rank nearby riders to form a candidate queue.
+ * Prioritizes based on distance to pickup and idle time (time since last assigned order).
+ */
+export async function rankRidersForBooking(
+    booking: BookingRequest,
+    nearbyRiders: RiderLocation[]
+): Promise<string[]> {
+    if (nearbyRiders.length === 0) return [];
+
+    const db = getFirebaseDatabase();
+    
+    // Fetch recent delivery history for riders to determine idle time
+    // In a real production app, we might query Supabase or a specific Firebase node for 'last_completed_at'
+    // For this implementation, we use the rider's lastUpdated timestamp as a proxy for idle time if available,
+    // or simulate an idle score. 
+    // Weighting: 1 km of distance penalty = ~5 minutes of idle time bonus
+    const distanceWeight = 1.0;
+    const idleTimeBonusPerMinute = 0.2; 
+    
+    const now = Date.now();
+    
+    const scoredRiders = nearbyRiders.map(rider => {
+        const distanceToPickup = calculateHaversineDistance(
+            rider.lat,
+            rider.lng,
+            booking.pickupLat,
+            booking.pickupLng
+        );
+        
+        // Calculate minutes idle (max 60 mins to prevent extreme skew)
+        const minutesIdle = Math.min(60, Math.max(0, (now - rider.lastUpdated) / 60000));
+        
+        // Lower score is better. Distance adds to score, idle time subtracts from score.
+        const score = (distanceToPickup * distanceWeight) - (minutesIdle * idleTimeBonusPerMinute);
+        
+        return {
+            riderId: rider.riderId,
+            distance: distanceToPickup,
+            score: score
+        };
+    });
+    
+    // Sort by lowest score first
+    scoredRiders.sort((a, b) => a.score - b.score);
+    
+    console.log(`[RiderMatching] Ranked Candidate Queue for ${booking.bookingId}:`, scoredRiders.map(r => `${r.riderId} (score: ${r.score.toFixed(2)}, dist: ${r.distance}km)`));
+    
+    return scoredRiders.map(r => r.riderId);
+}
+
+/**
+ * Notify all nearby riders about a new booking (Sequential Cascading version)
+ * This finds nearby riders, ranks them, stores the candidate queue, and actively pings *only* the best candidate.
  */
 export async function notifyNearbyRiders(
     booking: BookingRequest
@@ -487,50 +539,87 @@ export async function notifyNearbyRiders(
         SEARCH_RADIUS_KM
     );
 
-    const notifiedRiders: string[] = [];
+    if (nearbyRiders.length === 0) {
+        return { notifiedCount: 0, riders: [] };
+    }
+    
+    // 1. Generate the Candidate Queue based on fairness
+    const candidateQueue = await rankRidersForBooking(booking, nearbyRiders);
+    const topCandidateId = candidateQueue[0];
+    
+    // 2. Store the Candidate Queue in the pending booking
+    try {
+        const db = getFirebaseDatabase();
+        await update(ref(db, `/pending_bookings/${booking.bookingId}`), {
+            candidate_queue: candidateQueue,
+            current_candidate: topCandidateId,
+            offer_expires_at: Date.now() + REQUEST_EXPIRY_MS,
+            rejected_by: []
+        });
+        console.log(`[RiderMatching] Stored candidate queue for ${booking.bookingId}. Current candidate: ${topCandidateId}`);
+    } catch (err) {
+        console.error('[RiderMatching] Failed to store candidate queue details:', err);
+    }
 
-    for (const rider of nearbyRiders) {
-        const distanceToPickup = calculateHaversineDistance(
-            rider.lat,
-            rider.lng,
+    // 3. Find the top candidate's distance for their specific request payload
+    let distanceToPickup = 0;
+    const topCandidateData = nearbyRiders.find(r => r.riderId === topCandidateId);
+    if (topCandidateData) {
+        distanceToPickup = calculateHaversineDistance(
+            topCandidateData.lat,
+            topCandidateData.lng,
             booking.pickupLat,
             booking.pickupLng
         );
+    }
 
-        const orderRequest: RiderOrderRequest = {
-            bookingId: booking.bookingId,
-            pickupAddress: booking.pickupAddress,
-            dropoffAddress: booking.dropoffAddress,
-            pickupLat: booking.pickupLat,
-            pickupLng: booking.pickupLng,
-            dropoffLat: booking.dropoffLat,
-            dropoffLng: booking.dropoffLng,
-            distanceToPickupKm: distanceToPickup,
-            estimatedFare: booking.estimatedFare,
-            expiresAt: Date.now() + REQUEST_EXPIRY_MS,
-            customerId: booking.customerId,
-            distance: booking.distance, // EC-Fix: Propagate distance from booking
-            duration: booking.duration, // EC-Fix: Propagate duration from booking
-            customerName: booking.customerName, // EC-Fix: Propagate customer name
-            senderName: booking.senderName,
-            senderPhone: booking.senderPhone,
-            recipientName: booking.recipientName,
-            recipientPhone: booking.recipientPhone,
-            deliveryNotes: booking.deliveryNotes,
-        };
+    const notifiedRiders: string[] = [];
 
-        const success = await sendOrderRequestToRider(rider.riderId, orderRequest);
+    // ONLY notify the top candidate
+    if (topCandidateId) {
+        // Find the top candidate's data again to get the exact distance
+        const topCandidateData = nearbyRiders.find(r => r.riderId === topCandidateId);
+        if (topCandidateData) {
+            const distanceToPickup = calculateHaversineDistance(
+                topCandidateData.lat,
+                topCandidateData.lng,
+                booking.pickupLat,
+                booking.pickupLng
+            );
 
-        if (success) {
-            notifiedRiders.push(rider.riderId);
+            const orderRequest: RiderOrderRequest = {
+                bookingId: booking.bookingId,
+                pickupAddress: booking.pickupAddress,
+                dropoffAddress: booking.dropoffAddress,
+                pickupLat: booking.pickupLat,
+                pickupLng: booking.pickupLng,
+                dropoffLat: booking.dropoffLat,
+                dropoffLng: booking.dropoffLng,
+                distanceToPickupKm: distanceToPickup,
+                estimatedFare: booking.estimatedFare,
+                expiresAt: Date.now() + 15000, // 15 seconds exclusive window
+                customerId: booking.customerId,
+                distance: booking.distance, // EC-Fix: Propagate distance from booking
+                duration: booking.duration, // EC-Fix: Propagate duration from booking
+                customerName: booking.customerName, // EC-Fix: Propagate customer name
+                senderName: booking.senderName,
+                senderPhone: booking.senderPhone,
+                recipientName: booking.recipientName,
+                recipientPhone: booking.recipientPhone,
+                deliveryNotes: booking.deliveryNotes,
+            };
 
-            // Also show local notification if this is the current device
-            // In a real app, you'd send this via FCM to the rider's device
+            const success = await sendOrderRequestToRider(topCandidateId, orderRequest);
+
+            if (success) {
+                notifiedRiders.push(topCandidateId);
+                console.log(`[RiderMatching] Sent exclusive offer to candidate ${topCandidateId} for booking ${booking.bookingId}`);
+            }
         }
     }
 
     // Store notified rider IDs in the pending booking so that acceptOrder()
-    // can later cancel their requests when one rider wins the race.
+    // can later cancel their requests
     if (notifiedRiders.length > 0) {
         try {
             const db = getFirebaseDatabase();
@@ -621,6 +710,21 @@ export async function acceptOrder(
                 // Already accepted by another rider — abort
                 console.log(`[Booking] Accept aborted - Booking ${bookingId} status is ${dataToProcess.status}, accepted by ${dataToProcess.accepted_by}`);
                 return undefined;
+            }
+
+            // --- SEQUENTIAL ASSIGNMENT CHECKS ---
+            // If it's still in the exclusive phase, verify candidate and timer
+            if (dataToProcess.current_candidate && dataToProcess.offer_expires_at) {
+                const now = Date.now();
+                
+                // If the offer hasn't expired, ONLY the current candidate can accept it.
+                // We leave a 2-second grace period for network drift before enforcing expiration.
+                if (now <= dataToProcess.offer_expires_at + 2000) {
+                    if (dataToProcess.current_candidate !== riderId) {
+                        console.warn(`[RiderMatching] Rider ${riderId} attempted to accept, but current candidate is ${dataToProcess.current_candidate}`);
+                        return undefined; // Abort transaction
+                    }
+                }
             }
 
             // Claim the booking for this rider
@@ -873,18 +977,136 @@ export async function markRiderAvailable(riderId: string): Promise<boolean> {
 }
 
 /**
- * Reject an order as a rider
+ * Pass an order to the next candidate in the queue
+ */
+export async function passOrderToNextCandidate(
+    bookingId: string,
+    rejectingRiderId: string
+): Promise<void> {
+    const db = getFirebaseDatabase();
+    const bookingRef = ref(db, `/pending_bookings/${bookingId}`);
+
+    try {
+        await runTransaction(bookingRef, (booking) => {
+            if (!booking || booking.status !== 'SEARCHING') return undefined;
+
+            // Only process if this rider is actually the current candidate
+            if (booking.current_candidate !== rejectingRiderId) return undefined;
+
+            // Add to rejected list
+            const rejectedBy = booking.rejected_by || [];
+            if (!rejectedBy.includes(rejectingRiderId)) {
+                rejectedBy.push(rejectingRiderId);
+            }
+
+            // Remove from candidate queue
+            const queue = booking.candidate_queue || [];
+            const newQueue = queue.filter((id: string) => id !== rejectingRiderId);
+
+            if (newQueue.length > 0) {
+                // There are still candidates left, pass to the next one
+                const nextCandidate = newQueue[0];
+                return {
+                    ...booking,
+                    rejected_by: rejectedBy,
+                    candidate_queue: newQueue,
+                    current_candidate: nextCandidate,
+                    offer_expires_at: Date.now() + 15000, // 15 seconds for the next guy
+                };
+            } else {
+                // No exclusive candidates left! The order unlocks to the Open Market.
+                // It will be picked up by AvailableOrdersModal
+                return {
+                    ...booking,
+                    rejected_by: rejectedBy,
+                    candidate_queue: [],
+                    current_candidate: null,
+                    offer_expires_at: null,
+                };
+            }
+        });
+
+        // After the transaction completes, if there's a new candidate, we need to ping them.
+        const snapshot = await get(bookingRef);
+        if (snapshot.exists()) {
+            const updatedBooking = snapshot.val();
+            if (updatedBooking.status === 'SEARCHING' && updatedBooking.current_candidate) {
+                const nextCandidateId = updatedBooking.current_candidate;
+                
+                console.log(`[RiderMatching] Order ${bookingId} passed from ${rejectingRiderId} to ${nextCandidateId}`);
+                
+                // Fetch rider's location to calculate distance for the request
+                const riderSnap = await get(ref(db, `/online_riders/${nextCandidateId}`));
+                if (riderSnap.exists()) {
+                    const riderData = riderSnap.val();
+                    const distanceToPickup = calculateHaversineDistance(
+                        riderData.lat, 
+                        riderData.lng, 
+                        updatedBooking.pickup_lat, 
+                        updatedBooking.pickup_lng
+                    );
+
+                    const orderRequest: RiderOrderRequest = {
+                        bookingId: bookingId,
+                        pickupAddress: updatedBooking.pickup_address,
+                        dropoffAddress: updatedBooking.dropoff_address,
+                        pickupLat: updatedBooking.pickup_lat,
+                        pickupLng: updatedBooking.pickup_lng,
+                        dropoffLat: updatedBooking.dropoff_lat,
+                        dropoffLng: updatedBooking.dropoff_lng,
+                        distanceToPickupKm: distanceToPickup,
+                        estimatedFare: updatedBooking.estimated_fare,
+                        expiresAt: updatedBooking.offer_expires_at, // Use the new expiry
+                        customerId: updatedBooking.customer_id,
+                        // Propagate other fields if they exist
+                        distance: updatedBooking.distance, 
+                        duration: updatedBooking.duration, 
+                        customerName: updatedBooking.customer_name, 
+                        senderName: updatedBooking.sender_name,
+                        senderPhone: updatedBooking.sender_phone,
+                        recipientName: updatedBooking.recipient_name,
+                        recipientPhone: updatedBooking.recipient_phone,
+                        deliveryNotes: updatedBooking.delivery_notes,
+                    };
+
+                    await sendOrderRequestToRider(nextCandidateId, orderRequest);
+                    
+                    // Add the new rider to notified_riders array
+                    const notified = updatedBooking.notified_riders || [];
+                    if (!notified.includes(nextCandidateId)) {
+                        await update(bookingRef, {
+                            notified_riders: [...notified, nextCandidateId]
+                        });
+                    }
+                }
+            } else if (updatedBooking.status === 'SEARCHING' && !updatedBooking.current_candidate) {
+                console.log(`[RiderMatching] Order ${bookingId} queue exhausted. Unlocked to open market.`);
+            }
+        }
+    } catch (error) {
+        console.error(`[RiderMatching] Error passing order ${bookingId} to next candidate:`, error);
+    }
+}
+
+/**
+ * Handle order rejection and pass it to the next candidate
  */
 export async function rejectOrder(
     riderId: string,
-    requestId: string
+    requestId: string,
+    bookingId?: string // Now necessary to advance the queue
 ): Promise<boolean> {
     try {
         const db = getFirebaseDatabase();
-        // Remove the request (or update status) (Logic in original was update status)
+        // Mark the local request as rejected
         await update(ref(db, `/rider_requests/${riderId}/${requestId}`), {
             status: 'REJECTED',
         });
+
+        if (bookingId) {
+            // Trigger cascading queue logic
+            await passOrderToNextCandidate(bookingId, riderId);
+        }
 
         return true;
     } catch (error) {
@@ -946,8 +1168,39 @@ export function subscribeToBookingStatus(
         }
     });
 
-    // Return unsubscribe function
-    return () => off(statusRef);
+    return unsubscribe;
+}
+
+/**
+ * Perform a sweep of pending bookings to check for expired offers
+ * This is a "cron-like" function that should ideally run on a trusted backend (e.g., Firebase Cloud Functions or an Admin Node script).
+ * Running it from multiple clients is not ideal but possible with careful transaction usage.
+ */
+export async function runTimeoutSweep(): Promise<void> {
+    try {
+        const db = getFirebaseDatabase();
+        const pendingRef = ref(db, `/pending_bookings`);
+        
+        // We do a get() to find searching bookings, then process expirations.
+        // Doing this strictly via REST/Admin SDK is better, but here's the client-side approximation
+        const snapshot = await get(pendingRef);
+        if (!snapshot.exists()) return;
+
+        const bookings = snapshot.val();
+        const now = Date.now();
+
+        for (const [bookingId, data] of Object.entries<any>(bookings)) {
+            if (data.status === 'SEARCHING' && data.current_candidate && data.offer_expires_at) {
+                if (now > data.offer_expires_at) {
+                    console.log(`[RiderMatching] Sweeper detected expired offer for order ${bookingId} (candidate: ${data.current_candidate})`);
+                    // The candidate missed the window. Force a rejection to pop the queue.
+                    await passOrderToNextCandidate(bookingId, data.current_candidate);
+                }
+            }
+        }
+    } catch (error) {
+        console.error('[RiderMatching] Sweep failed:', error);
+    }
 }
 
 export function subscribeToDelivery(
@@ -1495,4 +1748,133 @@ export async function checkActiveBookings(userId: string): Promise<any | null> {
         console.error('Error checking active bookings:', error);
         return null;
     }
+}
+
+/**
+ * Fetch available orders manually (one-time fetch)
+ */
+export async function fetchAvailableOrders(
+    riderLat: number,
+    riderLng: number,
+    radiusKm: number = SEARCH_RADIUS_KM
+): Promise<RiderOrderRequest[]> {
+    try {
+        const db = getFirebaseDatabase();
+        const pendingRef = ref(db, '/pending_bookings');
+        const snapshot = await get(pendingRef);
+
+        if (!snapshot.exists()) return [];
+
+        const data = snapshot.val();
+        const availableOrders: RiderOrderRequest[] = [];
+
+        for (const [bookingId, b] of Object.entries(data)) {
+            const booking = b as any;
+            if (booking.status === 'SEARCHING' && !booking.accepted_by) {
+                // Check distance
+                const distance = calculateHaversineDistance(
+                    riderLat,
+                    riderLng,
+                    booking.pickup_lat,
+                    booking.pickup_lng
+                );
+
+                if (distance <= radiusKm) {
+                    availableOrders.push({
+                        bookingId,
+                        pickupAddress: booking.pickup_address,
+                        dropoffAddress: booking.dropoff_address,
+                        pickupLat: booking.pickup_lat,
+                        pickupLng: booking.pickup_lng,
+                        dropoffLat: booking.dropoff_lat,
+                        dropoffLng: booking.dropoff_lng,
+                        distanceToPickupKm: distance,
+                        estimatedFare: booking.estimated_fare,
+                        expiresAt: booking.created_at + REQUEST_EXPIRY_MS, // Though pool orders might live longer natively, we map it
+                        customerId: booking.customer_id,
+                        distance: booking.distance,
+                        duration: booking.duration,
+                        customerName: booking.customer_name,
+                        senderName: booking.sender_name,
+                        senderPhone: booking.sender_phone,
+                        recipientName: booking.recipient_name,
+                        recipientPhone: booking.recipient_phone,
+                        deliveryNotes: booking.delivery_notes,
+                    });
+                }
+            }
+        }
+        
+        // Sort by distance ascending
+        return availableOrders.sort((a, b) => a.distanceToPickupKm - b.distanceToPickupKm);
+    } catch (error) {
+        console.error('[AvailableOrders] Fetched failed:', error);
+        return [];
+    }
+}
+
+/**
+ * Subscribe to available orders in real-time
+ */
+export function subscribeToAvailableOrders(
+    riderLat: number,
+    riderLng: number,
+    radiusKm: number,
+    callback: (orders: RiderOrderRequest[]) => void
+): () => void {
+    const db = getFirebaseDatabase();
+    const pendingRef = ref(db, '/pending_bookings');
+
+    const unsubscribe = onValue(pendingRef, (snapshot) => {
+        if (!snapshot.exists()) {
+            callback([]);
+            return;
+        }
+
+        const data = snapshot.val();
+        const availableOrders: RiderOrderRequest[] = [];
+
+        for (const [bookingId, b] of Object.entries(data)) {
+            const booking = b as any;
+            if (booking.status === 'SEARCHING' && !booking.accepted_by) {
+                const distance = calculateHaversineDistance(
+                    riderLat,
+                    riderLng,
+                    booking.pickup_lat,
+                    booking.pickup_lng
+                );
+
+                if (distance <= radiusKm) {
+                    availableOrders.push({
+                        bookingId,
+                        pickupAddress: booking.pickup_address,
+                        dropoffAddress: booking.dropoff_address,
+                        pickupLat: booking.pickup_lat,
+                        pickupLng: booking.pickup_lng,
+                        dropoffLat: booking.dropoff_lat,
+                        dropoffLng: booking.dropoff_lng,
+                        distanceToPickupKm: distance,
+                        estimatedFare: booking.estimated_fare,
+                        // Expire slightly differently or just omit visual timer for pool
+                        expiresAt: booking.created_at + REQUEST_EXPIRY_MS, 
+                        customerId: booking.customer_id,
+                        distance: booking.distance,
+                        duration: booking.duration,
+                        customerName: booking.customer_name,
+                        senderName: booking.sender_name,
+                        senderPhone: booking.sender_phone,
+                        recipientName: booking.recipient_name,
+                        recipientPhone: booking.recipient_phone,
+                        deliveryNotes: booking.delivery_notes,
+                    });
+                }
+            }
+        }
+
+        // Sort by distance ascending
+        availableOrders.sort((a, b) => a.distanceToPickupKm - b.distanceToPickupKm);
+        callback(availableOrders);
+    });
+
+    return () => off(pendingRef, 'value', unsubscribe);
 }

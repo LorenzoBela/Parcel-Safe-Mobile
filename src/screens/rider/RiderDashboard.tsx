@@ -86,7 +86,9 @@ import {
     rejectOrder,
     updateRiderStatus,
     removeRiderFromOnline,
-    RiderOrderRequest
+    subscribeToAvailableOrders,
+    RiderOrderRequest,
+    runTimeoutSweep
 } from '../../services/riderMatchingService';
 import {
     registerForPushNotifications,
@@ -100,6 +102,7 @@ import CancellationModal from '../../components/modals/CancellationModal';
 import { requestCancellation, CancellationReason } from '../../services/cancellationService';
 import ReassignmentAlertModal from '../../components/ReassignmentAlertModal';
 import PhoneEntryModal from '../../components/modals/PhoneEntryModal';
+import AvailableOrdersModal from '../../components/modals/AvailableOrdersModal';
 import {
     subscribeToReassignment,
     ReassignmentState,
@@ -225,6 +228,10 @@ export default function RiderDashboard() {
     const [pendingRequestItem, setPendingRequestItem] = useState<{ requestId: string; data: RiderOrderRequest } | null>(null);
 
     const [photoQueueFull, setPhotoQueueFull] = useState(false);
+
+    // EC-New: Available Orders Pool
+    const [showAvailableOrders, setShowAvailableOrders] = useState(false);
+    const [availableOrdersCount, setAvailableOrdersCount] = useState(0);
 
     // GPS Redundancy Hook - monitors box connectivity and handles failover
     const {
@@ -466,6 +473,26 @@ export default function RiderDashboard() {
 
         restoreSession();
     }, [riderId]);
+
+    // Real-time listener for Available Orders
+    useEffect(() => {
+        if (!isOnline || !riderLocation) {
+            setAvailableOrdersCount(0);
+            return;
+        }
+
+        const unsubscribe = subscribeToAvailableOrders(
+            riderLocation.coords.latitude,
+            riderLocation.coords.longitude,
+            5, // SEARCH_RADIUS_KM
+            (orders) => {
+                setAvailableOrdersCount(orders.length);
+            }
+        );
+
+        return unsubscribe;
+    }, [isOnline, riderLocation]);
+
     // Dynamic delivery state — populated from real sources when available
     const nextDelivery = useMemo(() => activeDelivery ? {
         id: activeDelivery.id,
@@ -1022,6 +1049,17 @@ export default function RiderDashboard() {
         return () => unsubscribePower();
     }, [boxIdForMonitoring]);
 
+    // EC-Sweep: Poll for expired offers in the absence of a dedicated backend
+    useEffect(() => {
+        // Run sweep every 5 seconds to ensure queue moves quickly
+        const sweeper = setInterval(() => {
+            if (isOnline) {
+                runTimeoutSweep().catch(console.error);
+            }
+        }, 5000);
+        return () => clearInterval(sweeper);
+    }, [isOnline]);
+
     // EC-35: Try to flush any queued status updates while rider is active
     useEffect(() => {
         statusUpdateService.processQueue().catch(() => undefined);
@@ -1105,9 +1143,20 @@ export default function RiderDashboard() {
 
     // Handle rejecting an order
     const handleRejectOrder = useCallback(async (requestId: string) => {
-        await rejectOrder(riderId, requestId);
-        // Subscription will automatically update the list
-    }, [riderId]);
+        // Find the actual order request object matching the requestId
+        const requestToReject = incomingRequests.find(req => req.requestId === requestId);
+        
+        // Pass the bookingId if present, triggering the cascade to the next rider
+        const passedBookingId = requestToReject?.data?.bookingId;
+
+        await rejectOrder(riderId, requestId, passedBookingId);
+        
+        // Ensure optimistic removal prevents the modal waiting for subscription lag
+        setIncomingRequests(prev => prev.filter(req => req.requestId !== requestId));
+        if (incomingRequests.length <= 1) {
+            setShowOrderModal(false);
+        }
+    }, [riderId, incomingRequests]);
 
     // Trip Preview State
 
@@ -1807,6 +1856,20 @@ export default function RiderDashboard() {
                     </View>
                 </Animated.View>
 
+                {availableOrdersCount > 0 && isOnline && !hasActiveDelivery && (
+                    <Animated.View style={actionsAnim[0].style}>
+                        <Button 
+                            mode="contained" 
+                            buttonColor={c.greenText}
+                            icon="bell-ring"
+                            onPress={() => setShowAvailableOrders(true)}
+                            style={{ marginHorizontal: 16, marginBottom: 16, borderRadius: 12 }}
+                        >
+                            {availableOrdersCount} Available Order{availableOrdersCount > 1 ? 's' : ''} Nearby
+                        </Button>
+                    </Animated.View>
+                )}
+
                 {/* Next Delivery Card */}
                 <Animated.View style={jobAnim.style}>
                     <Text variant="titleMedium" style={[styles.sectionTitle, { color: c.text }]}>Current Job</Text>
@@ -2198,6 +2261,23 @@ export default function RiderDashboard() {
                     }
                 }}
                 riderId={riderId || ''}
+            />
+
+            <AvailableOrdersModal
+                visible={showAvailableOrders}
+                riderLat={riderLocation?.coords.latitude || localPhoneLocation?.coords.latitude || null}
+                riderLng={riderLocation?.coords.longitude || localPhoneLocation?.coords.longitude || null}
+                onClose={() => setShowAvailableOrders(false)}
+                onAccept={async (request) => {
+                    setShowAvailableOrders(false);
+                    try {
+                        // We use a dummy requestId here since pool orders are organically fetched, 
+                        // and acceptOrder can handle a dummy request ID for the backend cleanly.
+                        await handleAcceptOrder({ requestId: `pool-${request.bookingId}`, data: request });
+                    } catch (error) {
+                        console.error('Failed to accept available order', error);
+                    }
+                }}
             />
         </View>
     );

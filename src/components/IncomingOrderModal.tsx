@@ -26,7 +26,7 @@ export default function IncomingOrderModal({
 }: IncomingOrderModalProps) {
     const theme = useTheme();
     const [currentIndex, setCurrentIndex] = useState(0);
-    const [timeLeft, setTimeLeft] = useState(30);
+    const [timeLeft, setTimeLeft] = useState(15);
     const slideAnim = useRef(new Animated.Value(-300)).current;
     const pulseAnim = useRef(new Animated.Value(1)).current;
 
@@ -88,7 +88,8 @@ export default function IncomingOrderModal({
             const remaining = Math.max(0, Math.floor((currentRequest.expiresAt - Date.now()) / 1000));
             setTimeLeft(remaining);
             if (remaining <= 0) {
-                // Optionally handle expiry here if needed, but parent usually handles this via simple poll or cleanup
+                // Auto-reject when timer expires
+                onReject(currentRequestWrapper.requestId);
             }
         };
 
@@ -176,8 +177,8 @@ export default function IncomingOrderModal({
                             style={[
                                 styles.timerProgress,
                                 {
-                                    width: `${(timeLeft / 30) * 100}%`,
-                                    backgroundColor: timeLeft <= 10 ? '#F44336' : theme.colors.primary,
+                                    width: `${(timeLeft / 15) * 100}%`,
+                                    backgroundColor: timeLeft <= 5 ? '#F44336' : theme.colors.primary,
                                 },
                             ]}
                         />
