@@ -225,7 +225,10 @@ class OfflineQueueService {
             // which is correct for "current location". 
             // If we wanted to keep points, we'd write to /locations/{boxId}/history/{timestamp}
 
-            await update(ref(db), updates);
+            await Promise.race([
+                update(ref(db), updates),
+                new Promise((_, reject) => setTimeout(() => reject(new Error('Firebase write timeout')), 10000))
+            ]);
 
             // Clear queue only after successful send
             this.queue = [];
@@ -275,7 +278,10 @@ class OfflineQueueService {
             };
         }
 
-        await update(ref(db), updates);
+        await Promise.race([
+            update(ref(db), updates),
+            new Promise((_, reject) => setTimeout(() => reject(new Error('Firebase write timeout')), 10000))
+        ]);
     }
 }
 

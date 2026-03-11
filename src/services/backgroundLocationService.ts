@@ -61,27 +61,41 @@ function getTimestampSentinel(): any {
 async function writePathValue(path: string, value: any): Promise<void> {
     const normalizedPath = normalizeFirebasePath(path);
 
-    if (nativeDatabase) {
-        await nativeDatabase.ref(normalizedPath).set(value);
-        return;
-    }
+    const writePromise = (async () => {
+        if (nativeDatabase) {
+            await nativeDatabase.ref(normalizedPath).set(value);
+            return;
+        }
 
-    const db = getFirebaseDatabase();
-    await set(ref(db, normalizedPath), value);
+        const db = getFirebaseDatabase();
+        await set(ref(db, normalizedPath), value);
+    })();
+
+    await Promise.race([
+        writePromise,
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Firebase write timeout')), 10000))
+    ]);
 }
 
 async function writeMultiPathUpdates(updatesMap: Record<string, any>): Promise<void> {
-    if (nativeDatabase) {
-        const normalizedUpdates: Record<string, any> = {};
-        Object.entries(updatesMap).forEach(([path, value]) => {
-            normalizedUpdates[normalizeFirebasePath(path)] = value;
-        });
-        await nativeDatabase.ref('/').update(normalizedUpdates);
-        return;
-    }
+    const writePromise = (async () => {
+        if (nativeDatabase) {
+            const normalizedUpdates: Record<string, any> = {};
+            Object.entries(updatesMap).forEach(([path, value]) => {
+                normalizedUpdates[normalizeFirebasePath(path)] = value;
+            });
+            await nativeDatabase.ref('/').update(normalizedUpdates);
+            return;
+        }
 
-    const db = getFirebaseDatabase();
-    await update(ref(db), updatesMap);
+        const db = getFirebaseDatabase();
+        await update(ref(db), updatesMap);
+    })();
+
+    await Promise.race([
+        writePromise,
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Firebase write timeout')), 10000))
+    ]);
 }
 
 const BACKGROUND_STATUS_WARN_INTERVAL_MS = 60_000;

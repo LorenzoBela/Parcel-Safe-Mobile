@@ -200,9 +200,18 @@ const AppContent = () => {
         try {
           const { getFirebaseDatabase } = require('./src/services/firebaseClient');
           const { goOffline } = require('firebase/database');
-          const db = getFirebaseDatabase();
-          goOffline(db);
-          if (__DEV__) console.log('[App] Firebase RTDB disconnected (background)');
+          
+          // DO NOT disconnect if the user is a rider (they need background location)
+          const useAuthStore = require('./src/store/authStore').useAuthStore;
+          const user = useAuthStore.getState().user;
+          
+          if (user?.role === 'rider') {
+            if (__DEV__) console.log('[App] Keeping Firebase RTDB connected for rider background tracking');
+          } else {
+            const db = getFirebaseDatabase();
+            goOffline(db);
+            if (__DEV__) console.log('[App] Firebase RTDB disconnected (background)');
+          }
         } catch (_) { /* non-fatal */ }
       } else if (nextAppState === 'active') {
         // Force Firebase RTDB to reconnect immediately when the app resumes.
