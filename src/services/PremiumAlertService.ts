@@ -5,6 +5,8 @@ export interface PremiumAlertOptions {
     message?: string;
     buttons?: AlertButton[];
     options?: AlertOptions;
+    icon?: string;
+    iconColor?: string;
 }
 
 /**
@@ -17,8 +19,8 @@ class PremiumAlertServiceClass {
     /**
      * Mirrors the exact API of `Alert.alert(title, message?, buttons?, options?)`
      */
-    alert(title: string, message?: string, buttons?: AlertButton[], options?: AlertOptions) {
-        DeviceEventEmitter.emit(this.SHOW_EVENT, { title, message, buttons, options } as PremiumAlertOptions);
+    alert(title: string, message?: string, buttons?: AlertButton[], options?: AlertOptions, icon?: string, iconColor?: string) {
+        DeviceEventEmitter.emit(this.SHOW_EVENT, { title, message, buttons, options, icon, iconColor } as PremiumAlertOptions);
     }
 }
 

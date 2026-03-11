@@ -92,6 +92,11 @@ export default function GlobalPremiumAlert() {
                 <View style={styles.dragIndicator} />
 
                 <View style={styles.content}>
+                    {alertConfig.icon && (
+                        <View style={[styles.iconContainer, { backgroundColor: (alertConfig.iconColor || c.accent) + '15' }]}>
+                            <MaterialCommunityIcons name={alertConfig.icon as any} size={32} color={alertConfig.iconColor || c.accent} />
+                        </View>
+                    )}
                     <Text style={[styles.title, { color: c.textPrimary }]}>
                         {alertConfig.title}
                     </Text>
@@ -171,6 +176,14 @@ const styles = StyleSheet.create({
         paddingHorizontal: 24,
         paddingTop: 12,
         alignItems: 'center',
+    },
+    iconContainer: {
+        width: 64,
+        height: 64,
+        borderRadius: 32,
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginBottom: 20,
     },
     title: {
         fontSize: 22,

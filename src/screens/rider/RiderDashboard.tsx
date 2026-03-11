@@ -607,7 +607,11 @@ export default function RiderDashboard() {
                 // quickly updates with fresh network data. This looks like a state change!
                 const isInitialLoadPhase = Date.now() - subscriptionStartTime.current < 3000;
                 
-                if (msg && !isInitialLoadPhase) {
+                // IGNORE if the new state from Firebase is exactly what we loaded from Supabase 
+                // when the dashboard first mounted for this delivery.
+                const isSyncingToInitialState = data.status === activeDelivery.status;
+                
+                if (msg && !isInitialLoadPhase && !isSyncingToInitialState) {
                     showStatusNotification(msg.title, msg.body, { deliveryId, status: data.status })
                         .catch(console.error);
                 }

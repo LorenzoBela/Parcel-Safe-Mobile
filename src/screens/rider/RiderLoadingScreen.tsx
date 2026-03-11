@@ -30,6 +30,13 @@ import { usePulseAnimation } from '../../hooks/useEntryAnimation';
 import { isGpsWarmedUp, warmUpLocationServices } from '../../services/gpsWarmupService';
 import * as Location from 'expo-location';
 
+// New imports for pre-fetching
+import useAuthStore from '../../store/authStore';
+import { supabase } from '../../services/supabaseClient';
+import { getAuth } from 'firebase/auth';
+import { subscribeToRiderPairing, BoxPairingState } from '../../services/boxPairingService';
+import { fetchNotifications } from '../../services/notificationService';
+
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
 const COLORS = {
@@ -55,13 +62,14 @@ const COLORS = {
 
 const LOAD_STEPS = [
     { label: 'Warming up GPS...', progress: 0.15, icon: 'crosshairs-gps' as const },
-    { label: 'Locking satellites...', progress: 0.35, icon: 'satellite-variant' as const },
-    { label: 'Checking permissions...', progress: 0.55, icon: 'shield-check-outline' as const },
-    { label: 'Preparing dashboard...', progress: 0.80, icon: 'view-dashboard-outline' as const },
+    { label: 'Locking satellites...', progress: 0.30, icon: 'satellite-variant' as const },
+    { label: 'Checking permissions...', progress: 0.45, icon: 'shield-check-outline' as const },
+    { label: 'Syncing dashboard data...', progress: 0.70, icon: 'cloud-sync-outline' as const },
+    { label: 'Preparing dashboard...', progress: 0.85, icon: 'view-dashboard-outline' as const },
     { label: 'Ready!', progress: 1.0, icon: 'check-circle-outline' as const },
 ];
 
-const MIN_DISPLAY_MS = 1500;
+const MIN_DISPLAY_MS = 2000; // Increased slightly for the new data fetch step
 
 export default function RiderLoadingScreen() {
     const navigation = useNavigation<any>();
@@ -75,13 +83,16 @@ export default function RiderLoadingScreen() {
     const mountTime = useRef(Date.now()).current;
     const hasNavigated = useRef(false);
 
+    // Get rider ID for data fetching
+    const authedUserId = useAuthStore((state: any) => state.user?.userId) as string | undefined;
 
     // Run all readiness checks
     useEffect(() => {
         let cancelled = false;
+        let pairingUnsubscribe: (() => void) | null = null;
 
         const prepareRider = async () => {
-            // Step 1: Ensure warmup is triggered (may already be done from AuthLoadingScreen)
+            // Step 1: Ensure warmup is triggered
             setStepIndex(0);
             animateProgress(LOAD_STEPS[0].progress);
             warmUpLocationServices();
@@ -100,9 +111,16 @@ export default function RiderLoadingScreen() {
 
             if (cancelled) return;
 
-            // Step 4: Preparing dashboard
+            // Step 4: Sync dashboard data (Deliveries, Pairing, Notifs)
             setStepIndex(3);
             animateProgress(LOAD_STEPS[3].progress);
+            await syncDashboardData();
+
+            if (cancelled) return;
+
+            // Step 5: Preparing dashboard
+            setStepIndex(4);
+            animateProgress(LOAD_STEPS[4].progress);
 
             // Ensure minimum display time
             const elapsed = Date.now() - mountTime;
@@ -112,8 +130,8 @@ export default function RiderLoadingScreen() {
 
             if (cancelled) return;
 
-            // Step 5: Ready — navigate
-            setStepIndex(4);
+            // Step 6: Ready — navigate
+            setStepIndex(5);
             animateProgress(1.0);
 
             // Brief pause on "Ready!" before navigating
@@ -124,9 +142,88 @@ export default function RiderLoadingScreen() {
             navigation.replace('RiderApp');
         };
 
+        // --- Data Sync Helpers ---
+        const syncDashboardData = async () => {
+            let riderId = authedUserId;
+            
+            // Auto-restore session if Zustand state drops but Firebase is active
+            if (!riderId) {
+                 const auth = getAuth();
+                 const firebaseUser = auth.currentUser;
+                 if (firebaseUser) {
+                     try {
+                         const { data: profile } = await supabase
+                             .from('profiles')
+                             .select('*')
+                             .eq('id', firebaseUser.uid)
+                             .single();
+                         if (profile) {
+                             // Temporarily have it for fetches, AuthStore will restore it permanently 
+                             // on the dashboard or we can just use the DB ID for now.
+                             riderId = profile.id;
+                         }
+                     } catch (e) {
+                         console.warn('[RiderLoading] Failed to quick-restore session:', e);
+                     }
+                 }
+            }
+
+            if (!riderId) return; // Skip if completely unauthenticated
+
+            try {
+                // Run fetches in parallel
+                await Promise.allSettled([
+                    fetchActiveDelivery(riderId),
+                    fetchPairingState(riderId),
+                    fetchUnreadNotifications(riderId)
+                ]);
+            } catch (error) {
+                console.warn('[RiderLoading] Data sync encountered an issue:', error);
+                // We do NOT throw here. We want the rider to enter the dashboard even if sync fails,
+                // so they aren't stuck on the loading screen forever.
+            }
+        };
+
+        const fetchActiveDelivery = async (rId: string) => {
+             // Replicates RiderDashboard's initial Supabase fetch
+             const { error } = await supabase
+                 .from('deliveries')
+                 .select('*')
+                 .eq('rider_id', rId)
+                 .in('status', ['PENDING', 'IN_TRANSIT', 'ARRIVED'])
+                 .limit(1);
+             // We don't need to store it; Supabase caches responses, 
+             // making the subsequent dashboard fetch instantaneous.
+             if (error) console.warn('[RiderLoading] Active delivery prefetch error:', error);
+        };
+
+        const fetchPairingState = async (rId: string): Promise<void> => {
+            return new Promise((resolve) => {
+                // Subscribe momentarily just to get the initial state cached by Firebase SDK
+                pairingUnsubscribe = subscribeToRiderPairing(rId, (state) => {
+                    resolve(); // Resolve on first emission
+                });
+                
+                // Fallback timeout in case Firebase is offline
+                setTimeout(resolve, 3000); 
+            });
+        };
+
+        const fetchUnreadNotifications = async (rId: string) => {
+            try {
+                // This builds the offline cache / quick-access for Notifications
+                await fetchNotifications(rId);
+            } catch (e) {
+                console.warn('[RiderLoading] Notif prefetch error:', e);
+            }
+        };
+
         prepareRider();
 
-        return () => { cancelled = true; };
+        return () => { 
+            cancelled = true; 
+            if (pairingUnsubscribe) pairingUnsubscribe();
+        };
     }, []);
 
     function animateProgress(toValue: number) {

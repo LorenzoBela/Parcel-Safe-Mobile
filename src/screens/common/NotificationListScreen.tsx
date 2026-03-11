@@ -24,6 +24,7 @@ import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import dayjs from 'dayjs';
 import relativeTime from 'dayjs/plugin/relativeTime';
+import { PremiumAlert } from '../../services/PremiumAlertService';
 import useAuthStore from '../../store/authStore';
 import { useAppTheme } from '../../context/ThemeContext';
 import {
@@ -136,36 +137,55 @@ export default function NotificationListScreen() {
     }, [userId]);
 
     const handleClear = useCallback(async (notifId: string) => {
+        // Optimistic UI update
+        const previousNotifications = [...notifications];
+        setNotifications((prev) => prev.filter((n) => n.id !== notifId));
+
         try {
             await clearNotifications({ notificationId: notifId });
-            setNotifications((prev) => prev.filter((n) => n.id !== notifId));
         } catch (error) {
             console.warn('[NotificationList] clear error:', error);
+            // Revert UI on failure
+            setNotifications(previousNotifications);
+            PremiumAlert.alert('Error', 'Failed to clear notification. Please try again.');
         }
-    }, []);
+    }, [notifications]);
 
     const handleClearAll = useCallback(async () => {
         if (!userId) return;
+        
+        // Optimistic UI update
+        const previousNotifications = [...notifications];
+        setNotifications([]);
+
         try {
             await clearNotifications({ userId, all: true });
-            setNotifications([]);
         } catch (error) {
             console.warn('[NotificationList] clearAll error:', error);
+            // Revert UI on failure
+            setNotifications(previousNotifications);
+            PremiumAlert.alert('Error', 'Failed to clear all notifications. Please try again.');
         }
-    }, [userId]);
+    }, [userId, notifications]);
 
     const handleOpenNotification = useCallback((item: AppNotification) => {
         if (!item.read) {
             handleMarkRead(item.id);
         }
         setTimeout(() => {
-            Alert.alert(
+            const iconName = notificationIcon(item.type);
+            const iconColor = notificationColor(item.type, c);
+            
+            PremiumAlert.alert(
                 item.title,
                 item.message,
-                [{ text: 'Close', style: 'cancel' }]
+                [{ text: 'Close', style: 'cancel' }],
+                undefined,
+                iconName,
+                iconColor
             );
         }, 100);
-    }, [handleMarkRead]);
+    }, [handleMarkRead, c]);
 
     // ── Render Item ────────────────────────────────────────────────────────────
 
