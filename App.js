@@ -1,5 +1,5 @@
 import 'react-native-gesture-handler';
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { GluestackUIProvider } from '@gluestack-ui/themed';
 import { config } from '@gluestack-ui/config';
 import { PaperProvider } from 'react-native-paper';
@@ -9,6 +9,7 @@ import AppNavigator from './src/navigation/AppNavigator';
 import { configureGoogleSignIn } from './src/services/auth';
 import { ThemeProvider, useAppTheme } from './src/context/ThemeContext';
 import GlobalPremiumAlert from './src/components/modals/GlobalPremiumAlert';
+import ResumeScreen from './src/screens/auth/ResumeScreen';
 
 import * as SplashScreen from 'expo-splash-screen';
 
@@ -33,6 +34,10 @@ let supabase = null;
 const AppContent = () => {
   const { theme } = useAppTheme();
   const [appState, setAppState] = useState(AppState.currentState);
+  const [isResuming, setIsResuming] = useState(false);
+  // Only trigger ResumeScreen when the app truly went to background (not just inactive).
+  // inactive alone is caused by notification shade, dropdowns, system dialogs — not a real background trip.
+  const wasBackgroundedRef = useRef(false);
 
   useEffect(() => {
     let cleanupFunctions = [];
@@ -186,20 +191,35 @@ const AppContent = () => {
 
     // Monitor app state changes
     const subscription = AppState.addEventListener('change', nextAppState => {
-      if (appState.match(/inactive|background/) && nextAppState === 'active') {
-        if (__DEV__) console.log('[App] App has come to the foreground!');
+      if (nextAppState === 'background') {
+        // Mark that we genuinely went to background (not just inactive via notification shade)
+        wasBackgroundedRef.current = true;
 
-        // Re-warm GPS when returning from background — the chip may have powered down.
-        // resetWarmup() has a built-in 60s cooldown to prevent excessive warmups.
+        // Cleanly disconnect Firebase RTDB WebSocket to prevent stale connections.
+        // This avoids the 20-30s lazy reconnect delay when the app resumes.
         try {
-          const { resetWarmup, warmUpLocationServices } = require('./src/services/gpsWarmupService');
-          resetWarmup();
-          warmUpLocationServices();
-        } catch (e) {
-          // Non-fatal — warmup is best-effort
+          const { getFirebaseDatabase } = require('./src/services/firebaseClient');
+          const { goOffline } = require('firebase/database');
+          const db = getFirebaseDatabase();
+          goOffline(db);
+          if (__DEV__) console.log('[App] Firebase RTDB disconnected (background)');
+        } catch (_) { /* non-fatal */ }
+      } else if (nextAppState === 'active') {
+        // Force Firebase RTDB to reconnect immediately when the app resumes.
+        // Without this, the SDK waits for its internal reconnect timer (up to 30s).
+        try {
+          const { getFirebaseDatabase } = require('./src/services/firebaseClient');
+          const { goOnline } = require('firebase/database');
+          const db = getFirebaseDatabase();
+          goOnline(db);
+          if (__DEV__) console.log('[App] Firebase RTDB reconnected (foreground)');
+        } catch (_) { /* non-fatal */ }
+
+        if (wasBackgroundedRef.current) {
+          if (__DEV__) console.log('[App] App returned from background — showing ResumeScreen');
+          wasBackgroundedRef.current = false;
+          setIsResuming(true);
         }
-      } else if (nextAppState.match(/inactive|background/)) {
-        // if (__DEV__) console.log('[App] App has gone to the background');
       }
       setAppState(nextAppState);
     });
@@ -224,6 +244,9 @@ const AppContent = () => {
     <PaperProvider theme={theme}>
       <AppNavigator />
       <GlobalPremiumAlert />
+      {isResuming && (
+        <ResumeScreen onReady={() => setIsResuming(false)} />
+      )}
     </PaperProvider>
   );
 };

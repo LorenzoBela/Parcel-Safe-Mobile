@@ -51,6 +51,7 @@ import PrivacyPolicyScreen from '../screens/common/PrivacyPolicyScreen';
 import EditProfileScreen from '../screens/common/EditProfileScreen';
 import SavedAddressesScreen from '../screens/common/SavedAddressesScreen';
 import SavedContactsScreen from '../screens/common/SavedContactsScreen';
+import NotificationListScreen from '../screens/common/NotificationListScreen';
 
 const Stack = createStackNavigator();
 const Tab = createBottomTabNavigator();
@@ -257,6 +258,7 @@ export default function AppNavigator() {
                 <Stack.Screen name="EditProfile" component={EditProfileScreen} options={{ headerShown: true, title: 'Edit Profile' }} />
                 <Stack.Screen name="SavedAddresses" component={SavedAddressesScreen} options={{ headerShown: true, title: 'Saved Addresses' }} />
                 <Stack.Screen name="SavedContacts" component={SavedContactsScreen} options={{ headerShown: true, title: 'Saved Contacts' }} />
+                <Stack.Screen name="NotificationList" component={NotificationListScreen} options={{ headerShown: false }} />
 
                 {/* EC-81: Theft Detection Screens */}
                 <Stack.Screen name="TheftAlert" component={TheftAlertScreen} options={{ headerShown: true, title: 'Box Security' }} />

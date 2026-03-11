@@ -468,6 +468,8 @@ export default function TrackOrderScreen() {
         return () => { cancelled = true; };
     }, [params.riderId]);
 
+    const subscriptionStartTime = useRef<number>(0);
+
     useEffect(() => {
         if (!deliveryId) {
             PremiumAlert.alert('Missing Delivery', 'Unable to open tracking without a valid delivery.', [
@@ -475,6 +477,8 @@ export default function TrackOrderScreen() {
             ]);
             return;
         }
+
+        subscriptionStartTime.current = Date.now();
 
         if (MAPBOX_TOKEN) {
             MapboxGL.setAccessToken(MAPBOX_TOKEN);
@@ -500,7 +504,13 @@ export default function TrackOrderScreen() {
                     FAILED: { title: '⚠️ Delivery Failed', body: 'Delivery attempt failed. Please contact support.' },
                 };
                 const msg = STATUS_MESSAGES[data.status];
-                if (msg) {
+                
+                // EC-Fix: Ignore state transitions that happen immediately upon subscription.
+                // Firebase offline persistence fires with cached old data first, then 
+                // quickly updates with fresh network data. This looks like a state change!
+                const isInitialLoadPhase = Date.now() - subscriptionStartTime.current < 3000;
+                
+                if (msg && !isInitialLoadPhase) {
                     showStatusNotification(msg.title, msg.body, { deliveryId, status: data.status })
                         .catch(console.error);
                     // Keep the ongoing sticky notification in the shade in sync

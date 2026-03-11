@@ -192,6 +192,15 @@ function setupFCMHandlers(): void {
     messaging().onMessage(async (remoteMessage: any) => {
         if (__DEV__) console.log('[BackgroundService] Foreground FCM message');
 
+        // EC-FIX: Ignore stale foreground messages queued up by FCM
+        if (remoteMessage.sentTime) {
+            const ageMs = Date.now() - remoteMessage.sentTime;
+            if (ageMs > 5 * 60 * 1000) { // 5 minutes
+                if (__DEV__) console.log(`[BackgroundService] Ignoring stale foreground message (age: ${Math.round(ageMs / 1000)}s)`);
+                return;
+            }
+        }
+
         if (remoteMessage.data?.type === 'order') {
             await emitEvent('order_received', remoteMessage.data);
             await showOrderNotification(remoteMessage.data);
@@ -214,6 +223,15 @@ function setupFCMHandlers(): void {
  */
 export async function handleBackgroundMessage(remoteMessage: any): Promise<void> {
     if (__DEV__) console.log('[BackgroundService] Background FCM message');
+
+    // EC-FIX: Ignore stale background messages queued up by FCM
+    if (remoteMessage.sentTime) {
+        const ageMs = Date.now() - remoteMessage.sentTime;
+        if (ageMs > 5 * 60 * 1000) { // 5 minutes
+            if (__DEV__) console.log(`[BackgroundService] Ignoring stale background message (age: ${Math.round(ageMs / 1000)}s)`);
+            return;
+        }
+    }
 
     const data = remoteMessage.data || {};
 

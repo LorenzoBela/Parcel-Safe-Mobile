@@ -489,6 +489,42 @@ export default function ArrivalScreen() {
                 return;
             }
 
+            const applyPosition = (coords: { latitude: number; longitude: number; accuracy: number | null }, fallbackAccuracy: number) => {
+                const position = {
+                    lat: coords.latitude,
+                    lng: coords.longitude,
+                    accuracy: coords.accuracy ?? fallbackAccuracy,
+                };
+                setCurrentPosition(position);
+                const result = checkGeofence(position, geofence);
+                setIsPhoneInside(result.isInside);
+                setDistanceMeters(result.distanceMeters);
+            };
+
+            // Stage 1: Seed immediately from last-known OS cache.
+            // When backgroundLocationService has been running during transit, this fix
+            // is only seconds old — zero wait, geofence check runs instantly.
+            let seededFresh = false;
+            try {
+                const lastKnown = await Location.getLastKnownPositionAsync({ maxAge: 30000 });
+                if (lastKnown) {
+                    applyPosition(lastKnown.coords, 50);
+                    // If background service is active the fix is already GPS-accurate;
+                    // no need for a redundant Balanced round-trip.
+                    seededFresh = isBackgroundLocationRunning();
+                }
+            } catch { /* silent — best-effort seed */ }
+
+            // Stage 2: Fast balanced fix using cell/Wi-Fi (~1-3 s) — only when GPS is
+            // cold (background service not running). Skipped when GPS is already hot.
+            if (!seededFresh) {
+                try {
+                    const fast = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+                    applyPosition(fast.coords, 30);
+                } catch { /* GPS unavailable — watchPositionAsync will still provide updates */ }
+            }
+
+            // Stage 3: High-accuracy continuous GPS watch for precise ongoing checks.
             subscription = await Location.watchPositionAsync(
                 {
                     accuracy: Location.Accuracy.High,
@@ -496,19 +532,7 @@ export default function ArrivalScreen() {
                     distanceInterval: 5,
                 },
                 (location) => {
-                    const position = {
-                        lat: location.coords.latitude,
-                        lng: location.coords.longitude,
-                        accuracy: location.coords.accuracy || 25,
-                    };
-
-                    // Update current position for UI/Map
-                    setCurrentPosition(position);
-
-                    // Check if Phone is inside
-                    const result = checkGeofence(position, geofence);
-                    setIsPhoneInside(result.isInside);
-                    setDistanceMeters(result.distanceMeters); // Distance from Phone to Target
+                    applyPosition(location.coords, 25);
                 }
             );
         };

@@ -8,6 +8,7 @@ import 'react-native-url-polyfill/auto';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import axios from 'axios';
+import { AppState, AppStateStatus } from 'react-native';
 
 const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL || '';
 const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || '';
@@ -63,7 +64,7 @@ export const supabase: SupabaseClient | null =
                             headers: headers as any,
                             data: requestData,
                             validateStatus: () => true, // resolve promise for all status codes
-                            timeout: 30000,
+                            timeout: 10000,
                         });
 
                         // Convert axios response to fetch Response
@@ -118,6 +119,43 @@ export const supabase: SupabaseClient | null =
             },
         })
         : null;
+
+// ==================== Proactive Session Refresh ====================
+// When the app returns from background after 10+ minutes, the Supabase JWT
+// is likely expired. The SDK's autoRefreshToken pauses while backgrounded,
+// so we proactively kick a refresh the moment the app becomes active.
+// This eliminates the 20-30s delay caused by lazy token refresh blocking
+// the first API call on resume.
+
+let _lastBackgroundedAt = 0;
+const MIN_BACKGROUND_FOR_REFRESH_MS = 60_000; // Only refresh if backgrounded > 1 min
+
+if (supabase) {
+    let _prevAppState: AppStateStatus = AppState.currentState;
+
+    AppState.addEventListener('change', (nextState: AppStateStatus) => {
+        if (nextState === 'background' || nextState === 'inactive') {
+            if (_prevAppState === 'active') {
+                _lastBackgroundedAt = Date.now();
+            }
+        } else if (nextState === 'active' && _prevAppState !== 'active') {
+            const backgroundDuration = _lastBackgroundedAt > 0
+                ? Date.now() - _lastBackgroundedAt
+                : Infinity; // First launch or unknown — always refresh
+
+            if (backgroundDuration >= MIN_BACKGROUND_FOR_REFRESH_MS) {
+                console.log(`[Supabase] App resumed after ${Math.round(backgroundDuration / 1000)}s — proactive session refresh`);
+                // Fire-and-forget: refresh the token in the background.
+                // This warms the HTTP connection and refreshes the JWT so
+                // subsequent API calls are instant instead of blocking.
+                supabase.auth.getSession().catch((err) => {
+                    console.warn('[Supabase] Proactive session refresh failed (non-fatal):', err?.message);
+                });
+            }
+        }
+        _prevAppState = nextState;
+    });
+}
 
 // ==================== Types ====================
 

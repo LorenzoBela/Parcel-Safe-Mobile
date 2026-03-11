@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import NotificationBell from '../../components/NotificationBell';
 import { View, StyleSheet, ScrollView, TouchableOpacity, ImageBackground, StatusBar, Alert, RefreshControl, Share, Animated } from 'react-native';
 import { useEntryAnimation, useStaggerAnimation } from '../../hooks/useEntryAnimation';
 import { Text, Avatar, Portal, Modal, IconButton } from 'react-native-paper';
@@ -244,13 +245,16 @@ export default function CustomerDashboard() {
                             <Text style={styles.dateText}>{currentTime.format('dddd, MMMM D')}</Text>
                             <Text style={styles.timeText}>{currentTime.format('h:mm A')}</Text>
                         </View>
-                        {weather && (
-                            <View style={styles.weatherPill}>
-                                <MaterialCommunityIcons name={weather.icon as any} size={26} color="#FFFFFF" />
-                                <Text style={styles.weatherTemp}>{weather.temp}</Text>
-                                <Text style={styles.weatherCond}>{weather.condition}</Text>
-                            </View>
-                        )}
+                        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                            {weather && (
+                                <View style={styles.weatherPill}>
+                                    <MaterialCommunityIcons name={weather.icon as any} size={26} color="#FFFFFF" />
+                                    <Text style={styles.weatherTemp}>{weather.temp}</Text>
+                                    <Text style={styles.weatherCond}>{weather.condition}</Text>
+                                </View>
+                            )}
+                            <NotificationBell color="#FFFFFF" size={24} />
+                        </View>
                     </View>
                 </View>
             </ImageBackground>

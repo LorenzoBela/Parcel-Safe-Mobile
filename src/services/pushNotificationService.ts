@@ -381,6 +381,17 @@ function setupFCMBackgroundHandler(): void {
             const body = remoteMessage.notification?.body || data.body || 'You have a new notification.';
             const channelId = data.channelId || NOTIFICATION_CHANNELS.DELIVERY_STATUS;
 
+            // EC-FIX: Ignore stale background messages queued up by FCM
+            // If the device was offline when the push was sent, FCM will hold it and deliver
+            // it all at once when connecting. We ignore messages older than 5 minutes.
+            if (remoteMessage.sentTime) {
+                const ageMs = Date.now() - remoteMessage.sentTime;
+                if (ageMs > 5 * 60 * 1000) { // 5 minutes
+                    console.log(`[FCM] Ignoring stale background message (age: ${Math.round(ageMs / 1000)}s):`, title);
+                    return;
+                }
+            }
+
             if (checkNotificationsAvailable()) {
                 await scheduleWakingNotification(title, body, data, channelId);
             }
@@ -405,6 +416,17 @@ export function setupFCMForegroundHandler(): () => void {
             const title = remoteMessage.notification?.title || data.title || 'Parcel Safe';
             const body = remoteMessage.notification?.body || data.body || 'You have a new notification.';
             const channelId = data.channelId || NOTIFICATION_CHANNELS.DELIVERY_STATUS;
+
+            // EC-FIX: Ignore stale foreground messages queued up by FCM
+            // If the app is launched and registers for messaging(), FCM may flush old
+            // pending messages. We ignore messages older than 5 minutes.
+            if (remoteMessage.sentTime) {
+                const ageMs = Date.now() - remoteMessage.sentTime;
+                if (ageMs > 5 * 60 * 1000) { // 5 minutes
+                    console.log(`[FCM] Ignoring stale foreground message (age: ${Math.round(ageMs / 1000)}s):`, title);
+                    return;
+                }
+            }
 
             if (checkNotificationsAvailable()) {
                 await scheduleWakingNotification(title, body, data, channelId);

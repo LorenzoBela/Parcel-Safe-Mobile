@@ -148,6 +148,56 @@ export default function AuthLoadingScreen() {
     useEffect(() => {
         const restoreSession = async () => {
             try {
+                // ── Fast path: MMKV-hydrated state ──────────────────────────
+                // If Zustand already has user data (restored from MMKV on disk),
+                // skip the network call and go straight to the dashboard.
+                // The Supabase token is refreshed silently in the background
+                // by the AppState listener in supabaseClient.ts.
+                const cachedState = useAuthStore.getState() as any;
+                if (cachedState.user && cachedState.role) {
+                    console.log('[AuthLoading] Fast path: state hydrated from MMKV, skipping network');
+                    Animated.timing(progressAnim, {
+                        toValue: 1,
+                        duration: 200,
+                        useNativeDriver: false,
+                    }).start(() => {
+                        navigation.replace('RoleSelection');
+                    });
+
+                    // Fire-and-forget: silently refresh profile in background
+                    // so any server-side role changes take effect next launch
+                    (async () => {
+                        try {
+                            const { data: { session } } = await supabase.auth.getSession();
+                            if (session?.user) {
+                                const { data: profile } = await supabase
+                                    .from('profiles')
+                                    .select('role, full_name, phone_number, avatar_url')
+                                    .eq('id', session.user.id)
+                                    .maybeSingle();
+                                if (profile) {
+                                    const rawRole = profile.role || session.user.user_metadata?.role || 'CUSTOMER';
+                                    const role = typeof rawRole === 'string' ? rawRole.toLowerCase() : 'customer';
+                                    login({
+                                        userId: session.user.id,
+                                        email: session.user.email,
+                                        name: profile.full_name || session.user.user_metadata?.full_name || session.user.user_metadata?.name,
+                                        photo: profile.avatar_url || session.user.user_metadata?.avatar_url,
+                                        role,
+                                        fullName: profile.full_name || session.user.user_metadata?.full_name,
+                                        phone: profile.phone_number,
+                                    });
+                                }
+                            }
+                        } catch (_) {
+                            // Non-fatal background refresh
+                        }
+                    })();
+
+                    return;
+                }
+
+                // ── Slow path: no cached state, fetch from network ──────────
                 const { data: { session }, error } = await supabase.auth.getSession();
 
                 if (error) {

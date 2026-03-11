@@ -127,6 +127,7 @@ import {
 import { subscribeToPower, PowerState, isSolenoidBlockedByVoltage } from '../../services/firebaseClient';
 import useAuthStore from '../../store/authStore';
 import { fetchWeather, weatherBackgroundImages, WeatherData } from '../../services/weatherService';
+import NotificationBell from '../../components/NotificationBell';
 import { getAuth } from 'firebase/auth'; // EC-Fix: Fallback auth
 import { supabase } from '../../services/supabaseClient'; // EC-Fix: Session restoration
 
@@ -576,12 +577,15 @@ export default function RiderDashboard() {
 
     // Rider-side delivery status watcher — fires lock-screen notifications for events
     // the rider didn't initiate (customer cancellation, box tamper, delivery confirmed).
+    const subscriptionStartTime = useRef<number>(0);
+    
     useEffect(() => {
         if (!activeDelivery?.id) {
             prevRiderDeliveryStatus.current = null;
             return;
         }
 
+        subscriptionStartTime.current = Date.now();
         const deliveryId = activeDelivery.id;
 
         const unsubscribe = subscribeToDelivery(deliveryId, (data) => {
@@ -597,9 +601,23 @@ export default function RiderDashboard() {
                     COMPLETED: { title: '✅ Delivery Confirmed', body: 'Customer confirmed delivery. Great work!' },
                 };
                 const msg = RIDER_ALERT_MESSAGES[data.status];
-                if (msg) {
+                
+                // EC-Fix: Ignore state transitions that happen immediately upon subscription.
+                // Firebase offline persistence fires with cached old data first, then 
+                // quickly updates with fresh network data. This looks like a state change!
+                const isInitialLoadPhase = Date.now() - subscriptionStartTime.current < 3000;
+                
+                if (msg && !isInitialLoadPhase) {
                     showStatusNotification(msg.title, msg.body, { deliveryId, status: data.status })
                         .catch(console.error);
+                }
+
+                // Terminal statuses — clear active delivery immediately so the
+                // dashboard doesn't show a stale "current job" after cancellation.
+                const TERMINAL_STATUSES = ['CANCELLED', 'COMPLETED', 'RETURNED'];
+                if (TERMINAL_STATUSES.includes(data.status)) {
+                    setActiveDelivery(null);
+                    setHasActiveDelivery(false);
                 }
             }
             prevRiderDeliveryStatus.current = data?.status ?? null;
@@ -1110,6 +1128,10 @@ export default function RiderDashboard() {
 
             if (result.success) {
                 setShowCancelModal(false);
+                // Immediately clear stale delivery state so the dashboard
+                // doesn't show the cancelled job when the rider navigates back.
+                setActiveDelivery(null);
+                setHasActiveDelivery(false);
                 // Navigate to confirmation screen with return OTP
                 navigation.navigate('CancellationConfirmation', {
                     deliveryId: nextDelivery.id,
@@ -1520,13 +1542,16 @@ export default function RiderDashboard() {
                             <Text style={styles.dateText}>{currentTime.format('dddd, MMMM D')}</Text>
                             <Text style={styles.timeText}>{currentTime.format('h:mm A')}</Text>
                         </View>
-                        {weather && (
-                            <View style={styles.weatherContainer}>
-                                <MaterialCommunityIcons name={weather.icon as any} size={30} color="white" />
-                                <Text style={styles.weatherText}>{weather.temp}</Text>
-                                <Text style={styles.weatherCondition}>{weather.condition}</Text>
-                            </View>
-                        )}
+                        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                            {weather && (
+                                <View style={styles.weatherContainer}>
+                                    <MaterialCommunityIcons name={weather.icon as any} size={30} color="white" />
+                                    <Text style={styles.weatherText}>{weather.temp}</Text>
+                                    <Text style={styles.weatherCondition}>{weather.condition}</Text>
+                                </View>
+                            )}
+                            <NotificationBell color="#FFFFFF" size={24} />
+                        </View>
                     </View>
                 </View>
             </ImageBackground>

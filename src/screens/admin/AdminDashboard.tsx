@@ -19,6 +19,7 @@ import { useAppTheme } from '../../context/ThemeContext';
 import { useExitAppConfirmation } from '../../hooks/useExitAppConfirmation';
 import ExitConfirmationModal from '../../components/modals/ExitConfirmationModal';
 import { PremiumAlert } from '../../services/PremiumAlertService';
+import NotificationBell from '../../components/NotificationBell';
 
 // ─── Dual-mode Color Palette ────────────────────────────────────────────────────
 
@@ -331,12 +332,15 @@ export default function AdminDashboard() {
                         {currentTime.format('dddd, MMM D · h:mm A')}
                     </Text>
                 </View>
-                {weather && (
-                    <View style={[styles.weatherPill, { backgroundColor: c.pillBg }]}>
-                        <MaterialCommunityIcons name={weather.icon as any} size={16} color={c.textSecondary} />
-                        <Text style={[styles.weatherTemp, { color: c.textPrimary }]}>{weather.temp}</Text>
-                    </View>
-                )}
+                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                    {weather && (
+                        <View style={[styles.weatherPill, { backgroundColor: c.pillBg }]}>
+                            <MaterialCommunityIcons name={weather.icon as any} size={16} color={c.textSecondary} />
+                            <Text style={[styles.weatherTemp, { color: c.textPrimary }]}>{weather.temp}</Text>
+                        </View>
+                    )}
+                    <NotificationBell color={c.textPrimary} size={22} />
+                </View>
             </Animated.View>
 
             <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
