@@ -140,6 +140,7 @@ import { useExitAppConfirmation } from '../../hooks/useExitAppConfirmation';
 import ExitConfirmationModal from '../../components/modals/ExitConfirmationModal';
 import { StatusBar } from 'expo-status-bar';
 import { PremiumAlert } from '../../services/PremiumAlertService';
+import EarningsWidget from '../../components/EarningsWidget';
 
 // ── Uber-style dual palette ──
 const lightC = {
@@ -1767,6 +1768,9 @@ export default function RiderDashboard() {
                         <Switch value={isOnline} onValueChange={setIsOnline} trackColor={{ true: c.accent, false: c.search }} thumbColor={isDarkMode ? c.text : c.bg} />
                     </View>
                 </Animated.View>
+
+                {/* Earnings & Goal Tracker Widget */}
+                {riderId && <EarningsWidget riderId={riderId} dailyGoal={1500} />}
 
                 {/* GPS Connection Status Indicator */}
                 <Animated.View style={gpsCardAnim.style}>

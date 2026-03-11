@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { View, StyleSheet, FlatList, RefreshControl, Modal } from 'react-native';
+import { View, StyleSheet, FlatList, RefreshControl, Modal, Animated } from 'react-native';
 import { Text, Button, Surface, IconButton, Divider, useTheme } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { RiderOrderRequest, subscribeToAvailableOrders, fetchAvailableOrders, SEARCH_RADIUS_KM } from '../../services/riderMatchingService';
@@ -22,6 +22,19 @@ export default function AvailableOrdersModal({
     const theme = useTheme();
     const [orders, setOrders] = useState<RiderOrderRequest[]>([]);
     const [refreshing, setRefreshing] = useState(false);
+    const [isLoading, setIsLoading] = useState(true);
+
+    // Initial load timer to ensure skeleton shows for at least a bit,
+    // and hides if Firebase returns empty quickly.
+    useEffect(() => {
+        if (visible) {
+            setIsLoading(true);
+            const timer = setTimeout(() => {
+                setIsLoading(false);
+            }, 1500); // 1.5s max skeleton time if no orders
+            return () => clearTimeout(timer);
+        }
+    }, [visible]);
 
     // Setup real-time listener when the modal is open
     useEffect(() => {
@@ -29,6 +42,7 @@ export default function AvailableOrdersModal({
 
         const unsubscribe = subscribeToAvailableOrders(riderLat, riderLng, SEARCH_RADIUS_KM, (updatedOrders) => {
             setOrders(updatedOrders);
+            setIsLoading(false); // Data arrived, hide skeleton
         });
 
         return unsubscribe;
@@ -49,6 +63,62 @@ export default function AvailableOrdersModal({
     }, [riderLat, riderLng]);
 
     const formatCurrency = (amount: number) => `₱${amount.toFixed(2)}`;
+
+    // --- Skeleton Loader Component ---
+    const SkeletonOrderCard = () => {
+        const fadeAnim = React.useRef(new Animated.Value(0.3)).current;
+
+        useEffect(() => {
+            Animated.loop(
+                Animated.sequence([
+                    Animated.timing(fadeAnim, {
+                        toValue: 0.7,
+                        duration: 800,
+                        useNativeDriver: true,
+                    }),
+                    Animated.timing(fadeAnim, {
+                        toValue: 0.3,
+                        duration: 800,
+                        useNativeDriver: true,
+                    }),
+                ])
+            ).start();
+        }, [fadeAnim]);
+
+        return (
+            <Surface style={styles.orderCard} elevation={2}>
+                <Animated.View style={{ opacity: fadeAnim }}>
+                    <View style={styles.cardHeader}>
+                        <View style={styles.cardHeaderLeft}>
+                            <View style={[styles.skeletonBlock, { width: 32, height: 32, borderRadius: 16 }]} />
+                            <View style={[styles.skeletonBlock, { width: 100, height: 20, marginLeft: 12 }]} />
+                        </View>
+                        <View style={[styles.skeletonBlock, { width: 60, height: 16 }]} />
+                    </View>
+                    <Divider style={styles.divider} />
+                    <View style={styles.locationRow}>
+                        <View style={[styles.skeletonBlock, { width: 28, height: 28, borderRadius: 14 }]} />
+                        <View style={styles.locationInfo}>
+                            <View style={[styles.skeletonBlock, { width: 50, height: 12, marginBottom: 4 }]} />
+                            <View style={[styles.skeletonBlock, { width: '80%', height: 16 }]} />
+                        </View>
+                    </View>
+                    <View style={styles.locationRow}>
+                        <View style={[styles.skeletonBlock, { width: 28, height: 28, borderRadius: 14 }]} />
+                        <View style={styles.locationInfo}>
+                            <View style={[styles.skeletonBlock, { width: 50, height: 12, marginBottom: 4 }]} />
+                            <View style={[styles.skeletonBlock, { width: '80%', height: 16 }]} />
+                        </View>
+                    </View>
+                    <View style={styles.fareRow}>
+                        <View style={[styles.skeletonBlock, { width: 80, height: 16 }]} />
+                        <View style={[styles.skeletonBlock, { width: 60, height: 24 }]} />
+                    </View>
+                    <View style={[styles.skeletonBlock, { width: '100%', height: 40, borderRadius: 12 }]} />
+                </Animated.View>
+            </Surface>
+        );
+    };
 
     const renderOrderItem = ({ item }: { item: RiderOrderRequest }) => (
         <Surface style={styles.orderCard} elevation={2}>
@@ -121,19 +191,21 @@ export default function AvailableOrdersModal({
                     </View>
 
                     <FlatList
-                        data={orders}
-                        keyExtractor={(item) => item.bookingId}
+                        data={isLoading ? ([1, 2, 3] as any[]) : orders}
+                        keyExtractor={(item, index) => isLoading ? `skeleton-${index}` : (item as RiderOrderRequest).bookingId}
                         contentContainerStyle={styles.listContent}
-                        renderItem={renderOrderItem}
+                        renderItem={({ item }) => isLoading ? <SkeletonOrderCard /> : renderOrderItem({ item: item as RiderOrderRequest })}
                         refreshControl={
                             <RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={[theme.colors.primary]} />
                         }
                         ListEmptyComponent={
-                            <View style={styles.emptyContainer}>
-                                <MaterialCommunityIcons name="clock-outline" size={64} color="#CCC" />
-                                <Text variant="bodyLarge" style={styles.emptyText}>No available orders nearby at the moment.</Text>
-                                <Text variant="bodyMedium" style={styles.emptySubText}>Pull down to refresh and check again.</Text>
-                            </View>
+                            !isLoading ? (
+                                <View style={styles.emptyContainer}>
+                                    <MaterialCommunityIcons name="clock-outline" size={64} color="#CCC" />
+                                    <Text variant="bodyLarge" style={styles.emptyText}>No available orders nearby at the moment.</Text>
+                                    <Text variant="bodyMedium" style={styles.emptySubText}>Pull down to refresh and check again.</Text>
+                                </View>
+                            ) : null
                         }
                     />
                 </Surface>
@@ -255,5 +327,9 @@ const styles = StyleSheet.create({
     acceptButton: {
         borderRadius: 12,
         paddingVertical: 4,
+    },
+    skeletonBlock: {
+        backgroundColor: '#E0E0E0',
+        borderRadius: 4,
     },
 });
