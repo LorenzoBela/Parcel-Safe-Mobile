@@ -970,26 +970,51 @@ export default function ArrivalScreen() {
         }
 
         const hasCoords = navLat && navLng && (navLat !== 0 || navLng !== 0);
+        const label = navAddress || 'Destination';
+        const encodedLabel = encodeURIComponent(label);
+
+        const openWithFallback = async (primaryUrl: string, fallbackUrl: string) => {
+            try {
+                const supported = await Linking.canOpenURL(primaryUrl);
+                if (supported) {
+                    await Linking.openURL(primaryUrl);
+                } else {
+                    await Linking.openURL(fallbackUrl);
+                }
+            } catch (error) {
+                console.error('[ArrivalScreen handleNavigate] Failed to open maps:', error);
+                try {
+                    const browserUrl = hasCoords
+                        ? `https://www.google.com/maps/dir/?api=1&destination=${navLat},${navLng}&travelmode=driving`
+                        : `https://www.google.com/maps/search/?api=1&query=${encodedLabel}`;
+                    await Linking.openURL(browserUrl);
+                } catch (browserError) {
+                    console.error('[ArrivalScreen handleNavigate] Browser fallback also failed:', browserError);
+                }
+            }
+        };
 
         if (hasCoords) {
             const latLng = `${navLat},${navLng}`;
-            const label = navAddress || 'Destination';
-
-            const url = Platform.select({
-                ios: `maps:?ll=${latLng}&q=${label}`,
-                android: `geo:${latLng}?q=${latLng}(${label})`
-            });
-            if (url) Linking.openURL(url);
-        } else {
-            // Fallback to address string if coordinates missing
-            if (navAddress) {
-                const scheme = Platform.select({ ios: 'maps:0,0?q=', android: 'geo:0,0?q=' });
-                const url = Platform.select({
-                    ios: `${scheme}${navAddress}`,
-                    android: `${scheme}${navAddress}`
-                });
-                if (url) Linking.openURL(url);
-            }
+            const primaryUrl = Platform.select({
+                ios: `maps:?ll=${latLng}&q=${encodedLabel}`,
+                android: `google.navigation:q=${latLng}&mode=d`,
+            })!;
+            const fallbackUrl = Platform.select({
+                ios: `https://maps.apple.com/?ll=${latLng}&q=${encodedLabel}`,
+                android: `geo:${latLng}?q=${latLng}(${encodedLabel})`,
+            })!;
+            openWithFallback(primaryUrl, fallbackUrl);
+        } else if (label) {
+            const primaryUrl = Platform.select({
+                ios: `maps:0,0?q=${encodedLabel}`,
+                android: `google.navigation:q=${encodedLabel}&mode=d`,
+            })!;
+            const fallbackUrl = Platform.select({
+                ios: `https://maps.apple.com/?q=${encodedLabel}`,
+                android: `geo:0,0?q=${encodedLabel}`,
+            })!;
+            openWithFallback(primaryUrl, fallbackUrl);
         }
     };
 

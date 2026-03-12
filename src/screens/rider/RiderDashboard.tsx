@@ -17,6 +17,7 @@ import MapboxGL, { isMapboxNativeAvailable, MapFallback } from '../../components
 import AnimatedRiderMarker from '../../components/map/AnimatedRiderMarker';
 import LottieView from 'lottie-react-native';
 import { useLocationRedundancy, getStatusMessage, getStatusColor } from '../../hooks/useLocationRedundancy';
+import { useSecurityAlerts } from '../../hooks/useSecurityAlerts';
 import { subscribeToBattery, BatteryState, subscribeToTamper, TamperState, subscribeToLocation, LocationData, subscribeToKeypad, KeypadState, subscribeToHinge, HingeState, subscribeToBoxState, BoxState, updateBoxState, writePhoneLocation } from '../../services/firebaseClient';
 import { offlineCache, PendingSync } from '../../services/offlineCache';
 import { NetworkStatusBanner } from '../../components';
@@ -95,6 +96,7 @@ import {
     setupNotificationChannels,
     showIncomingOrderNotification,
     showStatusNotification,
+    showSecurityNotification,
     NOTIFICATION_CHANNELS,
     addNotificationReceivedListener,
 } from '../../services/pushNotificationService';
@@ -428,6 +430,9 @@ export default function RiderDashboard() {
     const boxIdForMonitoring = pairedBoxId;
     const activeDeliveryBoxId = sanitizeBoxId(activeDelivery?.assigned_box_id || activeDelivery?.box_id);
     const trackedBoxId = (isPaired && pairedBoxId) ? pairedBoxId : activeDeliveryBoxId;
+
+    // EC-81: Real-time security alerts (push + in-app) for tamper/theft/lockdown
+    useSecurityAlerts(trackedBoxId, activeDelivery?.id, riderId);
 
     // Keep the ref in sync so the foreground watcher callback can access current boxId
     useEffect(() => {
@@ -765,13 +770,18 @@ export default function RiderDashboard() {
         const unsubscribeTamper = subscribeToTamper(boxIdForMonitoring, (state) => {
             setTamperState(state);
 
-            // Show critical alert on tamper detection
+            // Show critical alert on tamper detection (in-app modal + local notification)
             if (state?.detected) {
                 PremiumAlert.alert(
                     '🚨 SECURITY ALERT',
                     'Unauthorized access detected on your assigned box! The box is now in lockdown mode. Contact support immediately.',
                     [{ text: 'Contact Support', style: 'destructive' }]
                 );
+                showSecurityNotification(
+                    '🚨 TAMPER ALERT',
+                    `Unauthorized access detected on Box ${boxIdForMonitoring}. Lockdown activated.`,
+                    { boxId: boxIdForMonitoring || '', type: 'TAMPER_DETECTED' }
+                ).catch(() => {});
             }
         });
 
@@ -1442,24 +1452,51 @@ export default function RiderDashboard() {
 
         // Check for valid coordinates (not null/undefined and not 0,0)
         const hasCoords = lat && lng && (lat !== 0 || lng !== 0);
+        const encodedLabel = encodeURIComponent(label);
+
+        const openWithFallback = async (primaryUrl: string, fallbackUrl: string) => {
+            try {
+                const supported = await Linking.canOpenURL(primaryUrl);
+                if (supported) {
+                    await Linking.openURL(primaryUrl);
+                } else {
+                    await Linking.openURL(fallbackUrl);
+                }
+            } catch (error) {
+                console.error('[handleNavigate] Failed to open maps:', error);
+                // Last-resort: browser Google Maps
+                try {
+                    const browserUrl = hasCoords
+                        ? `https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}&destination_place_id=&travelmode=driving`
+                        : `https://www.google.com/maps/search/?api=1&query=${encodedLabel}`;
+                    await Linking.openURL(browserUrl);
+                } catch (browserError) {
+                    console.error('[handleNavigate] Browser fallback also failed:', browserError);
+                }
+            }
+        };
 
         if (hasCoords) {
             const latLng = `${lat},${lng}`;
-            const url = Platform.select({
-                ios: `maps:?ll=${latLng}&q=${label}`,
-                android: `geo:${latLng}?q=${latLng}(${label})`
-            });
-            if (url) Linking.openURL(url);
-        } else {
-            // Fallback to address query if coordinates are missing/zero
-            if (label) {
-                const scheme = Platform.select({ ios: 'maps:0,0?q=', android: 'geo:0,0?q=' });
-                const url = Platform.select({
-                    ios: `${scheme}${label}`,
-                    android: `${scheme}${label}`
-                });
-                if (url) Linking.openURL(url);
-            }
+            const primaryUrl = Platform.select({
+                ios: `maps:?ll=${latLng}&q=${encodedLabel}`,
+                android: `google.navigation:q=${latLng}&mode=d`,
+            })!;
+            const fallbackUrl = Platform.select({
+                ios: `https://maps.apple.com/?ll=${latLng}&q=${encodedLabel}`,
+                android: `geo:${latLng}?q=${latLng}(${encodedLabel})`,
+            })!;
+            openWithFallback(primaryUrl, fallbackUrl);
+        } else if (label) {
+            const primaryUrl = Platform.select({
+                ios: `maps:0,0?q=${encodedLabel}`,
+                android: `google.navigation:q=${encodedLabel}&mode=d`,
+            })!;
+            const fallbackUrl = Platform.select({
+                ios: `https://maps.apple.com/?q=${encodedLabel}`,
+                android: `geo:0,0?q=${encodedLabel}`,
+            })!;
+            openWithFallback(primaryUrl, fallbackUrl);
         }
     };
 
@@ -2233,6 +2270,19 @@ export default function RiderDashboard() {
                             Advanced Controls
                         </Button>
                     </View>
+
+                    {isPaired && (
+                        <Button
+                            mode="contained"
+                            style={{ marginTop: 8 }}
+                            buttonColor={c.redBg}
+                            textColor={c.redText}
+                            icon="alert-octagon"
+                            onPress={() => navigation.navigate('TheftAlert')}
+                        >
+                            Report Box as Stolen!
+                        </Button>
+                    )}
                 </View>
 
 

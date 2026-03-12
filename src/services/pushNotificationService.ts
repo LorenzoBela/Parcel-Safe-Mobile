@@ -643,6 +643,34 @@ export async function showStatusNotification(
     }
 }
 
+/**
+ * Show a security alert notification (tamper, theft, geofence breach).
+ * Uses the security-alerts channel with MAX importance + screen wake.
+ */
+export async function showSecurityNotification(
+    title: string,
+    body: string,
+    data?: Record<string, any>
+): Promise<string> {
+    if (!nativeNotificationsAvailable) {
+        console.log(`[DEV SECURITY NOTIFICATION] ${title}: ${body}`);
+        return 'SIMULATED_NOTIF_ID';
+    }
+
+    try {
+        const notificationId = await scheduleWakingNotification(
+            title,
+            body,
+            { ...data, type: 'SECURITY_ALERT' },
+            NOTIFICATION_CHANNELS.SECURITY_ALERTS
+        );
+        return notificationId;
+    } catch (error) {
+        console.warn('Failed to show security notification:', error);
+        return 'FAILED_NOTIF_ID';
+    }
+}
+
 // Store ongoing notification ID for updates
 let ongoingNotificationId: string | null = null;
 
@@ -889,7 +917,6 @@ export function addNotificationResponseListener(
     }
     return Notifications.addNotificationResponseReceivedListener(callback);
 }
-
 /**
  * Add notification received listener (when app is in foreground)
  */
@@ -902,3 +929,4 @@ export function addNotificationReceivedListener(
     }
     return Notifications.addNotificationReceivedListener(callback);
 }
+

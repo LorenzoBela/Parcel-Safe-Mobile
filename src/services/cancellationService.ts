@@ -207,6 +207,25 @@ export async function requestCancellation(
     const isPickedUp = request.currentStatus && ['PICKED_UP', 'IN_TRANSIT', 'ARRIVED'].includes(request.currentStatus.toUpperCase());
     const newStatus = isPickedUp ? 'RETURNING' : 'CANCELLED';
 
+    // EC-32 Bridge: mirror return state into /hardware/{boxId} for the LilyGO proxy.
+    // The proxy reads /hardware/{boxId} and serves /otp to the Controller ESP32.
+    const hardwareRef = ref(database, `hardware/${request.boxId}`);
+    if (newStatus === 'RETURNING') {
+      await update(hardwareRef, {
+        return_otp: returnOtp,
+        return_active: true,
+        // Ensure normal delivery OTP isn't used during returns
+        otp_code: null,
+        delivery_id: request.deliveryId,
+      });
+    } else {
+      // If the delivery was never picked up, clear return mode.
+      await update(hardwareRef, {
+        return_otp: null,
+        return_active: false,
+      });
+    }
+
     // 4. Update delivery status and cancellation context (Firebase)
     // IMPORTANT: If picked up, it goes to RETURNING. Otherwise, CANCELLED.
     const deliveryRef = ref(database, `deliveries/${request.deliveryId}`);
@@ -292,6 +311,15 @@ export async function markPackageRetrieved(
     // Clear box state
     const boxRef = ref(database, `boxes/${boxId}/delivery_context`);
     await set(boxRef, null);
+
+    // EC-32 Bridge: clear return state on /hardware/{boxId}
+    // Keep other hardware telemetry intact by using update().
+    await update(ref(database, `hardware/${boxId}`), {
+      return_otp: null,
+      return_active: false,
+      otp_code: null,
+      delivery_id: null,
+    });
 
     // Update status to RETURNED in Firebase
     const deliveryRef = ref(database, `deliveries/${deliveryId}/status`);

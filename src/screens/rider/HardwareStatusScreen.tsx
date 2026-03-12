@@ -18,7 +18,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useHardwareStatus } from '../../hooks/useHardwareStatus';
 import { HardwareAlertList } from '../../components/HardwareAlertBanner';
 import { HardwareStatusBadge, StatusDot } from '../../components/HardwareStatusBadge';
-import { subscribeToPower, PowerState, subscribeToResourceConflict, ResourceConflictState } from '../../services/firebaseClient';
+import { subscribeToPower, PowerState, subscribeToResourceConflict, ResourceConflictState, subscribeToBoxState, BoxState } from '../../services/firebaseClient';
 import {
     BoxPairingState,
     isPairingActive,
@@ -47,6 +47,9 @@ export default function HardwareStatusScreen({ route, navigation }: HardwareStat
 
     // EC-90: Power State
     const [powerState, setPowerState] = useState<PowerState | null>(null);
+
+    // Geofence / theft state from hardware telemetry
+    const [boxState, setBoxState] = useState<BoxState | null>(null);
 
     // EC-91: Resource Conflict State
     const [resourceConflict, setResourceConflict] = useState<ResourceConflictState | null>(null);
@@ -79,6 +82,13 @@ export default function HardwareStatusScreen({ route, navigation }: HardwareStat
     useEffect(() => {
         if (!boxId) return;
         const unsubscribe = subscribeToResourceConflict(boxId, setResourceConflict);
+        return () => unsubscribe();
+    }, [boxId]);
+
+    // Subscribe to box state for geofence / theft telemetry
+    useEffect(() => {
+        if (!boxId) return;
+        const unsubscribe = subscribeToBoxState(boxId, setBoxState);
         return () => unsubscribe();
     }, [boxId]);
 
@@ -467,6 +477,41 @@ export default function HardwareStatusScreen({ route, navigation }: HardwareStat
                                     valueColor="#eab308"
                                 />
                             )}
+                        </View>
+                    </View>
+
+                    {/* EC-92/94: Geofence & EC-81: Theft Guard */}
+                    <View style={styles.componentCard}>
+                        <View style={styles.componentHeader}>
+                            <Text style={styles.componentIcon}>📍</Text>
+                            <Text style={styles.componentTitle}>Geofence / Security</Text>
+                            <StatusDot
+                                status={
+                                    boxState?.theft_state === 'STOLEN' || boxState?.theft_state === 'LOCKDOWN' ? 'CRITICAL' :
+                                        boxState?.theft_state === 'SUSPICIOUS' ? 'WARNING' :
+                                            boxState?.geo_state === 'INSIDE' ? 'HEALTHY' :
+                                                'WARNING'
+                                }
+                            />
+                        </View>
+                        <View style={styles.componentDetails}>
+                            <DetailRow
+                                label="Geofence"
+                                value={boxState?.geo_state || 'N/A'}
+                                valueColor={boxState?.geo_state === 'INSIDE' ? '#22c55e' : undefined}
+                            />
+                            <DetailRow
+                                label="Distance"
+                                value={boxState?.geo_dist_m != null ? `${Math.round(boxState.geo_dist_m)}m` : '-- m'}
+                            />
+                            <DetailRow
+                                label="Security"
+                                value={boxState?.theft_state || 'NORMAL'}
+                                valueColor={
+                                    boxState?.theft_state === 'STOLEN' || boxState?.theft_state === 'LOCKDOWN' ? '#ef4444' :
+                                        boxState?.theft_state === 'SUSPICIOUS' ? '#eab308' : undefined
+                                }
+                            />
                         </View>
                     </View>
                 </View>

@@ -188,25 +188,40 @@ export default function AssignedDeliveriesScreen() {
         fetchDeliveries();
     };
 
-    const openGoogleMaps = (lat, lng, address) => {
+    const openGoogleMaps = async (lat, lng, address) => {
         if (!lat || !lng) {
             PremiumAlert.alert('Error', 'Location coordinates missing for this delivery.');
             return;
         }
-        const url = Platform.select({
-            ios: `maps:0,0?q=${address}@${lat},${lng}`,
-            android: `geo:0,0?q=${lat},${lng}(${address})`
-        });
 
-        const webUrl = `https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}`;
+        const encodedAddress = encodeURIComponent(address || 'Destination');
+        const latLng = `${lat},${lng}`;
+        const browserUrl = `https://www.google.com/maps/dir/?api=1&destination=${latLng}&travelmode=driving`;
 
-        Linking.canOpenURL(url || webUrl).then(supported => {
-            if (supported && url) {
-                Linking.openURL(url);
+        const primaryUrl = Platform.select({
+            ios: `maps:?ll=${latLng}&q=${encodedAddress}`,
+            android: `google.navigation:q=${latLng}&mode=d`,
+        })!;
+        const fallbackUrl = Platform.select({
+            ios: `https://maps.apple.com/?ll=${latLng}&q=${encodedAddress}`,
+            android: `geo:${latLng}?q=${latLng}(${encodedAddress})`,
+        })!;
+
+        try {
+            const supported = await Linking.canOpenURL(primaryUrl);
+            if (supported) {
+                await Linking.openURL(primaryUrl);
             } else {
-                Linking.openURL(webUrl);
+                await Linking.openURL(fallbackUrl);
             }
-        });
+        } catch (error) {
+            console.error('[AssignedDeliveries] Failed to open maps:', error);
+            try {
+                await Linking.openURL(browserUrl);
+            } catch (browserError) {
+                console.error('[AssignedDeliveries] Browser fallback also failed:', browserError);
+            }
+        }
     };
 
     const handleCancellationSubmit = async (reason: CancellationReason, details: string) => {

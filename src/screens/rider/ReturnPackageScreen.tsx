@@ -185,16 +185,33 @@ export default function ReturnPackageScreen() {
             : `${(distanceM / 1000).toFixed(1)} km`;
     };
 
-    const openNavigation = () => {
-        const url = Platform.select({
-            ios: `maps://app?daddr=${pickupLat},${pickupLng}`,
-            android: `google.navigation:q=${pickupLat},${pickupLng}`,
-        });
-        if (url) {
-            Linking.canOpenURL(url).then((ok) => {
-                if (ok) Linking.openURL(url);
-                else PremiumAlert.alert('Error', 'Unable to open navigation app');
-            });
+    const openNavigation = async () => {
+        const latLng = `${pickupLat},${pickupLng}`;
+        const encodedLabel = encodeURIComponent(pickupAddress || 'Pickup');
+        const primaryUrl = Platform.select({
+            ios: `maps://app?daddr=${latLng}`,
+            android: `google.navigation:q=${latLng}&mode=d`,
+        })!;
+        const fallbackUrl = Platform.select({
+            ios: `https://maps.apple.com/?daddr=${latLng}&q=${encodedLabel}`,
+            android: `geo:${latLng}?q=${latLng}(${encodedLabel})`,
+        })!;
+
+        try {
+            const supported = await Linking.canOpenURL(primaryUrl);
+            if (supported) {
+                await Linking.openURL(primaryUrl);
+            } else {
+                await Linking.openURL(fallbackUrl);
+            }
+        } catch (error) {
+            console.error('[ReturnPackage] Failed to open navigation:', error);
+            try {
+                await Linking.openURL(`https://www.google.com/maps/dir/?api=1&destination=${latLng}&travelmode=driving`);
+            } catch (browserError) {
+                console.error('[ReturnPackage] Browser fallback also failed:', browserError);
+                PremiumAlert.alert('Error', 'Unable to open navigation app');
+            }
         }
     };
 

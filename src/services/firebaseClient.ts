@@ -121,6 +121,9 @@ export interface BoxState {
     rssi?: number;       // Telemetry
     temp?: number;       // Telemetry
     csq?: number;        // Telemetry
+    geo_state?: 'OUTSIDE' | 'INSIDE' | 'DEAD_ZONE' | 'ENTERING' | 'EXITING';
+    geo_dist_m?: number;
+    theft_state?: 'NORMAL' | 'SUSPICIOUS' | 'STOLEN' | 'LOCKDOWN' | 'RECOVERED';
 }
 
 /** Fields the firmware writes to hardware/{boxId} via REST */
@@ -146,6 +149,12 @@ export interface HardwareDiagnostics {
         detected?: boolean;
         lockdown?: boolean;
     };
+    /** Geofence state reported by firmware (OUTSIDE/INSIDE/DEAD_ZONE) */
+    geo_state?: string;
+    /** Distance to geofence target in meters */
+    geo_dist_m?: number;
+    /** Theft guard state reported by firmware */
+    theft_state?: string;
 }
 
 export type HardwareByBoxId = Record<string, HardwareDiagnostics>;
@@ -508,6 +517,8 @@ export interface OtpAssignment {
     delivery_id: string;
     target_lat: number;
     target_lng: number;
+    pickup_lat?: number;
+    pickup_lng?: number;
 }
 
 /**
@@ -2021,8 +2032,21 @@ export async function reportBoxStolen(
     // Also update server timestamp heartbeat
     const heartbeatRef = ref(db, `hardware/${boxId}/last_heartbeat`);
     await set(heartbeatRef, serverTimestamp());
+
+    // 4. Write lockdown flag to the hardware node the firmware reads
+    await set(ref(db, `hardware/${boxId}/lockdown`), true);
+
+    // 5. Dispatch push notification (fire-and-forget, imported lazily to avoid circular dep)
+    try {
+        const { dispatchSecurityNotification } = await import('./riderMatchingService');
+        dispatchSecurityNotification('THEFT_REPORTED', {
+            boxId,
+            reportedBy,
+            ...(deliveryId ? { deliveryId } : {}),
+        }, deliveryId).catch(() => {});
+    } catch (_) { /* dynamic import may fail in some envs */ }
 }
 
-export { ref, onValue, off, set, serverTimestamp };
+export { ref, onValue, off, set, update, serverTimestamp };
 export type { Database, DatabaseReference };
 

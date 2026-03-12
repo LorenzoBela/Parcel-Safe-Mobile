@@ -26,32 +26,39 @@ export default function TripPreviewModal({ visible, onDismiss, onStartTrip, trip
 
     if (!tripDetails) return null;
 
-    const handleOpenMaps = () => {
-        const { pickupLat, pickupLng, dropoffLat, dropoffLng } = tripDetails;
-        // Construct Google Maps URL for navigation
-        // Source: Current Location (implicit if not specified) -> Destination: Pickup -> Waypoint: Dropoff
-        // Ideally, first leg is to Pickup.
+    const handleOpenMaps = async () => {
+        const { pickupLat, pickupLng } = tripDetails;
 
         const label = encodeURIComponent(tripDetails.pickupAddress);
         const latLng = `${pickupLat},${pickupLng}`;
+        const browserUrl = `https://www.google.com/maps/dir/?api=1&destination=${latLng}&travelmode=driving`;
 
-        // Scheme for Google Maps
-        const scheme = Platform.select({ ios: 'maps:0,0?q=', android: 'geo:0,0?q=' });
-        const url = Platform.select({
-            ios: `${scheme}${label}@${latLng}`,
-            android: `${scheme}${latLng}(${label})`
-        });
+        // Primary: google.navigation for turn-by-turn (Android), Apple Maps (iOS)
+        const primaryUrl = Platform.select({
+            ios: `maps:?ll=${latLng}&q=${label}`,
+            android: `google.navigation:q=${latLng}&mode=d`,
+        })!;
 
-        if (url) {
-            Linking.canOpenURL(url).then(supported => {
-                if (supported) {
-                    Linking.openURL(url);
-                } else {
-                    // Fallback to browser
-                    const browserUrl = `https://www.google.com/maps/search/?api=1&query=${latLng}`;
-                    Linking.openURL(browserUrl);
-                }
-            });
+        // Fallback: geo: scheme (Android), Apple Maps HTTPS (iOS)
+        const fallbackUrl = Platform.select({
+            ios: `https://maps.apple.com/?ll=${latLng}&q=${label}`,
+            android: `geo:${latLng}?q=${latLng}(${label})`,
+        })!;
+
+        try {
+            const supported = await Linking.canOpenURL(primaryUrl);
+            if (supported) {
+                await Linking.openURL(primaryUrl);
+            } else {
+                await Linking.openURL(fallbackUrl);
+            }
+        } catch (error) {
+            console.error('[TripPreviewModal] Failed to open maps:', error);
+            try {
+                await Linking.openURL(browserUrl);
+            } catch (browserError) {
+                console.error('[TripPreviewModal] Browser fallback also failed:', browserError);
+            }
         }
     };
 

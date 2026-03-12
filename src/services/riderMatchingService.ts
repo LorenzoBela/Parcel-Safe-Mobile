@@ -54,6 +54,33 @@ async function dispatchStatusNotification(
     }
 }
 
+/**
+ * Fire-and-forget: dispatch a security/tamper notification via the server FCM API.
+ * Sends to delivery parties, the rider, and all admins.
+ */
+export async function dispatchSecurityNotification(
+    type: 'TAMPER_DETECTED' | 'THEFT_REPORTED' | 'GEOFENCE_BREACH',
+    context: Record<string, string>,
+    deliveryId?: string,
+    targetUserId?: string
+): Promise<void> {
+    try {
+        await fetch(`${API_BASE_URL}/api/notifications/send`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                type,
+                ...(deliveryId ? { deliveryId, includeCustomer: true, includeRider: true } : {}),
+                ...(targetUserId ? { targetUserId } : {}),
+                includeAdmins: true,
+                context,
+            }),
+        });
+    } catch (err) {
+        console.warn(`[Notification] dispatchSecurityNotification(${type}) failed (non-fatal):`, err);
+    }
+}
+
 // Search radius in kilometers (as per user requirement)
 export const SEARCH_RADIUS_KM = 3;
 
@@ -811,8 +838,12 @@ export async function acceptOrder(
                     otp_code: resolvedOtp,
                     delivery_id: bookingId,
                     otp_issued_at: serverTimestamp(),
+                    target_lat: booking.dropoff_lat || 0,
+                    target_lng: booking.dropoff_lng || 0,
+                    pickup_lat: booking.pickup_lat || 0,
+                    pickup_lng: booking.pickup_lng || 0,
                 });
-                console.log(`[RiderMatching] Written OTP='${resolvedOtp}' to hardware/${normalizedBoxId}`);
+                console.log(`[RiderMatching] Written OTP='${resolvedOtp}' + pickup/dropoff coords to hardware/${normalizedBoxId}`);
             } catch (hwErr) {
                 console.error('[RiderMatching] Failed to write to hardware node:', hwErr);
             }

@@ -7,7 +7,7 @@
  * - EC-94: Boundary Hopper (Inner/outer radius hysteresis)
  */
 
-import { getFirebaseDatabase, ref, set, onValue, off, serverTimestamp } from './firebaseClient';
+import { getFirebaseDatabase, ref, set, update, onValue, off, serverTimestamp } from './firebaseClient';
 
 // ==================== Configuration ====================
 
@@ -262,65 +262,65 @@ export function updateGeofenceState(
 }
 
 // ==================== Firebase Functions ====================
+//
+// Canonical geofence state is written by the box firmware to flat fields
+// at hardware/{boxId} (geo_state, geo_dist_m). The functions below read
+// from / write to the same path so mobile and firmware share a single
+// source of truth.
 
 /**
- * Publish geofence stability state to Firebase
+ * Publish geofence stability state to Firebase.
+ * Writes to the same flat fields the firmware uses so the data is unified.
  */
 export async function publishGeofenceStability(
     boxId: string,
     state: GeofenceStabilityState
 ): Promise<void> {
     const db = getFirebaseDatabase();
-    const stabilityRef = ref(db, `hardware/${boxId}/geofence_stability`);
+    const hwRef = ref(db, `hardware/${boxId}`);
 
-    await set(stabilityRef, {
-        stable_state: state.stableState,
-        raw_distance_m: state.rawDistanceM,
-        hdop: state.hdop,
-        satellites: state.satellites,
-        urban_canyon_detected: state.urbanCanyonDetected,
-        warehouse_return_detected: state.warehouseReturnDetected,
-        last_stable_change: state.lastStableChangeMs,
-        hysteresis_count: state.hysteresisCount,
-        timestamp: serverTimestamp(),
+    await update(hwRef, {
+        geo_state: state.stableState,
+        geo_dist_m: state.rawDistanceM,
     });
 }
 
 /**
- * Subscribe to geofence stability updates from Firebase
+ * Subscribe to geofence stability updates from Firebase.
+ * Reads the flat fields written by firmware at hardware/{boxId}.
  */
 export function subscribeToGeofenceStability(
     boxId: string,
     callback: (state: GeofenceStabilityState | null) => void
 ): () => void {
     const db = getFirebaseDatabase();
-    const stabilityRef = ref(db, `hardware/${boxId}/geofence_stability`);
+    const hwRef = ref(db, `hardware/${boxId}`);
 
     const handleValue = (snapshot: any) => {
         const data = snapshot.val();
-        if (!data) {
+        if (!data || !data.geo_state) {
             callback(null);
             return;
         }
 
         callback({
-            stableState: data.stable_state || 'OUTSIDE',
-            rawState: data.raw_state || 'OUTSIDE',
-            rawDistanceM: data.raw_distance_m || 0,
-            hdop: data.hdop || 1.0,
-            satellites: data.satellites || 0,
-            urbanCanyonDetected: data.urban_canyon_detected || false,
-            warehouseReturnDetected: data.warehouse_return_detected || false,
-            lastStableChangeMs: data.last_stable_change || 0,
-            hysteresisCount: data.hysteresis_count || 0,
-            warehouseEntryMs: data.warehouse_entry_ms || null,
+            stableState: data.geo_state || 'OUTSIDE',
+            rawState: data.geo_state || 'OUTSIDE',
+            rawDistanceM: data.geo_dist_m || 0,
+            hdop: 1.0,
+            satellites: 0,
+            urbanCanyonDetected: false,
+            warehouseReturnDetected: false,
+            lastStableChangeMs: 0,
+            hysteresisCount: 0,
+            warehouseEntryMs: null,
         });
     };
 
-    onValue(stabilityRef, handleValue);
+    onValue(hwRef, handleValue);
 
     return () => {
-        off(stabilityRef);
+        off(hwRef);
     };
 }
 
