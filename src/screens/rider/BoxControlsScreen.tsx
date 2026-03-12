@@ -857,7 +857,8 @@ export default function BoxControlsScreen() {
                         <Button
                             mode="contained"
                             onPress={toggleLock}
-                            disabled={!isPaired}
+                            disabled={!isPaired || boxState?.status === 'UNLOCKING'}
+                            loading={boxState?.status === 'UNLOCKING'}
                             style={[
                                 styles.button,
                                 {
@@ -866,10 +867,10 @@ export default function BoxControlsScreen() {
                                 }
                             ]}
                             textColor={!isPaired ? c.textTer : c.accentText}
-                            icon={isLocked ? "lock" : "lock-open"}
+                            icon={boxState?.status === 'UNLOCKING' ? undefined : (isLocked ? "lock" : "lock-open")}
                             contentStyle={{ height: 48 }}
                         >
-                            {isPaired ? (isLocked ? "Unlock Box" : "Lock Box") : "Controls Disabled"}
+                            {isPaired ? (boxState?.status === 'UNLOCKING' ? "Actuating..." : (isLocked ? "Unlock Box" : "Lock Box")) : "Controls Disabled"}
                         </Button>
 
                         <Divider style={[styles.divider, { backgroundColor: c.divider }]} />
@@ -1068,6 +1069,26 @@ export default function BoxControlsScreen() {
                                     }
                                 ]}>
                                     {lockoutState?.active ? 'LOCKOUT' : otpStatus?.otp_expired ? 'EXPIRED' : 'READY'}
+                                </Text>
+                            </View>
+                        </View>
+
+                        <Divider style={[styles.divider, { backgroundColor: c.divider }]} />
+
+                        {/* Solenoid Lock Unit */}
+                        <View style={styles.diagRow}>
+                            <View style={[styles.iconContainer, { backgroundColor: lockHealth?.overheated ? c.redBg : c.greenBg }]}>
+                                <MaterialCommunityIcons name="lock-smart" size={22} color={lockHealth?.overheated ? c.redText : c.greenText} />
+                            </View>
+                            <View style={styles.diagInfo}>
+                                <Text variant="titleSmall" style={{ fontWeight: 'bold', color: c.text }}>Solenoid Lock Unit</Text>
+                                <Text variant="bodySmall" style={{ color: c.textSec }}>
+                                    {lockHealth?.overheated ? 'Thermal cutoff triggered (cool down required)' : 'Operating normally'}
+                                </Text>
+                            </View>
+                            <View style={[styles.diagBadge, { backgroundColor: lockHealth?.overheated ? c.redBg : c.greenBg }]}>
+                                <Text style={[styles.diagBadgeText, { color: lockHealth?.overheated ? c.redText : c.greenText }]}>
+                                    {lockHealth?.overheated ? 'OVERHEATED' : 'NOMINAL'}
                                 </Text>
                             </View>
                         </View>
