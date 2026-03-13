@@ -83,6 +83,7 @@ export default function BoxControlsScreen() {
     const c = isDarkMode ? darkC : lightC;
     const animationRef = useRef<LottieView>(null);
     const [rebooting, setRebooting] = useState(false);
+    const [manualOverrideSending, setManualOverrideSending] = useState(false);
     const [logs, setLogs] = useState<{ time: string; message: string; type: string }[]>([]);
     const [pairingState, setPairingState] = useState<BoxPairingState | null>(null);
     const authedUserId = useAuthStore((state: any) => state.user?.userId) as string | undefined;
@@ -178,7 +179,8 @@ export default function BoxControlsScreen() {
 
     const isPaired = isPairingActive(pairingState);
     const pairedBoxId = pairingState?.box_id;
-    const boxId = route?.params?.boxId ?? pairedBoxId ?? cachedBoxId ?? DEMO_BOX_ID;
+    // Pairing state is authoritative. Route params can be stale after reassignment/re-pair.
+    const boxId = pairedBoxId ?? route?.params?.boxId ?? cachedBoxId ?? DEMO_BOX_ID;
     const routeDeliveryId = route?.params?.deliveryId as string | undefined;
 
     // Last-resort fallback for dev screens when box has no active delivery.
@@ -368,7 +370,7 @@ export default function BoxControlsScreen() {
         setLogs(prev => [{ time: dayjs().format('HH:mm:ss'), message, type }, ...prev]);
     };
 
-    const toggleLock = () => {
+    const toggleLock = async () => {
         if (!isPaired) {
             PremiumAlert.alert('Pair Required', 'Scan your box QR to unlock controls.');
             navigation.navigate('PairBox' as never);
@@ -395,12 +397,32 @@ export default function BoxControlsScreen() {
         }
 
         const action = isLocked ? "UNLOCKING" : "LOCKED";
+        const requestId = `manual_${Date.now()}`;
 
         // EC-FIX: Send command to Firebase instead of local toggle
-        import('../../services/firebaseClient').then(({ updateBoxState }) => {
-            updateBoxState(boxId, { status: action });
-            addLog(`Command Sent: ${action}`, "info");
-        });
+        try {
+            setManualOverrideSending(true);
+            addLog(`Sending manual override: ${action} -> ${boxId}`, "warning");
+            const { updateBoxState } = await import('../../services/firebaseClient');
+            await updateBoxState(boxId, {
+                command: action,
+                command_request_id: requestId,
+                command_requested_by: 'mobile_rider',
+            } as any);
+            addLog(`Manual override sent: ${action} -> ${boxId}`, "success");
+            PremiumAlert.alert(
+                'Manual Override Queued',
+                action === 'UNLOCKING'
+                    ? `Unlock command queued for ${boxId}. Waiting for hardware acknowledgment.`
+                    : `Lock command queued for ${boxId}. Waiting for hardware acknowledgment.`
+            );
+        } catch (error) {
+            console.error('[toggleLock] Failed to send manual override:', error);
+            addLog('Manual override failed to send', 'error');
+            PremiumAlert.alert('Manual Override Failed', 'Could not send command. Check network and try again.');
+        } finally {
+            setManualOverrideSending(false);
+        }
     };
 
     const handleEmergencyOpen = () => {
@@ -412,12 +434,25 @@ export default function BoxControlsScreen() {
                 {
                     text: "FORCE OPEN",
                     style: "destructive",
-                    onPress: () => {
-                        import('../../services/firebaseClient').then(({ updateBoxState }) => {
-                            updateBoxState(boxId, { status: 'UNLOCKING' }); // Or specific emergency state if available
-                        });
-                        addLog("EMERGENCY OPEN TRIGGERED", "error");
-                        addLog("Incident Report #9921 created", "info");
+                    onPress: async () => {
+                        try {
+                            setManualOverrideSending(true);
+                            const { updateBoxState } = await import('../../services/firebaseClient');
+                            await updateBoxState(boxId, {
+                                command: 'UNLOCKING',
+                                command_request_id: `emergency_${Date.now()}`,
+                                command_requested_by: 'mobile_emergency',
+                            } as any); // Or specific emergency state if available
+                            addLog("EMERGENCY OPEN TRIGGERED", "error");
+                            addLog("Incident Report #9921 created", "info");
+                            PremiumAlert.alert('Emergency Command Sent', `Force-open command sent to ${boxId}.`);
+                        } catch (error) {
+                            console.error('[handleEmergencyOpen] Failed to send emergency command:', error);
+                            addLog('Emergency open failed to send', 'error');
+                            PremiumAlert.alert('Emergency Command Failed', 'Unable to send emergency command. Check network and retry.');
+                        } finally {
+                            setManualOverrideSending(false);
+                        }
                     }
                 }
             ]
@@ -607,14 +642,16 @@ export default function BoxControlsScreen() {
 
     // EC-03: Get battery color
     const getBatteryColor = () => {
-        const pct = batteryState?.percentage ?? 85;
+        if (batteryState == null) return c.textTer;
+        const pct = batteryState.percentage;
         if (pct > 20) return c.greenText;
         if (pct > 10) return c.orangeText;
         return c.redText;
     };
 
     const getBatteryIcon = () => {
-        const pct = batteryState?.percentage ?? 85;
+        if (batteryState == null) return 'battery-unknown';
+        const pct = batteryState.percentage;
         if (pct > 80) return 'battery';
         if (pct > 60) return 'battery-70';
         if (pct > 40) return 'battery-50';
@@ -768,7 +805,7 @@ export default function BoxControlsScreen() {
                     <TelemetryItem
                         icon={isPaired ? getBatteryIcon() : "battery-unknown"}
                         label="Battery"
-                        value={isPaired ? `${batteryState?.percentage ?? 85}%` : '--%'}
+                        value={isPaired ? (batteryState ? `${batteryState.percentage}%` : '--') : '--%'}
                         color={isPaired ? getBatteryColor() : c.textTer}
                     />
                     <TelemetryItem
@@ -857,8 +894,8 @@ export default function BoxControlsScreen() {
                         <Button
                             mode="contained"
                             onPress={toggleLock}
-                            disabled={!isPaired || boxState?.status === 'UNLOCKING'}
-                            loading={boxState?.status === 'UNLOCKING'}
+                            disabled={!isPaired || manualOverrideSending || boxState?.status === 'UNLOCKING'}
+                            loading={manualOverrideSending || boxState?.status === 'UNLOCKING'}
                             style={[
                                 styles.button,
                                 {
@@ -897,6 +934,7 @@ export default function BoxControlsScreen() {
                                 style={[styles.button, { flex: 1, borderColor: !isPaired ? c.border : c.redText }]}
                                 textColor={!isPaired ? c.textTer : c.redText}
                                 icon="alert"
+                                onPress={() => PremiumAlert.alert('Long Press Required', 'Press and hold Emergency for 1 second to trigger force open.')}
                             >
                                 Emergency
                             </Button>

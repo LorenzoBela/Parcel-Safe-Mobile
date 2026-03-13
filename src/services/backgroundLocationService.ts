@@ -100,7 +100,6 @@ async function writeMultiPathUpdates(updatesMap: Record<string, any>): Promise<v
 
 const BACKGROUND_STATUS_WARN_INTERVAL_MS = 60_000;
 let lastBackgroundStatusWarnAt = 0;
-let backgroundStatusUseBoxesPath = true;
 
 function warnBackgroundStatusOncePerInterval(message: string, error?: unknown): void {
     const now = Date.now();
@@ -116,16 +115,6 @@ function warnBackgroundStatusOncePerInterval(message: string, error?: unknown): 
 
 async function writeBackgroundStatusBestEffort(boxId: string, status: Record<string, any>): Promise<void> {
     const boxesPath = `boxes/${boxId}/background_location_status`;
-    const hardwarePath = `hardware/${boxId}/background_location_status`;
-
-    if (!backgroundStatusUseBoxesPath) {
-        try {
-            await writePathValue(hardwarePath, status);
-        } catch (fallbackError) {
-            warnBackgroundStatusOncePerInterval('[EC-15] Background status fallback write failed (non-fatal):', fallbackError);
-        }
-        return;
-    }
 
     try {
         await writePathValue(boxesPath, status);
@@ -134,13 +123,7 @@ async function writeBackgroundStatusBestEffort(boxId: string, status: Record<str
         const isPermissionDenied = /permission-denied/i.test(message);
 
         if (isPermissionDenied) {
-            backgroundStatusUseBoxesPath = false;
-            warnBackgroundStatusOncePerInterval('[EC-15] /boxes background status denied; switching to /hardware fallback');
-            try {
-                await writePathValue(hardwarePath, status);
-            } catch (fallbackError) {
-                warnBackgroundStatusOncePerInterval('[EC-15] Background status fallback write failed (non-fatal):', fallbackError);
-            }
+            warnBackgroundStatusOncePerInterval('[EC-15] /boxes background status denied; write skipped (no /hardware fallback)');
             return;
         }
 

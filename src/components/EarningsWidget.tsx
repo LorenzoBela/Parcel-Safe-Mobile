@@ -61,7 +61,7 @@ export default function EarningsWidget({ riderId, dailyGoal: initialDailyGoal = 
             // If it's just 'price' or another name, adjust below.
             const { data, error } = await supabase
                 .from('deliveries')
-                .select('price') // Change 'price' to 'rider_fee' if such column exists instead
+                .select('estimated_fare')
                 .eq('rider_id', riderId)
                 .eq('status', 'COMPLETED')
                 .gte('created_at', startOfDay)
@@ -70,7 +70,7 @@ export default function EarningsWidget({ riderId, dailyGoal: initialDailyGoal = 
             if (error) throw error;
 
             if (data) {
-                const total = data.reduce((sum, row) => sum + (Number(row.price) || 0), 0);
+                const total = data.reduce((sum, row) => sum + (Number(row.estimated_fare) || 0), 0);
                 setEarnings(total);
                 setCompletedTrips(data.length);
             }

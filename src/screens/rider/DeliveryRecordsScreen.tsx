@@ -98,6 +98,7 @@ export default function DeliveryRecordsScreen() {
                         shortTrk: shortTrk,
                         status: mapStatus(d.status),
                         rawStatus: d.status,
+                        rawDate: d.created_at,
                         date: dateObj ? dayjs(d.created_at).add(8, 'hour').format('MMM D, YYYY') : 'N/A',
                         time: dateObj ? dayjs(d.created_at).add(8, 'hour').format('h:mm A') : '',
                         customer: d.profiles?.full_name || 'Unknown Customer',
@@ -159,18 +160,18 @@ export default function DeliveryRecordsScreen() {
         let matchesFilter = true;
 
         if (filter === 'Today') {
-            const itemDate = parseUTCString(item.date);
+            const itemDate = parseUTCString(item.rawDate);
             matchesFilter =
                 itemDate.getDate() === currentDate.getDate() &&
                 itemDate.getMonth() === currentDate.getMonth() &&
                 itemDate.getFullYear() === currentDate.getFullYear();
         } else if (filter === 'This Week') {
-            const itemDate = parseUTCString(item.date);
+            const itemDate = parseUTCString(item.rawDate);
             const diffTime = Math.abs(currentDate.getTime() - itemDate.getTime());
             const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
             matchesFilter = diffDays <= 7;
         } else if (filter === 'This Month') {
-            const itemDate = parseUTCString(item.date);
+            const itemDate = parseUTCString(item.rawDate);
             matchesFilter = itemDate.getMonth() === currentDate.getMonth() &&
                 itemDate.getFullYear() === currentDate.getFullYear();
         }

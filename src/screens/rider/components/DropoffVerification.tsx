@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { View, StyleSheet, Alert, Linking } from 'react-native';
 import { Text, Card, Button, IconButton } from 'react-native-paper';
 import * as ImagePicker from 'expo-image-picker';
@@ -68,6 +68,7 @@ export default function DropoffVerification({
     // ━━━ LOCK EVENTS: Real-time OTP + Face Detection from hardware ━━━
     const [lockEvent, setLockEvent] = useState<LockEvent | null>(null);
     const [faceDetected, setFaceDetected] = useState(false);
+    const lockEventSubscriptionStartRef = useRef<number>(Date.now());
 
     // Auto-arrive logic
     useEffect(() => {
@@ -91,16 +92,20 @@ export default function DropoffVerification({
         if (!canProcessOtpSignals) {
             setBoxOtpValidated(false);
             setHardwareSuccess(false);
+            setFaceDetected(false);
+            setLockEvent(null);
         }
     }, [canProcessOtpSignals]);
 
     // Monitor box state for OTP validation
     useEffect(() => {
+        // Reset event gate whenever this subscription context changes.
+        lockEventSubscriptionStartRef.current = Date.now();
+
         const unsubscribeBox = subscribeToBoxState(boxId, (state) => {
-            if (canProcessOtpSignals && (state?.status === 'UNLOCKING' || state?.status === 'ACTIVE')) {
-                // Box confirmed OTP was entered correctly — this is the security gate
-                setBoxOtpValidated(true);
-            }
+            // Keep subscription for future diagnostics/state-dependent UI,
+            // but do not infer OTP success from generic box status.
+            void state;
         });
 
         // Monitor delivery proof for hardware camera success
@@ -121,6 +126,17 @@ export default function DropoffVerification({
         // ━━━ Monitor lock events for OTP + face detection results ━━━
         const unsubscribeLockEvents = subscribeToLockEvents(boxId, (event) => {
             if (!canProcessOtpSignals || !event) return;
+
+            // Ignore stale snapshot replay from previous delivery/session.
+            // Firebase onValue emits latest existing value immediately.
+            const eventMs =
+                typeof event.timestamp === 'number' ? event.timestamp :
+                typeof event.device_epoch === 'number' ? event.device_epoch * 1000 :
+                null;
+            if (eventMs && eventMs + 1500 < lockEventSubscriptionStartRef.current) {
+                return;
+            }
+
             setLockEvent(event);
 
             if (event.otp_valid) {

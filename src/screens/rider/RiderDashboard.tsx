@@ -1501,7 +1501,10 @@ export default function RiderDashboard() {
     };
 
     const toggleLock = () => {
-        if (!boxIdForMonitoring) return;
+        if (!boxIdForMonitoring) {
+            PremiumAlert.alert('No Box Connected', 'Pair and select a box first to send lock controls.');
+            return;
+        }
 
         PremiumAlert.alert(
             isLocked ? "Unlock Box?" : "Lock Box?",
@@ -1509,9 +1512,20 @@ export default function RiderDashboard() {
             [
                 { text: "Cancel", style: "cancel" },
                 {
-                    text: isLocked ? "Unlock" : "Lock", onPress: () => {
+                    text: isLocked ? "Unlock" : "Lock", onPress: async () => {
                         const action = isLocked ? "UNLOCKING" : "LOCKED";
-                        updateBoxState(boxIdForMonitoring, { status: action });
+                        try {
+                            await updateBoxState(boxIdForMonitoring, { command: action });
+                            PremiumAlert.alert(
+                                'Command Sent',
+                                action === 'UNLOCKING'
+                                    ? 'Unlock command sent. Box should actuate shortly.'
+                                    : 'Lock command sent. Box should relock shortly.'
+                            );
+                        } catch (error) {
+                            console.error('[toggleLock] Failed to send lock command:', error);
+                            PremiumAlert.alert('Command Failed', 'Unable to send lock command. Check connection and try again.');
+                        }
                     }
                 }
             ]

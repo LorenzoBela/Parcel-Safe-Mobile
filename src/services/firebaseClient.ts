@@ -113,6 +113,7 @@ export type { LocationData, LocationsByBoxId };
 
 export interface BoxState {
     status: 'SLEEP' | 'STANDBY' | 'ACTIVE' | 'ARRIVED' | 'UNLOCKING' | 'LOCKED';
+    command?: 'UNLOCKING' | 'LOCKED' | 'NONE';
     delivery_id?: string;
     otp_code?: string;
     last_heartbeat?: number;
@@ -421,21 +422,36 @@ export interface BatteryState {
 }
 
 /**
- * Subscribe to box battery state updates
+ * Subscribe to box battery state updates.
+ * Firmware writes flat fields (batt_v, batt_pct, batt_low) into hardware/{boxId}.
+ * We derive the BatteryState from those fields here.
  */
 export function subscribeToBattery(
     boxId: string,
     callback: (state: BatteryState | null) => void
 ): () => void {
     const db = getFirebaseDatabase();
-    const batteryRef = ref(db, `hardware/${boxId}/battery`);
+    const hwRef = ref(db, `hardware/${boxId}`);
 
-    const unsubscribe = onValue(batteryRef, (snapshot) => {
+    const unsubscribe = onValue(hwRef, (snapshot) => {
         const data = snapshot.val();
-        callback(data as BatteryState | null);
+        if (!data || data.batt_pct == null) {
+            callback(null);
+            return;
+        }
+        const pct: number = data.batt_pct;
+        const state: BatteryState = {
+            percentage: pct,
+            voltage: data.batt_v ?? 0,
+            charging: false,
+            lowBatteryWarning: pct < 20,
+            criticalBatteryWarning: pct < 10,
+            timestamp: data.last_updated ?? Date.now(),
+        };
+        callback(state);
     });
 
-    return () => off(batteryRef);
+    return () => off(hwRef);
 }
 
 // ==================== EC-18: Tamper Detection ====================

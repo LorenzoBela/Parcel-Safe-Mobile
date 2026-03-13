@@ -1366,6 +1366,25 @@ export async function updateDeliveryStatus(
         // Cancel 2-hour reminder when delivery finalizes
         if (status === 'COMPLETED' || status === 'CANCELLED') {
             cancelDeliveryReminderNotification().catch(() => { /* ignore */ });
+
+            // Clear the hardware node's delivery context so the box stops
+            // treating this as an active delivery (box will return to STANDBY)
+            try {
+                const deliverySnap = await get(ref(db, `/deliveries/${deliveryId}`));
+                const deliveryData = deliverySnap.exists() ? deliverySnap.val() : null;
+                const hwBoxId = deliveryData?.box_id
+                    || (additionalFields?.boxId as string)
+                    || '';
+                if (hwBoxId) {
+                    await update(ref(db, `/hardware/${hwBoxId}`), {
+                        otp_code: null,
+                        delivery_id: null,
+                    });
+                    console.log(`[updateDeliveryStatus] Cleared hardware context for ${hwBoxId}`);
+                }
+            } catch (hwClearErr) {
+                console.error('[updateDeliveryStatus] Failed to clear hardware context:', hwClearErr);
+            }
         }
 
         // Sync status to Supabase (Source of Truth)

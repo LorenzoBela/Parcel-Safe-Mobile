@@ -10,7 +10,7 @@
 #   - react-native-svg:  15.12.1  (must be 15.12.1+ for RN 0.81 new arch support)
 #   - Expo SDK:          54
 #   - JDK:               17 (Eclipse Adoptium Temurin)
-#   - NDK:               27.2.12479018
+#   - NDK:               26.1.10909125 (CRITICAL: RN 0.81 requires NDK 26. NDK 27 will fail)
 #   - Gradle:            8.14.3
 #
 # CRITICAL BUILD NOTES:
@@ -435,10 +435,17 @@ if ((!$env:ANDROID_HOME -or !$env:ANDROID_SDK_ROOT) -and $sdkDirEarly) {
         Write-Host "[OK] Added Android platform-tools to PATH" -ForegroundColor Green
     }
 
-    # Set NDK path (prefer 27.2.12479018 for C++20 std::format support)
-    $preferredNdkVersion = "27.2.12479018"
+    # --- CRITICAL NDK 26 LOCK ---
+    $preferredNdkVersion = "26.1.10909125"
     $ndkRoot = Join-Path $sdkDirEarly "ndk"
     $ndkDir = $null
+    
+    if (-not (Test-Path (Join-Path $ndkRoot $preferredNdkVersion))) {
+        Write-Host "`n[ERROR] CRITICAL: React Native 0.81 strictly requires Android NDK $preferredNdkVersion" -ForegroundColor Red
+        Write-Host "NDK 27 breaks C++ compilation and causes 'undefined symbol: operator new' errors." -ForegroundColor Red
+        Write-Host "ACTION REQUIRED: Open Android Studio -> SDK Manager -> SDK Tools -> Check 'Show Package Details' -> Install NDK $preferredNdkVersion" -ForegroundColor Magenta
+        # Wait for user or fallback logic, we let the rest of the script continue but printing this warning.
+    }
 
     function Get-SdkManagerPath {
         param([string]$SdkRoot)
@@ -491,9 +498,10 @@ if ((!$env:ANDROID_HOME -or !$env:ANDROID_SDK_ROOT) -and $sdkDirEarly) {
             if ((Test-Path $preferredCandidate) -and (Test-NdkValid $preferredCandidate)) {
                 $ndkDir = $preferredCandidate
             } else {
-                $ndkDir = Get-ChildItem -Path $ndkRoot -Directory | Sort-Object Name -Descending |
-                    Where-Object { Test-NdkValid $_.FullName } |
-                    Select-Object -First 1 | ForEach-Object { $_.FullName }
+                Write-Host "`n[ERROR] CRITICAL: NDK $preferredNdkVersion is required but could not be installed." -ForegroundColor Red
+                Write-Host "NDK 27 causes 'undefined symbol: operator new/delete/__cxa_throw' linker errors." -ForegroundColor Red
+                Write-Host "ACTION REQUIRED: Open Android Studio -> SDK Manager -> SDK Tools -> Show Package Details -> Install NDK $preferredNdkVersion" -ForegroundColor Magenta
+                exit 1
             }
         }
     }
@@ -728,6 +736,9 @@ Ensure-CMakeLibCppShared -Path $gestureCmake -TargetName '${PACKAGE_NAME}'
 $screensCmake = Join-Path $PROJECT_ROOT "node_modules\react-native-screens\android\CMakeLists.txt"
 Ensure-CMakeLibCppShared -Path $screensCmake -TargetName 'rnscreens'
 
+$nitroCmake = Join-Path $PROJECT_ROOT "node_modules\react-native-nitro-modules\android\CMakeLists.txt"
+Ensure-CMakeLibCppShared -Path $nitroCmake -TargetName 'NitroModules'
+
 Write-Host "[OK] Working build fixes applied" -ForegroundColor Green
 
 # Step 2.7: Verify working build fixes
@@ -750,6 +761,7 @@ $checkResults["app build.gradle app-cmake-libcxx-fix"] = Test-FileContains -Path
 $checkResults["expo-modules-core CMake libc++_shared"] = Test-FileContains -Path $expoCmake -Pattern 'c\+\+_shared'
 $checkResults["worklets CMake libc++_shared"] = Test-FileContains -Path $workletsCmake -Pattern 'c\+\+_shared'
 $checkResults["gesture-handler CMake libc++_shared"] = Test-FileContains -Path $gestureCmake -Pattern 'c\+\+_shared'
+$checkResults["nitro-modules CMake libc++_shared"] = Test-FileContains -Path $nitroCmake -Pattern 'c\+\+_shared'
 
 foreach ($key in $checkResults.Keys) {
     if ($checkResults[$key]) {
@@ -1029,16 +1041,41 @@ Ensure-BlockAfterLine -Path $rootBuildGradle -AnchorRegex 'apply plugin: "com.fa
 Ensure-AppCmakeArguments -Path $appBuildGradle
 
 # Re-apply CMake patches to native node_modules (may have been refreshed by npm install)
-$expoCmake = Join-Path $PROJECT_ROOT "node_modules\expo-modules-core\android\CMakeLists.txt"
-Ensure-CMakeLibCppShared -Path $expoCmake -TargetName '${PACKAGE_NAME}'
-$workletsCmake = Join-Path $PROJECT_ROOT "node_modules\react-native-worklets\android\CMakeLists.txt"
-Ensure-CMakeLibCppShared -Path $workletsCmake -TargetName 'worklets'
-$reanimatedCmake = Join-Path $PROJECT_ROOT "node_modules\react-native-reanimated\android\CMakeLists.txt"
-Ensure-CMakeLibCppShared -Path $reanimatedCmake -TargetName 'reanimated'
-$gestureCmake = Join-Path $PROJECT_ROOT "node_modules\react-native-gesture-handler\android\src\main\jni\CMakeLists.txt"
-Ensure-CMakeLibCppShared -Path $gestureCmake -TargetName '${PACKAGE_NAME}'
-$screensCmake = Join-Path $PROJECT_ROOT "node_modules\react-native-screens\android\CMakeLists.txt"
-Ensure-CMakeLibCppShared -Path $screensCmake -TargetName 'rnscreens'
+# Use auto-discovery (ported from production build script) to catch ALL native modules
+$knownTargets = @{
+    'expo-modules-core'           = '${PACKAGE_NAME}'
+    'react-native-screens'        = 'rnscreens'
+    'react-native-worklets'       = 'worklets'
+    'react-native-reanimated'     = 'reanimated'
+    'react-native-nitro-modules'  = 'NitroModules'
+}
+$cmakePatchCount = 0
+
+# Scan node_modules for all CMakeLists.txt under android/ directories
+$cmakeFiles = Get-ChildItem -Path (Join-Path $PROJECT_ROOT "node_modules") -Filter "CMakeLists.txt" -Recurse -ErrorAction SilentlyContinue |
+    Where-Object { $_.FullName -match 'android' -and $_.FullName -notmatch '\.cxx' -and $_.FullName -notmatch 'build\\' }
+
+foreach ($cmakeFile in $cmakeFiles) {
+    $raw = Get-Content -Path $cmakeFile.FullName -Raw -ErrorAction SilentlyContinue
+    if (-not $raw) { continue }
+    # Only patch files that have target_link_libraries (actual native build files)
+    if ($raw -notmatch 'target_link_libraries') { continue }
+
+    # Determine target name from known map or extract from add_library
+    $moduleName = ($cmakeFile.FullName -replace '.*node_modules\\', '' -replace '\\android.*', '')
+    $targetName = $null
+    if ($knownTargets.ContainsKey($moduleName)) {
+        $targetName = $knownTargets[$moduleName]
+    } elseif ($raw -match 'add_library\(\s*([\w${}]+)') {
+        $targetName = $matches[1]
+    }
+    if (-not $targetName) { continue }
+
+    Ensure-CMakeLibCppShared -Path $cmakeFile.FullName -TargetName $targetName
+    $cmakePatchCount++
+}
+
+Write-Host "[OK] Patched $cmakePatchCount CMakeLists.txt files with c++_shared linking (post-prebuild)" -ForegroundColor Green
 
 # Ensure local.properties has correct sdk.dir after prebuild regenerated android/
 $localPropsPostPrebuild = Join-Path $ANDROID_DIR "local.properties"
