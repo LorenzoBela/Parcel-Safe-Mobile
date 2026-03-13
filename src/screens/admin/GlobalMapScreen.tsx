@@ -10,6 +10,7 @@ import { useEntryAnimation } from '../../hooks/useEntryAnimation';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import MapboxGL from '../../components/map/MapboxWrapper';
+import AnimatedRiderMarker from '../../components/map/AnimatedRiderMarker';
 import {
     HardwareByBoxId,
     HardwareDiagnostics,
@@ -52,6 +53,9 @@ type BoxMarker = {
     gpsFix?: boolean;
     lastUpdated?: number;
     dataBytes?: number;
+    batteryPct?: number;
+    batteryVolt?: number;
+    distanceTrav?: number;
 };
 
 type AnimationState = {
@@ -59,6 +63,9 @@ type AnimationState = {
     target: [number, number];
     startTime: number;
     start: [number, number];
+    currentRot: number;
+    startRot: number;
+    targetRot: number;
 };
 
 type FleetFilter = 'ALL' | 'TAMPER' | 'ACTIVE' | 'OFFLINE';
@@ -271,7 +278,6 @@ export default function GlobalMapScreen() {
     const animationFrameId = useRef<number | null>(null);
     const boxBearings = useRef<Map<string, number>>(new Map()); // per-box bearing tracking
     const markerRefs = useRef<Map<string, any>>(new Map()); // per-box PointAnnotation refs for refresh
-    const RiderIcon = require('../../../assets/Rider.jpg');
 
     useEffect(() => {
         if (MAPBOX_TOKEN) {
@@ -320,6 +326,9 @@ export default function GlobalMapScreen() {
                     gpsFix: hw?.gps_fix,
                     lastUpdated: hw?.last_updated,
                     dataBytes: hw?.data_bytes,
+                    batteryPct: hw?.batt_pct,
+                    batteryVolt: hw?.batt_v,
+                    distanceTrav: hw?.geo_dist_m,
                 };
             })
             .filter((b) => isValidLat(b.lat) && isValidLng(b.lng));
@@ -376,6 +385,8 @@ export default function GlobalMapScreen() {
                 }
                 emaSmoothStates.current.set(box.id, smoothedTarget);
 
+                let targetRotation = 0;
+                
                 // Compute bearing from previous → current position
                 const prevTarget = animationStates.current.get(box.id)?.target;
                 if (prevTarget) {
@@ -383,9 +394,13 @@ export default function GlobalMapScreen() {
                     if (dist > 0.00005) { // ~5m threshold
                         const dLng = smoothedTarget[0] - prevTarget[0];
                         const dLat = smoothedTarget[1] - prevTarget[1];
-                        const angle = (Math.atan2(dLng, dLat) * 180) / Math.PI;
-                        boxBearings.current.set(box.id, angle);
+                        targetRotation = (Math.atan2(dLng, dLat) * 180) / Math.PI;
+                        boxBearings.current.set(box.id, targetRotation);
+                    } else {
+                        targetRotation = boxBearings.current.get(box.id) ?? 0;
                     }
+                } else {
+                    targetRotation = boxBearings.current.get(box.id) ?? 0;
                 }
 
                 let state = animationStates.current.get(box.id);
@@ -396,7 +411,10 @@ export default function GlobalMapScreen() {
                         current: smoothedTarget,
                         target: smoothedTarget,
                         start: smoothedTarget,
-                        startTime: Date.now()
+                        startTime: Date.now(),
+                        currentRot: targetRotation,
+                        startRot: targetRotation,
+                        targetRot: targetRotation
                     });
                 } else if (state.target[0] !== smoothedTarget[0] || state.target[1] !== smoothedTarget[1]) {
                     // Update target
@@ -407,10 +425,15 @@ export default function GlobalMapScreen() {
                         state.start = smoothedTarget;
                         state.target = smoothedTarget;
                         state.startTime = Date.now();
+                        state.currentRot = targetRotation;
+                        state.startRot = targetRotation;
+                        state.targetRot = targetRotation;
                     } else {
                         state.start = state.current;
                         state.target = smoothedTarget;
                         state.startTime = Date.now();
+                        state.startRot = state.currentRot;
+                        state.targetRot = targetRotation;
                     }
                 }
             });
@@ -441,10 +464,16 @@ export default function GlobalMapScreen() {
                 const currentLng = state.start[0] + (state.target[0] - state.start[0]) * t;
                 const currentLat = state.start[1] + (state.target[1] - state.start[1]) * t;
 
+                // Interpolate Rotation seamlessly
+                let rotDiff = state.targetRot - state.startRot;
+                if (rotDiff > 180) rotDiff -= 360;
+                if (rotDiff < -180) rotDiff += 360;
+                const currentRot = state.startRot + rotDiff * t;
+
                 state.current = [currentLng, currentLat];
+                state.currentRot = currentRot;
 
                 // 2. Build Feature
-                const boxBearing = boxBearings.current.get(id) ?? 0;
                 features.push({
                     type: 'Feature',
                     id: id,
@@ -454,7 +483,7 @@ export default function GlobalMapScreen() {
                         alert: box.alert,
                         color: getStatusColor(box.status, box.alert),
                         selected: id === selectedBoxId,
-                        bearing: boxBearing,
+                        bearing: currentRot,
                     },
                     geometry: {
                         type: 'Point',
@@ -584,8 +613,30 @@ export default function GlobalMapScreen() {
                             <Text style={[styles.diagPillText, { color: uiText }]}>{formatTimeAgo(selectedBox.lastUpdated || selectedBox.timestamp)}</Text>
                         </View>
                         <View style={[styles.diagPill, { backgroundColor: uiPill }]}>
+                            <MaterialCommunityIcons name={selectedBox.gpsSource === 'phone' ? 'cellphone' : 'box'} size={14} color={uiAccent} />
+                            <Text style={[styles.diagPillText, { color: uiText }]}>{selectedBox.gpsSource === 'phone' ? 'Phone' : 'Box'}</Text>
+                        </View>
+                        <View style={[styles.diagPill, { backgroundColor: uiPill }]}>
                             <MaterialCommunityIcons name="speedometer" size={14} color={uiAccent} />
                             <Text style={[styles.diagPillText, { color: uiText }]}>{formatSpeed(selectedBox.speed)}</Text>
+                        </View>
+                        <View style={[styles.diagPill, { backgroundColor: uiPill }]}>
+                            <MaterialCommunityIcons 
+                                name={selectedBox.batteryPct != null && selectedBox.batteryPct <= 20 ? 'battery-alert' : 'battery'} 
+                                size={14} 
+                                color={selectedBox.batteryPct != null && selectedBox.batteryPct <= 20 ? '#DC2626' : '#16A34A'} 
+                            />
+                            <Text style={[styles.diagPillText, { color: uiText }]}>
+                                {selectedBox.batteryPct != null ? `${selectedBox.batteryPct}%` : '—'}
+                            </Text>
+                        </View>
+                        <View style={[styles.diagPill, { backgroundColor: uiPill }]}>
+                            <MaterialCommunityIcons name="map-marker-distance" size={14} color={uiAccent} />
+                            <Text style={[styles.diagPillText, { color: uiText }]}>
+                                {selectedBox.distanceTrav != null 
+                                    ? (selectedBox.distanceTrav >= 1000 ? `${(selectedBox.distanceTrav / 1000).toFixed(1)} km` : `${Math.round(selectedBox.distanceTrav)} m`) 
+                                    : '—'}
+                            </Text>
                         </View>
                     </View>
                 </Card.Content>
@@ -609,95 +660,24 @@ export default function GlobalMapScreen() {
                     {/* Per-box rider markers — same style as tracking pages */}
                     {filteredBoxes.map((box) => {
                         const anim = animationStates.current.get(box.id);
-                        const coord = anim?.current ?? [box.lng, box.lat];
-                        const bng = boxBearings.current.get(box.id) ?? 0;
-                        const color = getStatusColor(box.status, box.alert);
+                        
+                        // Use the smoothed coords if available to reduce GPS jitter
+                        const smoothed = emaSmoothStates.current.get(box.id);
+                        const coordToPass = smoothed ?? [box.lng, box.lat];
+                        
                         const isSelected = box.id === selectedBoxId;
+                        
                         return (
-                            <MapboxGL.PointAnnotation
+                            <AnimatedRiderMarker
                                 key={box.id}
                                 id={`box-${box.id}`}
-                                ref={(ref: any) => {
-                                    if (ref) markerRefs.current.set(box.id, ref);
-                                }}
-                                coordinate={coord}
-                                anchor={{ x: 0.5, y: 0.7 }}
+                                latitude={coordToPass[1]}
+                                longitude={coordToPass[0]}
+                                rotation={boxBearings.current.get(box.id) ?? 0}
+                                speed={box.speed}
+                                isSelected={isSelected}
                                 onSelected={() => selectBox(box.id)}
-                            >
-                                <View style={{ alignItems: 'center' }}>
-                                    {/* Speed Badge — counter-rotated to stay upright */}
-                                    <View style={{
-                                        backgroundColor: 'rgba(15, 23, 42, 0.85)',
-                                        paddingHorizontal: 7,
-                                        paddingVertical: 2,
-                                        borderRadius: 999,
-                                        marginBottom: 2,
-                                        opacity: box.speed != null && box.speed >= 0 ? 1 : 0,
-                                        transform: [{ rotate: `${-bng}deg` }],
-                                    }}>
-                                        <Text style={{ color: '#fff', fontSize: 10, fontWeight: '700' }}>
-                                            {box.speed != null && box.speed >= 0 ? Math.round(box.speed * 3.6) : 0} km/h
-                                        </Text>
-                                    </View>
-
-                                    <View style={{
-                                        width: isSelected ? 64 : 56,
-                                        height: isSelected ? 64 : 56,
-                                        justifyContent: 'center',
-                                        alignItems: 'center',
-                                        transform: [{ rotate: `${bng}deg` }],
-                                    }}>
-                                        {/* Rider image circle — matches AnimatedRiderMarker style */}
-                                        <View style={{
-                                            width: isSelected ? 60 : 56,
-                                            height: isSelected ? 60 : 56,
-                                            borderRadius: isSelected ? 30 : 28,
-                                            backgroundColor: 'white',
-                                            borderWidth: 2,
-                                            borderColor: '#0f172a',
-                                            overflow: 'hidden',
-                                            justifyContent: 'center',
-                                            alignItems: 'center',
-                                            zIndex: 20,
-                                            shadowColor: '#000',
-                                            shadowOffset: { width: 0, height: 2 },
-                                            shadowOpacity: 0.3,
-                                            shadowRadius: 4,
-                                            elevation: 6,
-                                        }}>
-                                            <Image
-                                                source={RiderIcon}
-                                                style={{
-                                                    width: isSelected ? 56 : 52,
-                                                    height: isSelected ? 56 : 52,
-                                                    borderRadius: isSelected ? 28 : 26,
-                                                }}
-                                                resizeMode="cover"
-                                                fadeDuration={0}
-                                                onLoad={() => {
-                                                    const ref = markerRefs.current.get(box.id);
-                                                    if (ref) ref.refresh();
-                                                }}
-                                            />
-                                        </View>
-                                        {/* Direction cone */}
-                                        <View style={{
-                                            position: 'absolute',
-                                            top: -12,
-                                            left: isSelected ? 26 : 22,
-                                            width: 0,
-                                            height: 0,
-                                            borderLeftWidth: 6,
-                                            borderLeftColor: 'transparent',
-                                            borderRightWidth: 6,
-                                            borderRightColor: 'transparent',
-                                            borderBottomWidth: 10,
-                                            borderBottomColor: 'rgba(15, 23, 42, 0.9)',
-                                            zIndex: 10,
-                                        }} />
-                                    </View>
-                                </View>
-                            </MapboxGL.PointAnnotation>
+                            />
                         );
                     })}
 
@@ -843,6 +823,24 @@ export default function GlobalMapScreen() {
                                                     </Text>
                                                 </View>
                                                 <View style={styles.listItemMeta}>
+                                                    <MaterialCommunityIcons 
+                                                        name={box.batteryPct != null && box.batteryPct <= 20 ? 'battery-alert' : 'battery'} 
+                                                        size={12} 
+                                                        color={box.batteryPct != null && box.batteryPct <= 20 ? '#DC2626' : '#16A34A'} 
+                                                    />
+                                                    <Text style={[styles.listItemMetaText, { color: uiTextSec }]}>
+                                                        {box.batteryPct != null ? `${box.batteryPct}%` : '—'}
+                                                    </Text>
+                                                </View>
+                                                <View style={styles.listItemMeta}>
+                                                    <MaterialCommunityIcons name="map-marker-distance" size={12} color={uiTextSec} />
+                                                    <Text style={[styles.listItemMetaText, { color: uiTextSec }]}>
+                                                        {box.distanceTrav != null 
+                                                            ? (box.distanceTrav >= 1000 ? `${(box.distanceTrav / 1000).toFixed(1)}km` : `${Math.round(box.distanceTrav)}m`) 
+                                                            : '—'}
+                                                    </Text>
+                                                </View>
+                                                <View style={styles.listItemMeta}>
                                                     <MaterialCommunityIcons
                                                         name="cloud-upload-outline"
                                                         size={12}
@@ -850,6 +848,16 @@ export default function GlobalMapScreen() {
                                                     />
                                                     <Text style={[styles.listItemMetaText, { color: uiTextSec }]}>
                                                         {formatDataBytes(box.dataBytes)}
+                                                    </Text>
+                                                </View>
+                                                <View style={styles.listItemMeta}>
+                                                    <MaterialCommunityIcons 
+                                                        name={box.gpsSource === 'phone' ? 'cellphone' : 'box'} 
+                                                        size={12} 
+                                                        color={uiTextSec} 
+                                                    />
+                                                    <Text style={[styles.listItemMetaText, { color: uiTextSec }]}>
+                                                        {box.gpsSource === 'phone' ? 'Phone' : 'Box'}
                                                     </Text>
                                                 </View>
                                                 <Text style={[styles.listItemMetaText, { color: uiTextSec }]}>

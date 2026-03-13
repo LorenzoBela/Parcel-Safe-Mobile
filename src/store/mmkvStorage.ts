@@ -10,22 +10,44 @@
  * ~30-100x faster than AsyncStorage for reads.
  */
 
-// eslint-disable-next-line @typescript-eslint/no-var-requires
-const { MMKV } = require('react-native-mmkv');
+// Single MMKV instance — isolated to prevent key collisions with other storage
+import { Platform } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { StateStorage } from 'zustand/middleware';
 
-// Single MMKV instance — isolated to prevent key collisions with other storage
-const mmkv = new MMKV({ id: 'parcel-safe-store' });
+let mmkv: any = null;
+let isMMKVAvailable = false;
+
+try {
+    if (Platform.OS !== 'web') {
+        const { MMKV } = require('react-native-mmkv');
+        mmkv = new MMKV({ id: 'parcel-safe-store' });
+        isMMKVAvailable = true;
+    }
+} catch (e) {
+    console.warn('MMKV not available (likely Expo Go or Web), falling back to AsyncStorage', e);
+}
 
 export const mmkvStorage: StateStorage = {
-    getItem: (name: string): string | null => {
-        return mmkv.getString(name) ?? null;
+    getItem: async (name: string): Promise<string | null> => {
+        if (isMMKVAvailable && mmkv) {
+            return mmkv.getString(name) ?? null;
+        }
+        return await AsyncStorage.getItem(name);
     },
-    setItem: (name: string, value: string): void => {
-        mmkv.set(name, value);
+    setItem: async (name: string, value: string): Promise<void> => {
+        if (isMMKVAvailable && mmkv) {
+            mmkv.set(name, value);
+        } else {
+            await AsyncStorage.setItem(name, value);
+        }
     },
-    removeItem: (name: string): void => {
-        mmkv.delete(name);
+    removeItem: async (name: string): Promise<void> => {
+        if (isMMKVAvailable && mmkv) {
+            mmkv.delete(name);
+        } else {
+            await AsyncStorage.removeItem(name);
+        }
     },
 };
 

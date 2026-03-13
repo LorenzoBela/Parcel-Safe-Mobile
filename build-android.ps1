@@ -219,7 +219,6 @@ $robocopyArgs = @(
     ".git",
     "/XF",               # Exclude files
     "*.log",
-    "*.lock",
     ".DS_Store",
     "/NFL",              # No file list (less verbose)
     "/NDL",              # No directory list (less verbose)
@@ -885,23 +884,12 @@ if (Test-Path $expoCameraPatch) {
 # Always reinstall in build directory to ensure correct versions
 Write-Host "  Installing dependencies..." -ForegroundColor Gray
 
-# Force clean node_modules to avoid ghost patch files or corrupted cache
-$nodeModulesPath = Join-Path $PROJECT_ROOT "node_modules"
-if (Test-Path $nodeModulesPath) {
-    Write-Host "  Removing existing node_modules to ensure clean install..." -ForegroundColor DarkGray
-    Remove-Item -Path $nodeModulesPath -Recurse -Force -ErrorAction SilentlyContinue
-}
-$nodeModulesExists = $false
+# Use npm install instead of forcing a full wipe when possible to speed up builds
+# node_modules and package-lock.json are now synced via robocopy
 
-# Remove stale package-lock.json to ensure npm installs versions from updated package.json
-# (robocopy excludes *.lock files, so the build dir may have a stale lock from a previous run)
-$lockFile = Join-Path $PROJECT_ROOT "package-lock.json"
-if (Test-Path $lockFile) {
-    Remove-Item -Path $lockFile -Force
-    Write-Host "  Removed stale package-lock.json to force fresh dependency resolution" -ForegroundColor Gray
-}
+$nodeModulesExists = Test-Path (Join-Path $PROJECT_ROOT "node_modules")
 
-npm install --force
+npm install
 $npmInstallExit = $LASTEXITCODE
 if ($npmInstallExit -ne 0) {
     Write-Host "[ERROR] npm install failed with exit code $npmInstallExit" -ForegroundColor Red
@@ -1087,6 +1075,21 @@ if ($env:ANDROID_SDK_ROOT) {
 Write-Host "[OK] Post-prebuild Gradle fixes applied" -ForegroundColor Green
 
 # Step 7: Apply Patches
+
+function Invoke-ReactNativeScreensCMakeFix {
+    param([string]$ProjectRoot)
+    $screensCMake = Join-Path $ProjectRoot "node_modules\react-native-screens\android\src\main\jni\CMakeLists.txt"
+    if (Test-Path $screensCMake) {
+        $rawScreens = Get-Content -Path $screensCMake -Raw
+        if ($rawScreens -match 'target_link_libraries\(rnscreens') {
+            $rawScreens = $rawScreens -replace 'target_link_libraries\(rnscreens', 'target_link_libraries(${LIB_TARGET_NAME}'
+            Set-Content -Path $screensCMake -Value $rawScreens
+            Write-Host "[OK] Patched react-native-screens CMake: rnscreens -> LIB_TARGET_NAME" -ForegroundColor Green
+        }
+    }
+}
+
+Invoke-ReactNativeScreensCMakeFix -ProjectRoot $PROJECT_ROOT
 
 function Invoke-BarcodeScannerInterfaceFix {
     param([string]$ProjectRoot)
@@ -1472,42 +1475,14 @@ Write-Host "Starting Android build..." -ForegroundColor Cyan
 Write-Host "====================================" -ForegroundColor Cyan
 Write-Host ""
 
-# Ensure a healthy adb connection before build
-function Test-ConnectedAndroidDevice {
-    param([string]$SdkRoot)
-    if (-not $SdkRoot) { return $true }
-    $adbPath = Join-Path $SdkRoot "platform-tools\adb.exe"
-    if (-not (Test-Path $adbPath)) { return $true }
-    $devices = & $adbPath devices
-    $deviceLines = $devices | Where-Object { $_ -match "\t" }
-    foreach ($line in $deviceLines) {
-        $parts = $line -split "\t"
-        if ($parts.Count -ge 2 -and $parts[1] -eq "device") { return $true }
-    }
-    return $false
-}
-
-if (-not (Test-ConnectedAndroidDevice -SdkRoot $env:ANDROID_SDK_ROOT)) {
-    $adbPath = Join-Path $env:ANDROID_SDK_ROOT "platform-tools\adb.exe"
-    if (Test-Path $adbPath) {
-        Write-Host "[WARN] No active Android device found. Restarting adb..." -ForegroundColor DarkYellow
-        & $adbPath kill-server | Out-Null
-        Start-Sleep -Seconds 2
-        & $adbPath start-server | Out-Null
-        Start-Sleep -Seconds 2
-    }
-    if (-not (Test-ConnectedAndroidDevice -SdkRoot $env:ANDROID_SDK_ROOT)) {
-        Write-Host "[ERROR] No connected Android device/emulator. Please start an emulator or connect a device, then re-run." -ForegroundColor Red
-        exit 1
-    }
-}
+# Ensure a healthy adb connection before build (Removed to avoid forcing emulator)
 
 #region agent log
 Write-AgentLog -HypothesisId "H3" -Message "pre-build context" -Data @{
     workingDir    = (Get-Location).Path
     androidDir    = $ANDROID_DIR
     gradlewExists = (Test-Path "$ANDROID_DIR\gradlew.bat")
-    command       = "npx expo run:android"
+    command       = "gradlew assembleDebug"
 }
 #endregion
 
@@ -1547,7 +1522,7 @@ if ($gradleExitCode -eq 0) {
     }
 
     if ($foundApks.Count -gt 0) {
-        $CENTRAL_APK_DIR = "C:\Dev\TopBox\mobile\APK"
+        $CENTRAL_APK_DIR = Join-Path $SOURCE_DIR "APK"
         if (-not (Test-Path $CENTRAL_APK_DIR)) {
             New-Item -ItemType Directory -Path $CENTRAL_APK_DIR -Force | Out-Null
         }
@@ -1565,22 +1540,12 @@ if ($gradleExitCode -eq 0) {
     exit $gradleExitCode
 }
 
-# Phase 2: Install on device and launch dev client (this blocks on metro bundler)
-Write-Host "`nPhase 2: Installing and launching on device..." -ForegroundColor Yellow
-npx expo run:android
-$expoExitCode = $LASTEXITCODE
-#region agent log
-Write-AgentLog -HypothesisId "H6" -Message "expo run result" -Data @{
-    exitCode = $expoExitCode
-}
-#endregion
-
 Write-Host "`n====================================" -ForegroundColor Cyan
 Write-Host "Build process completed!" -ForegroundColor Cyan
 Write-Host "====================================" -ForegroundColor Cyan
 
 # Post-build verification
-if ($expoExitCode -eq 0) {
+if ($gradleExitCode -eq 0) {
     Write-Host "`n[OK] Build succeeded!" -ForegroundColor Green
 
     # Save last known good build snapshot

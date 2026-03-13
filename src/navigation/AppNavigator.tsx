@@ -111,17 +111,25 @@ const CustomerNavigator = () => {
 // Rider Tabs
 const RiderNavigator = () => {
     const theme = useTheme();
+    const isDark = theme.dark;
+    const tabBg = isDark ? '#000000' : '#FFFFFF';
+    const tabBorder = isDark ? '#1C1C1E' : '#E5E5EA';
+    const activeColor = isDark ? '#FFFFFF' : '#000000';
+    const inactiveColor = '#8E8E93';
     return (
         <Tab.Navigator
             id="RiderTabs"
             screenOptions={{
                 headerShown: false,
-                tabBarActiveTintColor: '#4CAF50', // Keep specific rider color or use theme? keeping specific for identity
-                tabBarInactiveTintColor: theme.colors.onSurfaceVariant,
+                tabBarActiveTintColor: activeColor,
+                tabBarInactiveTintColor: inactiveColor,
                 tabBarStyle: {
-                    backgroundColor: theme.colors.surface,
-                    borderTopColor: theme.colors.outline,
-                }
+                    backgroundColor: tabBg,
+                    borderTopColor: tabBorder,
+                    borderTopWidth: StyleSheet.hairlineWidth,
+                    elevation: 0,
+                },
+                tabBarLabelStyle: { fontSize: 11, fontWeight: '600' },
             }}
         >
             <Tab.Screen

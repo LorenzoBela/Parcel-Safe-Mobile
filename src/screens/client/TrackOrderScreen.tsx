@@ -1016,6 +1016,7 @@ export default function TrackOrderScreen() {
                         longitude={riderMarkerLocation.longitude}
                         rotation={riderBearing.current}
                         speed={riderLiveLocation?.speed}
+                        pathGeometry={lastMatchedRoadRef.current}
                     />
 
                     {/* Destination Marker */}

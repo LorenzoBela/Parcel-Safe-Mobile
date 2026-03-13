@@ -430,7 +430,7 @@ export default function CustomerDashboard() {
                 <Modal visible={shareModalVisible} onDismiss={() => setShareModalVisible(false)}
                     contentContainerStyle={[styles.modal, { backgroundColor: c.card }]}
                 >
-                    <View style={{ alignItems: 'center' }}>
+                    <View style={{ alignItems: 'center', width: '100%' }}>
                         <View style={[styles.modalIcon, { backgroundColor: c.red + '14' }]}>
                             <MaterialCommunityIcons name="shield-lock-outline" size={40} color={c.red} />
                         </View>
@@ -447,7 +447,7 @@ export default function CustomerDashboard() {
                             <Text style={[styles.primaryBtnText, { color: c.bg }]}>I Understand, Share</Text>
                         </TouchableOpacity>
                         <TouchableOpacity
-                            style={[styles.secondaryBtn, { borderColor: c.border, width: '100%' }]}
+                            style={[styles.secondaryBtn, { borderColor: c.border, width: '100%', flex: 0 }]}
                             onPress={() => setShareModalVisible(false)} activeOpacity={0.7}
                         >
                             <Text style={[styles.secondaryBtnText, { color: c.textSec }]}>Cancel</Text>

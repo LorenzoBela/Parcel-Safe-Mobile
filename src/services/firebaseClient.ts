@@ -156,6 +156,12 @@ export interface HardwareDiagnostics {
     geo_dist_m?: number;
     /** Theft guard state reported by firmware */
     theft_state?: string;
+    /** Battery Percentage 0-100 */
+    batt_pct?: number;
+    /** Battery Voltage */
+    batt_v?: number;
+    /** Low battery flag */
+    batt_low?: boolean;
 }
 
 export type HardwareByBoxId = Record<string, HardwareDiagnostics>;
