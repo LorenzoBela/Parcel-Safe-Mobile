@@ -4,7 +4,8 @@ import { useEntryAnimation } from '../../hooks/useEntryAnimation';
 import { Text, ActivityIndicator } from 'react-native-paper';
 import { useNavigation } from '@react-navigation/native';
 import MapboxGL from '../../components/map/MapboxWrapper';
-import { subscribeToStolenBoxes, TheftStatus } from '../../services/firebaseClient';
+import { subscribeToAllHardware, subscribeToAllLocations, HardwareByBoxId, HardwareDiagnostics, clearTamperStatus } from '../../services/firebaseClient';
+import type { LocationsByBoxId } from '../../types';
 import { supabase } from '../../services/supabaseClient';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useAppTheme } from '../../context/ThemeContext';
@@ -38,8 +39,9 @@ export default function TamperAlertsScreen() {
     const { isDarkMode } = useAppTheme();
     const c = isDarkMode ? darkC : lightC;
 
-    const [stolenBoxes, setStolenBoxes] = useState<Record<string, TheftStatus> | null>(null);
-    const [tamperLogs, setTamperLogs] = useState<AuditLog[]>([]);
+    const [hardware, setHardware] = useState<HardwareByBoxId | null>(null);
+    const [locations, setLocations] = useState<LocationsByBoxId | null>(null);
+    const [clearingBoxId, setClearingBoxId] = useState<string | null>(null);
     const [loading, setLoading] = useState(true);
     const [selectedBoxId, setSelectedBoxId] = useState<string | null>(null);
 
@@ -51,42 +53,33 @@ export default function TamperAlertsScreen() {
         if (MAPBOX_TOKEN) {
             MapboxGL.setAccessToken(MAPBOX_TOKEN);
         }
-        fetchAuditLogs();
-        const unsub = subscribeToStolenBoxes((boxes) => {
-            setStolenBoxes(boxes);
+        
+        setLoading(true);
+        const unsubHw = subscribeToAllHardware((hw) => {
+            setHardware(hw);
+            setLoading(false);
         });
-        return () => { unsub(); };
+        const unsubLoc = subscribeToAllLocations((locs) => {
+            setLocations(locs);
+        });
+        return () => { unsubHw(); unsubLoc(); };
     }, []);
 
-    const fetchAuditLogs = async () => {
-        setLoading(true);
-        if (!supabase) return;
-
-        const { data: logs, error } = await supabase
-            .from('audit_logs')
-            .select('*')
-            .in('action', ['TAMPER_ALERT', 'FORCE_UNLOCK', 'UNAUTHORIZED_ACCESS'])
-            .order('created_at', { ascending: false })
-            .limit(50);
-
-        if (logs) {
-            setTamperLogs(logs as AuditLog[]);
-        } else if (error) {
-            console.error('Failed to fetch tamper logs', error);
-        }
-        setLoading(false);
-    };
-
     const activeBoxes = useMemo(() => {
-        if (!stolenBoxes) return [];
-        return Object.entries(stolenBoxes).map(([id, status]) => ({
-            id,
-            lat: status.last_known_location?.lat || 0,
-            lng: status.last_known_location?.lng || 0,
-            status: status.state,
-            reportedAt: status.reported_at,
-        })).filter(b => b.lat !== 0 && b.lng !== 0);
-    }, [stolenBoxes]);
+        if (!hardware) return [];
+        return Object.entries(hardware)
+            .filter(([, status]) => status.tamper?.detected || status.tamper?.lockdown)
+            .map(([id, status]) => {
+                const loc = locations?.[id];
+                return {
+                    id,
+                    lat: loc?.latitude ?? 0,
+                    lng: loc?.longitude ?? 0,
+                    status: 'TAMPERED' as const,
+                    reportedAt: (status.tamper as any)?.timestamp_str || new Date().toISOString(),
+                };
+            });
+    }, [hardware, locations]);
 
     useEffect(() => {
         if (activeBoxes.length > 0 && cameraCenter[0] === DEFAULT_CENTER[0] && cameraCenter[1] === DEFAULT_CENTER[1]) {
@@ -115,22 +108,44 @@ export default function TamperAlertsScreen() {
         return `${Math.floor(diffInSeconds / 86400)}d ago`;
     };
 
-    const renderItem = ({ item }: { item: AuditLog }) => (
+    const handleClearTamper = async (boxId: string) => {
+        setClearingBoxId(boxId);
+        try {
+            await clearTamperStatus(boxId);
+        } catch (e) {
+            console.error('Failed to clear tamper', e);
+        } finally {
+            setClearingBoxId(null);
+        }
+    };
+
+    const renderItem = ({ item }: { item: typeof activeBoxes[0] }) => (
         <View style={[styles.alertCard, { backgroundColor: c.card, borderColor: c.alertBorder }]}>
             <View style={[styles.alertIconWrap, { backgroundColor: isDarkMode ? '#3C1515' : '#FEE2E2' }]}>
                 <MaterialCommunityIcons name="shield-alert-outline" size={20} color={c.red} />
             </View>
             <View style={{ flex: 1, marginLeft: 12 }}>
                 <Text style={[styles.alertTitle, { color: c.text }]}>
-                    {item.action.replace(/_/g, ' ')}
+                    Tamper Detected
                 </Text>
                 <Text style={[styles.alertSub, { color: c.textSec }]}>
-                    {item.box_id || 'Unknown Box'} · {formatTimeAgo(item.created_at)}
+                    {item.id} · {formatTimeAgo(item.reportedAt)}
                 </Text>
                 <Text style={[styles.alertBody, { color: c.textSec }]}>
-                    {item.details?.reason || item.details?.message || 'No additional details.'}
+                    Unauthorized lid open or lock bypass.
                 </Text>
             </View>
+            <TouchableOpacity 
+                style={[styles.clearButton, { backgroundColor: c.red }]} 
+                onPress={() => handleClearTamper(item.id)}
+                disabled={clearingBoxId === item.id}
+            >
+                {clearingBoxId === item.id ? (
+                    <ActivityIndicator size={16} color="#FFF" />
+                ) : (
+                    <Text style={{ color: '#FFF', fontSize: 12, fontWeight: '600' }}>Clear</Text>
+                )}
+            </TouchableOpacity>
         </View>
     );
 
@@ -193,7 +208,7 @@ export default function TamperAlertsScreen() {
                     <View style={[styles.overlayPill, { backgroundColor: c.overlay }]}>
                         <MaterialCommunityIcons name="alert-octagon" size={16} color={c.red} />
                         <Text style={[styles.overlayText, { color: c.red }]}>
-                            {activeBoxes.length} Stolen Boxes
+                            {activeBoxes.length} Tamper Alerts
                         </Text>
                     </View>
                 </View>
@@ -207,7 +222,7 @@ export default function TamperAlertsScreen() {
                     <ActivityIndicator style={{ marginTop: 20 }} />
                 ) : (
                     <FlatList
-                        data={tamperLogs}
+                        data={activeBoxes}
                         renderItem={renderItem}
                         keyExtractor={item => item.id}
                         contentContainerStyle={styles.listContent}
@@ -295,8 +310,14 @@ const styles = StyleSheet.create({
         fontSize: 12,
         marginTop: 4,
         lineHeight: 16,
-    },
-    emptyWrap: {
+    },    clearButton: {
+        marginLeft: 12,
+        paddingHorizontal: 12,
+        paddingVertical: 6,
+        borderRadius: 8,
+        justifyContent: 'center',
+        alignItems: 'center',
+    },    emptyWrap: {
         alignItems: 'center',
         paddingTop: 40,
         gap: 12,

@@ -398,6 +398,20 @@ export function subscribeToAllHardware(
     return () => off(hardwareRef);
 }
 
+export async function clearTamperStatus(boxId: string): Promise<void> {
+    const db = getFirebaseDatabase();
+    const tamperRef = ref(db, `hardware/${boxId}/tamper`);
+    await set(tamperRef, null);
+    
+    // Also clear theft_state lock
+    const theftRef = ref(db, `hardware/${boxId}/theft_state`);
+    await set(theftRef, null);
+
+    // Write a clear_tamper command for the proxy to read and reset TheftGuard
+    const cmdRef = ref(db, `hardware/${boxId}/clear_tamper`);
+    await set(cmdRef, { requested: true, timestamp: serverTimestamp() });
+}
+
 /**
  * Update box power state
  */
