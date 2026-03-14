@@ -64,8 +64,8 @@ export default function EarningsWidget({ riderId, dailyGoal: initialDailyGoal = 
                 .select('estimated_fare')
                 .eq('rider_id', riderId)
                 .eq('status', 'COMPLETED')
-                .gte('created_at', startOfDay)
-                .lte('created_at', endOfDay);
+                .gte('updated_at', startOfDay)
+                .lte('updated_at', endOfDay);
 
             if (error) throw error;
 

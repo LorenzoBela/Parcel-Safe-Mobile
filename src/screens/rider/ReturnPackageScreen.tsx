@@ -70,8 +70,7 @@ export default function ReturnPackageScreen() {
     const [cancellationState, setCancellationState] = useState<CancellationState | null>(null);
 
     // ── Hardware box state (primary photo source) ──
-    const [hardwareSuccess, setHardwareSuccess] = useState(false);
-    const [cameraFailed, setCameraFailed] = useState(false);
+    const [hardwareSuccess, setHardwareSuccess] = useState(false);    const [hardwareProofUrl, setHardwareProofUrl] = useState<string | null>(null);    const [cameraFailed, setCameraFailed] = useState(false);
     const [boxOtpValidated, setBoxOtpValidated] = useState(false);
     const [faceDetected, setFaceDetected] = useState(false);
     const [lockEvent, setLockEvent] = useState<LockEvent | null>(null);
@@ -106,6 +105,7 @@ export default function ReturnPackageScreen() {
         const unsubscribeProof = subscribeToDeliveryProof(deliveryId, (proof) => {
             if (proof?.proof_photo_url) {
                 setHardwareSuccess(true);
+                setHardwareProofUrl(proof.proof_photo_url);
                 setBoxOtpValidated(true);
             }
         });
@@ -140,7 +140,7 @@ export default function ReturnPackageScreen() {
     useEffect(() => {
         if (hardwareSuccess && currentStep === 'PHOTO_CAPTURE') {
             setCurrentStep('UPLOADING');
-            markPackageRetrieved(deliveryId, boxId).then((ok) => {
+            markPackageRetrieved(deliveryId, boxId, hardwareProofUrl || undefined).then((ok) => {
                 if (ok) {
                     setCurrentStep('COMPLETED');
                 } else {

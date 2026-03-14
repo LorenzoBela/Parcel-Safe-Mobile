@@ -60,6 +60,7 @@ export default function DropoffVerification({
     const [isLoading, setIsLoading] = useState(false);
     const [fallbackPhotoUri, setFallbackPhotoUri] = useState<string | null>(null);
     const [hardwareSuccess, setHardwareSuccess] = useState(false);
+    const [hardwareProofUrl, setHardwareProofUrl] = useState<string | null>(null);
 
     // ━━━ SECURITY GATE: Box must confirm OTP before completion is possible ━━━
     const [boxOtpValidated, setBoxOtpValidated] = useState(false);
@@ -112,6 +113,7 @@ export default function DropoffVerification({
         const unsubscribeProof = subscribeToDeliveryProof(deliveryId, (proof) => {
             if (canProcessOtpSignals && proof && proof.proof_photo_url) {
                 setHardwareSuccess(true);
+                setHardwareProofUrl(proof.proof_photo_url);
                 setBoxOtpValidated(true); // proof_photo_url implies box validated OTP
             }
         });
@@ -184,7 +186,7 @@ export default function DropoffVerification({
         }
 
         // ━━━ SECURITY CHECK: Box must have validated OTP ━━━
-        if (!boxOtpValidated) {
+        if (!boxOtpValidated && !cameraFailed) {
             PremiumAlert.alert(
                 'OTP Not Verified',
                 'The customer must enter the OTP on the physical box before delivery can be completed.',
@@ -218,8 +220,10 @@ export default function DropoffVerification({
                 });
             } else {
                 // Hardware already succeeded, just finalize rider state
+                // Pass the photo URL captured by hardware to Supabase as well
                 await updateDeliveryStatus(deliveryId, 'COMPLETED', {
                     completed_at: Date.now(),
+                    proof_photo_url: hardwareProofUrl || undefined,
                 });
             }
 
@@ -241,8 +245,14 @@ export default function DropoffVerification({
         if (boxOtpValidated && cameraFailed && fallbackPhotoUri) {
             return { text: '📸 OTP verified ✓  Fallback photo captured. Ready to complete.', color: '#15803d', bgColor: '#DCFCE7' };
         }
+        if (cameraFailed && fallbackPhotoUri) {
+            return { text: '📸 Box camera failed. Fallback photo captured. Ready to complete.', color: '#15803d', bgColor: '#DCFCE7' };
+        }
         if (boxOtpValidated && cameraFailed) {
             return { text: '⚠️ OTP verified ✓  Box camera failed. Please capture a fallback photo.', color: '#b45309', bgColor: '#FEF3C7' };
+        }
+        if (cameraFailed) {
+            return { text: '⚠️ Box camera failed. Please capture a fallback photo to proceed.', color: '#b45309', bgColor: '#FEF3C7' };
         }
         if (boxOtpValidated && faceDetected) {
             return { text: '🔓 OTP verified & face detected ✓  Finalizing unlock...', color: '#1d4ed8', bgColor: '#DBEAFE' };
@@ -257,9 +267,9 @@ export default function DropoffVerification({
     };
 
     // Can the rider swipe to complete?
-    const canSwipe = boxOtpValidated && (hardwareSuccess || fallbackPhotoUri);
+    const canSwipe = (boxOtpValidated && (hardwareSuccess || fallbackPhotoUri)) || (cameraFailed && fallbackPhotoUri);
     // Can the rider see the fallback photo button?
-    const showFallbackButton = boxOtpValidated && !hardwareSuccess;
+    const showFallbackButton = (boxOtpValidated && !hardwareSuccess) || cameraFailed;
 
     const statusMsg = getHandoverStatusMessage();
 
@@ -377,7 +387,7 @@ export default function DropoffVerification({
                             </Text>
                         </View>
 
-                        {/* Fallback photo button — ONLY visible after box confirms OTP */}
+                        {/* Fallback photo button — visible after box confirms OTP or if camera fails */}
                         {showFallbackButton && (
                             <View style={{ marginTop: 12 }}>
                                 <Button
@@ -420,15 +430,6 @@ export default function DropoffVerification({
                         Not Home
                     </Button>
                 )}
-                <Button
-                    mode="outlined"
-                    onPress={onShowBleModal}
-                    style={{ flex: 1, borderColor: '#cbd5e1' }}
-                    textColor="#475569"
-                    disabled={isLoading}
-                >
-                    BLE Transfer
-                </Button>
                 <Button
                     mode="outlined"
                     onPress={onShowCancelModal}

@@ -86,21 +86,22 @@ export default function DeliveryRecordsScreen() {
                     const rawTrk = d.tracking_number || d.id;
                     const shortTrk = rawTrk.length > 20 ? '...' + rawTrk.slice(-12) : rawTrk;
 
-                    const dateObj = d.created_at ? parseUTCString(d.created_at) : null;
-                    if (d.created_at) {
-                        const testDayjs = dayjs(d.created_at).tz('Asia/Manila').format('h:mm A');
-                        console.log(`[DeliveryRecords] ID: ${d.id}, Raw: ${d.created_at}, DayJS: ${testDayjs}`);
-                    }
+                      const timestampToUse = d.delivered_at || d.updated_at || d.created_at;
+                      const dateObj = timestampToUse ? parseUTCString(timestampToUse) : null;
+                      if (timestampToUse) {
+                          const testDayjs = dayjs(timestampToUse).tz('Asia/Manila').format('h:mm A');
+                          console.log(`[DeliveryRecords] ID: ${d.id}, Raw: ${timestampToUse}, DayJS: ${testDayjs}`);
+                      }
 
-                    return {
-                        id: d.id,
-                        trk: rawTrk,
-                        shortTrk: shortTrk,
-                        status: mapStatus(d.status),
-                        rawStatus: d.status,
-                        rawDate: d.created_at,
-                        date: dateObj ? dayjs(d.created_at).add(8, 'hour').format('MMM D, YYYY') : 'N/A',
-                        time: dateObj ? dayjs(d.created_at).add(8, 'hour').format('h:mm A') : '',
+                      return {
+                          id: d.id,
+                          trk: rawTrk,
+                          shortTrk: shortTrk,
+                          status: mapStatus(d.status),
+                          rawStatus: d.status,
+                          rawDate: timestampToUse,
+                          date: dateObj ? dayjs(timestampToUse).add(8, 'hour').format('MMM D, YYYY') : 'N/A',
+                          time: dateObj ? dayjs(timestampToUse).add(8, 'hour').format('h:mm A') : '',
                         customer: d.profiles?.full_name || 'Unknown Customer',
                         customerName: d.profiles?.full_name || 'Unknown Customer',
                         earnings: d.estimated_fare != null ? `₱${Number(d.estimated_fare).toFixed(2)}` : '—',
