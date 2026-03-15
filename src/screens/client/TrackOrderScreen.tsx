@@ -153,6 +153,7 @@ export default function TrackOrderScreen() {
     const [riderProfile, setRiderProfile] = useState<RiderProfile | null>(null);
     const [eta, setEta] = useState<number | null>(null);
     const [distanceToTarget, setDistanceToTarget] = useState<number | null>(null); // km
+    const [cameraBearing, setCameraBearing] = useState<number>(0);
     const [isMapLoading, setIsMapLoading] = useState(true); // Loading screen until real location is fetched
     const [isRouteView, setIsRouteView] = useState(false);
     const [isNavigationMode, setIsNavigationMode] = useState(false);
@@ -393,28 +394,33 @@ export default function TrackOrderScreen() {
         longitude: snappedLocation?.lng ?? displayLocation?.lng ?? (isPickedUp ? boxLocation.longitude : fallbackLng),
     };
 
-    // Compute rider bearing (heading direction) from previous → current position
+    // Compute rider bearing from the same coordinates used by the rendered marker.
+    // This keeps rotation stable and aligned with what the user actually sees.
     const prevRiderPos = useRef<{ lat: number; lng: number } | null>(null);
-    const riderBearing = useRef(0);
+    const [riderBearing, setRiderBearing] = useState(0);
 
     useEffect(() => {
-        if (!displayLocation?.lat || !displayLocation?.lng) return;
+        if (!riderMarkerLocation.latitude || !riderMarkerLocation.longitude) return;
+
         const prev = prevRiderPos.current;
         if (prev) {
-            // Only compute bearing if rider actually moved (~10m+)
-            const dist = Math.sqrt(
-                Math.pow(displayLocation.lng - prev.lng, 2) +
-                Math.pow(displayLocation.lat - prev.lat, 2)
-            );
-            if (dist > 0.0001) { // ~11m threshold
-                riderBearing.current = bearing(
-                    point([prev.lng, prev.lat]),
-                    point([displayLocation.lng, displayLocation.lat])
-                );
+            const from = point([prev.lng, prev.lat]);
+            const to = point([riderMarkerLocation.longitude, riderMarkerLocation.latitude]);
+            const distKm = distanceTurf(from, to, { units: 'kilometers' });
+
+            // Match web behavior: update heading only when movement is meaningful (> ~5m).
+            if (distKm > 0.005) {
+                let nextBearing = bearing(from, to);
+                if (nextBearing < 0) nextBearing += 360;
+                setRiderBearing(nextBearing);
             }
         }
-        prevRiderPos.current = { lat: displayLocation.lat, lng: displayLocation.lng };
-    }, [displayLocation?.lat, displayLocation?.lng]);
+
+        prevRiderPos.current = {
+            lat: riderMarkerLocation.latitude,
+            lng: riderMarkerLocation.longitude,
+        };
+    }, [riderMarkerLocation.latitude, riderMarkerLocation.longitude]);
 
     const riderDetails = {
         name: riderProfile?.full_name || delivery?.rider_name || (delivery?.status === 'ACCEPTED' ? 'Rider Assigned' : 'Connecting...'),
@@ -422,6 +428,29 @@ export default function TrackOrderScreen() {
         rating: riderProfile?.rating || 4.8,
         phone: delivery?.rider_phone || '',
         avatar: riderProfile?.avatar_url || 'https://i.pravatar.cc/150?img=11',
+    };
+
+    const lastCameraBearingRef = useRef<number>(0);
+    const updateCameraBearing = (event: any) => {
+        const nextBearingRaw =
+            event?.properties?.heading ??
+            event?.properties?.bearing ??
+            event?.heading ??
+            event?.bearing ??
+            event?.nativeEvent?.properties?.heading ??
+            event?.nativeEvent?.properties?.bearing;
+
+        if (typeof nextBearingRaw !== 'number' || Number.isNaN(nextBearingRaw)) return;
+
+        const normalized = ((nextBearingRaw % 360) + 360) % 360;
+        const prev = lastCameraBearingRef.current;
+        const diff = Math.abs(normalized - prev);
+        const circularDiff = Math.min(diff, 360 - diff);
+
+        if (circularDiff >= 0.5) {
+            lastCameraBearingRef.current = normalized;
+            setCameraBearing(normalized);
+        }
     };
 
     // Fetch Rider Profile when rider_id is assigned
@@ -890,7 +919,7 @@ export default function TrackOrderScreen() {
                 ...(isNavigationMode ? {
                     pitch: 60,
                     zoomLevel: 19,
-                    heading: riderBearing.current
+                    heading: riderBearing
                 } : {
                     pitch: 0,
                     zoomLevel: 16 // Fallback standard zoom
@@ -964,6 +993,8 @@ export default function TrackOrderScreen() {
                     styleURL={theme.dark ? MapboxGL.StyleURL.Dark : MapboxGL.StyleURL.Light}
                     logoEnabled={false}
                     attributionEnabled={false}
+                    onCameraChanged={updateCameraBearing}
+                    onRegionDidChange={updateCameraBearing}
                 >
                     <MapboxGL.Camera
                         ref={cameraRef}
@@ -1014,7 +1045,8 @@ export default function TrackOrderScreen() {
                     <AnimatedRiderMarker
                         latitude={riderMarkerLocation.latitude}
                         longitude={riderMarkerLocation.longitude}
-                        rotation={riderBearing.current}
+                        rotation={riderBearing}
+                        mapBearing={cameraBearing}
                         speed={riderLiveLocation?.speed}
                         pathGeometry={lastMatchedRoadRef.current}
                     />

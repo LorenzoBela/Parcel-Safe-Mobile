@@ -8,13 +8,14 @@ import lineSlice from '@turf/line-slice';
 import bearing from '@turf/bearing';
 
 // --- Configuration ---
-const ANIMATION_DURATION = 1000; // ms to interpolate between updates
+const ANIMATION_DURATION = 800; // ms to interpolate between updates (web parity)
 const JUMP_THRESHOLD = 0.005; // ~500m. If distance > this, snap instantly (teleport) instead of animating.
 
 interface AnimatedRiderMarkerProps {
     latitude: number;
     longitude: number;
     rotation?: number; // Heading in degrees (0 = North)
+    mapBearing?: number; // Current camera/map bearing in degrees
     speed?: number; // Speed in m/s from Firebase
     pathGeometry?: number[][]; // Array of [lng, lat] coordinates representing the road
     id?: string;
@@ -24,10 +25,16 @@ interface AnimatedRiderMarkerProps {
 
 const RiderImage = require('../../../assets/Rider.jpg');
 
+const normalizeAngle = (angle: number) => {
+    const normalized = angle % 360;
+    return normalized < 0 ? normalized + 360 : normalized;
+};
+
 const AnimatedRiderMarker: React.FC<AnimatedRiderMarkerProps> = ({
     latitude,
     longitude,
     rotation = 0,
+    mapBearing = 0,
     speed,
     pathGeometry,
     id = "rider-marker-animated",
@@ -96,14 +103,8 @@ const AnimatedRiderMarker: React.FC<AnimatedRiderMarkerProps> = ({
 
         startRotation.current = renderRotation;
         
-        // Calculate bearing automatically if distance is significant enough, otherwise rely on prop
-        let computedRotation = rotation;
-        if (dist > 0.00005) { // ~5m minimum to establish meaningful heading
-            computedRotation = bearing(point(startCoord.current), point(targetCoord.current));
-            // Or if we want strictly positive:
-            if (computedRotation < 0) computedRotation += 360;
-        }
-        targetRotation.current = computedRotation;
+        // Keep rotation source external (screen-level heading pipeline), matching web logic.
+        targetRotation.current = rotation;
 
         // Cache the Turf slice to completely avoid calculating it during the animation tick!
         cachedPathRef.current = null;
@@ -154,18 +155,8 @@ const AnimatedRiderMarker: React.FC<AnimatedRiderMarkerProps> = ({
                     const currentPoint = along(cachedPathRef.current, currentDist, { units: 'meters' });
                     lng = currentPoint.geometry.coordinates[0];
                     lat = currentPoint.geometry.coordinates[1];
-
-                    // Dynamically calculate heading based on path curve
-                    const lookAheadDist = Math.min(currentDist + 2, cachedPathLengthRef.current);
-                    if (lookAheadDist > currentDist + 0.1) {
-                        const aheadPoint = along(cachedPathRef.current, lookAheadDist, { units: 'meters' });
-                        rot = bearing(currentPoint, aheadPoint);
-                    } else if (progress < 1) {
-                        // Very close to end, ease the last remaining difference
-                        rot = startRotation.current + rotDiff * ease;
-                    } else {
-                        rot = targetRotation.current;
-                    }
+                    // Rotation remains externally controlled and smoothly interpolated.
+                    rot = startRotation.current + rotDiff * ease;
                 } catch (e) {
                     // Fallback on error
                     lng = startCoord.current[0] + (targetCoord.current[0] - startCoord.current[0]) * ease;
@@ -204,6 +195,8 @@ const AnimatedRiderMarker: React.FC<AnimatedRiderMarkerProps> = ({
 
     const annotationRef = useRef<any>(null);
 
+    const visualRotation = normalizeAngle(renderRotation - mapBearing);
+
     return (
         <MapboxGL.PointAnnotation
             ref={annotationRef}
@@ -216,7 +209,7 @@ const AnimatedRiderMarker: React.FC<AnimatedRiderMarkerProps> = ({
                 {/* Speed Badge — counter-rotated to stay upright */}
                 <View style={[
                     styles.speedBadge,
-                    { opacity: speed != null && speed >= 0 ? 1 : 0, transform: [{ rotate: `${-renderRotation}deg` }] }
+                    { opacity: speed != null && speed >= 0 ? 1 : 0, transform: [{ rotate: `${-visualRotation}deg` }] }
                 ]}>
                     <Text style={styles.speedBadgeText}>
                         {speed != null && speed >= 0 ? Math.round(speed * 3.6) : 0} km/h
@@ -228,7 +221,7 @@ const AnimatedRiderMarker: React.FC<AnimatedRiderMarkerProps> = ({
                     { 
                         width: 84,
                         height: 84,
-                        transform: [{ rotate: `${renderRotation}deg` }] 
+                        transform: [{ rotate: `${visualRotation}deg` }] 
                     }
                 ]}>
                     {/* Image Container */}
