@@ -5,7 +5,7 @@ import * as ImagePicker from 'expo-image-picker';
 import SwipeConfirmButton from '../../../components/SwipeConfirmButton';
 import { uploadDeliveryProofPhoto } from '../../../services/proofPhotoService';
 import { updateDeliveryStatus } from '../../../services/riderMatchingService';
-import { subscribeToDeliveryProof, DeliveryProofState, subscribeToBoxState, BoxState, subscribeToCamera, CameraState, subscribeToLockEvents, LockEvent } from '../../../services/firebaseClient';
+import { subscribeToDeliveryProof, DeliveryProofState, subscribeToBoxState, BoxState, subscribeToCamera, CameraState, subscribeToLockEvents, LockEvent, updateBoxState } from '../../../services/firebaseClient';
 import { PremiumAlert } from '../../../services/PremiumAlertService';
 
 interface DropoffVerificationProps {
@@ -69,7 +69,13 @@ export default function DropoffVerification({
     // ━━━ LOCK EVENTS: Real-time OTP + Face Detection from hardware ━━━
     const [lockEvent, setLockEvent] = useState<LockEvent | null>(null);
     const [faceDetected, setFaceDetected] = useState(false);
+    const [boxReportedUnlocked, setBoxReportedUnlocked] = useState(false);
+    const [unlockCommandAcked, setUnlockCommandAcked] = useState(false);
     const lockEventSubscriptionStartRef = useRef<number>(Date.now());
+    const boxStateSubscriptionStartRef = useRef<number>(Date.now());
+    const boxReportedUnlockedRef = useRef<boolean>(false);
+    const unlockCommandAckedRef = useRef<boolean>(false);
+    const retryExhausted = lockEvent?.face_retry_exhausted === true || lockEvent?.fallback_required === true;
 
     // Auto-arrive logic
     useEffect(() => {
@@ -95,6 +101,10 @@ export default function DropoffVerification({
             setHardwareSuccess(false);
             setFaceDetected(false);
             setLockEvent(null);
+            setBoxReportedUnlocked(false);
+            setUnlockCommandAcked(false);
+            boxReportedUnlockedRef.current = false;
+            unlockCommandAckedRef.current = false;
         }
     }, [canProcessOtpSignals]);
 
@@ -102,11 +112,22 @@ export default function DropoffVerification({
     useEffect(() => {
         // Reset event gate whenever this subscription context changes.
         lockEventSubscriptionStartRef.current = Date.now();
+        boxStateSubscriptionStartRef.current = Date.now();
 
         const unsubscribeBox = subscribeToBoxState(boxId, (state) => {
-            // Keep subscription for future diagnostics/state-dependent UI,
-            // but do not infer OTP success from generic box status.
-            void state;
+            const unlockedNow = state?.status === 'UNLOCKING';
+            setBoxReportedUnlocked(unlockedNow);
+            boxReportedUnlockedRef.current = unlockedNow;
+
+            const ackAt = typeof state?.command_ack_at === 'number' ? state.command_ack_at : 0;
+            const ackFresh = ackAt >= (boxStateSubscriptionStartRef.current - 1500);
+            const ackUnlockSuccess =
+                state?.command_ack_command === 'UNLOCKING' &&
+                (state?.command_ack_status === 'executed' || state?.command_ack_status === 'already_unlocked') &&
+                ackFresh;
+
+            setUnlockCommandAcked(ackUnlockSuccess);
+            unlockCommandAckedRef.current = ackUnlockSuccess;
         });
 
         // Monitor delivery proof for hardware camera success
@@ -144,6 +165,9 @@ export default function DropoffVerification({
             if (event.otp_valid) {
                 setBoxOtpValidated(true);
             }
+            if (event.face_retry_exhausted || event.fallback_required) {
+                setCameraFailed(true);
+            }
             if (event.face_detected) {
                 setFaceDetected(true);
             }
@@ -178,6 +202,17 @@ export default function DropoffVerification({
         }
     };
 
+    const waitForBoxUnlock = async (timeoutMs = 15000): Promise<boolean> => {
+        const started = Date.now();
+        while (Date.now() - started < timeoutMs) {
+            if (boxReportedUnlockedRef.current && unlockCommandAckedRef.current) {
+                return true;
+            }
+            await new Promise((resolve) => setTimeout(resolve, 250));
+        }
+        return false;
+    };
+
     const handleDeliverySwipe = async () => {
         if (deliveryStatus === 'COMPLETED') {
             // Already completed by hardware
@@ -186,7 +221,7 @@ export default function DropoffVerification({
         }
 
         // ━━━ SECURITY CHECK: Box must have validated OTP ━━━
-        if (!boxOtpValidated && !cameraFailed) {
+        if (!boxOtpValidated) {
             PremiumAlert.alert(
                 'OTP Not Verified',
                 'The customer must enter the OTP on the physical box before delivery can be completed.',
@@ -196,7 +231,11 @@ export default function DropoffVerification({
         }
 
         if (!hardwareSuccess && !fallbackPhotoUri) {
-            PremiumAlert.alert('Cannot Complete', 'Hardware verification pending. If the box camera failed, please capture a fallback photo.');
+            if (retryExhausted) {
+                PremiumAlert.alert('Fallback Required', 'Camera failed all retry attempts. Capture a fallback photo before completing delivery.');
+            } else {
+                PremiumAlert.alert('Cannot Complete', 'Hardware verification pending. If the box camera failed, please capture a fallback photo.');
+            }
             return;
         }
 
@@ -211,6 +250,16 @@ export default function DropoffVerification({
 
                 if (!uploadResult.success) {
                     PremiumAlert.alert('Upload Failed', 'Fallback photo upload failed. Please retry.');
+                    return;
+                }
+
+                await updateBoxState(boxId, {
+                    command: 'UNLOCKING',
+                });
+
+                const unlockConfirmed = await waitForBoxUnlock();
+                if (!unlockConfirmed) {
+                    PremiumAlert.alert('Unlock Pending', 'Fallback photo was uploaded, but box unlock was not confirmed yet. Please retry in a moment.');
                     return;
                 }
 
@@ -239,8 +288,24 @@ export default function DropoffVerification({
         if (hardwareSuccess) {
             return { text: '✅ Box unlocked! OTP verified & face detected.', color: '#15803d', bgColor: '#DCFCE7' };
         }
+        if (boxOtpValidated && fallbackPhotoUri && boxReportedUnlocked) {
+            return { text: '✅ Fallback photo verified and unlock confirmed. Ready to complete.', color: '#15803d', bgColor: '#DCFCE7' };
+        }
+        if (boxOtpValidated && !faceDetected && !retryExhausted && typeof lockEvent?.face_attempts === 'number' && lockEvent.face_attempts > 0) {
+            const attempt = Math.min(lockEvent.face_attempts, 3);
+            return { text: `🔎 Face scan attempt ${attempt}/3 in progress...`, color: '#1d4ed8', bgColor: '#DBEAFE' };
+        }
+        if (boxOtpValidated && retryExhausted && typeof lockEvent?.face_attempts === 'number' && lockEvent.face_attempts >= 3) {
+                return { text: '⚠️ Face scan attempt 3/3 failed. Capture fallback photo to proceed.', color: '#b45309', bgColor: '#FEF3C7' };
+        }
         if (boxOtpValidated && !faceDetected && lockEvent?.otp_valid && lockEvent?.face_detected === false) {
             return { text: '⚠️ OTP correct but NO face detected — box remains locked. Ask customer to stand in front of camera.', color: '#b45309', bgColor: '#FEF3C7' };
+        }
+        if (boxOtpValidated && retryExhausted && !fallbackPhotoUri) {
+            return { text: '⚠️ Face check failed after 3 attempts. Capture fallback photo to proceed.', color: '#b45309', bgColor: '#FEF3C7' };
+        }
+        if (fallbackPhotoUri && !hardwareSuccess && !unlockCommandAcked) {
+            return { text: '📤 Fallback photo uploaded. Waiting for box unlock confirmation...', color: '#1d4ed8', bgColor: '#DBEAFE' };
         }
         if (boxOtpValidated && cameraFailed && fallbackPhotoUri) {
             return { text: '📸 OTP verified ✓  Fallback photo captured. Ready to complete.', color: '#15803d', bgColor: '#DCFCE7' };
@@ -267,9 +332,9 @@ export default function DropoffVerification({
     };
 
     // Can the rider swipe to complete?
-    const canSwipe = (boxOtpValidated && (hardwareSuccess || fallbackPhotoUri)) || (cameraFailed && fallbackPhotoUri);
+    const canSwipe = boxOtpValidated && (hardwareSuccess || !!fallbackPhotoUri);
     // Can the rider see the fallback photo button?
-    const showFallbackButton = (boxOtpValidated && !hardwareSuccess) || cameraFailed;
+    const showFallbackButton = (boxOtpValidated && !hardwareSuccess) || (retryExhausted && !hardwareSuccess) || cameraFailed;
 
     const statusMsg = getHandoverStatusMessage();
 

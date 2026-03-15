@@ -114,6 +114,11 @@ export type { LocationData, LocationsByBoxId };
 export interface BoxState {
     status: 'SLEEP' | 'STANDBY' | 'ACTIVE' | 'ARRIVED' | 'UNLOCKING' | 'LOCKED';
     command?: 'UNLOCKING' | 'LOCKED' | 'NONE';
+    command_ack_command?: string;
+    command_ack_status?: string;
+    command_ack_details?: string;
+    command_ack_at?: number;
+    command_ack_epoch?: number;
     delivery_id?: string;
     otp_code?: string;
     last_heartbeat?: number;
@@ -994,6 +999,10 @@ export interface LockEvent {
     otp_valid: boolean;
     face_detected: boolean;
     unlocked: boolean;
+    face_attempts?: number;
+    face_retry_exhausted?: boolean;
+    fallback_required?: boolean;
+    failure_reason?: string;
     timestamp: number;
     device_epoch?: number;
     timestamp_str?: string;
