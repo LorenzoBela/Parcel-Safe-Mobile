@@ -11,6 +11,8 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import MapboxGL from '../../components/map/MapboxWrapper';
 import AnimatedRiderMarker from '../../components/map/AnimatedRiderMarker';
+import bearing from '@turf/bearing';
+import { point } from '@turf/helpers';
 import {
     HardwareByBoxId,
     HardwareDiagnostics,
@@ -23,7 +25,7 @@ import {
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const DEFAULT_CENTER: [number, number] = [121.0244, 14.5547];
-const ANIMATION_DURATION = 1000;
+const ANIMATION_DURATION = 800;
 
 const STATUS_PRIORITY: Record<string, number> = {
     TAMPER: 0,
@@ -271,6 +273,7 @@ export default function GlobalMapScreen() {
 
     const [cameraCenter, setCameraCenter] = useState<[number, number]>(DEFAULT_CENTER);
     const [cameraZoom, setCameraZoom] = useState<number>(12);
+    const [cameraBearing, setCameraBearing] = useState<number>(0);
 
     // Optimizations
     const shapeSourceRef = useRef<any>(null);
@@ -278,6 +281,29 @@ export default function GlobalMapScreen() {
     const animationFrameId = useRef<number | null>(null);
     const boxBearings = useRef<Map<string, number>>(new Map()); // per-box bearing tracking
     const markerRefs = useRef<Map<string, any>>(new Map()); // per-box PointAnnotation refs for refresh
+    const lastCameraBearingRef = useRef<number>(0);
+
+    const updateCameraBearing = useCallback((event: any) => {
+        const nextBearingRaw =
+            event?.properties?.heading ??
+            event?.properties?.bearing ??
+            event?.heading ??
+            event?.bearing ??
+            event?.nativeEvent?.properties?.heading ??
+            event?.nativeEvent?.properties?.bearing;
+
+        if (typeof nextBearingRaw !== 'number' || Number.isNaN(nextBearingRaw)) return;
+
+        const normalized = ((nextBearingRaw % 360) + 360) % 360;
+        const prev = lastCameraBearingRef.current;
+        const diff = Math.abs(normalized - prev);
+        const circularDiff = Math.min(diff, 360 - diff);
+
+        if (circularDiff >= 0.5) {
+            lastCameraBearingRef.current = normalized;
+            setCameraBearing(normalized);
+        }
+    }, []);
 
     useEffect(() => {
         if (MAPBOX_TOKEN) {
@@ -390,11 +416,15 @@ export default function GlobalMapScreen() {
                 // Compute bearing from previous → current position
                 const prevTarget = animationStates.current.get(box.id)?.target;
                 if (prevTarget) {
-                    const dist = Math.abs(smoothedTarget[0] - prevTarget[0]) + Math.abs(smoothedTarget[1] - prevTarget[1]);
-                    if (dist > 0.00005) { // ~5m threshold
-                        const dLng = smoothedTarget[0] - prevTarget[0];
-                        const dLat = smoothedTarget[1] - prevTarget[1];
-                        targetRotation = (Math.atan2(dLng, dLat) * 180) / Math.PI;
+                    const dLng = smoothedTarget[0] - prevTarget[0];
+                    const dLat = smoothedTarget[1] - prevTarget[1];
+                    const distKm = Math.sqrt(dLng * dLng + dLat * dLat) * 111;
+                    if (distKm > 0.005) { // ~5m threshold
+                        targetRotation = bearing(
+                            point([prevTarget[0], prevTarget[1]]),
+                            point([smoothedTarget[0], smoothedTarget[1]])
+                        );
+                        if (targetRotation < 0) targetRotation += 360;
                         boxBearings.current.set(box.id, targetRotation);
                     } else {
                         targetRotation = boxBearings.current.get(box.id) ?? 0;
@@ -654,6 +684,8 @@ export default function GlobalMapScreen() {
                     logoEnabled={false}
                     attributionEnabled={false}
                     onPress={() => setSelectedBoxId(null)}
+                    onCameraChanged={updateCameraBearing}
+                    onRegionDidChange={updateCameraBearing}
                 >
                     <MapboxGL.Camera zoomLevel={cameraZoom} centerCoordinate={cameraCenter} />
 
@@ -674,6 +706,7 @@ export default function GlobalMapScreen() {
                                 latitude={coordToPass[1]}
                                 longitude={coordToPass[0]}
                                 rotation={boxBearings.current.get(box.id) ?? 0}
+                                mapBearing={cameraBearing}
                                 speed={box.speed}
                                 isSelected={isSelected}
                                 onSelected={() => selectBox(box.id)}
