@@ -1240,16 +1240,48 @@ export function subscribeToDelivery(
 ): () => void {
     const db = getFirebaseDatabase();
     const deliveryRef = ref(db, `/deliveries/${deliveryId}`);
+    const auditRef = ref(db, `/audit_logs/${deliveryId}`);
 
-    onValue(deliveryRef, (snapshot) => {
-        if (!snapshot.exists()) {
+    let latestDelivery: DeliveryRecord | null = null;
+    let latestAuditUrl: string | null = null;
+
+    const pushUpdate = () => {
+        if (!latestDelivery) {
             callback(null);
             return;
         }
-        callback(snapshot.val() as DeliveryRecord);
+        
+        // Merge audit photo url if main delivery lacks proof_photo_url
+        const merged = { ...latestDelivery };
+        if (!merged.proof_photo_url && latestAuditUrl) {
+            merged.proof_photo_url = latestAuditUrl;
+        }
+        callback(merged);
+    };
+
+    const unsubDelivery = onValue(deliveryRef, (snapshot) => {
+        if (!snapshot.exists()) {
+            latestDelivery = null;
+        } else {
+            latestDelivery = snapshot.val() as DeliveryRecord;
+        }
+        pushUpdate();
     });
 
-    return () => off(deliveryRef);
+    const unsubAudit = onValue(auditRef, (snapshot) => {
+        if (snapshot.exists()) {
+            const auditData = snapshot.val();
+            if (auditData?.latest_photo_url) {
+                latestAuditUrl = auditData.latest_photo_url;
+                pushUpdate();
+            }
+        }
+    });
+
+    return () => {
+        unsubDelivery();
+        unsubAudit();
+    };
 }
 
 export function subscribeToRiderLocation(
