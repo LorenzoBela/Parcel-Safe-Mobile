@@ -47,6 +47,7 @@ export default function DeliveryDetailScreen() {
     const [loading, setLoading] = useState(false);
     const [pickupPhotoVersion, setPickupPhotoVersion] = useState<number>(0);
     const [proofPhotoVersion, setProofPhotoVersion] = useState<number>(0);
+    const [returnPhotoVersion, setReturnPhotoVersion] = useState<number>(0);
 
     // Map UX State
     const cameraRef = React.useRef<any>(null);
@@ -134,12 +135,16 @@ export default function DeliveryDetailScreen() {
                 ...prev,
                 ...(proof.pickup_photo_url ? { pickup_photo_url: proof.pickup_photo_url } : {}),
                 ...(proof.proof_photo_url ? { proof_photo_url: proof.proof_photo_url } : {}),
+                ...(proof.return_photo_url ? { return_photo_url: proof.return_photo_url } : {}),
             }));
             if (typeof proof.pickup_photo_uploaded_at === 'number') {
                 setPickupPhotoVersion(proof.pickup_photo_uploaded_at);
             }
             if (typeof proof.proof_photo_uploaded_at === 'number') {
                 setProofPhotoVersion(proof.proof_photo_uploaded_at);
+            }
+            if (typeof proof.return_photo_uploaded_at === 'number') {
+                setReturnPhotoVersion(proof.return_photo_uploaded_at);
             }
         });
 
@@ -176,6 +181,11 @@ export default function DeliveryDetailScreen() {
     const proofImageUri = useMemo(
         () => withCacheBust(deliveryData.proof_photo_url || deliveryData.image, proofPhotoVersion || deliveryData.delivered_at || deliveryData.updated_at),
         [deliveryData.proof_photo_url, deliveryData.image, deliveryData.delivered_at, deliveryData.updated_at, proofPhotoVersion]
+    );
+
+    const returnImageUri = useMemo(
+        () => withCacheBust(deliveryData.return_photo_url, returnPhotoVersion || deliveryData.updated_at),
+        [deliveryData.return_photo_url, deliveryData.updated_at, returnPhotoVersion]
     );
 
     // Get pickup and dropoff coordinates from delivery object (or fetched data)
@@ -624,11 +634,13 @@ export default function DeliveryDetailScreen() {
                 }
 
                 {/* Proof of Delivery */}
-                <Text variant="titleMedium" style={styles.sectionTitle}>Proof of Delivery</Text>
+                <Text variant="titleMedium" style={styles.sectionTitle}>
+                    {String(deliveryData.status || '').toUpperCase() === 'RETURNED' ? 'Return Verification' : 'Proof of Delivery'}
+                </Text>
                 {
-                    proofImageUri ? (
+                    (returnImageUri || proofImageUri) ? (
                         <Card style={styles.imageCard} mode="elevated">
-                            <Image source={{ uri: proofImageUri }} style={styles.proofImage} resizeMode="cover" />
+                            <Image source={{ uri: returnImageUri || proofImageUri }} style={styles.proofImage} resizeMode="cover" />
                             {deliveryData.delivered_at && (
                                 <Text style={{ padding: 10, textAlign: 'center', color: '#666', fontSize: 12 }}>
                                     Taken on {dayjs.utc(parseUTCString(deliveryData.delivered_at)).add(8, 'hour').format('MMM D, YYYY h:mm A')}

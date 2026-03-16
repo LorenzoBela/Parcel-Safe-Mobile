@@ -325,6 +325,13 @@ export async function markPackageRetrieved(
     const deliveryRef = ref(database, `deliveries/${deliveryId}/status`);
     await set(deliveryRef, 'RETURNED');
 
+    if (returnPhotoUrl) {
+      await update(ref(database, `deliveries/${deliveryId}`), {
+        return_photo_url: returnPhotoUrl,
+        return_photo_uploaded_at: Date.now(),
+      });
+    }
+
     // Update status to RETURNED in Supabase
     if (supabase) {
       const updatePayload: Record<string, string> = {

@@ -160,6 +160,7 @@ export default function TrackOrderScreen() {
     const [isBottomSheetExpanded, setIsBottomSheetExpanded] = useState(true);
     const [pickupPhotoVersion, setPickupPhotoVersion] = useState<number>(0);
     const [proofPhotoVersion, setProofPhotoVersion] = useState<number>(0);
+    const [returnPhotoVersion, setReturnPhotoVersion] = useState<number>(0);
 
     // Modals & Rating State
     const [showRiderDetailsModal, setShowRiderDetailsModal] = useState(false);
@@ -222,7 +223,7 @@ export default function TrackOrderScreen() {
     const customerId = useAuthStore((state: any) => state.user?.userId) as string | undefined;
 
     const deliveryStatus = mapStatusToCancellationStatus(delivery?.status);
-    const isTerminalState = ['COMPLETED', 'TAMPERED', 'CANCELLED'].includes(delivery?.status || '');
+    const isTerminalState = ['COMPLETED', 'RETURNED', 'TAMPERED', 'CANCELLED'].includes(delivery?.status || '');
 
     // Sync Ref and Clear Data on Terminal State
     useEffect(() => {
@@ -261,6 +262,11 @@ export default function TrackOrderScreen() {
     const proofPhotoUri = useMemo(
         () => withCacheBust(delivery?.proof_photo_url, proofPhotoVersion || delivery?.delivered_at || delivery?.updated_at),
         [delivery?.proof_photo_url, delivery?.delivered_at, delivery?.updated_at, proofPhotoVersion]
+    );
+
+    const returnPhotoUri = useMemo(
+        () => withCacheBust(delivery?.return_photo_url, returnPhotoVersion || delivery?.updated_at),
+        [delivery?.return_photo_url, delivery?.updated_at, returnPhotoVersion]
     );
 
     // Two-Phase Routing: determine the current route target
@@ -605,11 +611,17 @@ export default function TrackOrderScreen() {
             if (proof.proof_photo_url) {
                 setDelivery(prev => prev ? ({ ...prev, proof_photo_url: proof.proof_photo_url }) : prev);
             }
+            if (proof.return_photo_url) {
+                setDelivery(prev => prev ? ({ ...prev, return_photo_url: proof.return_photo_url }) : prev);
+            }
             if (typeof proof.pickup_photo_uploaded_at === 'number') {
                 setPickupPhotoVersion(proof.pickup_photo_uploaded_at);
             }
             if (typeof proof.proof_photo_uploaded_at === 'number') {
                 setProofPhotoVersion(proof.proof_photo_uploaded_at);
+            }
+            if (typeof proof.return_photo_uploaded_at === 'number') {
+                setReturnPhotoVersion(proof.return_photo_uploaded_at);
             }
         });
 
@@ -1422,7 +1434,7 @@ export default function TrackOrderScreen() {
                         {/* Completed state: show proof photo and go-home buttons */}
                         {delivery?.status === 'COMPLETED' && (
                             <View>
-                                {delivery?.proof_photo_url && (
+                                {proofPhotoUri && (
                                     <Card style={{ marginBottom: 12, borderRadius: 12 }} mode="elevated">
                                         <Card.Title title="Proof of Delivery" titleVariant="titleSmall" />
                                         <Card.Cover source={{ uri: proofPhotoUri }} style={{ height: 180 }} />
@@ -1449,6 +1461,18 @@ export default function TrackOrderScreen() {
                                 >
                                     View Delivery History
                                 </Button>
+                            </View>
+                        )}
+
+                        {delivery?.status === 'RETURNED' && returnPhotoUri && (
+                            <View>
+                                <Card style={{ marginBottom: 12, borderRadius: 12 }} mode="elevated">
+                                    <Card.Title title="Return Verification" titleVariant="titleSmall" />
+                                    <Card.Cover source={{ uri: returnPhotoUri }} style={{ height: 180 }} />
+                                    <Text style={{ padding: 10, textAlign: 'center', color: '#666', fontSize: 12 }}>
+                                        Sender return proof captured
+                                    </Text>
+                                </Card>
                             </View>
                         )}
 

@@ -955,6 +955,8 @@ export interface DeliveryProofState {
     pickup_photo_url?: string;
     pickup_photo_storage_path?: string;
     pickup_photo_uploaded_at?: number;
+    return_photo_url?: string;
+    return_photo_uploaded_at?: number;
 }
 
 /**

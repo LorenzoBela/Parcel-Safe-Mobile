@@ -103,9 +103,10 @@ export default function ReturnPackageScreen() {
         });
 
         const unsubscribeProof = subscribeToDeliveryProof(deliveryId, (proof) => {
-            if (proof?.proof_photo_url) {
+            const resolvedReturnProof = proof?.return_photo_url || proof?.proof_photo_url;
+            if (resolvedReturnProof) {
                 setHardwareSuccess(true);
-                setHardwareProofUrl(proof.proof_photo_url);
+                setHardwareProofUrl(resolvedReturnProof);
                 setBoxOtpValidated(true);
             }
         });
