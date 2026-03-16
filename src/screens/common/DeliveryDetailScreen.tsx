@@ -7,6 +7,7 @@ import { useNavigation, useRoute } from '@react-navigation/native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import MapboxGL, { isMapboxNativeAvailable, MapFallback } from '../../components/map/MapboxWrapper';
 import { supabase } from '../../services/supabaseClient';
+import { subscribeToDeliveryProof, subscribeToPhotoAuditLog } from '../../services/firebaseClient';
 import dayjs from 'dayjs';
 import utc from 'dayjs/plugin/utc';
 import timezone from 'dayjs/plugin/timezone';
@@ -44,6 +45,8 @@ export default function DeliveryDetailScreen() {
     const [routeGeometry, setRouteGeometry] = useState<any>(null);
     const [deliveryData, setDeliveryData] = useState<any>(delivery);
     const [loading, setLoading] = useState(false);
+    const [pickupPhotoVersion, setPickupPhotoVersion] = useState<number>(0);
+    const [proofPhotoVersion, setProofPhotoVersion] = useState<number>(0);
 
     // Map UX State
     const cameraRef = React.useRef<any>(null);
@@ -120,6 +123,60 @@ export default function DeliveryDetailScreen() {
 
         fetchDeliveryDetails();
     }, [delivery]);
+
+    useEffect(() => {
+        const liveId = deliveryData?.id || delivery?.id;
+        if (!liveId) return;
+
+        const unsubProof = subscribeToDeliveryProof(liveId, (proof) => {
+            if (!proof) return;
+            setDeliveryData((prev: any) => ({
+                ...prev,
+                ...(proof.pickup_photo_url ? { pickup_photo_url: proof.pickup_photo_url } : {}),
+                ...(proof.proof_photo_url ? { proof_photo_url: proof.proof_photo_url } : {}),
+            }));
+            if (typeof proof.pickup_photo_uploaded_at === 'number') {
+                setPickupPhotoVersion(proof.pickup_photo_uploaded_at);
+            }
+            if (typeof proof.proof_photo_uploaded_at === 'number') {
+                setProofPhotoVersion(proof.proof_photo_uploaded_at);
+            }
+        });
+
+        const unsubAudit = subscribeToPhotoAuditLog(liveId, (audit) => {
+            if (!audit?.latest_photo_url) return;
+            setDeliveryData((prev: any) => ({
+                ...prev,
+                proof_photo_url: audit.latest_photo_url,
+            }));
+            if (typeof audit.latest_photo_uploaded_at === 'number') {
+                setProofPhotoVersion(audit.latest_photo_uploaded_at);
+            } else {
+                setProofPhotoVersion(Date.now());
+            }
+        });
+
+        return () => {
+            unsubProof();
+            unsubAudit();
+        };
+    }, [deliveryData?.id, delivery?.id]);
+
+    const withCacheBust = (url?: string | null, version?: number | string | null): string | undefined => {
+        if (!url) return undefined;
+        const v = version || Date.now();
+        return `${url}${url.includes('?') ? '&' : '?'}t=${encodeURIComponent(String(v))}`;
+    };
+
+    const pickupImageUri = useMemo(
+        () => withCacheBust(deliveryData.pickupImage || deliveryData.pickup_photo_url, pickupPhotoVersion || deliveryData.picked_up_at || deliveryData.updated_at),
+        [deliveryData.pickupImage, deliveryData.pickup_photo_url, deliveryData.picked_up_at, deliveryData.updated_at, pickupPhotoVersion]
+    );
+
+    const proofImageUri = useMemo(
+        () => withCacheBust(deliveryData.proof_photo_url || deliveryData.image, proofPhotoVersion || deliveryData.delivered_at || deliveryData.updated_at),
+        [deliveryData.proof_photo_url, deliveryData.image, deliveryData.delivered_at, deliveryData.updated_at, proofPhotoVersion]
+    );
 
     // Get pickup and dropoff coordinates from delivery object (or fetched data)
     // Support both new format (pickup_lat/lng, dropoff_lat/lng) and old format (lat/lng)
@@ -552,9 +609,9 @@ export default function DeliveryDetailScreen() {
                 {/* Pickup Photo */}
                 <Text variant="titleMedium" style={styles.sectionTitle}>Pickup Photo</Text>
                 {
-                    deliveryData.pickupImage || deliveryData.pickup_photo_url ? (
+                    pickupImageUri ? (
                         <Card style={styles.imageCard} mode="elevated">
-                            <Image source={{ uri: deliveryData.pickupImage || deliveryData.pickup_photo_url }} style={styles.proofImage} resizeMode="cover" />
+                            <Image source={{ uri: pickupImageUri }} style={styles.proofImage} resizeMode="cover" />
                             {deliveryData.picked_up_at && (
                                 <Text style={{ padding: 10, textAlign: 'center', color: '#666', fontSize: 12 }}>
                                     Taken on {dayjs.utc(parseUTCString(deliveryData.picked_up_at)).add(8, 'hour').format('MMM D, YYYY h:mm A')}
@@ -569,9 +626,9 @@ export default function DeliveryDetailScreen() {
                 {/* Proof of Delivery */}
                 <Text variant="titleMedium" style={styles.sectionTitle}>Proof of Delivery</Text>
                 {
-                    deliveryData.proof_photo_url || deliveryData.image ? (
+                    proofImageUri ? (
                         <Card style={styles.imageCard} mode="elevated">
-                            <Image source={{ uri: deliveryData.proof_photo_url || deliveryData.image }} style={styles.proofImage} resizeMode="cover" />
+                            <Image source={{ uri: proofImageUri }} style={styles.proofImage} resizeMode="cover" />
                             {deliveryData.delivered_at && (
                                 <Text style={{ padding: 10, textAlign: 'center', color: '#666', fontSize: 12 }}>
                                     Taken on {dayjs.utc(parseUTCString(deliveryData.delivered_at)).add(8, 'hour').format('MMM D, YYYY h:mm A')}

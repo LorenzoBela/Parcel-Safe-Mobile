@@ -1,11 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { View, StyleSheet, Alert, Linking } from 'react-native';
+import { View, StyleSheet, Alert, Linking, Image } from 'react-native';
 import { Text, Card, Button, IconButton } from 'react-native-paper';
 import * as ImagePicker from 'expo-image-picker';
 import SwipeConfirmButton from '../../../components/SwipeConfirmButton';
 import { uploadDeliveryProofPhoto } from '../../../services/proofPhotoService';
 import { updateDeliveryStatus } from '../../../services/riderMatchingService';
-import { subscribeToDeliveryProof, DeliveryProofState, subscribeToBoxState, BoxState, subscribeToCamera, CameraState, subscribeToLockEvents, LockEvent, updateBoxState } from '../../../services/firebaseClient';
+import { subscribeToDeliveryProof, DeliveryProofState, subscribeToPhotoAuditLog, subscribeToBoxState, BoxState, subscribeToCamera, CameraState, subscribeToLockEvents, LockEvent, updateBoxState } from '../../../services/firebaseClient';
 import { PremiumAlert } from '../../../services/PremiumAlertService';
 
 interface DropoffVerificationProps {
@@ -61,6 +61,8 @@ export default function DropoffVerification({
     const [fallbackPhotoUri, setFallbackPhotoUri] = useState<string | null>(null);
     const [hardwareSuccess, setHardwareSuccess] = useState(false);
     const [hardwareProofUrl, setHardwareProofUrl] = useState<string | null>(null);
+    const [auditProofUrl, setAuditProofUrl] = useState<string | null>(null);
+    const [proofVersion, setProofVersion] = useState<number>(0);
 
     // ━━━ SECURITY GATE: Box must confirm OTP before completion is possible ━━━
     const [boxOtpValidated, setBoxOtpValidated] = useState(false);
@@ -76,6 +78,14 @@ export default function DropoffVerification({
     const boxReportedUnlockedRef = useRef<boolean>(false);
     const unlockCommandAckedRef = useRef<boolean>(false);
     const retryExhausted = lockEvent?.face_retry_exhausted === true || lockEvent?.fallback_required === true;
+    const effectiveHardwareProofUrl = hardwareProofUrl || auditProofUrl;
+    const hasHardwareProof = !!effectiveHardwareProofUrl;
+    const hasFallbackProof = !!fallbackPhotoUri;
+    const hasAnyProof = hasHardwareProof || hasFallbackProof;
+    const fallbackModeActive = retryExhausted || cameraFailed;
+    const displayedHardwareProofUrl = effectiveHardwareProofUrl
+        ? `${effectiveHardwareProofUrl}${effectiveHardwareProofUrl.includes('?') ? '&' : '?'}t=${proofVersion || Date.now()}`
+        : null;
 
     // Auto-arrive logic
     useEffect(() => {
@@ -135,8 +145,26 @@ export default function DropoffVerification({
             if (canProcessOtpSignals && proof && proof.proof_photo_url) {
                 setHardwareSuccess(true);
                 setHardwareProofUrl(proof.proof_photo_url);
+                if (typeof proof.proof_photo_uploaded_at === 'number') {
+                    setProofVersion(proof.proof_photo_uploaded_at);
+                } else {
+                    setProofVersion(Date.now());
+                }
                 setBoxOtpValidated(true); // proof_photo_url implies box validated OTP
             }
+        });
+
+        // Fallback source: firmware writes latest photo URL under audit_logs/{deliveryId}
+        const unsubscribePhotoAudit = subscribeToPhotoAuditLog(deliveryId, (audit) => {
+            if (!canProcessOtpSignals || !audit?.latest_photo_url) return;
+            setAuditProofUrl(audit.latest_photo_url);
+            if (typeof audit.latest_photo_uploaded_at === 'number') {
+                setProofVersion(audit.latest_photo_uploaded_at);
+            } else {
+                setProofVersion(Date.now());
+            }
+            setHardwareSuccess(true);
+            setBoxOtpValidated(true);
         });
 
         // Monitor camera state for failures
@@ -182,6 +210,7 @@ export default function DropoffVerification({
         return () => {
             unsubscribeBox();
             unsubscribeProof();
+            unsubscribePhotoAudit();
             unsubscribeCamera();
             unsubscribeLockEvents();
         };
@@ -230,9 +259,11 @@ export default function DropoffVerification({
             return;
         }
 
-        if (!hardwareSuccess && !fallbackPhotoUri) {
+        if (!hasAnyProof) {
             if (retryExhausted) {
                 PremiumAlert.alert('Fallback Required', 'Camera failed all retry attempts. Capture a fallback photo before completing delivery.');
+            } else if (hardwareSuccess) {
+                PremiumAlert.alert('Proof Photo Pending', 'Face verification succeeded, but the hardware photo is still not available. Please wait a few seconds or capture a fallback photo.');
             } else {
                 PremiumAlert.alert('Cannot Complete', 'Hardware verification pending. If the box camera failed, please capture a fallback photo.');
             }
@@ -241,7 +272,9 @@ export default function DropoffVerification({
 
         setIsLoading(true);
         try {
-            if (fallbackPhotoUri && !hardwareSuccess) {
+            let resolvedProofUrl: string | null = effectiveHardwareProofUrl || null;
+
+            if (fallbackPhotoUri && !hardwareProofUrl) {
                 const uploadResult = await uploadDeliveryProofPhoto({
                     deliveryId,
                     boxId,
@@ -253,27 +286,30 @@ export default function DropoffVerification({
                     return;
                 }
 
-                await updateBoxState(boxId, {
-                    command: 'UNLOCKING',
-                });
+                resolvedProofUrl = uploadResult.url || null;
 
-                const unlockConfirmed = await waitForBoxUnlock();
-                if (!unlockConfirmed) {
-                    PremiumAlert.alert('Unlock Pending', 'Fallback photo was uploaded, but box unlock was not confirmed yet. Please retry in a moment.');
-                    return;
+                if (!hardwareSuccess) {
+                    await updateBoxState(boxId, {
+                        command: 'UNLOCKING',
+                    });
+
+                    const unlockConfirmed = await waitForBoxUnlock();
+                    if (!unlockConfirmed) {
+                        PremiumAlert.alert('Unlock Pending', 'Fallback photo was uploaded, but box unlock was not confirmed yet. Please retry in a moment.');
+                        return;
+                    }
                 }
+            }
 
-                await updateDeliveryStatus(deliveryId, 'COMPLETED', {
-                    completed_at: Date.now(),
-                    proof_photo_url: uploadResult.url || null,
-                });
-            } else {
-                // Hardware already succeeded, just finalize rider state
-                // Pass the photo URL captured by hardware to Supabase as well
-                await updateDeliveryStatus(deliveryId, 'COMPLETED', {
-                    completed_at: Date.now(),
-                    proof_photo_url: hardwareProofUrl || undefined,
-                });
+            const statusSaved = await updateDeliveryStatus(deliveryId, 'COMPLETED', {
+                completed_at: Date.now(),
+                proof_photo_url: resolvedProofUrl,
+                box_id: boxId,
+            });
+
+            if (!statusSaved) {
+                PremiumAlert.alert('Action Failed', 'Could not mark this delivery as completed. Please check connection and try again.');
+                return;
             }
 
             PremiumAlert.alert('Delivery Completed', 'Package delivered successfully.');
@@ -285,8 +321,11 @@ export default function DropoffVerification({
 
     // ━━━ Determine handover card status message ━━━
     const getHandoverStatusMessage = (): { text: string; color: string; bgColor: string } => {
-        if (hardwareSuccess) {
+        if (hardwareSuccess && hasHardwareProof) {
             return { text: '✅ Box unlocked! OTP verified & face detected.', color: '#15803d', bgColor: '#DCFCE7' };
+        }
+        if (boxOtpValidated && hardwareSuccess && !hasHardwareProof) {
+            return { text: '📷 Face verification passed. Waiting for hardware proof photo upload, or capture fallback photo now.', color: '#1d4ed8', bgColor: '#DBEAFE' };
         }
         if (boxOtpValidated && fallbackPhotoUri && boxReportedUnlocked) {
             return { text: '✅ Fallback photo verified and unlock confirmed. Ready to complete.', color: '#15803d', bgColor: '#DCFCE7' };
@@ -332,9 +371,9 @@ export default function DropoffVerification({
     };
 
     // Can the rider swipe to complete?
-    const canSwipe = boxOtpValidated && (hardwareSuccess || !!fallbackPhotoUri);
+    const canSwipe = boxOtpValidated && (hasHardwareProof || (fallbackModeActive && hasFallbackProof));
     // Can the rider see the fallback photo button?
-    const showFallbackButton = (boxOtpValidated && !hardwareSuccess) || (retryExhausted && !hardwareSuccess) || cameraFailed;
+    const showFallbackButton = fallbackModeActive || (boxOtpValidated && !hasHardwareProof);
 
     const statusMsg = getHandoverStatusMessage();
 
@@ -452,6 +491,24 @@ export default function DropoffVerification({
                             </Text>
                         </View>
 
+                        <View style={styles.proofPanel}>
+                            <Text style={styles.proofTitle}>Verification Photo</Text>
+                            {hasHardwareProof && displayedHardwareProofUrl ? (
+                                <>
+                                    <Image
+                                        source={{ uri: displayedHardwareProofUrl }}
+                                        style={styles.proofImage}
+                                        resizeMode="cover"
+                                    />
+                                    <Text style={styles.proofHintSuccess}>✅ ESP-CAM proof received. You can now swipe to complete.</Text>
+                                </>
+                            ) : (
+                                <Text style={styles.proofHintPending}>
+                                    Waiting for ESP-CAM proof image to appear before swipe completion.
+                                </Text>
+                            )}
+                        </View>
+
                         {/* Fallback photo button — visible after box confirms OTP or if camera fails */}
                         {showFallbackButton && (
                             <View style={{ marginTop: 12 }}>
@@ -459,7 +516,7 @@ export default function DropoffVerification({
                                     mode="outlined"
                                     icon="camera-retake"
                                     onPress={handleCaptureFallbackPhoto}
-                                    disabled={isLoading || hardwareSuccess}
+                                    disabled={isLoading}
                                 >
                                     {fallbackPhotoUri ? 'Retake fallback photo' : 'Capture fallback photo'}
                                 </Button>
@@ -548,4 +605,36 @@ const styles = StyleSheet.create({
     navActions: { flexDirection: 'row', alignItems: 'center' },
     actionCard: { backgroundColor: 'white', borderRadius: 12, elevation: 1, marginBottom: 20 },
     actionTitle: { fontSize: 14, fontWeight: 'bold', color: '#1a1a1a', marginBottom: 4 },
+    proofPanel: {
+        marginTop: 12,
+        borderWidth: 1,
+        borderColor: '#e2e8f0',
+        borderRadius: 10,
+        padding: 10,
+        backgroundColor: '#f8fafc',
+    },
+    proofTitle: {
+        fontSize: 12,
+        fontWeight: '700',
+        color: '#334155',
+        marginBottom: 8,
+    },
+    proofImage: {
+        width: '100%',
+        height: 180,
+        borderRadius: 8,
+        backgroundColor: '#e2e8f0',
+    },
+    proofHintPending: {
+        color: '#475569',
+        fontSize: 12,
+        textAlign: 'center',
+    },
+    proofHintSuccess: {
+        marginTop: 8,
+        color: '#15803d',
+        fontSize: 12,
+        textAlign: 'center',
+        fontWeight: '600',
+    },
 });

@@ -100,8 +100,22 @@ export default function DeliveryRecordsScreen() {
                           status: mapStatus(d.status),
                           rawStatus: d.status,
                           rawDate: timestampToUse,
-                          date: dateObj ? dayjs(timestampToUse).add(8, 'hour').format('MMM D, YYYY') : 'N/A',
-                          time: dateObj ? dayjs(timestampToUse).add(8, 'hour').format('h:mm A') : '',
+                          date: dateObj
+                              ? dateObj.toLocaleDateString('en-US', {
+                                  timeZone: 'Asia/Manila',
+                                  month: 'short',
+                                  day: 'numeric',
+                                  year: 'numeric',
+                              })
+                              : 'N/A',
+                          time: dateObj
+                              ? dateObj.toLocaleTimeString('en-US', {
+                                  timeZone: 'Asia/Manila',
+                                  hour: 'numeric',
+                                  minute: '2-digit',
+                                  hour12: true,
+                              })
+                              : '',
                         customer: d.profiles?.full_name || 'Unknown Customer',
                         customerName: d.profiles?.full_name || 'Unknown Customer',
                         earnings: d.estimated_fare != null ? `₱${Number(d.estimated_fare).toFixed(2)}` : '—',

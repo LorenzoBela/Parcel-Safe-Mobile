@@ -4,7 +4,7 @@ import { Surface, Text, useTheme } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { supabase } from '../services/supabaseClient';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import dayjs from 'dayjs';
+import { parseUTCString } from '../utils/date';
 
 interface EarningsWidgetProps {
     riderId: string;
@@ -52,27 +52,31 @@ export default function EarningsWidget({ riderId, dailyGoal: initialDailyGoal = 
         if (!riderId) return;
         setIsLoading(true);
         try {
-            // Get start and end of current local day in ISO string format
-            const startOfDay = dayjs().startOf('day').toISOString();
-            const endOfDay = dayjs().endOf('day').toISOString();
-
-            // Query Supabase for COMPLETED deliveries by this rider today
-            // Note: Assuming 'rider_fee' is the column name for the rider's cut.
-            // If it's just 'price' or another name, adjust below.
+            // Keep date basis consistent with history/deliveries screens.
             const { data, error } = await supabase
                 .from('deliveries')
-                .select('estimated_fare')
+                .select('estimated_fare, delivered_at, updated_at, created_at')
                 .eq('rider_id', riderId)
-                .eq('status', 'COMPLETED')
-                .gte('updated_at', startOfDay)
-                .lte('updated_at', endOfDay);
+                .eq('status', 'COMPLETED');
 
             if (error) throw error;
 
             if (data) {
-                const total = data.reduce((sum, row) => sum + (Number(row.estimated_fare) || 0), 0);
+                const currentDate = new Date();
+                const todayCompleted = data.filter((row: any) => {
+                    const rawTs = row.delivered_at || row.updated_at || row.created_at;
+                    if (!rawTs) return false;
+                    const itemDate = parseUTCString(rawTs);
+                    return (
+                        itemDate.getDate() === currentDate.getDate() &&
+                        itemDate.getMonth() === currentDate.getMonth() &&
+                        itemDate.getFullYear() === currentDate.getFullYear()
+                    );
+                });
+
+                const total = todayCompleted.reduce((sum, row: any) => sum + (Number(row.estimated_fare) || 0), 0);
                 setEarnings(total);
-                setCompletedTrips(data.length);
+                setCompletedTrips(todayCompleted.length);
             }
         } catch (error) {
             console.error('[EarningsWidget] Error fetching earnings:', error);
@@ -90,16 +94,14 @@ export default function EarningsWidget({ riderId, dailyGoal: initialDailyGoal = 
             .on(
                 'postgres_changes',
                 {
-                    event: 'UPDATE',
+                    event: '*',
                     schema: 'public',
                     table: 'deliveries',
                     filter: `rider_id=eq.${riderId}`,
                 },
-                (payload) => {
-                    if (payload.new && payload.new.status === 'COMPLETED') {
-                        // Refresh earnings when a delivery completes
-                        fetchTodayEarnings();
-                    }
+                () => {
+                    // Keep dashboard metrics in sync whenever rider delivery rows change.
+                    fetchTodayEarnings();
                 }
             )
             .subscribe();

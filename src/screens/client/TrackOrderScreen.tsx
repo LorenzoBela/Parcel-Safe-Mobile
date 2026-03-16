@@ -4,7 +4,7 @@ import MapboxGL, { isMapboxNativeAvailable, MapFallback } from '../../components
 import { Text, Card, Avatar, Button, IconButton, Surface, useTheme } from 'react-native-paper';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { subscribeToDisplay } from '../../services/firebaseClient';
+import { subscribeToDisplay, subscribeToDeliveryProof, subscribeToPhotoAuditLog } from '../../services/firebaseClient';
 import { parseUTCString } from '../../utils/date';
 import {
     subscribeToDelivery,
@@ -158,6 +158,8 @@ export default function TrackOrderScreen() {
     const [isRouteView, setIsRouteView] = useState(false);
     const [isNavigationMode, setIsNavigationMode] = useState(false);
     const [isBottomSheetExpanded, setIsBottomSheetExpanded] = useState(true);
+    const [pickupPhotoVersion, setPickupPhotoVersion] = useState<number>(0);
+    const [proofPhotoVersion, setProofPhotoVersion] = useState<number>(0);
 
     // Modals & Rating State
     const [showRiderDetailsModal, setShowRiderDetailsModal] = useState(false);
@@ -244,6 +246,22 @@ export default function TrackOrderScreen() {
     };
 
     const isPickedUp = ['PICKED_UP', 'IN_TRANSIT', 'ARRIVED', 'COMPLETED', 'RETURNING'].includes(delivery?.status || '');
+
+    const withCacheBust = (url?: string | null, version?: number | string | null): string | undefined => {
+        if (!url) return undefined;
+        const v = version || Date.now();
+        return `${url}${url.includes('?') ? '&' : '?'}t=${encodeURIComponent(String(v))}`;
+    };
+
+    const pickupPhotoUri = useMemo(
+        () => withCacheBust(delivery?.pickup_photo_url, pickupPhotoVersion || delivery?.picked_up_at || delivery?.updated_at),
+        [delivery?.pickup_photo_url, delivery?.picked_up_at, delivery?.updated_at, pickupPhotoVersion]
+    );
+
+    const proofPhotoUri = useMemo(
+        () => withCacheBust(delivery?.proof_photo_url, proofPhotoVersion || delivery?.delivered_at || delivery?.updated_at),
+        [delivery?.proof_photo_url, delivery?.delivered_at, delivery?.updated_at, proofPhotoVersion]
+    );
 
     // Two-Phase Routing: determine the current route target
     const routeTarget = (delivery?.status === 'RETURNING') ? pickupLocation : (isPickedUp ? destination : pickupLocation);
@@ -578,10 +596,39 @@ export default function TrackOrderScreen() {
             }
         });
 
+        // Realtime proof-photo updates for tracking UI (no manual refresh).
+        const unsubscribeProof = subscribeToDeliveryProof(deliveryId, (proof) => {
+            if (!proof) return;
+            if (proof.pickup_photo_url) {
+                setDelivery(prev => prev ? ({ ...prev, pickup_photo_url: proof.pickup_photo_url }) : prev);
+            }
+            if (proof.proof_photo_url) {
+                setDelivery(prev => prev ? ({ ...prev, proof_photo_url: proof.proof_photo_url }) : prev);
+            }
+            if (typeof proof.pickup_photo_uploaded_at === 'number') {
+                setPickupPhotoVersion(proof.pickup_photo_uploaded_at);
+            }
+            if (typeof proof.proof_photo_uploaded_at === 'number') {
+                setProofPhotoVersion(proof.proof_photo_uploaded_at);
+            }
+        });
+
+        const unsubscribeAudit = subscribeToPhotoAuditLog(deliveryId, (audit) => {
+            if (!audit?.latest_photo_url) return;
+            setDelivery(prev => prev ? ({ ...prev, proof_photo_url: audit.latest_photo_url }) : prev);
+            if (typeof audit.latest_photo_uploaded_at === 'number') {
+                setProofPhotoVersion(audit.latest_photo_uploaded_at);
+            } else {
+                setProofPhotoVersion(Date.now());
+            }
+        });
+
         return () => {
             unsubscribeDelivery();
             unsubscribeRiderLocation();
             unsubscribeCancellation();
+            unsubscribeProof();
+            unsubscribeAudit();
         };
     }, [MAPBOX_TOKEN, deliveryId, params.riderId, navigation]);
 
@@ -1358,11 +1405,11 @@ export default function TrackOrderScreen() {
                         </TouchableOpacity>
 
                         {/* Pickup Photo - Show if available and NOT pending */}
-                        {delivery?.pickup_photo_url && delivery?.status !== 'PENDING' && (
+                        {pickupPhotoUri && delivery?.status !== 'PENDING' && (
                             <View>
                                 <Card style={{ marginBottom: 12, borderRadius: 12 }} mode="elevated">
                                     <Card.Title title="Pickup Photo" titleVariant="titleSmall" />
-                                    <Card.Cover source={{ uri: delivery.pickup_photo_url }} style={{ height: 180 }} />
+                                    <Card.Cover source={{ uri: pickupPhotoUri }} style={{ height: 180 }} />
                                     {delivery.picked_up_at && (
                                         <Text style={{ padding: 10, textAlign: 'center', color: '#666', fontSize: 12 }}>
                                             Taken on {dayjs.utc(parseUTCString(delivery.picked_up_at)).add(8, 'hour').format('MMM D, YYYY h:mm A')}
@@ -1378,7 +1425,7 @@ export default function TrackOrderScreen() {
                                 {delivery?.proof_photo_url && (
                                     <Card style={{ marginBottom: 12, borderRadius: 12 }} mode="elevated">
                                         <Card.Title title="Proof of Delivery" titleVariant="titleSmall" />
-                                        <Card.Cover source={{ uri: delivery.proof_photo_url }} style={{ height: 180 }} />
+                                        <Card.Cover source={{ uri: proofPhotoUri }} style={{ height: 180 }} />
                                         {delivery.delivered_at && (
                                             <Text style={{ padding: 10, textAlign: 'center', color: '#666', fontSize: 12 }}>
                                                 Taken on {dayjs.utc(parseUTCString(delivery.delivered_at)).add(8, 'hour').format('MMM D, YYYY h:mm A')}
