@@ -29,9 +29,18 @@ import {
 import {
     checkGeofence,
     createDefaultGeofence,
-    calculateDistanceMeters,
     GeofenceConfig,
 } from '../../utils/geoUtils';
+import {
+    createInitialState,
+    updateGeofenceState,
+    GeofenceStabilityState,
+} from '../../services/geofenceStabilityService';
+import {
+    loadRiderSessionSnapshot,
+    saveRiderSessionSnapshot,
+    clearRiderSessionSnapshot,
+} from '../../services/riderSessionSnapshotService';
 
 // Grace Period & No-Show
 import {
@@ -50,6 +59,7 @@ import {
     setTrackingPhase,
     BackgroundLocationState,
 } from '../../services/backgroundLocationService';
+import { startForegroundGpsWarmWindow } from '../../services/gpsWarmupService';
 
 import {
     subscribeToLocation,
@@ -141,6 +151,14 @@ export default function ArrivalScreen() {
     const [isBoxInside, setIsBoxInside] = useState(false);
     const [isBoxOffline, setIsBoxOffline] = useState(false);
     const [boxLocationLastSeen, setBoxLocationLastSeen] = useState<number>(0);
+    const [phoneLocationLastSeen, setPhoneLocationLastSeen] = useState<number>(0);
+    const [boxLocationSubscriptionEpoch, setBoxLocationSubscriptionEpoch] = useState(0);
+    const phoneGeofenceStateRef = useRef<GeofenceStabilityState>(createInitialState());
+    const boxGeofenceStateRef = useRef<GeofenceStabilityState>(createInitialState());
+    const masterSwitchDebounceRef = useRef<NodeJS.Timeout | null>(null);
+    const masterDecisionRef = useRef<boolean>(false);
+    const boxOfflineRef = useRef<boolean>(false);
+    const boxOfflineTransitionStartRef = useRef<number>(0);
 
     const [currentPosition, setCurrentPosition] = useState({ lat: 0, lng: 0, accuracy: 25 });
     const [geofence, setGeofence] = useState<GeofenceConfig>(
@@ -375,6 +393,85 @@ export default function ArrivalScreen() {
     const hasPickupCoords = Number.isFinite(params.pickupLat) && Number.isFinite(params.pickupLng);
     const hasDropoffCoords = Number.isFinite(params.dropoffLat) && Number.isFinite(params.dropoffLng);
 
+    useEffect(() => {
+        let mounted = true;
+
+        const hydrateSnapshot = async () => {
+            const snapshot = await loadRiderSessionSnapshot();
+            if (!mounted || !snapshot) return;
+            if (snapshot.deliveryId !== params.deliveryId || snapshot.boxId !== params.boxId) return;
+
+            if (snapshot.geofenceTarget === 'dropoff' && hasDropoffCoords) {
+                setGeofence(createDefaultGeofence(params.dropoffLat as number, params.dropoffLng as number));
+                setGeofenceTarget('dropoff');
+            } else if (hasPickupCoords) {
+                setGeofence(createDefaultGeofence(params.pickupLat as number, params.pickupLng as number));
+                setGeofenceTarget(snapshot.geofenceTarget === 'return_pickup' ? 'return_pickup' : 'pickup');
+            }
+
+            setBoxLocationLastSeen(snapshot.lastBoxHeartbeatAt || 0);
+            setPhoneLocationLastSeen(snapshot.lastPhoneGpsAt || 0);
+            if (typeof snapshot.lastDistanceMeters === 'number') {
+                setDistanceMeters(snapshot.lastDistanceMeters);
+            }
+        };
+
+        hydrateSnapshot();
+
+        return () => {
+            mounted = false;
+        };
+    }, [
+        params.deliveryId,
+        params.boxId,
+        params.pickupLat,
+        params.pickupLng,
+        params.dropoffLat,
+        params.dropoffLng,
+        hasPickupCoords,
+        hasDropoffCoords,
+    ]);
+
+    useEffect(() => {
+        const uiPhase = !isPickupConfirmed
+            ? 'pickup'
+            : isReturning
+                ? 'return_pickup'
+                : (waitTimerState.status === 'WAITING' || waitTimerState.status === 'EXPIRED')
+                    ? 'customer_wait'
+                    : deliveryStatus === 'ARRIVED'
+                        ? 'dropoff_arrived'
+                        : deliveryStatus === 'COMPLETED'
+                            ? 'completed'
+                            : 'dropoff';
+
+        saveRiderSessionSnapshot({
+            lastActiveDeliveryId: params.deliveryId,
+            deliveryId: params.deliveryId,
+            boxId: params.boxId,
+            geofenceTarget,
+            uiPhase,
+            lastDistanceMeters: distanceMeters,
+            lastBoxHeartbeatAt: boxLocationLastSeen,
+            lastPhoneGpsAt: phoneLocationLastSeen,
+        });
+
+        if (deliveryStatus === 'COMPLETED' || deliveryStatus === 'CANCELLED') {
+            clearRiderSessionSnapshot();
+        }
+    }, [
+        params.deliveryId,
+        params.boxId,
+        geofenceTarget,
+        deliveryStatus,
+        distanceMeters,
+        boxLocationLastSeen,
+        phoneLocationLastSeen,
+        isPickupConfirmed,
+        isReturning,
+        waitTimerState.status,
+    ]);
+
     // ━━━ Grace Period Timer Effect ━━━
     // Only starts when rider is physically inside the DROPOFF geofence.
     // isInsideGeoFence at this point references the dropoff zone (geofenceTarget === 'dropoff')
@@ -443,6 +540,13 @@ export default function ArrivalScreen() {
 
     // Dynamically switch geofence target when transitioning from pickup to dropoff
     useEffect(() => {
+        // Reset geofence stabilizers when destination target changes.
+        phoneGeofenceStateRef.current = createInitialState();
+        boxGeofenceStateRef.current = createInitialState();
+        masterDecisionRef.current = false;
+        boxOfflineRef.current = false;
+        boxOfflineTransitionStartRef.current = 0;
+
         if (isPickupConfirmed && isReturning && hasPickupCoords) {
             setGeofence(createDefaultGeofence(params.pickupLat as number, params.pickupLng as number));
             setGeofenceTarget('return_pickup');
@@ -489,6 +593,9 @@ export default function ArrivalScreen() {
                 return;
             }
 
+            // Fast relock after resume/lockscreen: keep high-accuracy warm briefly.
+            startForegroundGpsWarmWindow(25000).catch(() => { });
+
             const applyPosition = (coords: { latitude: number; longitude: number; accuracy: number | null }, fallbackAccuracy: number) => {
                 const position = {
                     lat: coords.latitude,
@@ -496,9 +603,25 @@ export default function ArrivalScreen() {
                     accuracy: coords.accuracy ?? fallbackAccuracy,
                 };
                 setCurrentPosition(position);
-                const result = checkGeofence(position, geofence);
-                setIsPhoneInside(result.isInside);
-                setDistanceMeters(result.distanceMeters);
+
+                const now = Date.now();
+                const quality = {
+                    hdop: Math.max(0.8, Math.min(8, (position.accuracy || fallbackAccuracy) / 6)),
+                    satellites: (position.accuracy || fallbackAccuracy) <= 20 ? 8 : ((position.accuracy || fallbackAccuracy) <= 40 ? 6 : 4),
+                    timestamp: now,
+                };
+                const nextState = updateGeofenceState(
+                    phoneGeofenceStateRef.current,
+                    { lat: position.lat, lng: position.lng },
+                    { latitude: geofence.centerLat, longitude: geofence.centerLng },
+                    quality,
+                    null,
+                    now
+                );
+                phoneGeofenceStateRef.current = nextState;
+                setIsPhoneInside(nextState.stableState === 'INSIDE');
+                setDistanceMeters(Math.round(nextState.rawDistanceM));
+                setPhoneLocationLastSeen(now);
             };
 
             // Stage 1: Seed immediately from last-known OS cache.
@@ -548,18 +671,39 @@ export default function ArrivalScreen() {
 
     // 2. Track BOX Location (The "Secondary Check")
     useEffect(() => {
-        const unsubscribeLocation = subscribeToLocation(params.boxId, (location) => {
-            if (!location) {
-                setIsBoxOffline(true);
+        const OFFLINE_SWITCH_DEBOUNCE_MS = 5000;
+
+        const updateOfflineState = (desiredOffline: boolean, now: number) => {
+            if (desiredOffline === boxOfflineRef.current) {
+                boxOfflineTransitionStartRef.current = 0;
                 return;
             }
 
+            if (boxOfflineTransitionStartRef.current === 0) {
+                boxOfflineTransitionStartRef.current = now;
+                return;
+            }
+
+            if (now - boxOfflineTransitionStartRef.current >= OFFLINE_SWITCH_DEBOUNCE_MS) {
+                boxOfflineRef.current = desiredOffline;
+                setIsBoxOffline(desiredOffline);
+                boxOfflineTransitionStartRef.current = 0;
+            }
+        };
+
+        const unsubscribeLocation = subscribeToLocation(params.boxId, (location) => {
             const now = Date.now();
+
+            if (!location) {
+                updateOfflineState(true, now);
+                return;
+            }
+
             const dataTimestamp = location.server_timestamp || location.timestamp || 0;
             const isStale = (now - dataTimestamp) > 120000; // 2 minutes
 
             setBoxLocationLastSeen(dataTimestamp);
-            setIsBoxOffline(isStale);
+            updateOfflineState(isStale, now);
 
             if (!isStale) {
                 const position = {
@@ -567,30 +711,56 @@ export default function ArrivalScreen() {
                     lng: location.longitude,
                     accuracy: 15, // Assume acceptable accuracy for Box GPS
                 };
-                const result = checkGeofence(position, geofence);
-                setIsBoxInside(result.isInside);
+
+                const nextState = updateGeofenceState(
+                    boxGeofenceStateRef.current,
+                    { lat: position.lat, lng: position.lng },
+                    { latitude: geofence.centerLat, longitude: geofence.centerLng },
+                    { hdop: 1.5, satellites: 8, timestamp: now },
+                    null,
+                    now
+                );
+                boxGeofenceStateRef.current = nextState;
+                setIsBoxInside(nextState.stableState === 'INSIDE');
             }
         });
 
         return unsubscribeLocation;
-    }, [geofence, params.boxId]);
+    }, [geofence, params.boxId, boxLocationSubscriptionEpoch]);
+
+    // Listener watchdog: if box stream goes stale while marked online, resubscribe.
+    useEffect(() => {
+        const interval = setInterval(() => {
+            if (!boxLocationLastSeen || isBoxOffline) return;
+            const ageMs = Date.now() - boxLocationLastSeen;
+            if (ageMs > 45000) {
+                setBoxLocationSubscriptionEpoch((prev) => prev + 1);
+            }
+        }, 12000);
+
+        return () => clearInterval(interval);
+    }, [boxLocationLastSeen, isBoxOffline]);
 
     // 3. The "Master Switch" (Dual Check Logic)
     useEffect(() => {
-        // Rule 1: Phone MUST be inside
-        if (!isPhoneInside) {
-            setIsInsideGeoFence(false);
-            return;
+        if (masterSwitchDebounceRef.current) {
+            clearTimeout(masterSwitchDebounceRef.current);
         }
 
-        // Rule 2: Box MUST be inside OR Box is Offline (Fallback)
-        // If Box is online and reporting location, it must be close.
-        // If Box is offline/stale, we trust the Rider's phone location (Fallback).
-        if (isBoxOffline) {
-            setIsInsideGeoFence(true); // Allow fallback
-        } else {
-            setIsInsideGeoFence(isBoxInside); // Strict check
-        }
+        masterSwitchDebounceRef.current = setTimeout(() => {
+            const nextInside = isPhoneInside && (isBoxOffline || isBoxInside);
+            if (nextInside !== masterDecisionRef.current) {
+                masterDecisionRef.current = nextInside;
+                setIsInsideGeoFence(nextInside);
+            }
+        }, 500);
+
+        return () => {
+            if (masterSwitchDebounceRef.current) {
+                clearTimeout(masterSwitchDebounceRef.current);
+                masterSwitchDebounceRef.current = null;
+            }
+        };
     }, [isPhoneInside, isBoxInside, isBoxOffline]);
 
     // 4. Pickup Arrival Notification — fires once when rider first enters pickup geofence
@@ -1281,6 +1451,8 @@ export default function ArrivalScreen() {
                                 isPhoneInside={isPhoneInside}
                                 isBoxInside={isBoxInside}
                                 isBoxOffline={isBoxOffline}
+                                lastBoxHeartbeatAt={boxLocationLastSeen}
+                                lastPhoneGpsAt={phoneLocationLastSeen}
                                 onDeliveryCompleted={() => navigation.goBack()}
 
                                 onNavigate={handleNavigate}

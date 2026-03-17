@@ -1,11 +1,13 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { View, StyleSheet, Alert, Linking, Image } from 'react-native';
-import { Text, Card, Button, IconButton } from 'react-native-paper';
+import { Text, Card, Button, IconButton, Switch } from 'react-native-paper';
 import * as ImagePicker from 'expo-image-picker';
 import SwipeConfirmButton from '../../../components/SwipeConfirmButton';
 import { uploadDeliveryProofPhoto } from '../../../services/proofPhotoService';
 import { updateDeliveryStatus } from '../../../services/riderMatchingService';
-import { subscribeToDeliveryProof, DeliveryProofState, subscribeToPhotoAuditLog, subscribeToBoxState, BoxState, subscribeToCamera, CameraState, subscribeToLockEvents, LockEvent, updateBoxState } from '../../../services/firebaseClient';
+import { subscribeToDeliveryProof, DeliveryProofState, subscribeToPhotoAuditLog, subscribeToBoxState, BoxState, subscribeToCamera, CameraState, subscribeToLockEvents, LockEvent, updateBoxState, getDeliveryProofSnapshot, getLockEventSnapshot, getBoxStateSnapshot } from '../../../services/firebaseClient';
+import { loadDropoffVerificationSnapshot, saveDropoffVerificationSnapshot, clearDropoffVerificationSnapshot } from '../../../services/dropoffVerificationStorageService';
+import { enqueueBoxCommand, flushQueuedBoxCommands, markLatestSentCommandAcked } from '../../../services/boxCommandQueueService';
 import { PremiumAlert } from '../../../services/PremiumAlertService';
 
 interface DropoffVerificationProps {
@@ -22,6 +24,8 @@ interface DropoffVerificationProps {
     isPhoneInside: boolean;
     isBoxInside: boolean;
     isBoxOffline: boolean;
+    lastBoxHeartbeatAt?: number;
+    lastPhoneGpsAt?: number;
 
     onDeliveryCompleted: () => void;
 
@@ -34,6 +38,20 @@ interface DropoffVerificationProps {
     isWaitTimerActive: boolean;
     canAutoArrive: boolean;
 }
+
+type DropoffVerificationCacheState = {
+    boxOtpValidated: boolean;
+    faceDetected: boolean;
+    cameraFailed: boolean;
+    hardwareSuccess: boolean;
+    fallbackPhotoUri: string | null;
+    hardwareProofUrl: string | null;
+    auditProofUrl: string | null;
+    proofVersion: number;
+    manualModeEnabled: boolean;
+};
+
+const verificationCacheByDelivery: Record<string, DropoffVerificationCacheState> = {};
 
 export default function DropoffVerification({
     deliveryId,
@@ -48,6 +66,8 @@ export default function DropoffVerification({
     isPhoneInside,
     isBoxInside,
     isBoxOffline,
+    lastBoxHeartbeatAt,
+    lastPhoneGpsAt,
     onDeliveryCompleted,
 
     onNavigate,
@@ -63,10 +83,18 @@ export default function DropoffVerification({
     const [hardwareProofUrl, setHardwareProofUrl] = useState<string | null>(null);
     const [auditProofUrl, setAuditProofUrl] = useState<string | null>(null);
     const [proofVersion, setProofVersion] = useState<number>(0);
+    const [manualModeEnabled, setManualModeEnabled] = useState(false);
+    const [manualCommandLoading, setManualCommandLoading] = useState(false);
+    const [otpConfirmedByCloud, setOtpConfirmedByCloud] = useState(false);
+    const [faceConfirmedByCloud, setFaceConfirmedByCloud] = useState(false);
+    const [otpSyncPending, setOtpSyncPending] = useState(false);
+    const [faceSyncPending, setFaceSyncPending] = useState(false);
+    const [subscriptionEpoch, setSubscriptionEpoch] = useState(0);
 
     // ━━━ SECURITY GATE: Box must confirm OTP before completion is possible ━━━
     const [boxOtpValidated, setBoxOtpValidated] = useState(false);
     const [cameraFailed, setCameraFailed] = useState(false);
+    const [boxState, setBoxState] = useState<BoxState | null>(null);
 
     // ━━━ LOCK EVENTS: Real-time OTP + Face Detection from hardware ━━━
     const [lockEvent, setLockEvent] = useState<LockEvent | null>(null);
@@ -77,6 +105,8 @@ export default function DropoffVerification({
     const boxStateSubscriptionStartRef = useRef<number>(Date.now());
     const boxReportedUnlockedRef = useRef<boolean>(false);
     const unlockCommandAckedRef = useRef<boolean>(false);
+    const lastCloudSignalAtRef = useRef<number>(Date.now());
+    const recoveryInFlightRef = useRef<boolean>(false);
     const retryExhausted = lockEvent?.face_retry_exhausted === true || lockEvent?.fallback_required === true;
     const effectiveHardwareProofUrl = hardwareProofUrl || auditProofUrl;
     const hasHardwareProof = !!effectiveHardwareProofUrl;
@@ -88,6 +118,78 @@ export default function DropoffVerification({
         : null;
 
     // Auto-arrive logic
+    useEffect(() => {
+        let mounted = true;
+
+        const hydrate = async () => {
+            const memoryCached = verificationCacheByDelivery[deliveryId];
+            const diskCached = await loadDropoffVerificationSnapshot(deliveryId);
+            const cached = memoryCached || diskCached;
+            if (!mounted || !cached) return;
+
+            setBoxOtpValidated(cached.boxOtpValidated);
+            setFaceDetected(cached.faceDetected);
+            setCameraFailed(cached.cameraFailed);
+            setHardwareSuccess(cached.hardwareSuccess);
+            setFallbackPhotoUri(cached.fallbackPhotoUri);
+            setHardwareProofUrl(cached.hardwareProofUrl);
+            setAuditProofUrl(cached.auditProofUrl);
+            setProofVersion(cached.proofVersion);
+            setManualModeEnabled(cached.manualModeEnabled);
+            if (cached.boxOtpValidated) {
+                setOtpSyncPending(true);
+            }
+            if (cached.faceDetected) {
+                setFaceSyncPending(true);
+            }
+        };
+
+        hydrate();
+
+        return () => {
+            mounted = false;
+        };
+    }, [deliveryId]);
+
+    useEffect(() => {
+        const snapshot = {
+            boxOtpValidated,
+            faceDetected,
+            cameraFailed,
+            hardwareSuccess,
+            fallbackPhotoUri,
+            hardwareProofUrl,
+            auditProofUrl,
+            proofVersion,
+            manualModeEnabled,
+        };
+
+        verificationCacheByDelivery[deliveryId] = snapshot;
+        saveDropoffVerificationSnapshot(deliveryId, snapshot);
+    }, [
+        deliveryId,
+        boxOtpValidated,
+        faceDetected,
+        cameraFailed,
+        hardwareSuccess,
+        fallbackPhotoUri,
+        hardwareProofUrl,
+        auditProofUrl,
+        proofVersion,
+        manualModeEnabled,
+    ]);
+
+    useEffect(() => {
+        if (deliveryStatus === 'COMPLETED' || deliveryStatus === 'CANCELLED' || deliveryStatus === 'RETURNING') {
+            clearDropoffVerificationSnapshot(deliveryId);
+            delete verificationCacheByDelivery[deliveryId];
+            setOtpSyncPending(false);
+            setFaceSyncPending(false);
+            setOtpConfirmedByCloud(false);
+            setFaceConfirmedByCloud(false);
+        }
+    }, [deliveryId, deliveryStatus]);
+
     useEffect(() => {
         if (canAutoArrive && isInsideGeoFence && deliveryStatus === 'IN_TRANSIT') {
             // Automatically mark as ARRIVED when entering geofence
@@ -105,26 +207,163 @@ export default function DropoffVerification({
         isInsideGeoFence &&
         (deliveryStatus === 'ARRIVED' || deliveryStatus === 'COMPLETED');
 
-    useEffect(() => {
-        if (!canProcessOtpSignals) {
-            setBoxOtpValidated(false);
-            setHardwareSuccess(false);
-            setFaceDetected(false);
-            setLockEvent(null);
-            setBoxReportedUnlocked(false);
-            setUnlockCommandAcked(false);
-            boxReportedUnlockedRef.current = false;
-            unlockCommandAckedRef.current = false;
+    const runCloudReconcile = async (reason: 'pending-timeout' | 'watchdog') => {
+        if (recoveryInFlightRef.current || !canProcessOtpSignals) return;
+        recoveryInFlightRef.current = true;
+        try {
+            const [proof, lockEventSnapshot, boxSnapshot] = await Promise.all([
+                getDeliveryProofSnapshot(deliveryId),
+                getLockEventSnapshot(boxId),
+                getBoxStateSnapshot(boxId),
+            ]);
+
+            lastCloudSignalAtRef.current = Date.now();
+
+            if (proof?.proof_photo_url) {
+                setHardwareSuccess(true);
+                setHardwareProofUrl(proof.proof_photo_url);
+                setProofVersion(
+                    typeof proof.proof_photo_uploaded_at === 'number'
+                        ? proof.proof_photo_uploaded_at
+                        : Date.now()
+                );
+                setBoxOtpValidated(true);
+                setOtpConfirmedByCloud(true);
+                setOtpSyncPending(false);
+            }
+
+            if (lockEventSnapshot) {
+                setLockEvent(lockEventSnapshot);
+
+                if (lockEventSnapshot.otp_valid) {
+                    setBoxOtpValidated(true);
+                    setOtpConfirmedByCloud(true);
+                    setOtpSyncPending(false);
+                } else {
+                    setBoxOtpValidated(false);
+                    setOtpConfirmedByCloud(false);
+                    setOtpSyncPending(false);
+                }
+
+                if (lockEventSnapshot.face_detected) {
+                    setFaceDetected(true);
+                    setFaceConfirmedByCloud(true);
+                    setFaceSyncPending(false);
+                } else if (lockEventSnapshot.otp_valid) {
+                    setFaceDetected(false);
+                    setFaceConfirmedByCloud(false);
+                    setFaceSyncPending(false);
+                }
+
+                if (lockEventSnapshot.unlocked) {
+                    setHardwareSuccess(true);
+                    setBoxOtpValidated(true);
+                    setFaceDetected(true);
+                    setOtpConfirmedByCloud(true);
+                    setFaceConfirmedByCloud(true);
+                    setOtpSyncPending(false);
+                    setFaceSyncPending(false);
+                }
+            }
+
+            if (boxSnapshot) {
+                setBoxState(boxSnapshot);
+                const unlockedNow = boxSnapshot.status === 'UNLOCKING';
+                setBoxReportedUnlocked(unlockedNow);
+                boxReportedUnlockedRef.current = unlockedNow;
+
+                const ackAt = typeof boxSnapshot.command_ack_at === 'number' ? boxSnapshot.command_ack_at : 0;
+                const ackFresh = ackAt >= (boxStateSubscriptionStartRef.current - 1500);
+                const ackUnlockSuccess =
+                    boxSnapshot.command_ack_command === 'UNLOCKING' &&
+                    (boxSnapshot.command_ack_status === 'executed' || boxSnapshot.command_ack_status === 'already_unlocked') &&
+                    ackFresh;
+
+                if (ackUnlockSuccess) {
+                    setUnlockCommandAcked(true);
+                    unlockCommandAckedRef.current = true;
+                    await markLatestSentCommandAcked({
+                        deliveryId,
+                        boxId,
+                        command: 'UNLOCKING',
+                        ackStatus: boxSnapshot.command_ack_status,
+                        ackDetails: boxSnapshot.command_ack_details,
+                    });
+                }
+            }
+
+            if (reason === 'watchdog') {
+                setSubscriptionEpoch((value) => value + 1);
+            }
+        } catch {
+            if (reason === 'watchdog') {
+                setSubscriptionEpoch((value) => value + 1);
+            }
+        } finally {
+            recoveryInFlightRef.current = false;
         }
-    }, [canProcessOtpSignals]);
+    };
+
+    useEffect(() => {
+        if (deliveryStatus !== 'ARRIVED' && deliveryStatus !== 'COMPLETED' && deliveryStatus !== 'IN_TRANSIT') {
+            setLockEvent(null);
+        }
+    }, [deliveryStatus]);
+
+    useEffect(() => {
+        if (!canProcessOtpSignals || (!otpSyncPending && !faceSyncPending)) return;
+
+        const timeout = setTimeout(() => {
+            runCloudReconcile('pending-timeout').catch(() => {
+                // Best-effort reconcile fallback.
+            });
+        }, 3500);
+
+        return () => clearTimeout(timeout);
+    }, [canProcessOtpSignals, otpSyncPending, faceSyncPending, deliveryId, boxId]);
+
+    useEffect(() => {
+        if (!canProcessOtpSignals) return;
+
+        const interval = setInterval(() => {
+            const staleMs = Date.now() - lastCloudSignalAtRef.current;
+            if (staleMs > 12000) {
+                runCloudReconcile('watchdog').catch(() => {
+                    // Self-healing path only.
+                });
+            }
+        }, 6000);
+
+        return () => clearInterval(interval);
+    }, [canProcessOtpSignals, deliveryId, boxId]);
+
+    useEffect(() => {
+        if (!effectiveHardwareProofUrl) return;
+        Image.prefetch(effectiveHardwareProofUrl).catch(() => {
+            // Best-effort warm-up only.
+        });
+    }, [effectiveHardwareProofUrl]);
 
     // Monitor box state for OTP validation
     useEffect(() => {
         // Reset event gate whenever this subscription context changes.
         lockEventSubscriptionStartRef.current = Date.now();
         boxStateSubscriptionStartRef.current = Date.now();
+        lastCloudSignalAtRef.current = Date.now();
+
+        flushQueuedBoxCommands(async (item) => {
+            await updateBoxState(item.boxId, {
+                command: item.command,
+                command_request_id: item.requestId,
+                command_requested_by: item.requestedBy,
+            } as any);
+        }).catch(() => {
+            // Best-effort flush on mount.
+        });
 
         const unsubscribeBox = subscribeToBoxState(boxId, (state) => {
+            lastCloudSignalAtRef.current = Date.now();
+            setBoxState(state);
             const unlockedNow = state?.status === 'UNLOCKING';
             setBoxReportedUnlocked(unlockedNow);
             boxReportedUnlockedRef.current = unlockedNow;
@@ -136,12 +375,38 @@ export default function DropoffVerification({
                 (state?.command_ack_status === 'executed' || state?.command_ack_status === 'already_unlocked') &&
                 ackFresh;
 
+            const ackLockSuccess =
+                state?.command_ack_command === 'LOCKED' &&
+                (state?.command_ack_status === 'executed' || state?.command_ack_status === 'already_locked') &&
+                ackFresh;
+
+            if (ackUnlockSuccess) {
+                markLatestSentCommandAcked({
+                    deliveryId,
+                    boxId,
+                    command: 'UNLOCKING',
+                    ackStatus: state?.command_ack_status,
+                    ackDetails: state?.command_ack_details,
+                }).catch(() => { });
+            }
+
+            if (ackLockSuccess) {
+                markLatestSentCommandAcked({
+                    deliveryId,
+                    boxId,
+                    command: 'LOCKED',
+                    ackStatus: state?.command_ack_status,
+                    ackDetails: state?.command_ack_details,
+                }).catch(() => { });
+            }
+
             setUnlockCommandAcked(ackUnlockSuccess);
             unlockCommandAckedRef.current = ackUnlockSuccess;
         });
 
         // Monitor delivery proof for hardware camera success
         const unsubscribeProof = subscribeToDeliveryProof(deliveryId, (proof) => {
+            lastCloudSignalAtRef.current = Date.now();
             if (canProcessOtpSignals && proof && proof.proof_photo_url) {
                 setHardwareSuccess(true);
                 setHardwareProofUrl(proof.proof_photo_url);
@@ -151,11 +416,14 @@ export default function DropoffVerification({
                     setProofVersion(Date.now());
                 }
                 setBoxOtpValidated(true); // proof_photo_url implies box validated OTP
+                setOtpConfirmedByCloud(true);
+                setOtpSyncPending(false);
             }
         });
 
         // Fallback source: firmware writes latest photo URL under audit_logs/{deliveryId}
         const unsubscribePhotoAudit = subscribeToPhotoAuditLog(deliveryId, (audit) => {
+            lastCloudSignalAtRef.current = Date.now();
             if (!canProcessOtpSignals || !audit?.latest_photo_url) return;
             setAuditProofUrl(audit.latest_photo_url);
             if (typeof audit.latest_photo_uploaded_at === 'number') {
@@ -165,10 +433,13 @@ export default function DropoffVerification({
             }
             setHardwareSuccess(true);
             setBoxOtpValidated(true);
+            setOtpConfirmedByCloud(true);
+            setOtpSyncPending(false);
         });
 
         // Monitor camera state for failures
         const unsubscribeCamera = subscribeToCamera(boxId, (camState) => {
+            lastCloudSignalAtRef.current = Date.now();
             if (camState && (camState.status === 'FAILED' || camState.status === 'HARDWARE_ERROR')) {
                 setCameraFailed(true);
             }
@@ -176,6 +447,7 @@ export default function DropoffVerification({
 
         // ━━━ Monitor lock events for OTP + face detection results ━━━
         const unsubscribeLockEvents = subscribeToLockEvents(boxId, (event) => {
+            lastCloudSignalAtRef.current = Date.now();
             if (!canProcessOtpSignals || !event) return;
 
             // Ignore stale snapshot replay from previous delivery/session.
@@ -192,18 +464,34 @@ export default function DropoffVerification({
 
             if (event.otp_valid) {
                 setBoxOtpValidated(true);
+                setOtpConfirmedByCloud(true);
+                setOtpSyncPending(false);
+            } else if (event.otp_valid === false) {
+                setBoxOtpValidated(false);
+                setOtpConfirmedByCloud(false);
+                setOtpSyncPending(false);
             }
             if (event.face_retry_exhausted || event.fallback_required) {
                 setCameraFailed(true);
             }
             if (event.face_detected) {
                 setFaceDetected(true);
+                setFaceConfirmedByCloud(true);
+                setFaceSyncPending(false);
+            } else if (event.face_detected === false && event.otp_valid) {
+                setFaceDetected(false);
+                setFaceConfirmedByCloud(false);
+                setFaceSyncPending(false);
             }
             if (event.unlocked) {
                 // Box confirmed OTP + face + solenoid fired
                 setHardwareSuccess(true);
                 setBoxOtpValidated(true);
                 setFaceDetected(true);
+                setOtpConfirmedByCloud(true);
+                setFaceConfirmedByCloud(true);
+                setOtpSyncPending(false);
+                setFaceSyncPending(false);
             }
         });
 
@@ -214,7 +502,27 @@ export default function DropoffVerification({
             unsubscribeCamera();
             unsubscribeLockEvents();
         };
-    }, [boxId, deliveryId, canProcessOtpSignals]);
+    }, [boxId, deliveryId, canProcessOtpSignals, subscriptionEpoch]);
+
+    useEffect(() => {
+        const flush = async () => {
+            await flushQueuedBoxCommands(async (item) => {
+                await updateBoxState(item.boxId, {
+                    command: item.command,
+                    command_request_id: item.requestId,
+                    command_requested_by: item.requestedBy,
+                } as any);
+            }, 20);
+        };
+
+        const interval = setInterval(() => {
+            flush().catch(() => {
+                // Best-effort retry loop.
+            });
+        }, 3000);
+
+        return () => clearInterval(interval);
+    }, [boxId]);
 
     const handleCaptureFallbackPhoto = async () => {
         try {
@@ -228,6 +536,46 @@ export default function DropoffVerification({
             }
         } catch (e) {
             PremiumAlert.alert('Camera Error', 'Unable to capture fallback photo.');
+        }
+    };
+
+    const handleManualBoxCommand = async (command: 'UNLOCKING' | 'LOCKED') => {
+        if (!manualModeEnabled || !isInsideGeoFence || !otpConfirmedByCloud || !faceConfirmedByCloud) {
+            PremiumAlert.alert('Manual Control Locked', 'Enable manual mode and complete geofence, OTP, and face checks first.');
+            return;
+        }
+
+        setManualCommandLoading(true);
+        try {
+            const requestId = `dropoff_manual_${Date.now()}`;
+            const requestedBy = 'mobile_rider_dropoff_manual';
+
+            await enqueueBoxCommand({
+                deliveryId,
+                boxId,
+                command,
+                requestId,
+                requestedBy,
+            });
+
+            const flushResult = await flushQueuedBoxCommands(async (item) => {
+                await updateBoxState(item.boxId, {
+                    command: item.command,
+                    command_request_id: item.requestId,
+                    command_requested_by: item.requestedBy,
+                } as any);
+            }, 10);
+
+            PremiumAlert.alert(
+                'Manual Command Sent',
+                flushResult.sent > 0
+                    ? (command === 'UNLOCKING' ? 'Unlock command queued and sent to box.' : 'Lock command queued and sent to box.')
+                    : 'Command queued locally. It will send automatically when connectivity stabilizes.'
+            );
+        } catch (error) {
+            PremiumAlert.alert('Manual Command Failed', 'Could not send manual command. Please try again.');
+        } finally {
+            setManualCommandLoading(false);
         }
     };
 
@@ -250,10 +598,10 @@ export default function DropoffVerification({
         }
 
         // ━━━ SECURITY CHECK: Box must have validated OTP ━━━
-        if (!boxOtpValidated) {
+        if (!otpConfirmedByCloud) {
             PremiumAlert.alert(
                 'OTP Not Verified',
-                'The customer must enter the OTP on the physical box before delivery can be completed.',
+                'Waiting for cloud confirmation of OTP validation. Please wait a moment.',
                 [{ text: 'OK' }]
             );
             return;
@@ -371,11 +719,23 @@ export default function DropoffVerification({
     };
 
     // Can the rider swipe to complete?
-    const canSwipe = boxOtpValidated && (hasHardwareProof || (fallbackModeActive && hasFallbackProof));
+    const canSwipe = otpConfirmedByCloud && (hasHardwareProof || (fallbackModeActive && hasFallbackProof));
     // Can the rider see the fallback photo button?
     const showFallbackButton = fallbackModeActive || (boxOtpValidated && !hasHardwareProof);
+    const canManualControl = manualModeEnabled && isInsideGeoFence && otpConfirmedByCloud && faceConfirmedByCloud;
+    const isSyncPending = otpSyncPending || faceSyncPending;
 
     const statusMsg = getHandoverStatusMessage();
+
+    const formatAge = (timestamp?: number): string => {
+        if (!timestamp || timestamp <= 0) return '—';
+        const diffSec = Math.max(0, Math.floor((Date.now() - timestamp) / 1000));
+        if (diffSec < 60) return `${diffSec}s ago`;
+        const diffMin = Math.floor(diffSec / 60);
+        if (diffMin < 60) return `${diffMin}m ago`;
+        const diffH = Math.floor(diffMin / 60);
+        return `${diffH}h ago`;
+    };
 
     return (
         <View style={styles.container}>
@@ -418,6 +778,9 @@ export default function DropoffVerification({
                                 <Text style={styles.checkLabel}>{isBoxOffline ? 'Box Offline' : 'Smart Box'}</Text>
                             </View>
                         </View>
+                        <Text style={{ textAlign: 'center', fontSize: 11, color: '#64748b', marginTop: 2 }}>
+                            Phone GPS: {formatAge(lastPhoneGpsAt)} • Box heartbeat: {formatAge(lastBoxHeartbeatAt)}
+                        </Text>
                         {/* Row 2: OTP Verified + Face Check */}
                         <View style={styles.checksRow}>
                             <View style={styles.checkItem}>
@@ -491,6 +854,53 @@ export default function DropoffVerification({
                             </Text>
                         </View>
 
+                        {isSyncPending && (
+                            <View style={[styles.statusMessageContainer, { marginTop: 8, backgroundColor: '#fff7ed' }]}>
+                                <Text style={[styles.statusMessageText, { color: '#9a3412' }]}>
+                                    Sync pending: restoring local verification, waiting for cloud confirmation...
+                                </Text>
+                            </View>
+                        )}
+
+                        <View style={{ marginTop: 8, marginBottom: 8, padding: 12, borderRadius: 10, borderWidth: 1, borderColor: '#e2e8f0', backgroundColor: '#f8fafc' }}>
+                            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                                <View style={{ flex: 1, paddingRight: 10 }}>
+                                    <Text style={{ fontSize: 13, fontWeight: '700', color: '#0f172a' }}>Manual Box Mode</Text>
+                                    <Text style={{ fontSize: 12, color: '#475569', marginTop: 2 }}>
+                                        Enable to allow manual lock/unlock after OTP + face verification.
+                                    </Text>
+                                </View>
+                                <Switch value={manualModeEnabled} onValueChange={setManualModeEnabled} />
+                            </View>
+
+                            <View style={{ flexDirection: 'row', marginTop: 10, gap: 8 }}>
+                                <Button
+                                    mode="contained"
+                                    onPress={() => handleManualBoxCommand('UNLOCKING')}
+                                    disabled={!canManualControl || manualCommandLoading || boxState?.status === 'UNLOCKING'}
+                                    loading={manualCommandLoading && boxState?.status === 'UNLOCKING'}
+                                    style={{ flex: 1, backgroundColor: canManualControl ? '#16a34a' : '#94a3b8' }}
+                                >
+                                    Unlock
+                                </Button>
+                                <Button
+                                    mode="outlined"
+                                    onPress={() => handleManualBoxCommand('LOCKED')}
+                                    disabled={!canManualControl || manualCommandLoading}
+                                    loading={manualCommandLoading && boxState?.status !== 'UNLOCKING'}
+                                    style={{ flex: 1 }}
+                                >
+                                    Lock
+                                </Button>
+                            </View>
+
+                            {!canManualControl && (
+                                <Text style={{ marginTop: 8, fontSize: 12, color: '#64748b' }}>
+                                    Requirements: inside geofence, OTP verified, face verified, and manual mode enabled.
+                                </Text>
+                            )}
+                        </View>
+
                         <View style={styles.proofPanel}>
                             <Text style={styles.proofTitle}>Verification Photo</Text>
                             {hasHardwareProof && displayedHardwareProofUrl ? (
@@ -499,6 +909,7 @@ export default function DropoffVerification({
                                         source={{ uri: displayedHardwareProofUrl }}
                                         style={styles.proofImage}
                                         resizeMode="cover"
+                                        progressiveRenderingEnabled
                                     />
                                     <Text style={styles.proofHintSuccess}>✅ ESP-CAM proof received. You can now swipe to complete.</Text>
                                 </>

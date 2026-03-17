@@ -995,6 +995,18 @@ export function subscribeToDeliveryProof(
     return () => off(deliveryRef);
 }
 
+/**
+ * Read latest delivery proof once for reconcile/fallback flows.
+ */
+export async function getDeliveryProofSnapshot(
+    deliveryId: string
+): Promise<DeliveryProofState | null> {
+    const db = getFirebaseDatabase();
+    const deliveryRef = ref(db, `deliveries/${deliveryId}`);
+    const snapshot = await get(deliveryRef);
+    return (snapshot.val() as DeliveryProofState | null) ?? null;
+}
+
 // ==================== Lock Events (OTP + Face Detection from Hardware) ====================
 
 export interface LockEvent {
@@ -1030,6 +1042,30 @@ export function subscribeToLockEvents(
     });
 
     return () => off(lockRef);
+}
+
+/**
+ * Read latest lock event once for reconcile/fallback flows.
+ */
+export async function getLockEventSnapshot(
+    boxId: string
+): Promise<LockEvent | null> {
+    const db = getFirebaseDatabase();
+    const lockRef = ref(db, `lock_events/${boxId}/latest`);
+    const snapshot = await get(lockRef);
+    return (snapshot.val() as LockEvent | null) ?? null;
+}
+
+/**
+ * Read latest box state once for reconcile/fallback flows.
+ */
+export async function getBoxStateSnapshot(
+    boxId: string
+): Promise<BoxState | null> {
+    const db = getFirebaseDatabase();
+    const boxRef = ref(db, `hardware/${boxId}/box_state`);
+    const snapshot = await get(boxRef);
+    return (snapshot.val() as BoxState | null) ?? null;
 }
 
 export type LowLightTier = 'NORMAL' | 'ENHANCED' | 'FLASH' | 'FALLBACK';

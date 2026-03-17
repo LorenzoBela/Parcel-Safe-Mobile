@@ -39,6 +39,8 @@ const RE_WARMUP_COOLDOWN_MS = 60000;
 
 /** Timestamp of last warmup completion */
 let lastWarmupTime = 0;
+let foregroundWarmSub: Location.LocationSubscription | null = null;
+let foregroundWarmTimer: NodeJS.Timeout | null = null;
 
 // ==================== Public API ====================
 
@@ -91,6 +93,47 @@ export function resetWarmup(): void {
     warmupPromise = null;
     warmedUp = false;
     cachedWarmupFix = null;
+}
+
+/**
+ * Foreground warm window: keep high-accuracy watcher active briefly after resume
+ * so first in-screen GPS lock is fast and stable.
+ */
+export async function startForegroundGpsWarmWindow(durationMs = 25000): Promise<void> {
+    try {
+        const { status } = await Location.getForegroundPermissionsAsync();
+        if (status !== 'granted') return;
+
+        if (foregroundWarmSub) {
+            foregroundWarmSub.remove();
+            foregroundWarmSub = null;
+        }
+        if (foregroundWarmTimer) {
+            clearTimeout(foregroundWarmTimer);
+            foregroundWarmTimer = null;
+        }
+
+        foregroundWarmSub = await Location.watchPositionAsync(
+            {
+                accuracy: Location.Accuracy.High,
+                timeInterval: 1000,
+                distanceInterval: 1,
+            },
+            (location) => {
+                storeBestFix(location);
+            }
+        );
+
+        foregroundWarmTimer = setTimeout(() => {
+            if (foregroundWarmSub) {
+                foregroundWarmSub.remove();
+                foregroundWarmSub = null;
+            }
+            foregroundWarmTimer = null;
+        }, durationMs);
+    } catch (error) {
+        console.log('[GPSWarmup] Foreground warm window failed (non-fatal):', error);
+    }
 }
 
 // ==================== Internal ====================

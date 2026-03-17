@@ -149,6 +149,10 @@ $SOURCE_DIR = "C:\Users\Lorenzo Bela\Downloads\Thesis 24-25 Smart Top Box\mobile
 $DEST_DIR = "C:\Dev\TopBox\mobile"
 $OTA_CHANNEL = "thesis"
 $EAS_PROFILE = "production"
+$FAST_MODE = $true
+$FORCE_CLEAN_PREBUILD = $false
+$script:GradleMaxWorkers = 2
+$script:GradleHeapMb = 8192
 
 function Ensure-OtaChannelInAppJson {
     param(
@@ -192,6 +196,37 @@ function Ensure-OtaChannelInAppJson {
     } catch {
         Write-Host "[ERROR] Failed to enforce OTA channel in app.json: $_" -ForegroundColor Red
         exit 1
+    }
+}
+
+function Get-FileSha256 {
+    param([string]$Path)
+    if (-not (Test-Path $Path)) { return $null }
+    try {
+        return (Get-FileHash -Path $Path -Algorithm SHA256).Hash
+    } catch {
+        return $null
+    }
+}
+
+function Get-CombinedHash {
+    param([string[]]$Paths)
+    $parts = @()
+    foreach ($p in $Paths) {
+        if (Test-Path $p) {
+            $hash = Get-FileSha256 -Path $p
+            if ($hash) { $parts += "$p|$hash" }
+        }
+    }
+    if ($parts.Count -eq 0) { return $null }
+    $joined = ($parts | Sort-Object) -join "`n"
+    $bytes = [System.Text.Encoding]::UTF8.GetBytes($joined)
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $hashBytes = $sha.ComputeHash($bytes)
+        return ([BitConverter]::ToString($hashBytes)).Replace("-", "")
+    } finally {
+        $sha.Dispose()
     }
 }
 
@@ -246,6 +281,11 @@ if ($robocopyExitCode -ge 8) {
 Set-Location $DEST_DIR
 Write-Host "[OK] Switched to build directory: $DEST_DIR" -ForegroundColor Green
 Write-Host ""
+
+$BUILD_CACHE_DIR = Join-Path $DEST_DIR ".build-cache"
+if (-not (Test-Path $BUILD_CACHE_DIR)) {
+    New-Item -ItemType Directory -Path $BUILD_CACHE_DIR -Force | Out-Null
+}
 
 Write-Host "`nStep 0.2: Enforcing OTA channel configuration..." -ForegroundColor Yellow
 $appJsonPath = Join-Path $DEST_DIR "app.json"
@@ -358,25 +398,92 @@ Invoke-SmartCleanup -ProjectPath $PROJECT_ROOT
 Write-Host "`nStep 4: Cleaning Gradle cache..." -ForegroundColor Yellow
 Set-Location $ANDROID_DIR
 if (Test-Path ".\gradlew.bat") {
-    .\gradlew.bat clean
+    if ($FAST_MODE) {
+        Write-Host "[INFO] FAST_MODE enabled: skipping gradlew clean for faster iteration" -ForegroundColor Gray
+    } else {
+        .\gradlew.bat clean
+    }
 }
 Set-Location $PROJECT_ROOT
 
 Write-Host "`nStep 5: Ensuring node_modules are up to date..." -ForegroundColor Yellow
+$nodeModulesDir = Join-Path $PROJECT_ROOT "node_modules"
 $lockFile = Join-Path $PROJECT_ROOT "package-lock.json"
-if (Test-Path $lockFile) { Remove-Item -Path $lockFile -Force }
-npm install --force
-if ($LASTEXITCODE -ne 0) {
+$depsStampPath = Join-Path $BUILD_CACHE_DIR "deps.lock.sha256"
+$didRunNpmInstall = $false
+
+if (-not (Test-Path $nodeModulesDir)) {
+    Write-Host "[INFO] node_modules not found, running full install..." -ForegroundColor Gray
+    npm install --prefer-offline --no-audit --no-fund
+    $didRunNpmInstall = $true
+} elseif ($FAST_MODE) {
+    $currentLockHash = Get-FileSha256 -Path $lockFile
+    $previousLockHash = $null
+    if (Test-Path $depsStampPath) {
+        $previousLockHash = (Get-Content -Path $depsStampPath -Raw).Trim()
+    }
+
+    if ($currentLockHash -and $previousLockHash -and $currentLockHash -eq $previousLockHash) {
+        Write-Host "[INFO] FAST_MODE: lockfile unchanged, skipping npm install" -ForegroundColor Gray
+    } else {
+        Write-Host "[INFO] FAST_MODE: lockfile changed or stamp missing, running npm install" -ForegroundColor Gray
+        npm install --prefer-offline --no-audit --no-fund
+        $didRunNpmInstall = $true
+    }
+} else {
+    npm install --prefer-offline --no-audit --no-fund
+    $didRunNpmInstall = $true
+}
+
+if ($didRunNpmInstall -and $LASTEXITCODE -ne 0) {
     Write-Host "[ERROR] npm install failed" -ForegroundColor Red
     exit $LASTEXITCODE
 }
 
+if ($didRunNpmInstall) {
+    $installedLockHash = Get-FileSha256 -Path $lockFile
+    if ($installedLockHash) { Set-Content -Path $depsStampPath -Value $installedLockHash }
+}
+
 Write-Host "`nStep 6: Regenerating native Android project (Prebuild)..." -ForegroundColor Yellow
 $env:CI = "1"
-Invoke-Expression "npx expo prebuild --platform android --clean"
-if ($LASTEXITCODE -ne 0) {
-    Write-Host "[ERROR] npx expo prebuild failed" -ForegroundColor Red
-    exit $LASTEXITCODE
+$prebuildStampPath = Join-Path $BUILD_CACHE_DIR "expo-prebuild.sha256"
+$prebuildInputs = @(
+    (Join-Path $PROJECT_ROOT "app.json"),
+    (Join-Path $PROJECT_ROOT "package.json"),
+    (Join-Path $PROJECT_ROOT "package-lock.json"),
+    (Join-Path $PROJECT_ROOT "eas.json"),
+    (Join-Path $PROJECT_ROOT "babel.config.js"),
+    (Join-Path $PROJECT_ROOT "metro.config.js")
+)
+$currentPrebuildHash = Get-CombinedHash -Paths $prebuildInputs
+$previousPrebuildHash = $null
+if (Test-Path $prebuildStampPath) {
+    $previousPrebuildHash = (Get-Content -Path $prebuildStampPath -Raw).Trim()
+}
+
+$shouldRunPrebuild = $true
+if ($FAST_MODE -and -not $FORCE_CLEAN_PREBUILD -and (Test-Path $ANDROID_DIR) -and $currentPrebuildHash -and $previousPrebuildHash -and $currentPrebuildHash -eq $previousPrebuildHash) {
+    $shouldRunPrebuild = $false
+    Write-Host "[INFO] FAST_MODE: native inputs unchanged, skipping expo prebuild" -ForegroundColor Gray
+}
+
+if ($shouldRunPrebuild) {
+    $prebuildArgs = @("expo", "prebuild", "--platform", "android")
+    if ($FORCE_CLEAN_PREBUILD) { $prebuildArgs += "--clean" }
+    if ($FAST_MODE -and -not $FORCE_CLEAN_PREBUILD) {
+        Write-Host "[INFO] FAST_MODE enabled: prebuild without --clean" -ForegroundColor Gray
+    }
+
+    npx @prebuildArgs
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "[ERROR] npx expo prebuild failed" -ForegroundColor Red
+        exit $LASTEXITCODE
+    }
+
+    if ($currentPrebuildHash) {
+        Set-Content -Path $prebuildStampPath -Value $currentPrebuildHash
+    }
 }
 
 # ============================================
@@ -434,6 +541,38 @@ function Ensure-LineInFile {
     }
     if (-not $matched) { $newContent += $LineToSet }
     Set-Content -Path $Path -Value $newContent
+}
+
+function Ensure-GradleMemorySettings {
+    param([string]$GradlePropsPath)
+    if (-not (Test-Path $GradlePropsPath)) { return }
+
+    $logicalCores = [Environment]::ProcessorCount
+    $totalRamGb = 16
+    try {
+        $totalRamGb = [math]::Round(((Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory / 1GB), 1)
+    } catch {
+        Write-Host "[WARN] Could not read total RAM. Falling back to safe defaults." -ForegroundColor DarkYellow
+    }
+
+    $heapMb = [int][math]::Floor([math]::Min(12288, [math]::Max(6144, $totalRamGb * 1024 * 0.5)))
+    $metaMb = [int][math]::Floor([math]::Min(1536, [math]::Max(768, $heapMb * 0.125)))
+    $kotlinMb = [int][math]::Floor([math]::Min(4096, [math]::Max(2048, $heapMb * 0.3)))
+
+    $workersByCore = [math]::Max(2, $logicalCores - 2)
+    $workersByRam = [math]::Max(2, [int][math]::Floor($totalRamGb / 4))
+    $maxWorkers = [math]::Min(8, [math]::Min($workersByCore, $workersByRam))
+
+    $parallelEnabled = if ($maxWorkers -ge 4) { "true" } else { "false" }
+    $script:GradleMaxWorkers = $maxWorkers
+    $script:GradleHeapMb = $heapMb
+
+    Ensure-LineInFile -Path $GradlePropsPath -MatchRegex '^org\.gradle\.jvmargs=' -LineToSet "org.gradle.jvmargs=-Xmx${heapMb}m -XX:MaxMetaspaceSize=${metaMb}m -Dfile.encoding=UTF-8 -XX:+HeapDumpOnOutOfMemoryError"
+    Ensure-LineInFile -Path $GradlePropsPath -MatchRegex '^kotlin\.daemon\.jvm\.options=' -LineToSet "kotlin.daemon.jvm.options=-Xmx${kotlinMb}m"
+    Ensure-LineInFile -Path $GradlePropsPath -MatchRegex '^org\.gradle\.workers\.max=' -LineToSet "org.gradle.workers.max=$maxWorkers"
+    Ensure-LineInFile -Path $GradlePropsPath -MatchRegex '^org\.gradle\.parallel=' -LineToSet "org.gradle.parallel=$parallelEnabled"
+
+    Write-Host "[OK] Auto-tuned build profile: RAM=${totalRamGb}GB, cores=${logicalCores}, heap=${heapMb}MB, workers=${maxWorkers}, parallel=${parallelEnabled}" -ForegroundColor Green
 }
 
 function Ensure-BlockAfterLine {
@@ -505,6 +644,12 @@ function Ensure-CMakeLibCppShared {
 
 # 1. gradle.properties: CMake arguments
 Ensure-LineInFile -Path $gradleProps -MatchRegex '^android\.cmake\.arguments=' -LineToSet 'android.cmake.arguments=-DANDROID_STL=c++_shared -DCMAKE_ANDROID_STL_TYPE=c++_shared -DCMAKE_SHARED_LINKER_FLAGS=-lc++_shared -DCMAKE_EXE_LINKER_FLAGS=-lc++_shared'
+Ensure-GradleMemorySettings -GradlePropsPath $gradleProps
+
+# Reinforce memory defaults in the current shell to avoid daemon/client mismatch.
+$env:GRADLE_OPTS = "-Xmx$($script:GradleHeapMb)m -XX:MaxMetaspaceSize=1024m -Dfile.encoding=UTF-8"
+$env:JAVA_TOOL_OPTIONS = "-Xmx$($script:GradleHeapMb)m -XX:MaxMetaspaceSize=1024m -Dfile.encoding=UTF-8"
+Write-Host "[OK] Gradle/JVM memory limits applied for current shell" -ForegroundColor Green
 
 # 2. root build.gradle: subproject CMake args for ALL native modules
 $cmakeBlock = @(
@@ -546,28 +691,47 @@ $knownTargets = @{
 }
 $cmakePatchCount = 0
 
-# Scan node_modules for all CMakeLists.txt under android/ directories
-$cmakeFiles = Get-ChildItem -Path (Join-Path $PROJECT_ROOT "node_modules") -Filter "CMakeLists.txt" -Recurse -ErrorAction SilentlyContinue |
-    Where-Object { $_.FullName -match 'android' -and $_.FullName -notmatch '\.cxx' -and $_.FullName -notmatch 'build\\' }
-
-foreach ($cmakeFile in $cmakeFiles) {
-    $raw = Get-Content -Path $cmakeFile.FullName -Raw -ErrorAction SilentlyContinue
-    if (-not $raw) { continue }
-    # Only patch files that have target_link_libraries (actual native build files)
-    if ($raw -notmatch 'target_link_libraries') { continue }
-
-    # Determine target name from known map or extract from add_library
-    $moduleName = ($cmakeFile.FullName -replace '.*node_modules\\', '' -replace '\\android.*', '')
-    $targetName = $null
-    if ($knownTargets.ContainsKey($moduleName)) {
-        $targetName = $knownTargets[$moduleName]
-    } elseif ($raw -match 'add_library\(\s*([\w${}]+)') {
-        $targetName = $matches[1]
+$cmakePatchStampPath = Join-Path $BUILD_CACHE_DIR "cmake-patch.sha256"
+$cmakePatchKey = Get-FileSha256 -Path $lockFile
+$skipCmakeScan = $false
+if ($FAST_MODE -and $cmakePatchKey -and (Test-Path $cmakePatchStampPath)) {
+    $previousCmakePatchKey = (Get-Content -Path $cmakePatchStampPath -Raw).Trim()
+    if ($previousCmakePatchKey -eq $cmakePatchKey) {
+        $skipCmakeScan = $true
     }
-    if (-not $targetName) { continue }
+}
 
-    Ensure-CMakeLibCppShared -Path $cmakeFile.FullName -TargetName $targetName
-    $cmakePatchCount++
+# Scan node_modules for all CMakeLists.txt under android/ directories
+$cmakeFiles = @()
+if ($skipCmakeScan) {
+    Write-Host "[INFO] FAST_MODE: node_modules unchanged, skipping CMake scan" -ForegroundColor Gray
+} else {
+    $cmakeFiles = Get-ChildItem -Path (Join-Path $PROJECT_ROOT "node_modules") -Filter "CMakeLists.txt" -Recurse -ErrorAction SilentlyContinue |
+        Where-Object { $_.FullName -match 'android' -and $_.FullName -notmatch '\.cxx' -and $_.FullName -notmatch 'build\\' }
+
+    foreach ($cmakeFile in $cmakeFiles) {
+        $raw = Get-Content -Path $cmakeFile.FullName -Raw -ErrorAction SilentlyContinue
+        if (-not $raw) { continue }
+        # Only patch files that have target_link_libraries (actual native build files)
+        if ($raw -notmatch 'target_link_libraries') { continue }
+
+        # Determine target name from known map or extract from add_library
+        $moduleName = ($cmakeFile.FullName -replace '.*node_modules\\', '' -replace '\\android.*', '')
+        $targetName = $null
+        if ($knownTargets.ContainsKey($moduleName)) {
+            $targetName = $knownTargets[$moduleName]
+        } elseif ($raw -match 'add_library\(\s*([\w${}]+)') {
+            $targetName = $matches[1]
+        }
+        if (-not $targetName) { continue }
+
+        Ensure-CMakeLibCppShared -Path $cmakeFile.FullName -TargetName $targetName
+        $cmakePatchCount++
+    }
+
+    if ($cmakePatchKey) {
+        Set-Content -Path $cmakePatchStampPath -Value $cmakePatchKey
+    }
 }
 
 Write-Host "[OK] Patched $cmakePatchCount CMakeLists.txt files with c++_shared linking" -ForegroundColor Green
@@ -721,7 +885,19 @@ Write-Host ""
 Set-Location $ANDROID_DIR
 
 Write-Host "`nBuilding APK..." -ForegroundColor Yellow
-.\gradlew assembleRelease --stacktrace
+$gradleBuildArgs = @(
+    "assembleRelease",
+    "--stacktrace",
+    "--max-workers=$($script:GradleMaxWorkers)",
+    "--build-cache",
+    "-x", "lintVitalReportRelease",
+    "-x", "lintVitalRelease"
+)
+if (-not $FAST_MODE) {
+    $gradleBuildArgs += "--no-daemon"
+}
+Write-Host "[INFO] Gradle args: $($gradleBuildArgs -join ' ')" -ForegroundColor Gray
+.\gradlew @gradleBuildArgs
 $overallExit = $LASTEXITCODE
 
 Set-Location $PROJECT_ROOT

@@ -23,6 +23,8 @@ import {
 import { usePulseAnimation } from '../../hooks/useEntryAnimation';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { supabase } from '../../services/supabaseClient';
+import useAuthStore from '../../store/authStore';
+import { runForegroundResumePipeline } from '../../services/foregroundResumePipelineService';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -69,6 +71,7 @@ export default function ResumeScreen({ onReady }: Props) {
     const progressAnim = useRef(new Animated.Value(0)).current;
     const fadeAnim = useRef(new Animated.Value(1)).current;
     const [stepIndex, setStepIndex] = useState(0);
+    const [softAuthWarning, setSoftAuthWarning] = useState<string | null>(null);
     const doneRef = useRef(false);
 
     const dismiss = () => {
@@ -106,13 +109,14 @@ export default function ResumeScreen({ onReady }: Props) {
             setStepIndex(0);
             animateProgress(LOAD_STEPS[0].progress);
 
-            // Kick off GPS warmup in the background (non-blocking)
+            // Kick off resume pipeline stages with deadlines.
             try {
-                const { resetWarmup, warmUpLocationServices } = require('../../services/gpsWarmupService');
-                resetWarmup();
-                warmUpLocationServices();
+                await Promise.race([
+                    runForegroundResumePipeline(),
+                    new Promise(resolve => setTimeout(resolve, 1200)),
+                ]);
             } catch (_) {
-                // GPS is best-effort, never block UI for it
+                // Pipeline is best-effort, never block UI for it
             }
 
             // ── Step 1: Checking session ───────────────────────────────────────
@@ -120,6 +124,19 @@ export default function ResumeScreen({ onReady }: Props) {
             animateProgress(LOAD_STEPS[1].progress);
 
             try {
+                const cachedAuth = useAuthStore.getState() as any;
+                if (cachedAuth?.isAuthenticated && cachedAuth?.user) {
+                    // Fast resume path: UI is already hydrated from MMKV.
+                    // Refresh token/session in background without blocking unfreeze.
+                    setStepIndex(2);
+                    setTimeout(() => {
+                        supabase.auth.getSession().catch(() => { });
+                    }, 0);
+                    clearTimeout(hardCapTimer);
+                    dismiss();
+                    return;
+                }
+
                 // Ensure the Supabase token is fresh before returning to the app.
                 // The proactive refresh in supabaseClient.ts does the heavy lifting;
                 // this is just a quick sanity check capped at 1s.
@@ -128,7 +145,8 @@ export default function ResumeScreen({ onReady }: Props) {
                     new Promise(resolve => setTimeout(resolve, 1000)),
                 ]);
             } catch (_) {
-                // Non-fatal — app continues normally
+                // Non-fatal — app continues normally with cached auth.
+                setSoftAuthWarning('Session refresh is delayed. Using cached login.');
             }
 
             // ── Step 2: Done ───────────────────────────────────────────────────
@@ -197,6 +215,11 @@ export default function ResumeScreen({ onReady }: Props) {
                         {LOAD_STEPS[stepIndex]?.label ?? 'Loading...'}
                     </Text>
                 </View>
+                {softAuthWarning && (
+                    <Text style={[styles.statusText, { color: colors.textSecondary, marginTop: 6 }]}>
+                        {softAuthWarning}
+                    </Text>
+                )}
             </View>
         </Animated.View>
     );
