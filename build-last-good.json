@@ -1,10 +1,10 @@
 ﻿{
-    "lastSuccessfulBuild":  "2026-02-15T11:54:24.7622416+08:00",
+    "lastSuccessfulBuild":  "2026-03-17T10:14:30.6376113+08:00",
     "environment":  {
                         "androidSdkRoot":  "C:/Users/Lorenzo Bela/AppData/Local/Android/Sdk",
                         "androidHome":  "C:/Users/Lorenzo Bela/AppData/Local/Android/Sdk",
-                        "androidNdkHome":  "C:\\Users\\Lorenzo Bela\\AppData\\Local\\Android\\Sdk\\ndk\\27.2.12479018",
-                        "ndkHome":  "C:\\Users\\Lorenzo Bela\\AppData\\Local\\Android\\Sdk\\ndk\\27.2.12479018",
+                        "androidNdkHome":  "C:\\Users\\Lorenzo Bela\\AppData\\Local\\Android\\Sdk\\ndk\\26.1.10909125",
+                        "ndkHome":  "C:\\Users\\Lorenzo Bela\\AppData\\Local\\Android\\Sdk\\ndk\\26.1.10909125",
                         "javaHome":  "C:\\Program Files\\Eclipse Adoptium\\jdk-17.0.17.10-hotspot\\",
                         "nodeBinary":  "C:\\Program Files\\nodejs\\node.exe",
                         "androidStl":  "c++_shared",
@@ -18,7 +18,7 @@
                                                     "SerializedRemoteInvocationInfo":  null,
                                                     "ErrorRecord":  {
                                                                         "Exception":  {
-                                                                                          "Message":  "openjdk version \"17.0.17\" 2025-10-21",
+                                                                                          "Message":  "Picked up JAVA_TOOL_OPTIONS: -Xmx12288m -XX:MaxMetaspaceSize=1024m -Dfile.encoding=UTF-8",
                                                                                           "Data":  {
 
                                                                                                    },
@@ -46,7 +46,7 @@
                                                                                                   ]
                                                                     },
                                                     "WasThrownFromThrowStatement":  false,
-                                                    "Message":  "openjdk version \"17.0.17\" 2025-10-21",
+                                                    "Message":  "Picked up JAVA_TOOL_OPTIONS: -Xmx12288m -XX:MaxMetaspaceSize=1024m -Dfile.encoding=UTF-8",
                                                     "Data":  {
 
                                                              },
@@ -57,12 +57,12 @@
                                                     "Source":  null,
                                                     "HResult":  -2146233087
                                                 },
-                                  "TargetObject":  "openjdk version \"17.0.17\" 2025-10-21",
+                                  "TargetObject":  "Picked up JAVA_TOOL_OPTIONS: -Xmx12288m -XX:MaxMetaspaceSize=1024m -Dfile.encoding=UTF-8",
                                   "CategoryInfo":  {
                                                        "Category":  0,
                                                        "Activity":  "",
                                                        "Reason":  "RemoteException",
-                                                       "TargetName":  "openjdk version \"17.0.17\" 2025-10-21",
+                                                       "TargetName":  "Picked up JAVA_TOOL_OPTIONS: -Xmx12288m -XX:MaxMetaspaceSize=1024m -Dfile.encoding=UTF-8",
                                                        "TargetType":  "String"
                                                    },
                                   "FullyQualifiedErrorId":  "NativeCommandError",
@@ -103,12 +103,12 @@
                                                          "UnboundArguments":  [
 
                                                                               ],
-                                                         "ScriptLineNumber":  1441,
+                                                         "ScriptLineNumber":  1735,
                                                          "OffsetInLine":  21,
                                                          "HistoryId":  -1,
                                                          "ScriptName":  "C:\\Users\\Lorenzo Bela\\Downloads\\Thesis 24-25 Smart Top Box\\mobile\\build-android.ps1",
                                                          "Line":  "    $javaVersion = (\u0026 java -version 2\u003e\u00261 | Select-Object -First 1)\r\n",
-                                                         "PositionMessage":  "At C:\\Users\\Lorenzo Bela\\Downloads\\Thesis 24-25 Smart Top Box\\mobile\\build-android.ps1:1441 char:21\r\n+     $javaVersion = (\u0026 java -version 2\u003e\u00261 | Select-Object -First 1)\r\n+                     ~~~~~~~~~~~~~~~~~~~~",
+                                                         "PositionMessage":  "At C:\\Users\\Lorenzo Bela\\Downloads\\Thesis 24-25 Smart Top Box\\mobile\\build-android.ps1:1735 char:21\r\n+     $javaVersion = (\u0026 java -version 2\u003e\u00261 | Select-Object -First 1)\r\n+                     ~~~~~~~~~~~~~~~~~~~~",
                                                          "PSScriptRoot":  "C:\\Users\\Lorenzo Bela\\Downloads\\Thesis 24-25 Smart Top Box\\mobile",
                                                          "PSCommandPath":  "C:\\Users\\Lorenzo Bela\\Downloads\\Thesis 24-25 Smart Top Box\\mobile\\build-android.ps1",
                                                          "InvocationName":  "\u0026",
@@ -118,7 +118,7 @@
                                                          "CommandOrigin":  1,
                                                          "DisplayScriptPosition":  null
                                                      },
-                                  "ScriptStackTrace":  "at \u003cScriptBlock\u003e, C:\\Users\\Lorenzo Bela\\Downloads\\Thesis 24-25 Smart Top Box\\mobile\\build-android.ps1: line 1441",
+                                  "ScriptStackTrace":  "at \u003cScriptBlock\u003e, C:\\Users\\Lorenzo Bela\\Downloads\\Thesis 24-25 Smart Top Box\\mobile\\build-android.ps1: line 1735\r\nat \u003cScriptBlock\u003e, \u003cNo file\u003e: line 1",
                                   "PipelineIterationInfo":  [
                                                                 0,
                                                                 0,
@@ -138,7 +138,11 @@
                                     "react-native-worklets":  "0.5.1",
                                     "expo":  "54.0.33"
                                 },
-    "patches":  "react-native+0.81.5.patch",
+    "patches":  [
+                    "@react-native-google-signin+google-signin+16.1.1.patch",
+                    "expo-task-manager+14.0.9.patch",
+                    "react-native+0.81.5.patch"
+                ],
     "knownIssuesFixed":  [
                              "KOTLIN_VERSION_PROPERTY: Post-prebuild adds kotlinVersion= to gradle.properties",
                              "KOTLIN_KSP_COMPAT: kotlinVersion must be 2.0.0+ for KSP",
@@ -147,13 +151,13 @@
                              "PREBUILD_WIPES: All android/ patches re-applied after prebuild --clean"
                          ],
     "buildConfig":  {
-                        "timestamp":  "2026-02-15T11:44:36.8472073+08:00",
+                        "timestamp":  "2026-03-17T09:54:21.6595113+08:00",
                         "projectRoot":  "C:\\Dev\\TopBox\\mobile",
                         "androidDir":  "C:\\Dev\\TopBox\\mobile\\android",
                         "androidSdkRoot":  "C:/Users/Lorenzo Bela/AppData/Local/Android/Sdk",
                         "androidHome":  "C:/Users/Lorenzo Bela/AppData/Local/Android/Sdk",
-                        "androidNdkHome":  "C:\\Users\\Lorenzo Bela\\AppData\\Local\\Android\\Sdk\\ndk\\27.2.12479018",
-                        "ndkHome":  "C:\\Users\\Lorenzo Bela\\AppData\\Local\\Android\\Sdk\\ndk\\27.2.12479018",
+                        "androidNdkHome":  "C:\\Users\\Lorenzo Bela\\AppData\\Local\\Android\\Sdk\\ndk\\26.1.10909125",
+                        "ndkHome":  "C:\\Users\\Lorenzo Bela\\AppData\\Local\\Android\\Sdk\\ndk\\26.1.10909125",
                         "javaHome":  "C:\\Program Files\\Eclipse Adoptium\\jdk-17.0.17.10-hotspot\\",
                         "nodeBinary":  "C:\\Program Files\\nodejs\\node.exe",
                         "androidStl":  "c++_shared",

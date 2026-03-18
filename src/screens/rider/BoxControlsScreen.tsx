@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { View, Animated, StyleSheet, ScrollView, Alert, TouchableOpacity, Modal } from 'react-native';
 import { useEntryAnimation } from '../../hooks/useEntryAnimation';
-import { Text, Card, Button, Surface, ProgressBar, useTheme, IconButton, Divider, Portal, ActivityIndicator } from 'react-native-paper';
+import { Text, Card, Button, Surface, ProgressBar, useTheme, IconButton, Divider, Portal, ActivityIndicator, TextInput } from 'react-native-paper';
 import LottieView from 'lottie-react-native';
 import { useAppTheme } from '../../context/ThemeContext';
 
@@ -73,6 +73,14 @@ const DEMO_BOX_ID = 'BOX_001';
 
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { PremiumAlert } from '../../services/PremiumAlertService';
+import {
+    fetchRiderPersonalPinStatus,
+    setRiderPersonalPin,
+    resetRiderPersonalPin,
+    RiderPersonalPinStatus,
+    verifyRiderPersonalPinForUnlock,
+    sendRiderUnlockCommand,
+} from '../../services/personalPinService';
 
 export default function BoxControlsScreen() {
     const navigation = useNavigation();
@@ -124,6 +132,20 @@ export default function BoxControlsScreen() {
 
     // GPS location from Firebase (box sub-path, written by GPS_LTE firmware)
     const [locationData, setLocationData] = useState<LocationData | null>(null);
+    const [personalPinStatus, setPersonalPinStatus] = useState<RiderPersonalPinStatus | null>(null);
+    const [personalPinLoading, setPersonalPinLoading] = useState(false);
+    const [showPersonalPinModal, setShowPersonalPinModal] = useState(false);
+    const [newPersonalPin, setNewPersonalPin] = useState('');
+    const [confirmPersonalPin, setConfirmPersonalPin] = useState('');
+    const [showNewPersonalPin, setShowNewPersonalPin] = useState(false);
+    const [showConfirmPersonalPin, setShowConfirmPersonalPin] = useState(false);
+    const [savingPersonalPin, setSavingPersonalPin] = useState(false);
+    const [showUnlockPinModal, setShowUnlockPinModal] = useState(false);
+    const [unlockPin, setUnlockPin] = useState('');
+    const [showUnlockPin, setShowUnlockPin] = useState(false);
+    const [unlockPinSubmitting, setUnlockPinSubmitting] = useState(false);
+
+    const sanitizePinInput = (value: string) => value.replace(/\D/g, '').slice(0, 6);
 
     // Extended hardware diagnostics — fields written by GPS_LTE_Firebase_Test firmware
     const [hwDiag, setHwDiag] = useState<{
@@ -331,6 +353,27 @@ export default function BoxControlsScreen() {
         return unsubscribe;
     }, [riderId]);
 
+    useEffect(() => {
+        if (!riderId) return;
+
+        let active = true;
+        setPersonalPinLoading(true);
+        fetchRiderPersonalPinStatus()
+            .then((status) => {
+                if (active) setPersonalPinStatus(status);
+            })
+            .catch(() => {
+                if (active) setPersonalPinStatus(null);
+            })
+            .finally(() => {
+                if (active) setPersonalPinLoading(false);
+            });
+
+        return () => {
+            active = false;
+        };
+    }, [riderId]);
+
     // EC-04: Lockout countdown timer
     useEffect(() => {
         if (!lockoutState?.active) {
@@ -396,7 +439,14 @@ export default function BoxControlsScreen() {
             return;
         }
 
-        const action = isLocked ? "UNLOCKING" : "LOCKED";
+        if (isLocked) {
+            setUnlockPin('');
+            setShowUnlockPin(false);
+            setShowUnlockPinModal(true);
+            return;
+        }
+
+        const action = "LOCKED";
         const requestId = `manual_${Date.now()}`;
 
         // EC-FIX: Send command to Firebase instead of local toggle
@@ -421,6 +471,38 @@ export default function BoxControlsScreen() {
             addLog('Manual override failed to send', 'error');
             PremiumAlert.alert('Manual Override Failed', 'Could not send command. Check network and try again.');
         } finally {
+            setManualOverrideSending(false);
+        }
+    };
+
+    const handleSubmitUnlockWithPin = async () => {
+        const sanitizedPin = sanitizePinInput(unlockPin);
+        if (!/^\d{6}$/.test(sanitizedPin)) {
+            PremiumAlert.alert('Invalid PIN', 'Enter your 6-digit Personal PIN to unlock.');
+            return;
+        }
+
+        try {
+            setUnlockPinSubmitting(true);
+            setManualOverrideSending(true);
+
+            const { unlockToken } = await verifyRiderPersonalPinForUnlock(boxId, sanitizedPin);
+            await sendRiderUnlockCommand(boxId, unlockToken);
+
+            addLog(`Manual override sent: UNLOCKING -> ${boxId}`, 'success');
+            setShowUnlockPinModal(false);
+            setUnlockPin('');
+
+            PremiumAlert.alert(
+                'Unlock Command Queued',
+                `Unlock command queued for ${boxId}. Waiting for hardware acknowledgment.`
+            );
+        } catch (error: any) {
+            console.error('[handleSubmitUnlockWithPin] Unlock failed:', error);
+            addLog('Manual unlock failed: PIN verification or authorization error', 'error');
+            PremiumAlert.alert('Unlock Failed', error?.message || 'Could not authorize unlock.');
+        } finally {
+            setUnlockPinSubmitting(false);
             setManualOverrideSending(false);
         }
     };
@@ -682,6 +764,89 @@ export default function BoxControlsScreen() {
         }
     };
 
+    const handleOpenPersonalPinModal = () => {
+        if (!isPaired) {
+            PremiumAlert.alert('Pair Required', 'Scan your box QR before managing Personal PIN.');
+            navigation.navigate('PairBox' as never);
+            return;
+        }
+
+        if (tamperState?.lockdown) {
+            PremiumAlert.alert('Unavailable', 'Personal PIN changes are blocked while tamper lockdown is active.');
+            return;
+        }
+
+        setNewPersonalPin('');
+        setConfirmPersonalPin('');
+        setShowNewPersonalPin(false);
+        setShowConfirmPersonalPin(false);
+        setShowPersonalPinModal(true);
+    };
+
+    const handleSavePersonalPin = async () => {
+        const sanitizedNewPin = sanitizePinInput(newPersonalPin);
+        const sanitizedConfirmPin = sanitizePinInput(confirmPersonalPin);
+
+        if (!/^\d{6}$/.test(sanitizedNewPin)) {
+            PremiumAlert.alert('Invalid PIN', 'Personal PIN must be exactly 6 digits.');
+            return;
+        }
+        if (sanitizedNewPin !== sanitizedConfirmPin) {
+            PremiumAlert.alert('Mismatch', 'PIN confirmation does not match.');
+            return;
+        }
+
+        try {
+            setSavingPersonalPin(true);
+            await setRiderPersonalPin(boxId, sanitizedNewPin);
+            addLog('Personal PIN updated from rider dashboard', 'success');
+            PremiumAlert.alert('Saved', 'Personal PIN has been updated. Existing PIN is never displayed for security.');
+            setShowPersonalPinModal(false);
+
+            const refreshed = await fetchRiderPersonalPinStatus();
+            setPersonalPinStatus(refreshed);
+        } catch (error: any) {
+            addLog('Failed to update Personal PIN', 'error');
+            PremiumAlert.alert('Failed', error?.message || 'Could not update Personal PIN.');
+        } finally {
+            setSavingPersonalPin(false);
+        }
+    };
+
+    const handleForgotPersonalPin = async () => {
+        if (!isPaired) {
+            PremiumAlert.alert('Pair Required', 'Scan your box QR before requesting PIN reset.');
+            return;
+        }
+
+        PremiumAlert.alert(
+            'Forgot Personal PIN',
+            'For security, the current PIN cannot be shown. This will disable your current Personal PIN and require you to set a new one.',
+            [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                    text: 'Reset PIN',
+                    style: 'destructive',
+                    onPress: async () => {
+                        try {
+                            setPersonalPinLoading(true);
+                            await resetRiderPersonalPin(boxId);
+                            addLog('Personal PIN reset requested (forgot PIN flow)', 'warning');
+                            PremiumAlert.alert('Reset Requested', 'Personal PIN has been disabled. Set a new PIN before using keypad personal mode.');
+                            const refreshed = await fetchRiderPersonalPinStatus();
+                            setPersonalPinStatus(refreshed);
+                        } catch (error: any) {
+                            addLog('Failed to reset Personal PIN', 'error');
+                            PremiumAlert.alert('Failed', error?.message || 'Could not reset Personal PIN.');
+                        } finally {
+                            setPersonalPinLoading(false);
+                        }
+                    }
+                }
+            ]
+        );
+    };
+
     const screenAnim = useEntryAnimation(0);
 
     return (
@@ -912,7 +1077,56 @@ export default function BoxControlsScreen() {
 
                         <Divider style={[styles.divider, { backgroundColor: c.divider }]} />
 
-                        {/* 4. System Maintenance */}
+                        {/* 4. Personal PIN Management */}
+                        <Text variant="labelMedium" style={{ marginTop: 8, marginBottom: 8, color: c.textTer }}>Personal PIN</Text>
+                        <View style={styles.controlRow}>
+                            <View style={[styles.iconContainer, {
+                                backgroundColor: !isPaired ? c.search : (personalPinStatus?.enabled ? c.greenBg : c.orangeBg),
+                                opacity: !isPaired ? 0.5 : 1
+                            }]}>
+                                <MaterialCommunityIcons
+                                    name="form-textbox-password"
+                                    size={24}
+                                    color={!isPaired ? c.textTer : (personalPinStatus?.enabled ? c.greenText : c.orangeText)}
+                                />
+                            </View>
+                            <View style={styles.controlInfo}>
+                                <Text variant="titleMedium" style={{ fontWeight: 'bold', color: !isPaired ? c.textTer : c.text }}>
+                                    {personalPinStatus?.enabled ? 'Personal PIN Enabled' : 'Personal PIN Not Set'}
+                                </Text>
+                                <Text variant="bodySmall" style={{ color: !isPaired ? c.textTer : c.textSec }}>
+                                    {personalPinLoading
+                                        ? 'Loading PIN status...'
+                                        : 'For security, your current PIN is never shown in the app.'}
+                                </Text>
+                            </View>
+                        </View>
+                        <View style={styles.row}>
+                            <Button
+                                mode="contained-tonal"
+                                onPress={handleOpenPersonalPinModal}
+                                disabled={!isPaired || personalPinLoading}
+                                style={{ flex: 1, marginRight: 8 }}
+                                icon="shield-edit"
+                            >
+                                {personalPinStatus?.enabled ? 'Change PIN' : 'Set PIN'}
+                            </Button>
+                            <Button
+                                mode="outlined"
+                                onPress={handleForgotPersonalPin}
+                                disabled={!isPaired || personalPinLoading}
+                                style={{ flex: 1, borderColor: c.orangeText }}
+                                textColor={c.orangeText}
+                                icon="help-circle-outline"
+                            >
+                                Forgot PIN
+                            </Button>
+                        </View>
+                        <Text style={[styles.hintText, { color: c.textTer, marginTop: 8 }]}>Considerations: keep box locked before updates, never share PIN, and reset immediately if compromised.</Text>
+
+                        <Divider style={[styles.divider, { backgroundColor: c.divider }]} />
+
+                        {/* 5. System Maintenance */}
                         <Text variant="labelMedium" style={{ marginTop: 8, marginBottom: 8, color: c.textTer }}>System Maintenance</Text>
                         <View style={styles.row}>
                             <Button
@@ -1261,6 +1475,142 @@ export default function BoxControlsScreen() {
                                     Cancel
                                 </Button>
                             )}
+                        </View>
+                    </Surface>
+                </View>
+            </Modal>
+
+            <Modal
+                visible={showPersonalPinModal}
+                transparent
+                animationType="slide"
+                onRequestClose={() => setShowPersonalPinModal(false)}
+            >
+                <View style={styles.modalOverlay}>
+                    <Surface style={styles.modalContent} elevation={5}>
+                        <View style={styles.modalHeader}>
+                            <Text variant="titleLarge" style={{ fontWeight: 'bold' }}>Set Personal PIN</Text>
+                            <IconButton icon="close" size={24} onPress={() => setShowPersonalPinModal(false)} />
+                        </View>
+                        <View style={styles.modalBody}>
+                            <Text variant="bodyMedium" style={{ marginBottom: 12, color: c.textSec, textAlign: 'center' }}>
+                                This PIN is used on keypad key 4 manual mode. Existing PIN cannot be viewed after save.
+                            </Text>
+                            <TextInput
+                                mode="outlined"
+                                label="New Personal PIN"
+                                value={newPersonalPin}
+                                onChangeText={(value) => setNewPersonalPin(sanitizePinInput(value))}
+                                keyboardType="number-pad"
+                                secureTextEntry={!showNewPersonalPin}
+                                maxLength={6}
+                                right={
+                                    <TextInput.Icon
+                                        icon={showNewPersonalPin ? 'eye-off' : 'eye'}
+                                        onPress={() => setShowNewPersonalPin((prev) => !prev)}
+                                        forceTextInputFocus={false}
+                                    />
+                                }
+                                style={{ width: '100%', marginBottom: 12 }}
+                            />
+                            <TextInput
+                                mode="outlined"
+                                label="Confirm Personal PIN"
+                                value={confirmPersonalPin}
+                                onChangeText={(value) => setConfirmPersonalPin(sanitizePinInput(value))}
+                                keyboardType="number-pad"
+                                secureTextEntry={!showConfirmPersonalPin}
+                                maxLength={6}
+                                right={
+                                    <TextInput.Icon
+                                        icon={showConfirmPersonalPin ? 'eye-off' : 'eye'}
+                                        onPress={() => setShowConfirmPersonalPin((prev) => !prev)}
+                                        forceTextInputFocus={false}
+                                    />
+                                }
+                                style={{ width: '100%' }}
+                            />
+                        </View>
+                        <View style={[styles.modalFooter, { paddingBottom: Math.max(16, insets.bottom + 16) }]}>
+                            <Button
+                                mode="outlined"
+                                onPress={() => setShowPersonalPinModal(false)}
+                                style={{ flex: 1, marginRight: 8 }}
+                                disabled={savingPersonalPin}
+                            >
+                                Cancel
+                            </Button>
+                            <Button
+                                mode="contained"
+                                onPress={handleSavePersonalPin}
+                                style={{ flex: 1 }}
+                                loading={savingPersonalPin}
+                                disabled={savingPersonalPin || newPersonalPin.length !== 6 || confirmPersonalPin.length !== 6}
+                            >
+                                Save PIN
+                            </Button>
+                        </View>
+                    </Surface>
+                </View>
+            </Modal>
+
+            <Modal
+                visible={showUnlockPinModal}
+                transparent
+                animationType="slide"
+                onRequestClose={() => setShowUnlockPinModal(false)}
+            >
+                <View style={styles.modalOverlay}>
+                    <Surface style={styles.modalContent} elevation={5}>
+                        <View style={styles.modalHeader}>
+                            <Text variant="titleLarge" style={{ fontWeight: 'bold' }}>Authorize Unlock</Text>
+                            <IconButton
+                                icon="close"
+                                size={24}
+                                onPress={() => setShowUnlockPinModal(false)}
+                                disabled={unlockPinSubmitting}
+                            />
+                        </View>
+                        <View style={styles.modalBody}>
+                            <Text variant="bodyMedium" style={{ marginBottom: 12, color: c.textSec, textAlign: 'center' }}>
+                                Enter your 6-digit Personal PIN to authorize this unlock command.
+                            </Text>
+                            <TextInput
+                                mode="outlined"
+                                label="Personal PIN"
+                                value={unlockPin}
+                                onChangeText={(value) => setUnlockPin(sanitizePinInput(value))}
+                                keyboardType="number-pad"
+                                secureTextEntry={!showUnlockPin}
+                                maxLength={6}
+                                right={
+                                    <TextInput.Icon
+                                        icon={showUnlockPin ? 'eye-off' : 'eye'}
+                                        onPress={() => setShowUnlockPin((prev) => !prev)}
+                                        forceTextInputFocus={false}
+                                    />
+                                }
+                                style={{ width: '100%' }}
+                            />
+                        </View>
+                        <View style={[styles.modalFooter, { paddingBottom: Math.max(16, insets.bottom + 16) }]}>
+                            <Button
+                                mode="outlined"
+                                onPress={() => setShowUnlockPinModal(false)}
+                                style={{ flex: 1, marginRight: 8 }}
+                                disabled={unlockPinSubmitting}
+                            >
+                                Cancel
+                            </Button>
+                            <Button
+                                mode="contained"
+                                onPress={handleSubmitUnlockWithPin}
+                                style={{ flex: 1 }}
+                                loading={unlockPinSubmitting}
+                                disabled={unlockPinSubmitting || unlockPin.length !== 6}
+                            >
+                                Authorize
+                            </Button>
                         </View>
                     </Surface>
                 </View>
