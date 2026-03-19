@@ -38,6 +38,7 @@ import PairBoxScreen from '../screens/rider/PairBoxScreen';
 import RiderLoadingScreen from '../screens/rider/RiderLoadingScreen';
 
 import AdminDashboard from '../screens/admin/AdminDashboard';
+import AdminRecordsScreen from '../screens/admin/AdminRecordsScreen';
 import GlobalMapScreen from '../screens/admin/GlobalMapScreen';
 import TamperAlertsScreen from '../screens/admin/TamperAlertsScreen';
 import PhotoAuditScreen from '../screens/admin/PhotoAuditScreen';
@@ -255,6 +256,7 @@ export default function AppNavigator() {
                 <Stack.Screen name="DeliveryCompletion" component={DeliveryCompletionScreen} />
                 <Stack.Screen name="GlobalMap" component={GlobalMapScreen} />
                 <Stack.Screen name="TamperAlerts" component={TamperAlertsScreen} />
+                <Stack.Screen name="AdminRecords" component={AdminRecordsScreen} />
                 <Stack.Screen name="DeliveryRecords" component={DeliveryRecordsScreen} />
                 <Stack.Screen name="RiderSupport" component={require('../screens/rider/RiderSupportScreen').default} options={{ headerShown: false }} />
                 <Stack.Screen name="AdminRemoteUnlock" component={require('../screens/admin/AdminRemoteUnlockScreen').default} options={{ headerShown: false }} />

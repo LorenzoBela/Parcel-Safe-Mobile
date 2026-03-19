@@ -1,11 +1,11 @@
-import React, { useState } from 'react';
-import { View, Animated, StyleSheet, Alert, KeyboardAvoidingView, Platform, ScrollView, TouchableOpacity, StatusBar } from 'react-native';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { View, Animated, StyleSheet, KeyboardAvoidingView, Platform, ScrollView, TouchableOpacity, StatusBar } from 'react-native';
 import { useEntryAnimation } from '../../hooks/useEntryAnimation';
-import { Text, TextInput, IconButton } from 'react-native-paper';
+import { ActivityIndicator, Text, TextInput, IconButton } from 'react-native-paper';
 import { useNavigation } from '@react-navigation/native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { triggerAdminOverride } from '../../services/adminOverrideService';
-import { getCurrentUser } from '../../services/supabaseClient';
+import { getCurrentUser, listSmartBoxes, SmartBoxSummary } from '../../services/supabaseClient';
 import { useAppTheme } from '../../context/ThemeContext';
 import { PremiumAlert } from '../../services/PremiumAlertService';
 
@@ -27,14 +27,54 @@ export default function AdminRemoteUnlockScreen() {
     const { isDarkMode } = useAppTheme();
     const c = isDarkMode ? darkC : lightC;
 
-    const [boxId, setBoxId] = useState('');
+    const [boxes, setBoxes] = useState<SmartBoxSummary[]>([]);
+    const [selectedBoxId, setSelectedBoxId] = useState('');
+    const [manualBoxId, setManualBoxId] = useState('');
     const [reason, setReason] = useState('');
+    const [isLoadingBoxes, setIsLoadingBoxes] = useState(false);
+    const [loadError, setLoadError] = useState('');
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [successMessage, setSuccessMessage] = useState('');
 
+    const activeBoxes = useMemo(() => {
+        return boxes.filter((box) => box.status === 'IN_TRANSIT' || Boolean(box.current_rider_id));
+    }, [boxes]);
+
+    const selectedBox = useMemo(() => {
+        return boxes.find((box) => box.id === selectedBoxId) || null;
+    }, [boxes, selectedBoxId]);
+
+    const resolvedTargetBox = useMemo(() => {
+        const selectedTarget = selectedBox?.hardware_mac_address || selectedBox?.id || '';
+        if (selectedTarget) return selectedTarget;
+        return manualBoxId.trim();
+    }, [selectedBox, manualBoxId]);
+
+    const fetchBoxes = useCallback(async () => {
+        setIsLoadingBoxes(true);
+        setLoadError('');
+
+        try {
+            const data = await listSmartBoxes();
+            setBoxes(data);
+
+            if (selectedBoxId && !data.some((box) => box.id === selectedBoxId)) {
+                setSelectedBoxId('');
+            }
+        } catch {
+            setLoadError('Failed to load boxes. Pull to refresh or enter Box ID manually.');
+        } finally {
+            setIsLoadingBoxes(false);
+        }
+    }, [selectedBoxId]);
+
+    useEffect(() => {
+        fetchBoxes();
+    }, [fetchBoxes]);
+
     const handleUnlock = async () => {
-        if (!boxId.trim()) {
-            PremiumAlert.alert('Error', 'Please enter a Box ID');
+        if (!resolvedTargetBox) {
+            PremiumAlert.alert('Error', 'Select a box or enter a Box ID/MAC address');
             return;
         }
         if (!reason.trim()) {
@@ -48,11 +88,13 @@ export default function AdminRemoteUnlockScreen() {
         try {
             const user = await getCurrentUser();
             const adminId = user?.id || 'admin-unknown';
-            await triggerAdminOverride(boxId.trim(), adminId, reason.trim());
+            await triggerAdminOverride(resolvedTargetBox, adminId, reason.trim());
 
-            setSuccessMessage(`Unlock command sent to ${boxId.trim()} successfully.`);
-            setBoxId('');
+            setSuccessMessage(`Unlock command sent to ${resolvedTargetBox} successfully.`);
+            setManualBoxId('');
+            setSelectedBoxId('');
             setReason('');
+            fetchBoxes();
         } catch (error: any) {
             PremiumAlert.alert('Error', `Failed to trigger unlock: ${error.message}`);
         } finally {
@@ -87,10 +129,88 @@ export default function AdminRemoteUnlockScreen() {
                         Use only in emergencies or when the user cannot unlock it themselves.
                     </Text>
 
+                    <View style={styles.sectionRow}>
+                        <Text style={[styles.sectionTitle, { color: c.text }]}>Active Boxes (from DB)</Text>
+                        <TouchableOpacity
+                            onPress={fetchBoxes}
+                            disabled={isLoadingBoxes}
+                            style={[styles.refreshButton, { borderColor: c.border, backgroundColor: c.card2 }]}
+                        >
+                            <MaterialCommunityIcons name="refresh" size={16} color={c.textSec} />
+                            <Text style={[styles.refreshButtonText, { color: c.textSec }]}>
+                                {isLoadingBoxes ? 'Loading...' : 'Refresh'}
+                            </Text>
+                        </TouchableOpacity>
+                    </View>
+
+                    {isLoadingBoxes ? (
+                        <View style={styles.loadingWrap}>
+                            <ActivityIndicator size="small" color={c.textSec} />
+                            <Text style={[styles.loadingText, { color: c.textSec }]}>Fetching boxes...</Text>
+                        </View>
+                    ) : null}
+
+                    {loadError ? (
+                        <View style={[styles.errorBanner, { backgroundColor: c.warnBg, borderColor: c.border }]}>
+                            <MaterialCommunityIcons name="alert-circle-outline" size={18} color={c.red} />
+                            <Text style={[styles.errorText, { color: c.textSec }]}>{loadError}</Text>
+                        </View>
+                    ) : null}
+
+                    <View style={styles.boxListWrap}>
+                        {activeBoxes.length === 0 ? (
+                            <Text style={[styles.emptyText, { color: c.textSec }]}>No active boxes right now.</Text>
+                        ) : (
+                            activeBoxes.map((box) => {
+                                const target = box.hardware_mac_address || box.id;
+                                const selected = box.id === selectedBoxId;
+                                return (
+                                    <TouchableOpacity
+                                        key={box.id}
+                                        onPress={() => {
+                                            setSelectedBoxId(box.id);
+                                            setManualBoxId('');
+                                        }}
+                                        activeOpacity={0.85}
+                                        style={[
+                                            styles.boxItem,
+                                            {
+                                                backgroundColor: selected ? c.warnBg : c.card2,
+                                                borderColor: selected ? c.red : c.border,
+                                            },
+                                        ]}
+                                    >
+                                        <View style={styles.boxItemMain}>
+                                            <MaterialCommunityIcons
+                                                name={selected ? 'radiobox-marked' : 'radiobox-blank'}
+                                                size={18}
+                                                color={selected ? c.red : c.textTer}
+                                            />
+                                            <View style={styles.boxTextWrap}>
+                                                <Text style={[styles.boxTitle, { color: c.text }]}>{target}</Text>
+                                                <Text style={[styles.boxMeta, { color: c.textSec }]}>status: {box.status || 'UNKNOWN'}</Text>
+                                            </View>
+                                        </View>
+                                        {box.current_rider_id ? (
+                                            <View style={[styles.activePill, { backgroundColor: isDarkMode ? '#1F3A2A' : '#DCFCE7' }]}>
+                                                <Text style={[styles.activePillText, { color: c.green }]}>Assigned</Text>
+                                            </View>
+                                        ) : null}
+                                    </TouchableOpacity>
+                                );
+                            })
+                        )}
+                    </View>
+
                     <TextInput
-                        label="Box ID / MAC Address"
-                        value={boxId}
-                        onChangeText={setBoxId}
+                        label="Manual Box ID / MAC (Fallback)"
+                        value={manualBoxId}
+                        onChangeText={(value) => {
+                            setManualBoxId(value);
+                            if (value.trim()) {
+                                setSelectedBoxId('');
+                            }
+                        }}
                         mode="outlined"
                         placeholder="e.g., BOX-001"
                         style={[styles.input, { backgroundColor: c.card2 }]}
@@ -121,7 +241,7 @@ export default function AdminRemoteUnlockScreen() {
                     <TouchableOpacity
                         style={[styles.button, { backgroundColor: c.red }, isSubmitting && { opacity: 0.5 }]}
                         onPress={handleUnlock}
-                        disabled={isSubmitting}
+                        disabled={isSubmitting || !resolvedTargetBox}
                         activeOpacity={0.7}
                     >
                         <MaterialCommunityIcons name="lock-open-variant" size={18} color="#FFF" />
@@ -174,6 +294,101 @@ const styles = StyleSheet.create({
         fontSize: 13,
         lineHeight: 19,
         marginBottom: 24,
+    },
+    sectionRow: {
+        width: '100%',
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        marginBottom: 10,
+    },
+    sectionTitle: {
+        fontSize: 14,
+        fontWeight: '700',
+    },
+    refreshButton: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+        borderWidth: 1,
+        borderRadius: 999,
+        paddingHorizontal: 10,
+        paddingVertical: 6,
+    },
+    refreshButtonText: {
+        fontSize: 12,
+        fontWeight: '700',
+    },
+    loadingWrap: {
+        width: '100%',
+        flexDirection: 'row',
+        alignItems: 'center',
+        marginBottom: 8,
+        gap: 8,
+    },
+    loadingText: {
+        fontSize: 12,
+        fontWeight: '600',
+    },
+    errorBanner: {
+        width: '100%',
+        borderWidth: 1,
+        borderRadius: 10,
+        padding: 10,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+        marginBottom: 10,
+    },
+    errorText: {
+        flex: 1,
+        fontSize: 12,
+        lineHeight: 16,
+    },
+    boxListWrap: {
+        width: '100%',
+        marginBottom: 14,
+        gap: 8,
+    },
+    emptyText: {
+        fontSize: 12,
+        fontStyle: 'italic',
+    },
+    boxItem: {
+        borderWidth: 1,
+        borderRadius: 12,
+        paddingHorizontal: 12,
+        paddingVertical: 10,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+    },
+    boxItemMain: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        flex: 1,
+        gap: 8,
+    },
+    boxTextWrap: {
+        flex: 1,
+    },
+    boxTitle: {
+        fontSize: 13,
+        fontWeight: '700',
+    },
+    boxMeta: {
+        marginTop: 2,
+        fontSize: 11,
+        fontWeight: '500',
+    },
+    activePill: {
+        borderRadius: 999,
+        paddingHorizontal: 8,
+        paddingVertical: 4,
+    },
+    activePillText: {
+        fontSize: 10,
+        fontWeight: '700',
     },
     input: {
         width: '100%',

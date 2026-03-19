@@ -12,6 +12,7 @@ import { useAppTheme } from '../../context/ThemeContext';
 
 const MAPBOX_TOKEN = process.env.EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN;
 const DEFAULT_CENTER: [number, number] = [121.0244, 14.5547];
+const PH_TIMEZONE = 'Asia/Manila';
 
 const lightC = {
     bg: '#FFFFFF', card: '#F6F6F6', border: '#E5E5EA', text: '#000000',
@@ -108,6 +109,21 @@ export default function TamperAlertsScreen() {
         return `${Math.floor(diffInSeconds / 86400)}d ago`;
     };
 
+    const formatPst = (dateString: string | number) => {
+        if (!dateString) return 'Unknown time';
+        const date = new Date(dateString);
+        if (Number.isNaN(date.getTime())) return 'Unknown time';
+        return date.toLocaleString('en-US', {
+            timeZone: PH_TIMEZONE,
+            month: 'short',
+            day: 'numeric',
+            year: 'numeric',
+            hour: 'numeric',
+            minute: '2-digit',
+            hour12: true,
+        });
+    };
+
     const handleClearTamper = async (boxId: string) => {
         setClearingBoxId(boxId);
         try {
@@ -130,6 +146,12 @@ export default function TamperAlertsScreen() {
                 </Text>
                 <Text style={[styles.alertSub, { color: c.textSec }]}>
                     {item.id} · {formatTimeAgo(item.reportedAt)}
+                </Text>
+                <Text style={[styles.alertBody, { color: c.textSec }]}>
+                    When: {formatPst(item.reportedAt)} PST
+                </Text>
+                <Text style={[styles.alertBody, { color: c.textSec }]}>
+                    Where: {item.lat.toFixed(5)}, {item.lng.toFixed(5)}
                 </Text>
                 <Text style={[styles.alertBody, { color: c.textSec }]}>
                     Unauthorized lid open or lock bypass.

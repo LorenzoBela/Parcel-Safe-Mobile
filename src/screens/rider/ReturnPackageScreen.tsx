@@ -74,6 +74,9 @@ export default function ReturnPackageScreen() {
     const [boxOtpValidated, setBoxOtpValidated] = useState(false);
     const [faceDetected, setFaceDetected] = useState(false);
     const [lockEvent, setLockEvent] = useState<LockEvent | null>(null);
+    const [lockAwaitingClose, setLockAwaitingClose] = useState(false);
+    const [lockAwaitingCloseNeedsAssist, setLockAwaitingCloseNeedsAssist] = useState(false);
+    const [lockCloseConfirmed, setLockCloseConfirmed] = useState(false);
 
     // Photo capture & upload (fallback only)
     const [photoUri, setPhotoUri] = useState<string | null>(null);
@@ -100,6 +103,19 @@ export default function ReturnPackageScreen() {
             if (state?.status === 'UNLOCKING' || state?.status === 'ACTIVE') {
                 setBoxOtpValidated(true);
             }
+
+            const ackCommand = (state as any)?.command_ack_command;
+            const ackStatus = (state as any)?.command_ack_status;
+            const ackDetails = (state as any)?.command_ack_details;
+            const awaitingClose = ackCommand === 'LOCKED' && ackStatus === 'waiting_close';
+
+            setLockAwaitingClose(awaitingClose);
+            setLockAwaitingCloseNeedsAssist(awaitingClose && ackDetails === 'reed_open');
+            setLockCloseConfirmed(
+                ackCommand === 'LOCKED' &&
+                ackStatus === 'executed' &&
+                ackDetails === 'reed_closed_confirmed'
+            );
         });
 
         const unsubscribeProof = subscribeToDeliveryProof(deliveryId, (proof) => {
@@ -339,6 +355,12 @@ export default function ReturnPackageScreen() {
                             {currentStep === 'PHOTO_CAPTURE' && (
                                 hardwareSuccess
                                     ? 'Box captured sender photo ✔  Completing return…'
+                                    : lockAwaitingClose
+                                        ? (lockAwaitingCloseNeedsAssist
+                                            ? 'Lock is waiting for physical close. Close lid fully, press # for brief assist if latch blocks, then close again.'
+                                            : 'Lock is waiting for physical close. Close lid fully so reed-close can be confirmed.')
+                                        : lockCloseConfirmed
+                                            ? 'Lock confirmed by reed-close. Return flow can continue safely.'
                                     : cameraFailed
                                         ? 'Box camera failed — use phone camera as fallback'
                                         : boxOtpValidated && faceDetected
@@ -401,6 +423,12 @@ export default function ReturnPackageScreen() {
                                 }}>
                                     {hardwareSuccess
                                         ? '✅ Box unlocked — sender photo captured automatically'
+                                        : lockAwaitingClose
+                                            ? (lockAwaitingCloseNeedsAssist
+                                                ? '⚠️ Lock pending physical close — close the lid, press # for brief assist if needed, then close again'
+                                                : '⚠️ Lock pending physical close — close lid fully so reed-close can be confirmed')
+                                            : lockCloseConfirmed
+                                                ? '✅ Lock confirmed by reed-close'
                                         : boxOtpValidated && faceDetected
                                             ? '🔓 OTP verified & face detected ✔  Finalising…'
                                             : boxOtpValidated

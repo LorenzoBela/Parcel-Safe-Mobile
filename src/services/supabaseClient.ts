@@ -192,7 +192,140 @@ export interface Delivery {
 export interface SmartBoxSummary {
     id: string;
     hardware_mac_address?: string | null;
+    current_rider_id?: string | null;
     status?: 'IDLE' | 'IN_TRANSIT' | 'MAINTENANCE' | string | null;
+}
+
+export interface ActiveDeliverySummary {
+    id: string;
+    tracking_number: string;
+    status: 'PENDING' | 'IN_TRANSIT' | 'ARRIVED';
+    box_id: string;
+    created_at: string;
+}
+
+export interface AdminDeliveryRecord {
+    id: string;
+    tracking_number: string;
+    status: string;
+    rider_id: string;
+    customer_id: string;
+    created_at: string;
+    updated_at: string;
+    delivered_at?: string | null;
+    estimated_fare?: number | null;
+    pickup_address?: string | null;
+    dropoff_address?: string | null;
+    pickup_lat?: number | null;
+    pickup_lng?: number | null;
+    dropoff_lat?: number | null;
+    dropoff_lng?: number | null;
+    proof_of_delivery_url?: string | null;
+    pickup_photo_url?: string | null;
+    distance?: number | null;
+    distance_text?: string | null;
+    profiles?: { full_name?: string | null } | null;
+    rider_profile?: { full_name?: string | null } | null;
+}
+
+export interface ListAdminDeliveryRecordsParams {
+    page: number;
+    pageSize?: number;
+    search?: string;
+    status?: string[];
+    fromDate?: string;
+    toDate?: string;
+}
+
+export interface ListAdminDeliveryRecordsResult {
+    data: AdminDeliveryRecord[];
+    hasMore: boolean;
+    error?: string;
+}
+
+export async function listActiveDeliveries(limit = 30): Promise<ActiveDeliverySummary[]> {
+    if (!supabase) {
+        console.warn('Supabase not configured');
+        return [];
+    }
+
+    const { data, error } = await supabase
+        .from('deliveries')
+        .select('id, tracking_number, status, box_id, created_at')
+        .in('status', ['PENDING', 'IN_TRANSIT', 'ARRIVED'])
+        .order('created_at', { ascending: false })
+        .limit(limit);
+
+    if (error || !data) {
+        console.error('Failed to list active deliveries:', error?.message);
+        return [];
+    }
+
+    return data as ActiveDeliverySummary[];
+}
+
+export async function listAdminDeliveryRecords({
+    page,
+    pageSize = 50,
+    search,
+    status,
+    fromDate,
+    toDate,
+}: ListAdminDeliveryRecordsParams): Promise<ListAdminDeliveryRecordsResult> {
+    if (!supabase) {
+        console.warn('Supabase not configured');
+        return { data: [], hasMore: false, error: 'Supabase not configured' };
+    }
+
+    const safePage = Math.max(1, page);
+    const safePageSize = Math.max(1, Math.min(pageSize, 200));
+    const from = (safePage - 1) * safePageSize;
+    const to = from + safePageSize - 1;
+
+    let query = supabase
+        .from('deliveries')
+        .select(
+            '*, profiles:customer_id(full_name), rider_profile:profiles!deliveries_rider_id_fkey(full_name)',
+            { count: 'exact' }
+        )
+        .order('created_at', { ascending: false })
+        .range(from, to);
+
+    if (status && status.length > 0) {
+        query = query.in('status', status);
+    }
+
+    if (fromDate) {
+        query = query.gte('created_at', fromDate);
+    }
+
+    if (toDate) {
+        query = query.lte('created_at', toDate);
+    }
+
+    if (search && search.trim()) {
+        const term = search.trim().replace(/,/g, '');
+        query = query.or(`tracking_number.ilike.%${term}%,id.ilike.%${term}%`);
+    }
+
+    const { data, error, count } = await query;
+
+    if (error || !data) {
+        console.error('Failed to list admin delivery records:', error?.message);
+        return {
+            data: [],
+            hasMore: false,
+            error: error?.message || 'Failed to load admin delivery records',
+        };
+    }
+
+    const rows = data as AdminDeliveryRecord[];
+    const hasMore = typeof count === 'number' ? to + 1 < count : rows.length === safePageSize;
+
+    return {
+        data: rows,
+        hasMore,
+    };
 }
 
 // ==================== EC-03: ADMIN FALLBACK FUNCTIONS ====================
@@ -266,7 +399,7 @@ export async function listSmartBoxes(): Promise<SmartBoxSummary[]> {
 
     const { data, error } = await supabase
         .from('smart_boxes')
-        .select('id, hardware_mac_address, status')
+        .select('id, hardware_mac_address, current_rider_id, status')
         .order('hardware_mac_address');
 
     if (error || !data) {

@@ -569,7 +569,9 @@ export default function DropoffVerification({
             PremiumAlert.alert(
                 'Manual Command Sent',
                 flushResult.sent > 0
-                    ? (command === 'UNLOCKING' ? 'Unlock command queued and sent to box.' : 'Lock command queued and sent to box.')
+                    ? (command === 'UNLOCKING'
+                        ? 'Unlock command queued and sent to box.'
+                        : 'Lock command queued and sent to box. If lid is still open, app will show lock pending until reed-close is confirmed.')
                     : 'Command queued locally. It will send automatically when connectivity stabilizes.'
             );
         } catch (error) {
@@ -724,6 +726,12 @@ export default function DropoffVerification({
     const showFallbackButton = fallbackModeActive || (boxOtpValidated && !hasHardwareProof);
     const canManualControl = manualModeEnabled && isInsideGeoFence && otpConfirmedByCloud && faceConfirmedByCloud;
     const isSyncPending = otpSyncPending || faceSyncPending;
+    const lockAckCommand = (boxState as any)?.command_ack_command;
+    const lockAckStatus = (boxState as any)?.command_ack_status;
+    const lockAckDetails = (boxState as any)?.command_ack_details;
+    const lockAwaitingClose = lockAckCommand === 'LOCKED' && lockAckStatus === 'waiting_close';
+    const lockAwaitingCloseNeedsAssist = lockAwaitingClose && lockAckDetails === 'reed_open';
+    const lockCloseConfirmed = lockAckCommand === 'LOCKED' && lockAckStatus === 'executed' && lockAckDetails === 'reed_closed_confirmed';
 
     const statusMsg = getHandoverStatusMessage();
 
@@ -893,6 +901,30 @@ export default function DropoffVerification({
                                     Lock
                                 </Button>
                             </View>
+
+                            {lockAwaitingClose && (
+                                <View style={{ marginTop: 10, padding: 10, borderRadius: 8, backgroundColor: '#fff7ed', borderWidth: 1, borderColor: '#fed7aa' }}>
+                                    <Text style={{ fontSize: 12, color: '#9a3412', fontWeight: '700' }}>
+                                        Lock pending physical close
+                                    </Text>
+                                    <Text style={{ marginTop: 4, fontSize: 12, color: '#9a3412' }}>
+                                        {lockAwaitingCloseNeedsAssist
+                                            ? 'Close the lid until the latch aligns. If needed, press # on the keypad to retract briefly, then close again.'
+                                            : 'Close the lid fully so the reed can confirm the lock.'}
+                                    </Text>
+                                </View>
+                            )}
+
+                            {lockCloseConfirmed && (
+                                <View style={{ marginTop: 10, padding: 10, borderRadius: 8, backgroundColor: '#ecfdf5', borderWidth: 1, borderColor: '#bbf7d0' }}>
+                                    <Text style={{ fontSize: 12, color: '#166534', fontWeight: '700' }}>
+                                        Lock confirmed
+                                    </Text>
+                                    <Text style={{ marginTop: 4, fontSize: 12, color: '#166534' }}>
+                                        Reed close detected. The box is now physically locked.
+                                    </Text>
+                                </View>
+                            )}
 
                             {!canManualControl && (
                                 <Text style={{ marginTop: 8, fontSize: 12, color: '#64748b' }}>

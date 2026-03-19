@@ -1,11 +1,11 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { View, StyleSheet, ScrollView, TouchableOpacity, Alert, Share, StatusBar, Animated } from 'react-native';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { View, StyleSheet, ScrollView, TouchableOpacity, Alert, Share, StatusBar, Animated, ActivityIndicator } from 'react-native';
 import { useEntryAnimation, useStaggerAnimation } from '../../hooks/useEntryAnimation';
 import { Text, Modal, Portal, TextInput, Chip, Divider } from 'react-native-paper';
 import { useNavigation } from '@react-navigation/native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import dayjs from 'dayjs';
-import { getDeliveryByIdOrTracking, listSmartBoxes, markDeliveryComplete, SmartBoxSummary } from '../../services/supabaseClient';
+import { ActiveDeliverySummary, getDeliveryByIdOrTracking, listActiveDeliveries, listSmartBoxes, markDeliveryComplete, SmartBoxSummary } from '../../services/supabaseClient';
 import * as Clipboard from 'expo-clipboard';
 import * as FileSystem from 'expo-file-system/legacy';
 import QRCode from 'react-native-qrcode-svg';
@@ -109,6 +109,10 @@ export default function AdminDashboard() {
     const [pairBoxId, setPairBoxId] = useState('');
     const [availableBoxes, setAvailableBoxes] = useState<SmartBoxSummary[]>([]);
     const [boxesLoading, setBoxesLoading] = useState(false);
+    const [activeDeliveries, setActiveDeliveries] = useState<ActiveDeliverySummary[]>([]);
+    const [deliveriesLoading, setDeliveriesLoading] = useState(false);
+    const [deliveriesError, setDeliveriesError] = useState<string | null>(null);
+    const [selectedDeliveryId, setSelectedDeliveryId] = useState('');
     const [pairMode, setPairMode] = useState<'ONE_TIME' | 'SESSION'>('SESSION');
     const [sessionHours, setSessionHours] = useState(24);
     const [pairToken, setPairToken] = useState('');
@@ -139,6 +143,34 @@ export default function AdminDashboard() {
         }
         return `parcelsafe://pair?${params.toString()}`;
     }, [pairBoxId, pairMode, pairToken, sessionHours]);
+
+    const selectedDelivery = useMemo(
+        () => activeDeliveries.find((delivery) => delivery.id === selectedDeliveryId),
+        [activeDeliveries, selectedDeliveryId]
+    );
+
+    const loadActiveDeliveries = useCallback(async (showSpinner = true) => {
+        if (showSpinner) {
+            setDeliveriesLoading(true);
+        }
+        setDeliveriesError(null);
+
+        try {
+            const deliveries = await listActiveDeliveries(30);
+            setActiveDeliveries(deliveries);
+
+            if (selectedDeliveryId && !deliveries.some((delivery) => delivery.id === selectedDeliveryId)) {
+                setSelectedDeliveryId('');
+            }
+        } catch (error) {
+            console.error('Failed to load active deliveries:', error);
+            setDeliveriesError('Unable to load active deliveries. Please try again.');
+        } finally {
+            if (showSpinner) {
+                setDeliveriesLoading(false);
+            }
+        }
+    }, [selectedDeliveryId]);
 
     const generatePairToken = () => {
         if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
@@ -214,8 +246,20 @@ export default function AdminDashboard() {
         return unsubscribe;
     }, []);
 
+    useEffect(() => {
+        if (!overrideModalVisible) return;
+        loadActiveDeliveries(true);
+    }, [overrideModalVisible, loadActiveDeliveries]);
+
+    useEffect(() => {
+        if (!selectedDelivery) return;
+        setTrackingInput(selectedDelivery.id);
+    }, [selectedDelivery]);
+
     const handleOverrideDelivery = async () => {
-        if (!trackingInput.trim()) {
+        const lookupValue = selectedDelivery?.id || trackingInput.trim();
+
+        if (!lookupValue) {
             PremiumAlert.alert('Error', 'Please enter a tracking number or delivery ID');
             return;
         }
@@ -226,7 +270,7 @@ export default function AdminDashboard() {
 
         setIsProcessing(true);
 
-        const delivery = await getDeliveryByIdOrTracking(trackingInput.trim());
+        const delivery = await getDeliveryByIdOrTracking(lookupValue);
         if (!delivery) {
             PremiumAlert.alert('Not Found', 'No delivery found with that tracking number');
             setIsProcessing(false);
@@ -248,7 +292,7 @@ export default function AdminDashboard() {
                     text: 'Confirm',
                     style: 'destructive',
                     onPress: async () => {
-                        const success = await markDeliveryComplete(trackingInput.trim(), reasonInput.trim());
+                        const success = await markDeliveryComplete(lookupValue, reasonInput.trim());
                         setIsProcessing(false);
                         setOverrideModalVisible(false);
 
@@ -256,6 +300,8 @@ export default function AdminDashboard() {
                             PremiumAlert.alert('Success', 'Delivery marked as complete');
                             setTrackingInput('');
                             setReasonInput('');
+                            setSelectedDeliveryId('');
+                            loadActiveDeliveries(false);
                         } else {
                             PremiumAlert.alert('Error', 'Failed to update delivery. Please try again.');
                         }
@@ -309,7 +355,7 @@ export default function AdminDashboard() {
     const quickActions = [
         { icon: 'map-marker-radius', label: 'Live Map', onPress: () => navigation.navigate('GlobalMap') },
         { icon: 'alert-octagon', label: 'Alerts', onPress: () => navigation.navigate('TamperAlerts'), badge: hardwareSummary.tamper },
-        { icon: 'file-document-outline', label: 'Records', onPress: () => navigation.navigate('DeliveryRecords') },
+        { icon: 'file-document-outline', label: 'Records', onPress: () => navigation.navigate('AdminRecords') },
         { icon: 'lock-open-variant-outline', label: 'Unlock Box', onPress: () => navigation.navigate('AdminRemoteUnlock') },
         { icon: 'check-circle-outline', label: 'Complete Del.', onPress: () => setOverrideModalVisible(true) },
         { icon: 'qrcode-scan', label: 'Pair QR', onPress: openPairQrModal },
@@ -451,6 +497,47 @@ export default function AdminDashboard() {
                     <Text style={[styles.modalDesc, { color: c.textSecondary }]}>
                         Use when hardware failed but customer received the package.
                     </Text>
+                    <View style={styles.deliverySectionHeader}>
+                        <Text style={[styles.deliverySectionTitle, { color: c.textSecondary }]}>Active Deliveries</Text>
+                        <TouchableOpacity onPress={() => loadActiveDeliveries(false)}>
+                            <Text style={[styles.deliveryRefreshText, { color: c.accent }]}>Refresh</Text>
+                        </TouchableOpacity>
+                    </View>
+                    {deliveriesLoading ? (
+                        <ActivityIndicator color={c.accent} style={{ marginBottom: 12 }} />
+                    ) : deliveriesError ? (
+                        <Text style={[styles.deliveryError, { color: c.red }]}>{deliveriesError}</Text>
+                    ) : activeDeliveries.length === 0 ? (
+                        <Text style={[styles.deliveryEmpty, { color: c.textSecondary }]}>No active deliveries found.</Text>
+                    ) : (
+                        <ScrollView
+                            style={[styles.deliveryList, { borderColor: c.border, backgroundColor: c.card }]}
+                            nestedScrollEnabled
+                            showsVerticalScrollIndicator={false}
+                        >
+                            {activeDeliveries.map((delivery) => {
+                                const isSelected = selectedDeliveryId === delivery.id;
+                                return (
+                                    <TouchableOpacity
+                                        key={delivery.id}
+                                        style={[
+                                            styles.deliveryItem,
+                                            { borderColor: c.border, backgroundColor: c.card2 },
+                                            isSelected && [styles.deliveryItemSelected, { borderColor: c.accent }],
+                                        ]}
+                                        onPress={() => setSelectedDeliveryId(delivery.id)}
+                                        activeOpacity={0.8}
+                                    >
+                                        <Text style={[styles.deliveryTracking, { color: c.textPrimary }]}>{delivery.tracking_number}</Text>
+                                        <Text style={[styles.deliveryMeta, { color: c.textSecondary }]}>{`${delivery.status} · ${delivery.box_id}`}</Text>
+                                        <Text style={[styles.deliveryDate, { color: c.textTertiary }]}>
+                                            {dayjs(delivery.created_at).format('MMM D, h:mm A')}
+                                        </Text>
+                                    </TouchableOpacity>
+                                );
+                            })}
+                        </ScrollView>
+                    )}
                     <TextInput
                         label="Tracking Number / Delivery ID"
                         value={trackingInput}
@@ -923,6 +1010,59 @@ const styles = StyleSheet.create({
         letterSpacing: 0.5,
     },
     modalInput: {
+        marginBottom: 12,
+    },
+    deliverySectionHeader: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginBottom: 8,
+    },
+    deliverySectionTitle: {
+        fontSize: 12,
+        fontWeight: '700',
+        textTransform: 'uppercase',
+        letterSpacing: 0.5,
+    },
+    deliveryRefreshText: {
+        fontSize: 12,
+        fontWeight: '700',
+    },
+    deliveryList: {
+        maxHeight: 180,
+        borderWidth: 1,
+        borderRadius: 12,
+        padding: 8,
+        marginBottom: 12,
+    },
+    deliveryItem: {
+        borderWidth: 1,
+        borderRadius: 10,
+        padding: 10,
+        marginBottom: 8,
+    },
+    deliveryItemSelected: {
+        borderWidth: 2,
+    },
+    deliveryTracking: {
+        fontSize: 13,
+        fontWeight: '700',
+        marginBottom: 2,
+    },
+    deliveryMeta: {
+        fontSize: 12,
+        fontWeight: '500',
+    },
+    deliveryDate: {
+        fontSize: 11,
+        marginTop: 2,
+    },
+    deliveryError: {
+        fontSize: 12,
+        marginBottom: 12,
+    },
+    deliveryEmpty: {
+        fontSize: 12,
         marginBottom: 12,
     },
     modalActions: {

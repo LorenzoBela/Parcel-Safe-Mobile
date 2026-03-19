@@ -144,6 +144,7 @@ export default function BoxControlsScreen() {
     const [unlockPin, setUnlockPin] = useState('');
     const [showUnlockPin, setShowUnlockPin] = useState(false);
     const [unlockPinSubmitting, setUnlockPinSubmitting] = useState(false);
+    const lastCommandAckKeyRef = useRef('');
 
     const sanitizePinInput = (value: string) => value.replace(/\D/g, '').slice(0, 6);
 
@@ -211,6 +212,12 @@ export default function BoxControlsScreen() {
 
     // Derive lock state from real data
     const isLocked = boxState?.status === 'LOCKED';
+    const commandAckCommand = rawBoxState?.command_ack_command as string | undefined;
+    const commandAckStatus = rawBoxState?.command_ack_status as string | undefined;
+    const commandAckDetails = rawBoxState?.command_ack_details as string | undefined;
+    const lockAwaitingClose = commandAckCommand === 'LOCKED' && commandAckStatus === 'waiting_close';
+    const lockAwaitingCloseNeedsAssist = lockAwaitingClose && commandAckDetails === 'reed_open';
+    const lockCloseConfirmed = commandAckCommand === 'LOCKED' && commandAckStatus === 'executed' && commandAckDetails === 'reed_closed_confirmed';
 
     // Initialize Logs and Subscriptions
     useEffect(() => {
@@ -413,6 +420,35 @@ export default function BoxControlsScreen() {
         setLogs(prev => [{ time: dayjs().format('HH:mm:ss'), message, type }, ...prev]);
     };
 
+    useEffect(() => {
+        if (!commandAckCommand || !commandAckStatus) return;
+
+        const ackAt = rawBoxState?.command_ack_at ?? rawBoxState?.command_ack_epoch ?? '';
+        const ackKey = `${commandAckCommand}|${commandAckStatus}|${commandAckDetails || ''}|${ackAt}`;
+        if (lastCommandAckKeyRef.current === ackKey) return;
+        lastCommandAckKeyRef.current = ackKey;
+
+        const details = commandAckDetails ? ` (${commandAckDetails})` : '';
+        const commandLabel = commandAckCommand === 'REBOOT_ALL' ? 'Reboot All' : commandAckCommand;
+
+        if (commandAckStatus === 'accepted') {
+            addLog(`Command accepted by hardware: ${commandLabel}${details}`, 'info');
+            return;
+        }
+
+        if (commandAckStatus === 'executed') {
+            addLog(`Command executed: ${commandLabel}${details}`, 'success');
+            return;
+        }
+
+        if (commandAckStatus === 'waiting_close' || commandAckStatus === 'timeout_waiting_close') {
+            addLog(`Command pending completion: ${commandLabel}${details}`, 'warning');
+            return;
+        }
+
+        addLog(`Command failed: ${commandLabel} [${commandAckStatus}]${details}`, 'error');
+    }, [commandAckCommand, commandAckStatus, commandAckDetails]);
+
     const toggleLock = async () => {
         if (!isPaired) {
             PremiumAlert.alert('Pair Required', 'Scan your box QR to unlock controls.');
@@ -459,12 +495,12 @@ export default function BoxControlsScreen() {
                 command_request_id: requestId,
                 command_requested_by: 'mobile_rider',
             } as any);
-            addLog(`Manual override sent: ${action} -> ${boxId}`, "success");
+            addLog(`Manual override queued: ${action} -> ${boxId}`, "info");
             PremiumAlert.alert(
                 'Manual Override Queued',
                 action === 'UNLOCKING'
                     ? `Unlock command queued for ${boxId}. Waiting for hardware acknowledgment.`
-                    : `Lock command queued for ${boxId}. Waiting for hardware acknowledgment.`
+                    : `Lock command queued for ${boxId}. If the lid remains open, lock confirmation will wait until reed-close is detected.`
             );
         } catch (error) {
             console.error('[toggleLock] Failed to send manual override:', error);
@@ -489,7 +525,7 @@ export default function BoxControlsScreen() {
             const { unlockToken } = await verifyRiderPersonalPinForUnlock(boxId, sanitizedPin);
             await sendRiderUnlockCommand(boxId, unlockToken);
 
-            addLog(`Manual override sent: UNLOCKING -> ${boxId}`, 'success');
+            addLog(`Manual override queued: UNLOCKING -> ${boxId}`, 'info');
             setShowUnlockPinModal(false);
             setUnlockPin('');
 
@@ -544,24 +580,30 @@ export default function BoxControlsScreen() {
     const handleReboot = () => {
         PremiumAlert.alert(
             "Reboot System",
-            "This sends a reboot command to the GPS/LTE board via Firebase. The box will go offline for ~30 seconds while the modem restarts.",
+            "This sends a coordinated reboot command to Proxy, Controller, and CAM boards via Firebase. The box may go offline for ~30-60 seconds while services restart.",
             [
                 { text: "Cancel", style: "cancel" },
                 {
                     text: "Send Reboot",
                     onPress: () => {
                         setRebooting(true);
-                        addLog("Reboot command sent to hardware...", "warning");
+                        addLog("Coordinated reboot command sent to hardware...", "warning");
                         import('../../services/firebaseClient').then(({ updateBoxState }) => {
-                            // Write reboot_requested flag — GPS_LTE firmware polls hardware/{boxId}/reboot_requested
-                            (updateBoxState as any)(boxId, { reboot_requested: true, reboot_ts: Date.now() });
-                            addLog("Waiting for reconnect (~30s)...", "info");
+                            // Keep legacy reboot flags and send explicit cross-board reboot token.
+                            (updateBoxState as any)(boxId, {
+                                reboot_requested: true,
+                                reboot_ts: Date.now(),
+                                command: 'REBOOT_ALL',
+                                command_request_id: `reboot_${Date.now()}`,
+                                command_requested_by: 'mobile_reboot',
+                            });
+                            addLog("Waiting for reconnect (~30-60s)...", "info");
                         });
                         // Clear rebooting state after firmware expected reconnect window
                         setTimeout(() => {
                             setRebooting(false);
                             addLog("Reconnect window elapsed. Check LTE/GPS status above.", "success");
-                        }, 30000);
+                        }, 60000);
                     }
                 }
             ]
@@ -997,64 +1039,7 @@ export default function BoxControlsScreen() {
                 <Text variant="titleMedium" style={[styles.sectionTitle, { color: c.text }]}>Smart Box Controls</Text>
                 <Card style={[styles.controlsCard, { backgroundColor: c.card, borderColor: c.border, borderWidth: isDarkMode ? 1 : 0 }]}>
                     <Card.Content>
-                        {/* 1. Biometric Access */}
-                        <View style={styles.controlRow}>
-                            <View style={[styles.iconContainer, {
-                                backgroundColor: !isPaired ? c.search : (faceAuthStatus === 'SEARCHING' ? c.orangeBg : c.purpleBg),
-                                opacity: !isPaired ? 0.5 : 1
-                            }]}>
-                                <MaterialCommunityIcons
-                                    name="face-recognition"
-                                    size={28}
-                                    color={!isPaired ? c.textTer : (faceAuthStatus === 'SEARCHING' ? c.orangeText : c.purpleText)}
-                                />
-                            </View>
-                            <View style={styles.controlInfo}>
-                                <Text variant="titleMedium" style={{ fontWeight: 'bold', color: !isPaired ? c.textTer : c.text }}>Face Unlock</Text>
-                                <Text variant="bodySmall" style={{ color: !isPaired ? c.textTer : c.textSec }}>
-                                    {isPaired ? (faceAuthStatus === 'SEARCHING' ? 'Scanning...' : 'Scan face to unlock') : 'Requires pairing'}
-                                </Text>
-                            </View>
-                            <Button
-                                mode="contained-tonal"
-                                onPress={handleFaceUnlock}
-                                loading={faceAuthStatus === 'SEARCHING'}
-                                disabled={!isPaired || faceAuthStatus === 'SEARCHING' || !isLocked}
-                                style={{ alignSelf: 'center' }}
-                            >
-                                {faceAuthStatus === 'SEARCHING' ? 'Scan' : 'Start'}
-                            </Button>
-                        </View>
-
-                        <Divider style={[styles.divider, { backgroundColor: c.divider }]} />
-
-                        {/* 2. BLE OTP Transfer */}
-                        <View style={styles.controlRow}>
-                            <View style={[styles.iconContainer, {
-                                backgroundColor: !isPaired ? c.search : c.blueBg,
-                                opacity: !isPaired ? 0.5 : 1
-                            }]}>
-                                <MaterialCommunityIcons name="bluetooth" size={28} color={!isPaired ? c.textTer : c.blueText} />
-                            </View>
-                            <View style={styles.controlInfo}>
-                                <Text variant="titleMedium" style={{ fontWeight: 'bold', color: !isPaired ? c.textTer : c.text }}>BLE OTP</Text>
-                                <Text variant="bodySmall" style={{ color: !isPaired ? c.textTer : c.textSec }}>
-                                    {isPaired ? 'Offline transfer' : 'Requires pairing'}
-                                </Text>
-                            </View>
-                            <Button
-                                mode="contained-tonal"
-                                onPress={handleBleTransfer}
-                                disabled={!isPaired}
-                                style={{ alignSelf: 'center' }}
-                            >
-                                Send
-                            </Button>
-                        </View>
-
-                        <Divider style={[styles.divider, { backgroundColor: c.divider }]} />
-
-                        {/* 3. Manual Lock Control */}
+                        {/* 1. Manual Lock Control */}
                         <Text variant="labelMedium" style={{ marginTop: 8, marginBottom: 8, color: c.textTer }}>Manual Override</Text>
                         <Button
                             mode="contained"
@@ -1075,9 +1060,33 @@ export default function BoxControlsScreen() {
                             {isPaired ? (boxState?.status === 'UNLOCKING' ? "Actuating..." : (isLocked ? "Unlock Box" : "Lock Box")) : "Controls Disabled"}
                         </Button>
 
+                        {lockAwaitingClose && (
+                            <View style={{ marginTop: -6, marginBottom: 12, padding: 10, borderRadius: 10, backgroundColor: c.orangeBg, borderWidth: 1, borderColor: c.orangeText }}>
+                                <Text style={{ color: c.orangeText, fontWeight: '700' }}>
+                                    Lock pending physical close
+                                </Text>
+                                <Text style={{ marginTop: 4, color: c.orangeText, fontSize: 12 }}>
+                                    {lockAwaitingCloseNeedsAssist
+                                        ? 'Close the lid fully. If the latch is blocking closure, press # on the keypad for brief retract assist, then close again.'
+                                        : 'Close the lid fully so the reed switch can confirm lock completion.'}
+                                </Text>
+                            </View>
+                        )}
+
+                        {lockCloseConfirmed && (
+                            <View style={{ marginTop: -6, marginBottom: 12, padding: 10, borderRadius: 10, backgroundColor: c.greenBg, borderWidth: 1, borderColor: c.greenText }}>
+                                <Text style={{ color: c.greenText, fontWeight: '700' }}>
+                                    Lock confirmed
+                                </Text>
+                                <Text style={{ marginTop: 4, color: c.greenText, fontSize: 12 }}>
+                                    Reed close confirmed. The lock is physically secured.
+                                </Text>
+                            </View>
+                        )}
+
                         <Divider style={[styles.divider, { backgroundColor: c.divider }]} />
 
-                        {/* 4. Personal PIN Management */}
+                        {/* 2. Personal PIN Management */}
                         <Text variant="labelMedium" style={{ marginTop: 8, marginBottom: 8, color: c.textTer }}>Personal PIN</Text>
                         <View style={styles.controlRow}>
                             <View style={[styles.iconContainer, {
@@ -1126,7 +1135,7 @@ export default function BoxControlsScreen() {
 
                         <Divider style={[styles.divider, { backgroundColor: c.divider }]} />
 
-                        {/* 5. System Maintenance */}
+                        {/* 3. System Maintenance */}
                         <Text variant="labelMedium" style={{ marginTop: 8, marginBottom: 8, color: c.textTer }}>System Maintenance</Text>
                         <View style={styles.row}>
                             <Button

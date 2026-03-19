@@ -51,6 +51,23 @@ const formatSpeed = (speedMs: number | undefined | null) => {
     return `${Math.round(speedMs * 3.6)} km/h`;
 };
 
+const PH_TIMEZONE = 'Asia/Manila';
+
+const formatPhDateTime = (value: string | number | null | undefined): string => {
+    if (value == null) return 'Unknown time';
+    const parsed = parseUTCString(value);
+    if (Number.isNaN(parsed.getTime())) return 'Unknown time';
+    return parsed.toLocaleString('en-US', {
+        timeZone: PH_TIMEZONE,
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+        hour12: true,
+    });
+};
+
 interface TrackRouteParams {
     bookingId: string;
     riderId?: string;
@@ -281,6 +298,23 @@ export default function TrackOrderScreen() {
     }, [boxLiveLocation, riderLiveLocation]);
 
     const displayLocation = useBoxLocation ? boxLiveLocation : riderLiveLocation;
+
+    const tamperEventTime = useMemo(() => {
+        return formatPhDateTime(delivery?.updated_at ?? delivery?.arrived_at ?? delivery?.created_at);
+    }, [delivery?.updated_at, delivery?.arrived_at, delivery?.created_at]);
+
+    const tamperWhere = useMemo(() => {
+        if (boxLiveLocation?.lat != null && boxLiveLocation?.lng != null) {
+            return `${boxLiveLocation.lat.toFixed(5)}, ${boxLiveLocation.lng.toFixed(5)} (box GPS)`;
+        }
+        if (riderLiveLocation?.lat != null && riderLiveLocation?.lng != null) {
+            return `${riderLiveLocation.lat.toFixed(5)}, ${riderLiveLocation.lng.toFixed(5)} (phone fallback)`;
+        }
+        if (delivery?.dropoff_lat != null && delivery?.dropoff_lng != null) {
+            return `${Number(delivery.dropoff_lat).toFixed(5)}, ${Number(delivery.dropoff_lng).toFixed(5)} (drop-off reference)`;
+        }
+        return 'Unknown Location';
+    }, [boxLiveLocation, riderLiveLocation, delivery?.dropoff_lat, delivery?.dropoff_lng]);
 
     // --- Map Matching function for mobile ---
     const matchCoordinatesToRoad = async (
@@ -1285,9 +1319,17 @@ export default function TrackOrderScreen() {
                                         Your package has been delivered successfully.
                                     </Text>
                                 ) : delivery?.status === 'TAMPERED' ? (
-                                    <Text variant="bodyMedium" style={{ color: theme.colors.error }}>
-                                        Tampering was detected on the delivery box. Contact support immediately.
-                                    </Text>
+                                    <View>
+                                        <Text variant="bodyMedium" style={{ color: theme.colors.error }}>
+                                            Tampering was detected on the delivery box. Contact support immediately.
+                                        </Text>
+                                        <Text variant="bodySmall" style={{ color: theme.colors.error, marginTop: 4 }}>
+                                            When: {tamperEventTime} PST
+                                        </Text>
+                                        <Text variant="bodySmall" style={{ color: theme.colors.error }}>
+                                            Where: {tamperWhere}
+                                        </Text>
+                                    </View>
                                 ) : cancellation && delivery?.status === 'CANCELLED' ? (
                                     <Text variant="bodyMedium" style={{ color: theme.colors.onSurfaceVariant }}>
                                         Reason: {formatCancellationReason(cancellation.reason)}

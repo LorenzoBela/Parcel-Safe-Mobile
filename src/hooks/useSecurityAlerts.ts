@@ -15,7 +15,6 @@
 import { useEffect, useRef } from 'react';
 import { Alert } from 'react-native';
 import { subscribeToBoxState, BoxState } from '../services/firebaseClient';
-import { dispatchSecurityNotification } from '../services/riderMatchingService';
 import { showSecurityNotification } from '../services/pushNotificationService';
 
 const THREAT_STATES = ['SUSPICIOUS', 'STOLEN', 'LOCKDOWN'] as const;
@@ -64,22 +63,9 @@ export function useSecurityAlerts(
                 // 2. In-app modal alert for immediate attention
                 Alert.alert(title, message, [{ text: 'OK' }]);
 
-                // 3. FCM push to rider, customer, and all admins (server-side dispatch)
-                const notifType: 'TAMPER_DETECTED' | 'THEFT_REPORTED' =
-                    currentTheft === 'STOLEN' || currentTheft === 'LOCKDOWN'
-                        ? 'THEFT_REPORTED'
-                        : 'TAMPER_DETECTED';
-
-                dispatchSecurityNotification(
-                    notifType,
-                    {
-                        boxId,
-                        theftState: currentTheft,
-                        ...(riderId ? { riderId } : {}),
-                    },
-                    deliveryId,
-                    riderId
-                ).catch(() => {});
+                // Cloud-first security orchestration:
+                // backend listeners dispatch tamper/theft fanout notifications.
+                // Mobile remains a consumer for local tray + in-app alert only.
             }
 
             prevTheftState.current = currentTheft;
