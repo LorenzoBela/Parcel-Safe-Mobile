@@ -20,6 +20,7 @@ import {
     subscribeToAllHardware,
     subscribeToAllLocations,
 } from '../../services/firebaseClient';
+import { supabase } from '../../services/supabaseClient';
 
 // ==================== Constants ====================
 
@@ -71,6 +72,16 @@ type AnimationState = {
 };
 
 type FleetFilter = 'ALL' | 'TAMPER' | 'ACTIVE' | 'OFFLINE';
+
+type TamperIncidentPoint = {
+    id: string;
+    boxId: string | null;
+    lat: number;
+    lng: number;
+    detectedAt: string;
+    status: string;
+    locationSource: string | null;
+};
 
 // ==================== Helpers ====================
 
@@ -266,6 +277,7 @@ export default function GlobalMapScreen() {
 
     const [locationsByBox, setLocationsByBox] = useState<LocationsByBoxId | null>(null);
     const [hardwareByBox, setHardwareByBox] = useState<HardwareByBoxId | null>(null);
+    const [tamperIncidentPoints, setTamperIncidentPoints] = useState<TamperIncidentPoint[]>([]);
 
     const [selectedBoxId, setSelectedBoxId] = useState<string | null>(null);
     const [listVisible, setListVisible] = useState(false);
@@ -318,6 +330,49 @@ export default function GlobalMapScreen() {
         return () => {
             unsubscribeLocations();
             unsubscribeHardware();
+        };
+    }, []);
+
+    useEffect(() => {
+        let cancelled = false;
+
+        const loadTamperIncidents = async () => {
+            const { data, error } = await supabase
+                .from('tamper_incidents')
+                .select('id,box_id,status,detected_at,location_lat,location_lng,location_source')
+                .in('status', ['OPEN', 'PENDING_REVIEW'])
+                .not('location_lat', 'is', null)
+                .not('location_lng', 'is', null)
+                .order('detected_at', { ascending: false })
+                .limit(200);
+
+            if (cancelled) return;
+            if (error) {
+                console.error('[GlobalMapScreen] Failed to load tamper incidents:', error);
+                return;
+            }
+
+            const points: TamperIncidentPoint[] = (data || [])
+                .map((row: any) => ({
+                    id: String(row.id),
+                    boxId: row.box_id ? String(row.box_id) : null,
+                    lat: Number(row.location_lat),
+                    lng: Number(row.location_lng),
+                    detectedAt: String(row.detected_at || ''),
+                    status: String(row.status || 'OPEN'),
+                    locationSource: row.location_source ? String(row.location_source) : null,
+                }))
+                .filter((point) => Number.isFinite(point.lat) && Number.isFinite(point.lng));
+
+            setTamperIncidentPoints(points);
+        };
+
+        loadTamperIncidents();
+        const intervalId = setInterval(loadTamperIncidents, 20000);
+
+        return () => {
+            cancelled = true;
+            clearInterval(intervalId);
         };
     }, []);
 
@@ -714,6 +769,31 @@ export default function GlobalMapScreen() {
                         );
                     })}
 
+                    {/* Tamper incident pins from recorded incident coordinates */}
+                    {tamperIncidentPoints.map((incident) => (
+                        <MapboxGL.PointAnnotation
+                            key={`incident-${incident.id}`}
+                            id={`incident-${incident.id}`}
+                            coordinate={[incident.lng, incident.lat]}
+                            onSelected={() => {
+                                if (incident.boxId) {
+                                    selectBox(incident.boxId);
+                                } else {
+                                    setCameraCenter([incident.lng, incident.lat]);
+                                    setCameraZoom(15);
+                                }
+                            }}
+                        >
+                            <View style={styles.incidentPinWrap}>
+                                <View style={styles.incidentPinHalo} />
+                                <View style={styles.incidentPinCore}>
+                                    <Text style={styles.incidentPinText}>!</Text>
+                                </View>
+                            </View>
+                            <MapboxGL.Callout title={`Tamper ${incident.status}`} />
+                        </MapboxGL.PointAnnotation>
+                    ))}
+
                 </MapboxGL.MapView>
             ) : (
                 <View style={[styles.map, styles.mapFallback, { backgroundColor: uiPill }]}>
@@ -941,6 +1021,35 @@ const styles = StyleSheet.create({
         shadowOpacity: 0.3,
         shadowRadius: 4,
         elevation: 5,
+    },
+    incidentPinWrap: {
+        width: 24,
+        height: 24,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    incidentPinHalo: {
+        position: 'absolute',
+        width: 24,
+        height: 24,
+        borderRadius: 12,
+        backgroundColor: 'rgba(244,67,54,0.25)',
+    },
+    incidentPinCore: {
+        width: 16,
+        height: 16,
+        borderRadius: 8,
+        backgroundColor: '#F44336',
+        borderWidth: 2,
+        borderColor: '#FFFFFF',
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    incidentPinText: {
+        color: '#FFFFFF',
+        fontSize: 10,
+        fontWeight: '900',
+        lineHeight: 10,
     },
     overlayTop: {
         position: 'absolute',
