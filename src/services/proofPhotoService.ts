@@ -363,3 +363,59 @@ export async function uploadReturnPhoto(params: {
         };
     }
 }
+
+/**
+ * Upload a tamper-incident evidence photo to Supabase Storage.
+ * This does not mutate delivery status/timestamps.
+ */
+export async function uploadTamperEvidencePhoto(params: {
+    incidentId: string;
+    boxId: string;
+    localUri: string;
+}): Promise<{ success: boolean; url?: string; error?: string }> {
+    const { incidentId, boxId, localUri } = params;
+
+    try {
+        const compression = await compressImage(localUri);
+        const uploadUri = compression.success ? compression.compressedUri : localUri;
+
+        const base64 = await FileSystem.readAsStringAsync(uploadUri, {
+            encoding: 'base64',
+        });
+        const arrayBuffer = base64ToUint8Array(base64);
+
+        const sessionOk = await syncStorageSession();
+        if (!sessionOk) {
+            console.error('[ProofPhoto] Aborting tamper evidence upload: no authenticated session.');
+            return { success: false, error: 'Authentication session not available. Please sign in and try again.' };
+        }
+        const storage = getStorageClient();
+
+        const fileName = `${incidentId}_${Date.now()}.jpg`;
+        const objectPath = `tamper-incidents/${boxId}/${fileName}`;
+
+        const { data, error } = await storage.storage
+            .from(PROOF_PHOTOS_BUCKET)
+            .upload(objectPath, arrayBuffer, {
+                contentType: 'image/jpeg',
+                upsert: false,
+            });
+
+        if (error || !data?.path) {
+            console.error('[ProofPhoto] Tamper evidence upload failed:', error);
+            return { success: false, error: error?.message || 'Upload failed' };
+        }
+
+        const { data: urlData } = storage.storage
+            .from(PROOF_PHOTOS_BUCKET)
+            .getPublicUrl(data.path);
+
+        return { success: true, url: urlData.publicUrl };
+    } catch (error) {
+        console.error('[ProofPhoto] Exception during tamper evidence upload:', error);
+        return {
+            success: false,
+            error: error instanceof Error ? error.message : String(error),
+        };
+    }
+}

@@ -73,6 +73,7 @@ const DEMO_BOX_ID = 'BOX_001';
 
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { PremiumAlert } from '../../services/PremiumAlertService';
+import * as ImagePicker from 'expo-image-picker';
 import {
     fetchRiderPersonalPinStatus,
     setRiderPersonalPin,
@@ -81,6 +82,13 @@ import {
     verifyRiderPersonalPinForUnlock,
     sendRiderUnlockCommand,
 } from '../../services/personalPinService';
+import { uploadTamperEvidencePhoto } from '../../services/proofPhotoService';
+import {
+    fetchActiveTamperIncident,
+    submitRiderTamperEvidence,
+    RiderTamperIncident,
+} from '../../services/tamperIncidentService';
+import { showSecurityNotification } from '../../services/pushNotificationService';
 
 export default function BoxControlsScreen() {
     const navigation = useNavigation();
@@ -145,6 +153,13 @@ export default function BoxControlsScreen() {
     const [showUnlockPin, setShowUnlockPin] = useState(false);
     const [unlockPinSubmitting, setUnlockPinSubmitting] = useState(false);
     const lastCommandAckKeyRef = useRef('');
+    const [activeTamperIncident, setActiveTamperIncident] = useState<RiderTamperIncident | null>(null);
+    const [incidentLoading, setIncidentLoading] = useState(false);
+    const [tamperDisposition, setTamperDisposition] = useState<'HARDWARE_DAMAGED' | 'ACCIDENTAL_TRIGGER' | null>(null);
+    const [tamperNote, setTamperNote] = useState('');
+    const [tamperPhotoUri, setTamperPhotoUri] = useState<string | null>(null);
+    const [tamperPhotoUrl, setTamperPhotoUrl] = useState<string | null>(null);
+    const [tamperSubmitting, setTamperSubmitting] = useState(false);
 
     const sanitizePinInput = (value: string) => value.replace(/\D/g, '').slice(0, 6);
 
@@ -420,6 +435,133 @@ export default function BoxControlsScreen() {
         setLogs(prev => [{ time: dayjs().format('HH:mm:ss'), message, type }, ...prev]);
     };
 
+    const loadActiveTamperIncident = async () => {
+        if (!tamperState?.detected || !isPaired) {
+            setActiveTamperIncident(null);
+            return;
+        }
+
+        try {
+            setIncidentLoading(true);
+            const incident = await fetchActiveTamperIncident({
+                boxId,
+                deliveryId: activeDeliveryId && activeDeliveryId !== 'DEL_001' ? activeDeliveryId : undefined,
+            });
+            setActiveTamperIncident(incident);
+            if (incident?.status !== 'OPEN') {
+                setTamperDisposition(null);
+                setTamperNote('');
+                setTamperPhotoUri(null);
+                setTamperPhotoUrl(null);
+            }
+        } catch (error: any) {
+            console.warn('[TamperIncident] Failed to load active incident:', error?.message || error);
+        } finally {
+            setIncidentLoading(false);
+        }
+    };
+
+    useEffect(() => {
+        loadActiveTamperIncident();
+    }, [tamperState?.detected, isPaired, boxId, activeDeliveryId]);
+
+    const incidentResponseRequired = Boolean(
+        isPaired
+        && tamperState?.detected
+        && (incidentLoading || !activeTamperIncident || activeTamperIncident.status === 'OPEN')
+    );
+
+    const handleCaptureTamperPhoto = async () => {
+        if (!activeTamperIncident?.id) return;
+
+        try {
+            const permission = await ImagePicker.requestCameraPermissionsAsync();
+            if (permission.status !== 'granted') {
+                PremiumAlert.alert('Camera Permission Required', 'Please enable camera permission to submit hardware damage evidence.');
+                return;
+            }
+
+            const result = await ImagePicker.launchCameraAsync({
+                mediaTypes: ImagePicker.MediaTypeOptions.Images,
+                quality: 0.7,
+                allowsEditing: false,
+            });
+
+            if (result.canceled || !result.assets?.[0]?.uri) return;
+            const localUri = result.assets[0].uri;
+            setTamperPhotoUri(localUri);
+
+            const upload = await uploadTamperEvidencePhoto({
+                incidentId: activeTamperIncident.id,
+                boxId: boxId || activeTamperIncident.box_id || 'UNKNOWN_BOX',
+                localUri,
+            });
+
+            if (!upload.success || !upload.url) {
+                PremiumAlert.alert('Upload Failed', upload.error || 'Could not upload tamper evidence photo. Please retry.');
+                return;
+            }
+
+            setTamperPhotoUrl(upload.url);
+            addLog('Tamper evidence photo uploaded', 'info');
+        } catch (error: any) {
+            PremiumAlert.alert('Capture Failed', error?.message || 'Could not capture tamper evidence photo.');
+        }
+    };
+
+    const handleSubmitTamperEvidence = async () => {
+        if (!activeTamperIncident?.id || !tamperDisposition) {
+            PremiumAlert.alert('Required', 'Select a security assessment before submitting.');
+            return;
+        }
+
+        if (tamperDisposition === 'HARDWARE_DAMAGED' && !tamperPhotoUrl) {
+            PremiumAlert.alert('Photo Required', 'Capture and upload a damage photo before continuing.');
+            return;
+        }
+
+        if (tamperDisposition === 'ACCIDENTAL_TRIGGER' && !tamperNote.trim()) {
+            PremiumAlert.alert('Explanation Required', 'Enter a short explanation for accidental trigger.');
+            return;
+        }
+
+        try {
+            setTamperSubmitting(true);
+            await submitRiderTamperEvidence(activeTamperIncident.id, {
+                riderDisposition: tamperDisposition,
+                riderNote: tamperDisposition === 'ACCIDENTAL_TRIGGER' ? tamperNote.trim() : undefined,
+                riderPhotoUrl: tamperDisposition === 'HARDWARE_DAMAGED' ? tamperPhotoUrl || undefined : undefined,
+            });
+
+            addLog('Tamper incident evidence submitted to admin review', 'success');
+            PremiumAlert.alert('Submitted', 'Your security evidence was sent. Await admin review.');
+
+            // Local on-device notification so rider gets immediate confirmation
+            // even without depending on remote FCM fanout timing.
+            showSecurityNotification(
+                'Evidence Submitted',
+                'Your incident report was received and is pending admin review.',
+                {
+                    incidentId: activeTamperIncident.id,
+                    boxId,
+                    deliveryId: activeDeliveryId,
+                    status: 'PENDING_REVIEW',
+                    type: 'RIDER_EVIDENCE_SUBMITTED',
+                }
+            ).catch(() => {});
+
+            setActiveTamperIncident((prev) => prev ? { ...prev, status: 'PENDING_REVIEW' } : prev);
+            setTamperDisposition(null);
+            setTamperNote('');
+            setTamperPhotoUri(null);
+            setTamperPhotoUrl(null);
+        } catch (error: any) {
+            PremiumAlert.alert('Submission Failed', error?.message || 'Could not submit tamper evidence.');
+        } finally {
+            setTamperSubmitting(false);
+        }
+    };
+
     useEffect(() => {
         if (!commandAckCommand || !commandAckStatus) return;
 
@@ -498,9 +640,7 @@ export default function BoxControlsScreen() {
             addLog(`Manual override queued: ${action} -> ${boxId}`, "info");
             PremiumAlert.alert(
                 'Manual Override Queued',
-                action === 'UNLOCKING'
-                    ? `Unlock command queued for ${boxId}. Waiting for hardware acknowledgment.`
-                    : `Lock command queued for ${boxId}. If the lid remains open, lock confirmation will wait until reed-close is detected.`
+                `Lock command queued for ${boxId}. If the lid remains open, lock confirmation will wait until reed-close is detected.`
             );
         } catch (error) {
             console.error('[toggleLock] Failed to send manual override:', error);
@@ -930,7 +1070,11 @@ export default function BoxControlsScreen() {
                         <MaterialCommunityIcons name="alert-decagram" size={24} color={c.redText} />
                         <View style={{ flex: 1, marginLeft: 12 }}>
                             <Text style={[styles.alertTitle, { color: c.redText }]}>⚠️ SECURITY ALERT</Text>
-                            <Text style={[styles.alertText, { color: c.textSec }]}>Box tamper detected! Lockdown active.</Text>
+                            <Text style={[styles.alertText, { color: c.textSec }]}>
+                                {activeTamperIncident?.status === 'PENDING_REVIEW'
+                                    ? 'Evidence submitted. Awaiting admin review.'
+                                    : 'Box in Security Hold. Submit required rider evidence.'}
+                            </Text>
                         </View>
                     </Surface>
                 )}
@@ -1484,6 +1628,95 @@ export default function BoxControlsScreen() {
                                     Cancel
                                 </Button>
                             )}
+                        </View>
+                    </Surface>
+                </View>
+            </Modal>
+
+            <Modal
+                visible={incidentResponseRequired}
+                transparent
+                animationType="fade"
+                onRequestClose={() => { }}
+            >
+                <View style={styles.modalOverlay}>
+                    <Surface style={[styles.modalContent, { width: '92%', maxWidth: 520 }]} elevation={5}>
+                        <View style={styles.modalHeader}>
+                            <Text variant="titleLarge" style={{ fontWeight: 'bold' }}>Security Hold Response Required</Text>
+                        </View>
+                        <View style={styles.modalBody}>
+                            {!activeTamperIncident?.id && (
+                                <View style={{ marginBottom: 12, padding: 10, borderRadius: 8, backgroundColor: c.orangeBg }}>
+                                    <Text variant="bodySmall" style={{ color: c.orangeText }}>
+                                        {incidentLoading
+                                            ? 'Syncing incident record... Controls remain blocked for safety.'
+                                            : 'Incident record not yet available. Retry sync to continue.'}
+                                    </Text>
+                                </View>
+                            )}
+
+                            <Text variant="bodyMedium" style={{ color: c.textSec, marginBottom: 12 }}>
+                                This box is locked due to tamper detection. You must submit evidence before normal controls are restored.
+                            </Text>
+
+                            <View style={{ gap: 10, marginBottom: 14 }}>
+                                <Button
+                                    mode={tamperDisposition === 'HARDWARE_DAMAGED' ? 'contained' : 'outlined'}
+                                    onPress={() => setTamperDisposition('HARDWARE_DAMAGED')}
+                                >
+                                    Hardware Damaged
+                                </Button>
+                                <Button
+                                    mode={tamperDisposition === 'ACCIDENTAL_TRIGGER' ? 'contained' : 'outlined'}
+                                    onPress={() => setTamperDisposition('ACCIDENTAL_TRIGGER')}
+                                >
+                                    Accidental Trigger
+                                </Button>
+                            </View>
+
+                            {tamperDisposition === 'HARDWARE_DAMAGED' && (
+                                <View style={{ gap: 8, marginBottom: 14 }}>
+                                    <Button
+                                        mode="contained-tonal"
+                                        icon="camera"
+                                        onPress={handleCaptureTamperPhoto}
+                                        disabled={tamperSubmitting || !activeTamperIncident?.id}
+                                    >
+                                        {tamperPhotoUri ? 'Retake Damage Photo' : 'Capture Damage Photo'}
+                                    </Button>
+                                    <Text style={{ color: c.textSec, fontSize: 12 }}>
+                                        {tamperPhotoUrl ? 'Photo uploaded and ready for submission.' : 'A photo is required for this disposition.'}
+                                    </Text>
+                                </View>
+                            )}
+
+                            {tamperDisposition === 'ACCIDENTAL_TRIGGER' && (
+                                <TextInput
+                                    mode="outlined"
+                                    label="Explanation"
+                                    value={tamperNote}
+                                    onChangeText={setTamperNote}
+                                    multiline
+                                    numberOfLines={4}
+                                    style={{ marginBottom: 14 }}
+                                />
+                            )}
+
+                            <Button
+                                mode="contained"
+                                onPress={handleSubmitTamperEvidence}
+                                loading={tamperSubmitting || incidentLoading}
+                                disabled={tamperSubmitting || incidentLoading || !activeTamperIncident?.id}
+                            >
+                                Submit Security Evidence
+                            </Button>
+                            <Button
+                                mode="text"
+                                onPress={loadActiveTamperIncident}
+                                disabled={tamperSubmitting || incidentLoading}
+                            >
+                                Refresh Incident Status
+                            </Button>
                         </View>
                     </Surface>
                 </View>

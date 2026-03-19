@@ -316,6 +316,11 @@ export default function TrackOrderScreen() {
         return 'Unknown Location';
     }, [boxLiveLocation, riderLiveLocation, delivery?.dropoff_lat, delivery?.dropoff_lng]);
 
+    const wasSecurityIncidentCancelled = useMemo(() => {
+        const reason = String(delivery?.cancellation_reason || '').toUpperCase();
+        return reason.includes('SECURITY_INCIDENT');
+    }, [delivery?.cancellation_reason]);
+
     // --- Map Matching function for mobile ---
     const matchCoordinatesToRoad = async (
         buffer: { coord: [number, number]; time: number }[],
@@ -584,8 +589,13 @@ export default function TrackOrderScreen() {
                     IN_TRANSIT: { title: '🚀 Package in Transit', body: 'Your parcel is on its way to the destination.' },
                     ARRIVED: { title: '🎉 Rider Arrived!', body: 'Your rider has arrived at the destination.' },
                     COMPLETED: { title: '✅ Delivery Complete', body: 'Your package has been delivered successfully!' },
-                    CANCELLED: { title: '❌ Delivery Cancelled', body: 'Your delivery has been cancelled.' },
-                    TAMPERED: { title: '⚠️ Security Alert', body: 'Tamper detected on your package! Please check immediately.' },
+                    CANCELLED: {
+                        title: '❌ Delivery Cancelled',
+                        body: data?.cancellation_reason === 'SECURITY_INCIDENT_CONFIRMED'
+                            ? 'Cancelled after security review. Refund processing has started.'
+                            : 'Your delivery has been cancelled.'
+                    },
+                    TAMPERED: { title: '⚠️ Security Hold', body: 'Security hold is active while investigation is in progress.' },
                     RETURNING: { title: '↩️ Package Returning', body: 'Rider is returning the package to sender.' },
                     RETURNED: { title: '↩️ Package Returned', body: 'Package has been returned to sender.' },
                     FAILED: { title: '⚠️ Delivery Failed', body: 'Delivery attempt failed. Please contact support.' },
@@ -1298,7 +1308,7 @@ export default function TrackOrderScreen() {
                             {delivery?.status === 'COMPLETED' ? (
                                 <Text variant="titleLarge" style={{ fontWeight: 'bold', color: '#4CAF50' }}>Delivery Complete!</Text>
                             ) : delivery?.status === 'TAMPERED' ? (
-                                <Text variant="titleLarge" style={{ fontWeight: 'bold', color: theme.colors.error }}>Security Alert</Text>
+                                <Text variant="titleLarge" style={{ fontWeight: 'bold', color: theme.colors.error }}>Security Hold</Text>
                             ) : cancellation && delivery?.status === 'CANCELLED' ? (
                                 <Text variant="titleLarge" style={{ fontWeight: 'bold', color: theme.colors.error }}>Delivery Cancelled</Text>
                             ) : (
@@ -1321,18 +1331,20 @@ export default function TrackOrderScreen() {
                                 ) : delivery?.status === 'TAMPERED' ? (
                                     <View>
                                         <Text variant="bodyMedium" style={{ color: theme.colors.error }}>
-                                            Tampering was detected on the delivery box. Contact support immediately.
+                                            Security Hold is active. We detected a box incident and our team is investigating.
                                         </Text>
                                         <Text variant="bodySmall" style={{ color: theme.colors.error, marginTop: 4 }}>
-                                            When: {tamperEventTime} PST
+                                            When: {tamperEventTime}
                                         </Text>
                                         <Text variant="bodySmall" style={{ color: theme.colors.error }}>
-                                            Where: {tamperWhere}
+                                            Last known location: {tamperWhere}
                                         </Text>
                                     </View>
                                 ) : cancellation && delivery?.status === 'CANCELLED' ? (
                                     <Text variant="bodyMedium" style={{ color: theme.colors.onSurfaceVariant }}>
-                                        Reason: {formatCancellationReason(cancellation.reason)}
+                                        {wasSecurityIncidentCancelled
+                                            ? 'Cancelled after security review. Refund processing is in progress.'
+                                            : `Reason: ${formatCancellationReason(cancellation.reason)}`}
                                     </Text>
                                 ) : (
                                     <Text variant="bodyMedium" style={{ color: theme.colors.onSurfaceVariant }}>

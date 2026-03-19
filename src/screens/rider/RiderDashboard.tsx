@@ -135,6 +135,7 @@ import { fetchWeather, weatherBackgroundImages, WeatherData } from '../../servic
 import NotificationBell from '../../components/NotificationBell';
 import { getAuth } from 'firebase/auth'; // EC-Fix: Fallback auth
 import { supabase } from '../../services/supabaseClient'; // EC-Fix: Session restoration
+import { fetchActiveTamperIncident, RiderTamperIncident } from '../../services/tamperIncidentService';
 
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAppTheme } from '../../context/ThemeContext';
@@ -200,6 +201,8 @@ export default function RiderDashboard() {
 
     // EC-18: Tamper Detection
     const [tamperState, setTamperState] = useState<TamperState | null>(null);
+    const [activeTamperIncident, setActiveTamperIncident] = useState<RiderTamperIncident | null>(null);
+    const [incidentLoading, setIncidentLoading] = useState(false);
 
     // EC-82: Keypad State
     const [keypadState, setKeypadState] = useState<KeypadState | null>(null);
@@ -431,6 +434,36 @@ export default function RiderDashboard() {
     const activeDeliveryBoxId = sanitizeBoxId(activeDelivery?.assigned_box_id || activeDelivery?.box_id);
     const trackedBoxId = (isPaired && pairedBoxId) ? pairedBoxId : activeDeliveryBoxId;
 
+    const loadActiveTamperIncident = useCallback(async () => {
+        if (!trackedBoxId || !tamperState?.detected) {
+            setActiveTamperIncident(null);
+            return;
+        }
+
+        try {
+            setIncidentLoading(true);
+            const incident = await fetchActiveTamperIncident({
+                boxId: trackedBoxId,
+                deliveryId: activeDelivery?.id,
+            });
+            setActiveTamperIncident(incident);
+        } catch (error) {
+            console.warn('[RiderDashboard] Failed to load active tamper incident:', error);
+        } finally {
+            setIncidentLoading(false);
+        }
+    }, [trackedBoxId, tamperState?.detected, activeDelivery?.id]);
+
+    useEffect(() => {
+        loadActiveTamperIncident();
+    }, [loadActiveTamperIncident]);
+
+    const riderSecurityLockRequired = Boolean(
+        trackedBoxId
+        && tamperState?.detected
+        && (incidentLoading || !activeTamperIncident || activeTamperIncident.status === 'OPEN')
+    );
+
     // EC-81: Real-time security alerts (push + in-app) for tamper/theft/lockdown
     useSecurityAlerts(trackedBoxId, activeDelivery?.id, riderId);
 
@@ -628,9 +661,14 @@ export default function RiderDashboard() {
                 data.status !== prevRiderDeliveryStatus.current
             ) {
                 // Only notify the rider about statuses they didn't personally trigger.
+                const cancellationBody = data?.cancellation_reason === 'SECURITY_INCIDENT_CONFIRMED'
+                    ? 'Security incident confirmed. This trip was cancelled and refund processing started.'
+                    : 'The customer has cancelled this delivery.';
+
                 const RIDER_ALERT_MESSAGES: Record<string, { title: string; body: string }> = {
-                    CANCELLED: { title: '❌ Order Cancelled', body: 'The customer has cancelled this delivery.' },
+                    CANCELLED: { title: '❌ Order Cancelled', body: cancellationBody },
                     TAMPERED: { title: '⚠️ Security Alert!', body: 'Box tamper detected on your active delivery!' },
+                    IN_TRANSIT: { title: '✅ Delivery Resumed', body: 'Admin review completed. Continue with your active trip.' },
                     COMPLETED: { title: '✅ Delivery Confirmed', body: 'Customer confirmed delivery. Great work!' },
                 };
                 const msg = RIDER_ALERT_MESSAGES[data.status];
@@ -1589,6 +1627,39 @@ export default function RiderDashboard() {
     return (
         <View style={[styles.container, { backgroundColor: c.bg }]}>
             <StatusBar style={isDarkMode ? 'light' : 'dark'} />
+
+            {riderSecurityLockRequired && (
+                <View style={styles.incidentLockOverlay}>
+                    <Card style={[styles.incidentLockCard, { backgroundColor: c.card, borderColor: c.redText }]}> 
+                        <Card.Content>
+                            <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>
+                                <MaterialCommunityIcons name="shield-alert" size={28} color={c.redText} />
+                                <Text style={{ marginLeft: 8, fontWeight: 'bold', fontSize: 18, color: c.redText }}>
+                                    Security Incident Lock
+                                </Text>
+                            </View>
+                            <Text style={{ color: c.textSec, marginBottom: 14 }}>
+                                Map, jobs, and order queue are locked until rider evidence is submitted for this tamper incident.
+                            </Text>
+                            <Button
+                                mode="contained"
+                                onPress={() => navigation.navigate('BoxControls', { boxId: trackedBoxId, deliveryId: activeDelivery?.id })}
+                                style={{ marginBottom: 8 }}
+                            >
+                                Open Incident Response
+                            </Button>
+                            <Button
+                                mode="text"
+                                onPress={loadActiveTamperIncident}
+                                disabled={incidentLoading}
+                            >
+                                Refresh Incident Status
+                            </Button>
+                        </Card.Content>
+                    </Card>
+                </View>
+            )}
+
             {/* Incoming Order Modal - overlays entire screen */}
             <IncomingOrderModal
                 visible={showOrderModal}
@@ -2689,6 +2760,19 @@ const styles = StyleSheet.create({
         fontSize: 12,
         marginLeft: 8,
         fontWeight: '600',
+    },
+    incidentLockOverlay: {
+        ...StyleSheet.absoluteFillObject,
+        zIndex: 999,
+        backgroundColor: 'rgba(0,0,0,0.45)',
+        justifyContent: 'center',
+        alignItems: 'center',
+        paddingHorizontal: 24,
+    },
+    incidentLockCard: {
+        width: '100%',
+        borderRadius: 14,
+        borderWidth: 1,
     },
     badge: {
         justifyContent: 'center',
