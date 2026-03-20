@@ -160,6 +160,10 @@ export interface PhoneNetworkStatus {
     timestamp: number;
     /** Cumulative data bytes sent from the mobile app */
     data_bytes?: number;
+    /** Phone battery level as a percentage (0–100) */
+    battery_level?: number;
+    /** Whether the phone is currently charging */
+    battery_charging?: boolean;
 }
 
 /** Rate-limit: minimum interval between phone status writes (ms) */
@@ -208,6 +212,21 @@ async function collectPhoneNetworkStatus(
             cellularGeneration = netState.details?.cellularGeneration ?? null;
         }
 
+        // Collect phone battery info
+        let batteryLevel: number | undefined;
+        let batteryCharging: boolean | undefined;
+        try {
+            if (Battery) {
+                const level = await Battery.getBatteryLevelAsync();
+                const state = await Battery.getBatteryStateAsync();
+                // level is 0–1 float, convert to percentage
+                batteryLevel = level >= 0 ? Math.round(level * 100) : undefined;
+                batteryCharging = state === Battery.BatteryState.CHARGING;
+            }
+        } catch (e) {
+            if (__DEV__) console.warn('[EC-15] Failed to read battery:', e);
+        }
+
         return {
             connection,
             cellular_generation: cellularGeneration,
@@ -218,6 +237,8 @@ async function collectPhoneNetworkStatus(
             source,
             timestamp: Date.now(),
             data_bytes: cumulativeDataBytes,
+            battery_level: batteryLevel,
+            battery_charging: batteryCharging,
         };
     } catch (e) {
         if (__DEV__) console.warn('[EC-15] Failed to collect phone network status:', e);

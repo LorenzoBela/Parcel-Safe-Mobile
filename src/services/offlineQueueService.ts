@@ -211,13 +211,15 @@ class OfflineQueueService {
 
                 // Include phone network status from the buffered data
                 if (item.networkStatus) {
-                    updates[`/hardware/${sanitizedBoxId}/phone_status`] = {
-                        ...item.networkStatus,
-                        source: 'phone_buffered',
-                        timestamp: item.timestamp,
-                        gps_accuracy: null,
-                        gps_altitude: null,
-                    };
+                    // Write leaf fields so we don't clobber existing data_bytes.
+                    updates[`/hardware/${sanitizedBoxId}/phone_status/connection`] = item.networkStatus.connection;
+                    updates[`/hardware/${sanitizedBoxId}/phone_status/cellular_generation`] = item.networkStatus.cellular_generation;
+                    updates[`/hardware/${sanitizedBoxId}/phone_status/is_connected`] = item.networkStatus.is_connected;
+                    updates[`/hardware/${sanitizedBoxId}/phone_status/is_internet_reachable`] = item.networkStatus.is_internet_reachable;
+                    updates[`/hardware/${sanitizedBoxId}/phone_status/source`] = 'phone_buffered';
+                    updates[`/hardware/${sanitizedBoxId}/phone_status/timestamp`] = item.timestamp;
+                    updates[`/hardware/${sanitizedBoxId}/phone_status/gps_accuracy`] = null;
+                    updates[`/hardware/${sanitizedBoxId}/phone_status/gps_altitude`] = null;
                 }
             });
 
@@ -269,13 +271,15 @@ class OfflineQueueService {
 
         // Include phone network status from the location update
         if (data.networkStatus) {
-            updates[`/hardware/${sanitizedBoxId}/phone_status`] = {
-                ...data.networkStatus,
-                source: 'phone_background',
-                timestamp: data.timestamp,
-                gps_accuracy: null,
-                gps_altitude: null,
-            };
+            // Write leaf fields so we don't clobber existing data_bytes.
+            updates[`/hardware/${sanitizedBoxId}/phone_status/connection`] = data.networkStatus.connection;
+            updates[`/hardware/${sanitizedBoxId}/phone_status/cellular_generation`] = data.networkStatus.cellular_generation;
+            updates[`/hardware/${sanitizedBoxId}/phone_status/is_connected`] = data.networkStatus.is_connected;
+            updates[`/hardware/${sanitizedBoxId}/phone_status/is_internet_reachable`] = data.networkStatus.is_internet_reachable;
+            updates[`/hardware/${sanitizedBoxId}/phone_status/source`] = 'phone_background';
+            updates[`/hardware/${sanitizedBoxId}/phone_status/timestamp`] = data.timestamp;
+            updates[`/hardware/${sanitizedBoxId}/phone_status/gps_accuracy`] = null;
+            updates[`/hardware/${sanitizedBoxId}/phone_status/gps_altitude`] = null;
         }
 
         await Promise.race([

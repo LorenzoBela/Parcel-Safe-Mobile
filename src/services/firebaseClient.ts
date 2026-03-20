@@ -300,6 +300,35 @@ export function subscribeToAllLocations(
     return () => off(locationsRef);
 }
 
+const PHONE_DATA_BYTES_KEY_PREFIX = 'parcelSafe:phoneStatusDataBytes:';
+const phoneDataBytesCache = new Map<string, number>();
+
+const estimateWriteBytes = (path: string, payload: unknown): number => {
+    try {
+        return path.length + JSON.stringify(payload).length + 200;
+    } catch {
+        return 500;
+    }
+};
+
+async function getPhoneDataBytes(boxId: string): Promise<number> {
+    const cached = phoneDataBytesCache.get(boxId);
+    if (typeof cached === 'number' && Number.isFinite(cached) && cached >= 0) {
+        return cached;
+    }
+
+    try {
+        const raw = await AsyncStorage.getItem(`${PHONE_DATA_BYTES_KEY_PREFIX}${boxId}`);
+        const parsed = raw ? parseInt(raw, 10) : 0;
+        const normalized = Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
+        phoneDataBytesCache.set(boxId, normalized);
+        return normalized;
+    } catch {
+        phoneDataBytesCache.set(boxId, 0);
+        return 0;
+    }
+}
+
 /**
  * Write phone GPS location to Firebase (fallback mode)
  */
@@ -312,20 +341,36 @@ export async function writePhoneLocation(
 ): Promise<void> {
     const db = getFirebaseDatabase();
     const locationRef = ref(db, `locations/${boxId}/phone`);
+    const phoneStatusRef = ref(db, `hardware/${boxId}/phone_status`);
+    const now = Date.now();
 
     const locationData: LocationData = {
         latitude,
         longitude,
-        timestamp: Date.now(),
+        timestamp: now,
         speed: speed ?? 0,
         heading: heading ?? 0,
         source: 'phone',
     };
 
+    const currentBytes = await getPhoneDataBytes(boxId);
+    const writeBytes = estimateWriteBytes(`locations/${boxId}/phone`, locationData);
+    const nextBytes = currentBytes + writeBytes;
+
     await set(locationRef, {
         ...locationData,
         server_timestamp: serverTimestamp(),
     });
+
+    await update(phoneStatusRef, {
+        data_bytes: nextBytes,
+        timestamp: now,
+        is_connected: true,
+        source: 'phone_foreground',
+    });
+
+    phoneDataBytesCache.set(boxId, nextBytes);
+    AsyncStorage.setItem(`${PHONE_DATA_BYTES_KEY_PREFIX}${boxId}`, String(nextBytes)).catch(() => undefined);
 }
 
 /**
