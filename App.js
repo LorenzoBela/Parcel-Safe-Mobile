@@ -4,7 +4,7 @@ import { GluestackUIProvider } from '@gluestack-ui/themed';
 import { config } from '@gluestack-ui/config';
 import { PaperProvider } from 'react-native-paper';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
-import { AppState, Alert } from 'react-native';
+import { AppState, Alert, StatusBar } from 'react-native';
 import AppNavigator from './src/navigation/AppNavigator';
 import { configureGoogleSignIn } from './src/services/auth';
 import { ThemeProvider, useAppTheme } from './src/context/ThemeContext';
@@ -32,7 +32,7 @@ let initializeScheduledPromos = null;
 let supabase = null;
 
 const AppContent = () => {
-  const { theme } = useAppTheme();
+  const { theme, isDarkMode } = useAppTheme();
   const [appState, setAppState] = useState(AppState.currentState);
   const [isResuming, setIsResuming] = useState(false);
   // Only trigger ResumeScreen when the app truly went to background (not just inactive).
@@ -251,6 +251,10 @@ const AppContent = () => {
 
   return (
     <PaperProvider theme={theme}>
+      <StatusBar 
+        barStyle={isDarkMode ? 'light-content' : 'dark-content'} 
+        backgroundColor={theme.colors.background} 
+      />
       <AppNavigator />
       <GlobalPremiumAlert />
       {isResuming && (

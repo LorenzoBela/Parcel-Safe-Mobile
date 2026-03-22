@@ -1268,10 +1268,37 @@ class BackgroundLocationManager {
         if (!sanitizedCurrentBoxId || this.state.status !== 'RUNNING') return;
 
         try {
-            const location = await Promise.race([
-                Location.getCurrentPositionAsync({ accuracy: CONFIG.ACCURACY }),
-                new Promise<never>((_, reject) => setTimeout(() => reject(new Error('timeout')), 10000)),
-            ]) as Location.LocationObject;
+            // Two-stage strategy: try fast cell/WiFi fix first (works indoors),
+            // then attempt a higher-accuracy GPS fix. Both have hard timeouts
+            // so this method never blocks longer than ~12 seconds total.
+            const tryFix = async (
+                accuracy: Location.LocationAccuracy,
+                timeoutMs: number
+            ): Promise<Location.LocationObject | null> => {
+                try {
+                    return await Promise.race([
+                        Location.getCurrentPositionAsync({ accuracy }),
+                        new Promise<never>((_, reject) =>
+                            setTimeout(() => reject(new Error('timeout')), timeoutMs)),
+                    ]) as Location.LocationObject;
+                } catch {
+                    return null;
+                }
+            };
+
+            // Stage 1: Fast fix (cell/WiFi) — 4s timeout, works indoors
+            let location = await tryFix(Location.Accuracy.Balanced, 4000);
+
+            // Stage 2: High accuracy (GPS) — 8s timeout, for outdoor upgrades
+            if (!location) {
+                location = await tryFix(Location.Accuracy.High, 8000);
+            }
+
+            if (!location) {
+                // Both stages failed — silently back off; the foreground watcher
+                // or signal recovery watchdog will catch up.
+                return;
+            }
 
             // Write directly to Firebase — NOT through offlineQueueService.
             // offlineQueueService breaks in Android Doze mode (same fix as background task).
@@ -1326,7 +1353,9 @@ class BackgroundLocationManager {
             );
             await writePhoneStatusIfDue(sanitizedCurrentBoxId, phoneStatus);
         } catch (error) {
-            console.error('[EC-15] Force update failed:', error);
+            // Non-fatal: the foreground watcher and signal recovery watchdog
+            // provide redundant coverage. Only log once per minute.
+            warnBackgroundStatusOncePerInterval('[EC-15] Force update attempt failed (non-fatal)', error);
         }
     }
 
@@ -1713,20 +1742,30 @@ class BackgroundLocationManager {
     private startForegroundHeartbeat(): void {
         if (this.foregroundHeartbeatInterval || this.state.status !== 'RUNNING') return;
 
+        // The heartbeat acts as a gap-filler: it only calls forceUpdate when
+        // the foreground watcher (watchPositionAsync) hasn't delivered a fix
+        // recently. This eliminates redundant one-shot GPS requests that
+        // timeout indoors while the persistent watcher session is fine.
         this.foregroundHeartbeatInterval = setInterval(async () => {
             if (this.isForegroundHeartbeatInFlight) return;
             if (AppState.currentState !== 'active') return;
             if (!currentBoxId || this.state.status !== 'RUNNING') return;
 
+            // Skip if the foreground watcher already delivered a fix recently.
+            // The watcher writes on a persistent GPS session and is far more
+            // reliable than a one-shot getCurrentPositionAsync call.
+            const msSinceLastFix = Date.now() - (lastBackgroundTaskUpdateTimestamp ?? 0);
+            if (msSinceLastFix < CONFIG.LOCATION_INTERVAL_MS * 2) return;
+
             this.isForegroundHeartbeatInFlight = true;
             try {
                 await this.forceUpdate();
             } catch (error) {
-                console.error('[EC-15] Foreground heartbeat forceUpdate failed:', error);
+                console.warn('[EC-15] Foreground heartbeat gap-fill failed (non-fatal):', error);
             } finally {
                 this.isForegroundHeartbeatInFlight = false;
             }
-        }, CONFIG.LOCATION_INTERVAL_MS);
+        }, CONFIG.LOCATION_INTERVAL_MS * 3);
     }
 
     private stopForegroundHeartbeat(): void {

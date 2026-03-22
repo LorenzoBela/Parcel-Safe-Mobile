@@ -564,6 +564,12 @@ export async function showIncomingOrderNotification(
     estimatedFare: number,
     bookingId: string
 ): Promise<string> {
+    // Gate behind user preference
+    if (!(await isNotificationCategoryEnabled('rider_alerts'))) {
+        console.log('[NotifPrefs] rider_alerts disabled, skipping incoming order notification');
+        return 'PREF_DISABLED';
+    }
+
     if (!checkNotificationsAvailable()) {
         console.log(`[DEV NOTIFICATION] 🚀 New Order Request!\nPickup: ${pickupAddress}\nFare: ₱${estimatedFare.toFixed(2)}`);
         return 'SIMULATED_NOTIF_ID';
@@ -624,6 +630,12 @@ export async function showStatusNotification(
     body: string,
     data?: Record<string, any>
 ): Promise<string> {
+    // Gate behind user preference
+    if (!(await isNotificationCategoryEnabled('delivery_updates'))) {
+        console.log('[NotifPrefs] delivery_updates disabled, skipping status notification');
+        return 'PREF_DISABLED';
+    }
+
     if (!nativeNotificationsAvailable) {
         console.log(`[DEV NOTIFICATION] ${title}: ${body}`);
         return 'SIMULATED_NOTIF_ID';
@@ -930,3 +942,112 @@ export function addNotificationReceivedListener(
     return Notifications.addNotificationReceivedListener(callback);
 }
 
+// ─── Notification Preference Helpers ────────────────────────────────────────────
+
+/** Default preferences – must match the DB column default */
+export const DEFAULT_NOTIFICATION_PREFS: NotificationPreferences = {
+    delivery_updates: true,
+    rider_alerts: true,
+    security: true,
+    promotions: true,
+};
+
+export interface NotificationPreferences {
+    delivery_updates: boolean;
+    rider_alerts: boolean;
+    security: boolean;     // always true – UI should lock this
+    promotions: boolean;
+}
+
+const PREFS_CACHE_KEY = '@notification_preferences';
+
+/**
+ * Load notification preferences (local cache → Supabase fallback).
+ */
+export async function loadNotificationPreferences(): Promise<NotificationPreferences> {
+    try {
+        // Try local cache first for speed
+        const cached = await AsyncStorage.getItem(PREFS_CACHE_KEY);
+        if (cached) return { ...DEFAULT_NOTIFICATION_PREFS, ...JSON.parse(cached) };
+
+        // Fallback: fetch from Supabase
+        const { data: { user } } = await supabase.auth.getUser();
+        if (!user) return DEFAULT_NOTIFICATION_PREFS;
+
+        const { data } = await supabase
+            .from('profiles')
+            .select('notification_preferences')
+            .eq('id', user.id)
+            .single();
+
+        const prefs = { ...DEFAULT_NOTIFICATION_PREFS, ...(data?.notification_preferences || {}) };
+        // Security cannot be disabled
+        prefs.security = true;
+        await AsyncStorage.setItem(PREFS_CACHE_KEY, JSON.stringify(prefs));
+        return prefs;
+    } catch (error) {
+        console.warn('[NotifPrefs] Failed to load preferences:', error);
+        return DEFAULT_NOTIFICATION_PREFS;
+    }
+}
+
+/**
+ * Check if a specific notification category is enabled.
+ */
+export async function isNotificationCategoryEnabled(
+    category: keyof NotificationPreferences
+): Promise<boolean> {
+    // Security is always enabled regardless of user setting
+    if (category === 'security') return true;
+    const prefs = await loadNotificationPreferences();
+    return prefs[category] ?? true;
+}
+
+/**
+ * Update a single notification preference and persist to Supabase + local cache.
+ */
+export async function updateNotificationPreference(
+    category: keyof NotificationPreferences,
+    enabled: boolean
+): Promise<boolean> {
+    // Security cannot be disabled
+    if (category === 'security' && !enabled) return false;
+
+    try {
+        const { data: { user } } = await supabase.auth.getUser();
+        if (!user) return false;
+
+        // Load current prefs, apply change
+        const prefs = await loadNotificationPreferences();
+        prefs[category] = enabled;
+
+        // Persist to Supabase
+        const { error } = await supabase
+            .from('profiles')
+            .update({
+                notification_preferences: prefs,
+                updated_at: new Date().toISOString(),
+            })
+            .eq('id', user.id);
+
+        if (error) {
+            console.error('[NotifPrefs] Supabase update failed:', error.message);
+            return false;
+        }
+
+        // Update local cache
+        await AsyncStorage.setItem(PREFS_CACHE_KEY, JSON.stringify(prefs));
+        console.log(`[NotifPrefs] ${category} set to ${enabled}`);
+        return true;
+    } catch (error) {
+        console.error('[NotifPrefs] Failed to update preference:', error);
+        return false;
+    }
+}
+
+/**
+ * Clear the local preference cache (call on logout).
+ */
+export async function clearNotificationPreferencesCache(): Promise<void> {
+    await AsyncStorage.removeItem(PREFS_CACHE_KEY);
+}

@@ -1,6 +1,6 @@
 import React, { useEffect } from 'react';
 import { StyleSheet } from 'react-native';
-import { NavigationContainer } from '@react-navigation/native';
+import { NavigationContainer, DefaultTheme, DarkTheme as NavDarkTheme } from '@react-navigation/native';
 import { createStackNavigator, CardStyleInterpolators } from '@react-navigation/stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -53,6 +53,7 @@ import EditProfileScreen from '../screens/common/EditProfileScreen';
 import SavedAddressesScreen from '../screens/common/SavedAddressesScreen';
 import SavedContactsScreen from '../screens/common/SavedContactsScreen';
 import NotificationListScreen from '../screens/common/NotificationListScreen';
+import NotificationPreferencesScreen from '../screens/common/NotificationPreferencesScreen';
 
 const Stack = createStackNavigator();
 const Tab = createBottomTabNavigator();
@@ -218,13 +219,39 @@ const AdminNavigator = () => {
 };
 
 export default function AppNavigator() {
+    const paperTheme = useTheme();
+    const isDark = paperTheme.dark;
+    
+    // Create a nav theme that automatically styles all Stack Headers globally based on dark mode.
+    const navTheme = isDark ? {
+        ...NavDarkTheme,
+        colors: {
+            ...NavDarkTheme.colors,
+            background: '#000000',
+            card: '#000000', // Header background (full black to match our style)
+            text: '#FFFFFF', // Header title text
+            border: '#2C2C2E', // Header bottom border
+            primary: '#FFFFFF', // Back button color
+        }
+    } : {
+        ...DefaultTheme,
+        colors: {
+            ...DefaultTheme.colors,
+            background: '#FFFFFF',
+            card: '#FFFFFF', // Light mode header
+            text: '#000000',
+            border: '#E5E5EA',
+            primary: '#000000',
+        }
+    };
+
     // Layer 4: Trigger Firebase-to-Supabase sync on app startup
     useEffect(() => {
         triggerDeliverySync().catch(() => { });
     }, []);
 
     return (
-        <NavigationContainer>
+        <NavigationContainer theme={navTheme}>
             <Stack.Navigator id="RootStack" initialRouteName="AuthLoading" screenOptions={{ headerShown: false, cardStyleInterpolator: CardStyleInterpolators.forFadeFromCenter }}>
                 <Stack.Screen name="AuthLoading" component={AuthLoadingScreen} />
                 <Stack.Screen name="Login" component={LoginScreen} />
@@ -269,6 +296,7 @@ export default function AppNavigator() {
                 <Stack.Screen name="SavedAddresses" component={SavedAddressesScreen} options={{ headerShown: true, title: 'Saved Addresses' }} />
                 <Stack.Screen name="SavedContacts" component={SavedContactsScreen} options={{ headerShown: true, title: 'Saved Contacts' }} />
                 <Stack.Screen name="NotificationList" component={NotificationListScreen} options={{ headerShown: false }} />
+                <Stack.Screen name="NotificationPreferences" component={NotificationPreferencesScreen} options={{ headerShown: true, title: 'Notification Preferences' }} />
 
                 {/* EC-81: Theft Detection Screens */}
                 <Stack.Screen name="TheftAlert" component={TheftAlertScreen} options={{ headerShown: true, title: 'Box Security' }} />

@@ -9,6 +9,9 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { signOut, signInWithGoogleAndSyncProfile } from '../../services/auth';
 import useAuthStore from '../../store/authStore';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import {
+    clearNotificationPreferencesCache,
+} from '../../services/pushNotificationService';
 
 // ─── Colors ─────────────────────────────────────────────────────────────────────
 const light = {
@@ -56,7 +59,6 @@ export default function SettingsScreen() {
     const login = useAuthStore((state: any) => state.login);
     const logout = useAuthStore((state: any) => state.logout);
     const role = useAuthStore((state: any) => state.role);
-    const [notifications, setNotifications] = useState(true);
     const [profile, setProfile] = useState<any>(null);
     const [isSwitching, setIsSwitching] = useState(false);
 
@@ -72,10 +74,13 @@ export default function SettingsScreen() {
         }
     };
 
-    useFocusEffect(useCallback(() => { fetchProfile(); }, []));
+    useFocusEffect(useCallback(() => {
+        fetchProfile();
+    }, []));
 
     const handleLogout = async () => {
         try {
+            await clearNotificationPreferencesCache();
             await signOut();
             logout();
         } catch (error) {
@@ -116,7 +121,11 @@ export default function SettingsScreen() {
             <StatusBar barStyle={isDarkMode ? 'light-content' : 'dark-content'} />
 
             {/* Profile Card */}
-            <View style={[styles.profileCard, { backgroundColor: c.card, borderColor: c.border }]}>
+            <TouchableOpacity
+                style={[styles.profileCard, { backgroundColor: c.card, borderColor: c.border }]}
+                onPress={() => navigation.navigate('Profile')}
+                activeOpacity={0.7}
+            >
                 <Avatar.Image
                     size={56}
                     source={{ uri: profile?.avatar_url || 'https://i.pravatar.cc/150?img=12' }}
@@ -130,24 +139,17 @@ export default function SettingsScreen() {
                     </Text>
                 </View>
                 <MaterialCommunityIcons name="chevron-right" size={20} color={c.textTer} />
+            </TouchableOpacity>
+
+            {/* Notifications */}
+            <Text style={[styles.sectionTitle, { color: c.textSec }]}>NOTIFICATIONS</Text>
+            <View style={[styles.section, { backgroundColor: c.card, borderColor: c.border }]}>
+                <SettingsRow icon="bell-outline" label="Notification Preferences" subtitle="Manage alerts, promos & more" c={c} onPress={() => navigation.navigate('NotificationPreferences')} />
             </View>
 
             {/* Preferences */}
             <Text style={[styles.sectionTitle, { color: c.textSec }]}>PREFERENCES</Text>
             <View style={[styles.section, { backgroundColor: c.card, borderColor: c.border }]}>
-                <SettingsRow
-                    icon="bell-outline"
-                    label="Push Notifications"
-                    subtitle="Delivery updates & alerts"
-                    c={c}
-                    right={
-                        <Switch
-                            value={notifications}
-                            onValueChange={setNotifications}
-                            trackColor={{ false: c.border, true: c.switchTrack }}
-                        />
-                    }
-                />
                 <SettingsRow
                     icon="moon-waning-crescent"
                     label="Dark Mode"

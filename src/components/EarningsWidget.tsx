@@ -117,7 +117,7 @@ export default function EarningsWidget({ riderId, dailyGoal: initialDailyGoal = 
     const formatCurrency = (amount: number) => `₱${amount.toFixed(0)}`;
 
     return (
-        <Surface style={styles.container} elevation={1}>
+        <Surface style={[styles.container, { backgroundColor: theme.colors.surface }]} elevation={1}>
             <View style={styles.header}>
                 <View style={styles.headerLeft}>
                     <MaterialCommunityIcons name="wallet-outline" size={20} color={theme.colors.onSurfaceVariant} />
@@ -139,7 +139,7 @@ export default function EarningsWidget({ riderId, dailyGoal: initialDailyGoal = 
             ) : (
                 <View style={styles.content}>
                     <View style={styles.earningsWrapper}>
-                        <Text variant="headlineMedium" style={[styles.amount, { color: isGoalMet ? '#4CAF50' : theme.colors.onSurface }]}>
+                        <Text variant="headlineMedium" style={[styles.amount, { color: isGoalMet ? (theme.dark ? '#81C784' : '#4CAF50') : theme.colors.onSurface }]}>
                             {formatCurrency(earnings)}
                         </Text>
                         
@@ -173,13 +173,13 @@ export default function EarningsWidget({ riderId, dailyGoal: initialDailyGoal = 
                     </View>
 
                     {/* Custom Linear Progress Bar to simulate a goal tracker */}
-                    <View style={styles.progressTrack}>
+                    <View style={[styles.progressTrack, { backgroundColor: theme.dark ? '#2C2C2E' : '#F0F0F0' }]}>
                         <View
                             style={[
                                 styles.progressFill,
                                 {
                                     width: `${progress * 100}%`,
-                                    backgroundColor: isGoalMet ? '#4CAF50' : theme.colors.primary,
+                                    backgroundColor: isGoalMet ? (theme.dark ? '#81C784' : '#4CAF50') : theme.colors.primary,
                                 }
                             ]}
                         />
@@ -187,9 +187,9 @@ export default function EarningsWidget({ riderId, dailyGoal: initialDailyGoal = 
                     <View style={styles.progressFooter}>
                         <Text variant="labelSmall" style={{ color: theme.colors.outline }}>0</Text>
                         {isGoalMet && (
-                            <View style={styles.goalMetBadge}>
-                                <MaterialCommunityIcons name="check-decagram" size={14} color="#4CAF50" />
-                                <Text variant="labelSmall" style={{ color: '#4CAF50', marginLeft: 4, fontWeight: 'bold' }}>Goal Met!</Text>
+                            <View style={[styles.goalMetBadge, { backgroundColor: theme.dark ? '#052E16' : '#E8F5E9' }]}>
+                                <MaterialCommunityIcons name="check-decagram" size={14} color={theme.dark ? '#4ADE80' : '#4CAF50'} />
+                                <Text variant="labelSmall" style={{ color: theme.dark ? '#4ADE80' : '#4CAF50', marginLeft: 4, fontWeight: 'bold' }}>Goal Met!</Text>
                             </View>
                         )}
                         <Text variant="labelSmall" style={{ color: theme.colors.outline }}>Daily Goal</Text>
@@ -206,7 +206,6 @@ const styles = StyleSheet.create({
         marginBottom: 8,
         padding: 16,
         borderRadius: 16,
-        backgroundColor: '#FFFFFF',
     },
     header: {
         flexDirection: 'row',
@@ -264,7 +263,6 @@ const styles = StyleSheet.create({
     },
     progressTrack: {
         height: 8,
-        backgroundColor: '#F0F0F0',
         borderRadius: 4,
         overflow: 'hidden',
         marginBottom: 8,
@@ -281,7 +279,6 @@ const styles = StyleSheet.create({
     goalMetBadge: {
         flexDirection: 'row',
         alignItems: 'center',
-        backgroundColor: '#E8F5E9',
         paddingHorizontal: 8,
         paddingVertical: 2,
         borderRadius: 12,

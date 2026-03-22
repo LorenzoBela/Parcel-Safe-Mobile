@@ -257,6 +257,8 @@ export default function RiderDashboard() {
     // Ref so the foreground watcher callback can access the current boxId without a stale closure
     const activeBoxIdRef = useRef<string | null>(null);
     const lastForegroundWriteRef = useRef<number>(0);
+    /** Throttle noisy dev logs to once per 30s */
+    const lastFgLogRef = useRef<number>(0);
     // Track previous delivery status so we can detect changes on the rider's side
     const prevRiderDeliveryStatus = useRef<string | null>(null);
 
@@ -301,13 +303,17 @@ export default function RiderDashboard() {
                                     location.coords.speed ?? 0,
                                     location.coords.heading ?? 0
                                 ).then(() => {
-                                    if (__DEV__) console.log(`[RiderDashboard] ✓ Foreground write OK | box=${boxId} | lat=${location.coords.latitude.toFixed(5)} lng=${location.coords.longitude.toFixed(5)}`);
+                                    if (__DEV__ && now - lastFgLogRef.current >= 30_000) {
+                                        lastFgLogRef.current = now;
+                                        console.log(`[RiderDashboard] ✓ Foreground write OK | box=${boxId} | lat=${location.coords.latitude.toFixed(5)} lng=${location.coords.longitude.toFixed(5)}`);
+                                    }
                                 }).catch((err) => {
                                     console.warn('[RiderDashboard] ✗ Foreground Firebase write failed:', err);
                                 });
                             }
 
-                            if (__DEV__) {
+                            if (__DEV__ && Date.now() - lastFgLogRef.current >= 30_000) {
+                                lastFgLogRef.current = Date.now();
                                 console.log('[RiderDashboard] Phone Location Update:', {
                                     lat: location.coords.latitude,
                                     lng: location.coords.longitude,

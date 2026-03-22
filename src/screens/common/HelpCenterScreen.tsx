@@ -1,13 +1,27 @@
 import React from 'react';
 import { Animated, StyleSheet, ScrollView, View } from 'react-native';
 import { useEntryAnimation } from '../../hooks/useEntryAnimation';
-import { Text, List, Button, useTheme, Card, Divider } from 'react-native-paper';
+import { Text, List, Button, Card, Divider } from 'react-native-paper';
 import { useNavigation } from '@react-navigation/native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { useAppTheme } from '../../context/ThemeContext';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+// ─── Colors ─────────────────────────────────────────────────────────────────────
+const light = {
+    bg: '#FFFFFF', card: '#F6F6F6', border: '#E5E5EA',
+    text: '#000000', textSec: '#6B6B6B', textTer: '#AEAEB2',
+    accent: '#000000', error: '#FF3B30',
+};
+const dark = {
+    bg: '#000000', card: '#141414', border: '#2C2C2E',
+    text: '#FFFFFF', textSec: '#8E8E93', textTer: '#636366',
+    accent: '#FFFFFF', error: '#FF453A',
+};
+
 export default function HelpCenterScreen() {
-    const theme = useTheme();
+    const { isDarkMode } = useAppTheme();
+    const c = isDarkMode ? dark : light;
     const navigation = useNavigation();
 
     const insets = useSafeAreaInsets();
@@ -29,55 +43,59 @@ export default function HelpCenterScreen() {
     ];
 
     return (
-        <Animated.View style={[{ flex: 1 }, screenAnim.style]}>
+        <Animated.View style={[{ flex: 1, backgroundColor: c.bg }, screenAnim.style]}>
         <ScrollView
-            style={[styles.container, { backgroundColor: theme.colors.background }]}
+            style={[styles.container, { backgroundColor: c.bg }]}
             contentContainerStyle={{
                 paddingBottom: insets.bottom + 20,
                 paddingTop: insets.top
             }}
         >
             <View style={styles.header}>
-                <MaterialCommunityIcons name="lifebuoy" size={60} color={theme.colors.primary} />
-                <Text variant="headlineMedium" style={[styles.title, { color: theme.colors.onSurface }]}>Help Center</Text>
-                <Text variant="bodyMedium" style={{ color: theme.colors.onSurfaceVariant, textAlign: 'center' }}>
+                <MaterialCommunityIcons name="lifebuoy" size={60} color={c.accent} />
+                <Text variant="headlineMedium" style={[styles.title, { color: c.text }]}>Help Center</Text>
+                <Text variant="bodyMedium" style={{ color: c.textSec, textAlign: 'center' }}>
                     We're here to help you with your deliveries.
                 </Text>
             </View>
 
             <List.Section>
-                <List.Subheader style={{ color: theme.colors.primary }}>Frequently Asked Questions</List.Subheader>
+                <List.Subheader style={{ color: c.textSec, fontWeight: 'bold' }}>Frequently Asked Questions</List.Subheader>
                 {FAQs.map((faq, index) => (
-                    <Card key={index} style={[styles.card, { backgroundColor: theme.colors.surface }]} mode="elevated">
+                    <Card key={index} style={[styles.card, { backgroundColor: c.card, borderWidth: 1, borderColor: c.border }]} elevation={0}>
                         <Card.Content>
-                            <Text variant="titleMedium" style={[styles.question, { color: theme.colors.onSurface }]}>{faq.question}</Text>
-                            <Text variant="bodyMedium" style={{ color: theme.colors.onSurfaceVariant }}>{faq.answer}</Text>
+                            <Text variant="titleMedium" style={[styles.question, { color: c.text }]}>{faq.question}</Text>
+                            <Text variant="bodyMedium" style={{ color: c.textSec }}>{faq.answer}</Text>
                         </Card.Content>
                     </Card>
                 ))}
             </List.Section>
 
             <List.Section>
-                <List.Subheader style={{ color: theme.colors.primary }}>Contact Support</List.Subheader>
-                <Card style={[styles.card, { backgroundColor: theme.colors.surface }]} mode="elevated">
+                <List.Subheader style={{ color: c.textSec, fontWeight: 'bold' }}>Contact Support</List.Subheader>
+                <Card style={[styles.card, { backgroundColor: c.card, borderWidth: 1, borderColor: c.border }]} elevation={0}>
                     <List.Item
                         title="Customer Hotline"
+                        titleStyle={{ color: c.text, fontWeight: '500' }}
                         description="(02) 8-123-4567"
-                        left={props => <List.Icon {...props} icon="phone" color={theme.colors.primary} />}
+                        descriptionStyle={{ color: c.textSec }}
+                        left={props => <List.Icon {...props} icon="phone" color={c.accent} />}
                         onPress={() => console.log('Call Hotline')}
                     />
-                    <Divider />
+                    <Divider style={{ backgroundColor: c.border }} />
                     <List.Item
                         title="Email Support"
+                        titleStyle={{ color: c.text, fontWeight: '500' }}
                         description="support@parcelsafe.com"
-                        left={props => <List.Icon {...props} icon="email" color={theme.colors.primary} />}
+                        descriptionStyle={{ color: c.textSec }}
+                        left={props => <List.Icon {...props} icon="email" color={c.accent} />}
                         onPress={() => console.log('Email Support')}
                     />
                 </Card>
             </List.Section>
 
-            <Button mode="contained" onPress={() => navigation.goBack()} style={styles.button}>
-                Back to Settings
+            <Button mode="contained" onPress={() => navigation.goBack()} buttonColor={c.accent} textColor={c.bg} style={styles.button}>
+                Back
             </Button>
             <View style={{ height: 20 }} />
         </ScrollView>
@@ -100,13 +118,15 @@ const styles = StyleSheet.create({
     },
     card: {
         marginBottom: 12,
-        borderRadius: 8,
+        borderRadius: 16,
     },
     question: {
         fontWeight: 'bold',
-        marginBottom: 4,
+        marginBottom: 8,
     },
     button: {
-        marginTop: 10,
+        marginTop: 20,
+        borderRadius: 12,
+        paddingVertical: 6,
     }
 });

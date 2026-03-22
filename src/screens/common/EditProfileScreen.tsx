@@ -1,15 +1,29 @@
-﻿import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { View, Animated, StyleSheet, ScrollView, Alert, KeyboardAvoidingView, Platform } from 'react-native';
 import { useEntryAnimation } from '../../hooks/useEntryAnimation';
-import { TextInput, Button, useTheme, Surface, Text } from 'react-native-paper';
+import { TextInput, Button, Surface, Text } from 'react-native-paper';
 import { useNavigation } from '@react-navigation/native';
 import { supabase } from '../../services/supabaseClient';
 import LocationPicker, { LocationData } from '../../components/LocationPicker';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { useAppTheme } from '../../context/ThemeContext';
 import { PremiumAlert } from '../../services/PremiumAlertService';
 
+// ─── Colors ─────────────────────────────────────────────────────────────────────
+const light = {
+    bg: '#FFFFFF', card: '#F6F6F6', border: '#E5E5EA',
+    text: '#000000', textSec: '#6B6B6B', textTer: '#AEAEB2',
+    accent: '#000000', error: '#FF3B30',
+};
+const dark = {
+    bg: '#000000', card: '#141414', border: '#2C2C2E',
+    text: '#FFFFFF', textSec: '#8E8E93', textTer: '#636366',
+    accent: '#FFFFFF', error: '#FF453A',
+};
+
 export default function EditProfileScreen() {
-    const theme = useTheme();
+    const { isDarkMode } = useAppTheme();
+    const c = isDarkMode ? dark : light;
     const navigation = useNavigation<any>();
     const [loading, setLoading] = useState(false);
     const [saving, setSaving] = useState(false);
@@ -114,30 +128,33 @@ export default function EditProfileScreen() {
     const screenAnim = useEntryAnimation(0);
 
     return (
-        <Animated.View style={[{ flex: 1 }, screenAnim.style]}>
+        <Animated.View style={[{ flex: 1, backgroundColor: c.bg }, screenAnim.style]}>
         <KeyboardAvoidingView
-            style={[styles.container, { backgroundColor: theme.colors.background }]}
+            style={[styles.container, { backgroundColor: c.bg }]}
             behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         >
             <ScrollView contentContainerStyle={styles.scrollContent}>
                 <View style={styles.header}>
-                    <Text variant="headlineMedium" style={{ color: theme.colors.onBackground, fontWeight: 'bold' }}>
+                    <Text variant="headlineMedium" style={{ color: c.text, fontWeight: 'bold' }}>
                         Edit Profile
                     </Text>
-                    <Text variant="bodyMedium" style={{ color: theme.colors.onSurfaceVariant, marginTop: 4 }}>
+                    <Text variant="bodyMedium" style={{ color: c.textSec, marginTop: 4 }}>
                         Keep your details up to date for smooth deliveries.
                     </Text>
                 </View>
 
-                <Surface style={[styles.formContainer, { backgroundColor: theme.colors.surface }]} elevation={1}>
+                <Surface style={[styles.formContainer, { backgroundColor: c.card }]} elevation={0}>
                     <TextInput
                         label="Full Name"
                         value={fullName}
                         onChangeText={setFullName}
                         mode="outlined"
-                        style={styles.input}
+                        style={[styles.input, { backgroundColor: c.bg }]}
+                        outlineColor={c.border}
+                        activeOutlineColor={c.accent}
+                        textColor={c.text}
                         disabled={loading}
-                        left={<TextInput.Icon icon="account" />}
+                        left={<TextInput.Icon icon="account" color={c.textSec} />}
                     />
 
                     <TextInput
@@ -146,10 +163,14 @@ export default function EditProfileScreen() {
                         onChangeText={setPhoneNumber}
                         mode="outlined"
                         keyboardType="phone-pad"
-                        style={styles.input}
+                        style={[styles.input, { backgroundColor: c.bg }]}
+                        outlineColor={c.border}
+                        activeOutlineColor={c.accent}
+                        textColor={c.text}
                         disabled={loading}
-                        left={<TextInput.Icon icon="phone" />}
+                        left={<TextInput.Icon icon="phone" color={c.textSec} />}
                         placeholder="+63 9xx xxx xxxx"
+                        placeholderTextColor={c.textTer}
                     />
 
                     <View>
@@ -158,14 +179,18 @@ export default function EditProfileScreen() {
                             value={homeAddress}
                             onChangeText={setHomeAddress}
                             mode="outlined"
-                            style={[styles.input, styles.textArea]}
+                            style={[styles.input, styles.textArea, { backgroundColor: c.bg }]}
+                            outlineColor={c.border}
+                            activeOutlineColor={c.accent}
+                            textColor={c.text}
                             disabled={loading}
                             multiline
                             numberOfLines={3}
-                            left={<TextInput.Icon icon="map-marker" />}
+                            left={<TextInput.Icon icon="map-marker" color={c.textSec} />}
                             right={
                                 <TextInput.Icon
                                     icon="map"
+                                    color={c.accent}
                                     onPress={() => setShowLocationPicker(true)}
                                 />
                             }
@@ -175,9 +200,9 @@ export default function EditProfileScreen() {
                                 <MaterialCommunityIcons
                                     name="check-circle"
                                     size={16}
-                                    color={theme.colors.primary}
+                                    color={c.accent}
                                 />
-                                <Text variant="bodySmall" style={{ color: theme.colors.primary, marginLeft: 4 }}>
+                                <Text variant="bodySmall" style={{ color: c.accent, marginLeft: 4 }}>
                                     Location saved
                                 </Text>
                             </View>
@@ -191,6 +216,8 @@ export default function EditProfileScreen() {
                         onPress={handleSave}
                         loading={saving}
                         disabled={loading || saving}
+                        buttonColor={c.accent}
+                        textColor={c.bg}
                         style={styles.saveButton}
                         contentStyle={{ paddingVertical: 8 }}
                     >
@@ -201,7 +228,8 @@ export default function EditProfileScreen() {
                         mode="outlined"
                         onPress={() => navigation.goBack()}
                         disabled={saving}
-                        style={styles.cancelButton}
+                        textColor={c.textSec}
+                        style={[styles.cancelButton, { borderColor: c.border }]}
                     >
                         Cancel
                     </Button>
@@ -258,10 +286,10 @@ const styles = StyleSheet.create({
     },
     saveButton: {
         marginBottom: 12,
-        borderRadius: 8,
+        borderRadius: 12,
     },
     cancelButton: {
-        borderRadius: 8,
+        borderRadius: 12,
         borderWidth: 1,
     },
     locationIndicator: {

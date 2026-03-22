@@ -14,7 +14,7 @@
 
 import { Platform, AppState, AppStateStatus } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { NOTIFICATION_CHANNELS } from './pushNotificationService';
+import { NOTIFICATION_CHANNELS, isNotificationCategoryEnabled } from './pushNotificationService';
 
 const LAST_PROMO_KEY = '@last_promo_notification';
 // 110 minutes — prevents double-fire on adjacent hourly slots
@@ -107,6 +107,7 @@ async function shouldSendPromo(): Promise<boolean> {
 
 async function performPromoSmartCheck(): Promise<void> {
     if (!isWithinPromoHours()) return;
+    if (!(await isNotificationCategoryEnabled('promotions'))) return;
     if (!(await shouldSendPromo())) return;
 
     const notifs = loadNotifications();
@@ -213,6 +214,12 @@ export async function initializeScheduledPromos(): Promise<void> {
     const notifs = loadNotifications();
     if (!notifs) {
         if (__DEV__) console.log('[ScheduledPromo] expo-notifications not available, skipping');
+        return;
+    }
+
+    // Respect user's promotions preference
+    if (!(await isNotificationCategoryEnabled('promotions'))) {
+        if (__DEV__) console.log('[ScheduledPromo] Promotions disabled by user, skipping');
         return;
     }
 

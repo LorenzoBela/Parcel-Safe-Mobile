@@ -226,7 +226,7 @@ export default function CustomerDashboard() {
 
     return (
         <View style={[styles.container, { backgroundColor: c.bg }]}>
-            <StatusBar barStyle={c.statusBar} />
+            <StatusBar barStyle="light-content" />
 
             {/* ── Weather Banner ─────────────────────────────────────────── */}
             <ImageBackground
@@ -235,6 +235,7 @@ export default function CustomerDashboard() {
                 imageStyle={{ borderBottomLeftRadius: 24, borderBottomRightRadius: 24 }}
                 resizeMode="cover"
             >
+                <View style={{ position: 'absolute', top: 0, left: 0, right: 0, height: insets.top, backgroundColor: 'rgba(0,0,0,0.3)' }} />
                 <View style={[styles.headerOverlay, { paddingTop: insets.top + 12 }]}>
                     <View style={styles.headerRow}>
                         <View style={{ flex: 1 }}>
@@ -372,16 +373,16 @@ export default function CustomerDashboard() {
                 {/* ── Book Action ────────────────────────────────────────── */}
                 <Animated.View style={actionsAnim.style}>
                 <TouchableOpacity
-                    style={[styles.bookCard, { backgroundColor: c.accent }]}
+                    style={[styles.bookCard, { backgroundColor: isDarkMode ? c.pillBg : c.accent }]}
                     onPress={() => navigation.navigate('BookService')}
                     activeOpacity={0.85}
                 >
                     <View style={{ flex: 1 }}>
-                        <Text style={[styles.bookTitle, { color: c.bg }]}>Send a Package</Text>
-                        <Text style={[styles.bookSub, { color: c.bg + 'AA' }]}>Fast, secure delivery</Text>
+                        <Text style={[styles.bookTitle, { color: isDarkMode ? c.text : c.bg }]}>Send a Package</Text>
+                        <Text style={[styles.bookSub, { color: isDarkMode ? c.textSec : (c.bg + 'AA') }]}>Fast, secure delivery</Text>
                     </View>
-                    <View style={[styles.bookIcon, { backgroundColor: c.bg }]}>
-                        <MaterialCommunityIcons name="moped" size={28} color={c.accent} />
+                    <View style={[styles.bookIcon, { backgroundColor: isDarkMode ? c.bg : c.bg }]}>
+                        <MaterialCommunityIcons name="moped" size={28} color={isDarkMode ? c.text : c.accent} />
                     </View>
                 </TouchableOpacity>
 

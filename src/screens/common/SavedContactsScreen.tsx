@@ -5,9 +5,21 @@ import { Text, Button, useTheme, Surface, IconButton, TextInput, Portal, Modal, 
 import { useNavigation } from '@react-navigation/native';
 import { supabase } from '../../services/supabaseClient';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { useAppTheme } from '../../context/ThemeContext';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { PremiumAlert } from '../../services/PremiumAlertService';
 
+// ─── Colors ─────────────────────────────────────────────────────────────────────
+const light = {
+    bg: '#FFFFFF', card: '#F6F6F6', border: '#E5E5EA',
+    text: '#000000', textSec: '#6B6B6B', textTer: '#AEAEB2',
+    accent: '#000000', error: '#FF3B30',
+};
+const dark = {
+    bg: '#000000', card: '#141414', border: '#2C2C2E',
+    text: '#FFFFFF', textSec: '#8E8E93', textTer: '#636366',
+    accent: '#FFFFFF', error: '#FF453A',
+};
 interface SavedContact {
     id: string;
     name: string;
@@ -15,6 +27,8 @@ interface SavedContact {
 }
 
 export default function SavedContactsScreen() {
+    const { isDarkMode } = useAppTheme();
+    const c = isDarkMode ? dark : light;
     const theme = useTheme();
     const navigation = useNavigation();
     const insets = useSafeAreaInsets();
@@ -157,36 +171,38 @@ export default function SavedContactsScreen() {
     const screenAnim = useEntryAnimation(0);
 
     return (
-        <Animated.View style={[styles.container, { backgroundColor: theme.colors.background }, screenAnim.style]}>
+        <Animated.View style={[styles.container, { backgroundColor: c.bg }, screenAnim.style]}>
             <ScrollView contentContainerStyle={[styles.scrollContent, { paddingTop: insets.top + 20, paddingBottom: 100 + insets.bottom }]}>
                 {loading ? (
-                    <Text style={{ textAlign: 'center', marginTop: 20 }}>Loading contacts...</Text>
+                    <Text style={{ textAlign: 'center', marginTop: 20, color: c.textSec }}>Loading contacts...</Text>
                 ) : contacts.length === 0 ? (
                     <View style={styles.emptyState}>
-                        <MaterialCommunityIcons name="account-outline" size={48} color={theme.colors.outline} />
-                        <Text style={{ marginTop: 16, color: theme.colors.onSurfaceVariant }}>No saved contacts yet.</Text>
-                        <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant, marginTop: 4, textAlign: 'center', paddingHorizontal: 40 }}>
+                        <View style={[styles.emptyIconBox, { backgroundColor: c.accent + '10' }]}>
+                            <MaterialCommunityIcons name="account-outline" size={48} color={c.textTer} />
+                        </View>
+                        <Text variant="titleMedium" style={{ marginTop: 16, fontWeight: 'bold', color: c.text }}>No Contacts Found</Text>
+                        <Text variant="bodyMedium" style={{ color: c.textSec, marginTop: 8, textAlign: 'center', paddingHorizontal: 40 }}>
                             Save contacts here to quickly fill in sender or recipient details when booking.
                         </Text>
                     </View>
                 ) : (
                     contacts.map((contact) => (
-                        <Surface key={contact.id} style={[styles.card, { backgroundColor: theme.colors.surface }]} elevation={1}>
+                        <Surface key={contact.id} style={[styles.card, { backgroundColor: c.card, borderColor: c.border }]} elevation={0}>
                             <View style={styles.cardHeader}>
                                 <View style={styles.labelContainer}>
-                                    <View style={[styles.avatarCircle, { backgroundColor: theme.colors.primaryContainer }]}>
-                                        <Text style={{ fontSize: 16, fontWeight: 'bold', color: theme.colors.primary }}>
+                                    <View style={[styles.avatarCircle, { backgroundColor: c.accent + '14' }]}>
+                                        <Text style={{ fontSize: 18, fontWeight: 'bold', color: c.accent }}>
                                             {contact.name.charAt(0).toUpperCase()}
                                         </Text>
                                     </View>
-                                    <View style={{ marginLeft: 12, flex: 1 }}>
-                                        <Text variant="titleMedium" style={{ fontWeight: 'bold', color: theme.colors.onSurface }}>{contact.name}</Text>
-                                        <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>{contact.phone}</Text>
+                                    <View style={{ marginLeft: 14, flex: 1, justifyContent: 'center' }}>
+                                        <Text variant="titleMedium" style={{ fontWeight: 'bold', color: c.text }}>{contact.name}</Text>
+                                        <Text variant="bodyMedium" style={{ color: c.textSec, marginTop: 2, letterSpacing: 0.5 }}>{contact.phone}</Text>
                                     </View>
                                 </View>
-                                <View style={{ flexDirection: 'row' }}>
-                                    <IconButton icon="pencil" size={20} onPress={() => openEdit(contact)} />
-                                    <IconButton icon="delete" size={20} iconColor={theme.colors.error} onPress={() => handleDelete(contact.id)} />
+                                <View style={{ flexDirection: 'row', marginLeft: -8 }}>
+                                    <IconButton icon="pencil" size={20} iconColor={c.accent} onPress={() => openEdit(contact)} />
+                                    <IconButton icon="delete" size={20} iconColor={c.error} onPress={() => handleDelete(contact.id)} />
                                 </View>
                             </View>
                         </Surface>
@@ -194,19 +210,18 @@ export default function SavedContactsScreen() {
                 )}
             </ScrollView>
 
-            <Button
-                mode="contained"
-                icon="plus"
+            <TouchableOpacity
                 onPress={openAdd}
-                style={[styles.addButton, { bottom: 24 + insets.bottom }]}
-                contentStyle={{ paddingVertical: 8 }}
+                activeOpacity={0.8}
+                style={[styles.addButton, { bottom: 24 + insets.bottom, backgroundColor: c.accent }]}
             >
-                Add New Contact
-            </Button>
+                <MaterialCommunityIcons name="plus" size={20} color={c.bg} />
+                <Text style={{ color: c.bg, fontWeight: '600', marginLeft: 6 }}>Add New Contact</Text>
+            </TouchableOpacity>
 
             <Portal>
-                <Modal visible={modalVisible} onDismiss={() => setModalVisible(false)} contentContainerStyle={[styles.modalContent, { backgroundColor: theme.colors.surface }]}>
-                    <Text variant="headlineSmall" style={{ marginBottom: 16, fontWeight: 'bold' }}>
+                <Modal visible={modalVisible} onDismiss={() => setModalVisible(false)} contentContainerStyle={[styles.modalContent, { backgroundColor: c.bg }]}>
+                    <Text variant="headlineSmall" style={{ marginBottom: 16, fontWeight: 'bold', color: c.text }}>
                         {editingId ? 'Edit Contact' : 'New Contact'}
                     </Text>
 
@@ -230,8 +245,8 @@ export default function SavedContactsScreen() {
                     />
 
                     <View style={styles.modalActions}>
-                        <Button onPress={() => setModalVisible(false)} style={{ flex: 1, marginRight: 8 }}>Cancel</Button>
-                        <Button mode="contained" onPress={handleAddOrUpdate} loading={saving} style={{ flex: 1 }}>Save</Button>
+                        <Button onPress={() => setModalVisible(false)} textColor={c.textSec} style={{ flex: 1, marginRight: 8, backgroundColor: c.card }}>Cancel</Button>
+                        <Button mode="contained" onPress={handleAddOrUpdate} loading={saving} buttonColor={c.accent} textColor={c.bg} style={{ flex: 1 }}>Save</Button>
                     </View>
                 </Modal>
             </Portal>
@@ -251,10 +266,19 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         marginTop: 60,
     },
+    emptyIconBox: {
+        width: 80,
+        height: 80,
+        borderRadius: 40,
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginBottom: 8,
+    },
     card: {
-        borderRadius: 12,
-        marginBottom: 12,
-        padding: 12,
+        borderRadius: 16,
+        marginBottom: 16,
+        padding: 16,
+        borderWidth: 1,
     },
     cardHeader: {
         flexDirection: 'row',
@@ -267,9 +291,9 @@ const styles = StyleSheet.create({
         flex: 1,
     },
     avatarCircle: {
-        width: 40,
-        height: 40,
-        borderRadius: 20,
+        width: 46,
+        height: 46,
+        borderRadius: 23,
         alignItems: 'center',
         justifyContent: 'center',
     },
@@ -278,8 +302,16 @@ const styles = StyleSheet.create({
         bottom: 24,
         left: 20,
         right: 20,
-        borderRadius: 12,
-        elevation: 4,
+        borderRadius: 14,
+        elevation: 6,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.15,
+        shadowRadius: 8,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingVertical: 14,
     },
     modalContent: {
         margin: 20,

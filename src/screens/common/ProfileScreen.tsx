@@ -55,6 +55,22 @@ export default function ProfileScreen() {
     const [refreshing, setRefreshing] = useState(false);
     const insets = useSafeAreaInsets();
 
+    const extractAddressString = (val: any): string => {
+        if (!val) return 'Not set';
+        let current = val;
+        if (typeof current === 'string') {
+            try {
+                current = JSON.parse(current);
+            } catch (e) {
+                return current;
+            }
+        }
+        if (current && typeof current === 'object' && current.address) {
+            return typeof current.address === 'string' ? current.address : String(current.address);
+        }
+        return typeof val === 'string' ? val : String(val);
+    };
+
     const fetchProfile = async () => {
         const { data: { user } } = await supabase!.auth.getUser();
         if (user) {
@@ -72,14 +88,14 @@ export default function ProfileScreen() {
                         : data.saved_addresses;
                     if (Array.isArray(addresses)) {
                         const def = addresses.find((a: any) => a.isDefault);
-                        setDefaultAddress(def ? def.address : (data.home_address || 'Not set'));
+                        setDefaultAddress(def ? extractAddressString(def.address) : extractAddressString(data.home_address));
                     }
                 } catch (e) {
                     console.error('Error parsing addresses', e);
-                    setDefaultAddress(data.home_address || 'Not set');
+                    setDefaultAddress(extractAddressString(data.home_address));
                 }
             } else {
-                setDefaultAddress(data?.home_address || 'Not set');
+                setDefaultAddress(extractAddressString(data?.home_address));
             }
         }
     };
@@ -119,8 +135,8 @@ export default function ProfileScreen() {
                     onPress={() => navigation.navigate('EditProfile')}
                     activeOpacity={0.8}
                 >
-                    <MaterialCommunityIcons name="pencil" size={14} color="#FFFFFF" />
-                    <Text style={styles.editBtnText}>Edit Profile</Text>
+                    <MaterialCommunityIcons name="pencil" size={14} color={c.bg} />
+                    <Text style={[styles.editBtnText, { color: c.bg }]}>Edit Profile</Text>
                 </TouchableOpacity>
             </View>
 

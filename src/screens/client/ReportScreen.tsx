@@ -198,14 +198,14 @@ export default function ReportScreen() {
                     activeOpacity={0.8}
                 >
                     {loading ? (
-                        <ActivityIndicator color="#FFFFFF" />
+                        <ActivityIndicator color={c.bg} />
                     ) : (
-                        <Text style={styles.submitBtnText}>Submit Report</Text>
+                        <Text style={[styles.submitBtnText, { color: c.bg }]}>Submit Report</Text>
                     )}
                 </TouchableOpacity>
 
                 <TouchableOpacity style={styles.cancelBtn} onPress={() => navigation.goBack()} activeOpacity={0.7}>
-                    <Text style={[styles.cancelBtnText, { color: c.textSec }]}>Cancel</Text>
+                    <Text style={[styles.cancelBtnText, { color: c.red }]}>Cancel</Text>
                 </TouchableOpacity>
             </ScrollView>
         </KeyboardAvoidingView>

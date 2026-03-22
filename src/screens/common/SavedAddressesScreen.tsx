@@ -6,9 +6,21 @@ import { useNavigation } from '@react-navigation/native';
 import { supabase } from '../../services/supabaseClient';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import LocationPicker, { LocationData } from '../../components/LocationPicker';
+import { useAppTheme } from '../../context/ThemeContext';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { PremiumAlert } from '../../services/PremiumAlertService';
 
+// ─── Colors ─────────────────────────────────────────────────────────────────────
+const light = {
+    bg: '#FFFFFF', card: '#F6F6F6', border: '#E5E5EA',
+    text: '#000000', textSec: '#6B6B6B', textTer: '#AEAEB2',
+    accent: '#000000', error: '#FF3B30',
+};
+const dark = {
+    bg: '#000000', card: '#141414', border: '#2C2C2E',
+    text: '#FFFFFF', textSec: '#8E8E93', textTer: '#636366',
+    accent: '#FFFFFF', error: '#FF453A',
+};
 interface SavedAddress {
     id: string;
     label: string; // e.g., "Home", "Office"
@@ -20,6 +32,8 @@ interface SavedAddress {
 }
 
 export default function SavedAddressesScreen() {
+    const { isDarkMode } = useAppTheme();
+    const c = isDarkMode ? dark : light;
     const theme = useTheme();
     const navigation = useNavigation();
     const insets = useSafeAreaInsets();
@@ -186,46 +200,57 @@ export default function SavedAddressesScreen() {
     const screenAnim = useEntryAnimation(0);
 
     return (
-        <Animated.View style={[styles.container, { backgroundColor: theme.colors.background }, screenAnim.style]}>
+        <Animated.View style={[styles.container, { backgroundColor: c.bg }, screenAnim.style]}>
             <ScrollView contentContainerStyle={[styles.scrollContent, { paddingTop: insets.top + 20, paddingBottom: 100 + insets.bottom }]}>
                 {loading ? (
-                    <Text style={{ textAlign: 'center', marginTop: 20 }}>Loading addresses...</Text>
+                    <Text style={{ textAlign: 'center', marginTop: 20, color: c.textSec }}>Loading addresses...</Text>
                 ) : addresses.length === 0 ? (
                     <View style={styles.emptyState}>
-                        <MaterialCommunityIcons name="map-marker-off" size={48} color={theme.colors.outline} />
-                        <Text style={{ marginTop: 16, color: theme.colors.onSurfaceVariant }}>No saved addresses yet.</Text>
+                        <View style={[styles.emptyIconBox, { backgroundColor: c.accent + '10' }]}>
+                            <MaterialCommunityIcons name="map-marker-off" size={48} color={c.textTer} />
+                        </View>
+                        <Text variant="titleMedium" style={{ marginTop: 16, fontWeight: 'bold', color: c.text }}>No Addresses Found</Text>
+                        <Text variant="bodyMedium" style={{ marginTop: 8, color: c.textSec, textAlign: 'center', paddingHorizontal: 32 }}>
+                            Add your home, office, or other frequently used addresses for faster booking.
+                        </Text>
                     </View>
                 ) : (
                     addresses.map((addr) => (
-                        <Surface key={addr.id} style={[styles.card, { backgroundColor: theme.colors.surface }]} elevation={1}>
+                        <Surface key={addr.id} style={[styles.card, { backgroundColor: c.card, borderColor: c.border }]} elevation={0}>
                             <View style={styles.cardHeader}>
                                 <View style={styles.labelContainer}>
-                                    <MaterialCommunityIcons
-                                        name={addr.label.toLowerCase().includes('home') ? 'home' : addr.label.toLowerCase().includes('office') ? 'office-building' : 'map-marker'}
-                                        size={20}
-                                        color={theme.colors.primary}
-                                    />
-                                    <Text variant="titleMedium" style={[styles.cardLabel, { color: theme.colors.onSurface }]}>{addr.label}</Text>
-                                    {addr.isDefault && (
-                                        <View style={[styles.defaultBadge, { backgroundColor: theme.colors.primaryContainer }]}>
-                                            <Text style={{ fontSize: 10, color: theme.colors.primary, fontWeight: 'bold' }}>DEFAULT</Text>
+                                    <View style={[styles.iconBox, { backgroundColor: c.accent + '14' }]}>
+                                        <MaterialCommunityIcons
+                                            name={addr.label.toLowerCase().includes('home') ? 'home' : addr.label.toLowerCase().includes('office') ? 'office-building' : 'map-marker'}
+                                            size={22}
+                                            color={c.accent}
+                                        />
+                                    </View>
+                                    <View style={{ flex: 1 }}>
+                                        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                                            <Text variant="titleMedium" style={[styles.cardLabel, { color: c.text }]}>{addr.label}</Text>
+                                            {addr.isDefault && (
+                                                <View style={[styles.defaultBadge, { backgroundColor: c.accent + '10', borderColor: c.accent }]}>
+                                                    <Text style={{ fontSize: 9, color: c.accent, fontWeight: 'bold', letterSpacing: 0.5 }}>DEFAULT</Text>
+                                                </View>
+                                            )}
                                         </View>
-                                    )}
+                                    </View>
                                 </View>
-                                <View style={{ flexDirection: 'row' }}>
-                                    <IconButton icon="pencil" size={20} onPress={() => openEdit(addr)} />
-                                    <IconButton icon="delete" size={20} iconColor={theme.colors.error} onPress={() => handleDelete(addr.id)} />
+                                <View style={{ flexDirection: 'row', marginLeft: -8 }}>
+                                    <IconButton icon="pencil" size={20} iconColor={c.accent} onPress={() => openEdit(addr)} />
+                                    <IconButton icon="delete" size={20} iconColor={c.error} onPress={() => handleDelete(addr.id)} />
                                 </View>
                             </View>
-                            <Divider style={{ marginBottom: 12 }} />
-                            <Text variant="bodyMedium" style={{ color: theme.colors.onSurface }}>{addr.address}</Text>
+                            <Divider style={{ marginVertical: 12, backgroundColor: c.border, opacity: 0.8 }} />
+                            <Text variant="bodyMedium" style={{ color: c.text, lineHeight: 20 }}>{addr.address}</Text>
                             {addr.details ? (
-                                <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant, marginTop: 4 }}>Note: {addr.details}</Text>
+                                <Text variant="bodySmall" style={{ color: c.textSec, marginTop: 6, fontStyle: 'italic' }}>Note: {addr.details}</Text>
                             ) : null}
                             {addr.latitude && addr.longitude ? (
                                 <View style={styles.locationTag}>
-                                    <MaterialCommunityIcons name="map-marker-check" size={14} color={theme.colors.primary} />
-                                    <Text variant="bodySmall" style={{ color: theme.colors.primary, marginLeft: 4 }}>Location saved</Text>
+                                    <MaterialCommunityIcons name="map-marker-check" size={14} color={c.accent} />
+                                    <Text variant="bodySmall" style={{ color: c.accent, marginLeft: 4, fontWeight: '500' }}>Location coordinates verified</Text>
                                 </View>
                             ) : null}
                         </Surface>
@@ -233,19 +258,18 @@ export default function SavedAddressesScreen() {
                 )}
             </ScrollView>
 
-            <Button
-                mode="contained"
-                icon="plus"
+            <TouchableOpacity
                 onPress={openAdd}
-                style={[styles.addButton, { bottom: 24 + insets.bottom }]}
-                contentStyle={{ paddingVertical: 8 }}
+                activeOpacity={0.8}
+                style={[styles.addButton, { bottom: 24 + insets.bottom, backgroundColor: c.accent }]}
             >
-                Add New Address
-            </Button>
+                <MaterialCommunityIcons name="plus" size={20} color={c.bg} />
+                <Text style={{ color: c.bg, fontWeight: '600', marginLeft: 6 }}>Add New Address</Text>
+            </TouchableOpacity>
 
             <Portal>
-                <Modal visible={modalVisible} onDismiss={() => setModalVisible(false)} contentContainerStyle={[styles.modalContent, { backgroundColor: theme.colors.surface }]}>
-                    <Text variant="headlineSmall" style={{ marginBottom: 16, fontWeight: 'bold' }}>
+                <Modal visible={modalVisible} onDismiss={() => setModalVisible(false)} contentContainerStyle={[styles.modalContent, { backgroundColor: c.bg }]}>
+                    <Text variant="headlineSmall" style={{ marginBottom: 16, fontWeight: 'bold', color: c.text }}>
                         {editingId ? 'Edit Address' : 'New Address'}
                     </Text>
 
@@ -277,9 +301,9 @@ export default function SavedAddressesScreen() {
                                 <MaterialCommunityIcons
                                     name="check-circle"
                                     size={16}
-                                    color={theme.colors.primary}
+                                    color={c.accent}
                                 />
-                                <Text variant="bodySmall" style={{ color: theme.colors.primary, marginLeft: 4 }}>
+                                <Text variant="bodySmall" style={{ color: c.accent, marginLeft: 4 }}>
                                     Location coordinates saved
                                 </Text>
                             </View>
@@ -303,14 +327,14 @@ export default function SavedAddressesScreen() {
                         <Checkbox.Android
                             status={isDefault ? 'checked' : 'unchecked'}
                             onPress={() => setIsDefault(!isDefault)}
-                            color={theme.colors.primary}
+                            color={c.accent}
                         />
-                        <Text variant="bodyMedium" style={{ marginLeft: 8 }}>Set as default address</Text>
+                        <Text variant="bodyMedium" style={{ marginLeft: 8, color: c.text }}>Set as default address</Text>
                     </TouchableOpacity>
 
                     <View style={styles.modalActions}>
-                        <Button onPress={() => setModalVisible(false)} style={{ flex: 1, marginRight: 8 }}>Cancel</Button>
-                        <Button mode="contained" onPress={handleAddOrUpdate} loading={saving} style={{ flex: 1 }}>Save</Button>
+                        <Button onPress={() => setModalVisible(false)} textColor={c.textSec} style={{ flex: 1, marginRight: 8, backgroundColor: c.card }}>Cancel</Button>
+                        <Button mode="contained" onPress={handleAddOrUpdate} loading={saving} buttonColor={c.accent} textColor={c.bg} style={{ flex: 1 }}>Save</Button>
                     </View>
                 </Modal>
             </Portal>
@@ -348,38 +372,64 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         marginTop: 60,
     },
+    emptyIconBox: {
+        width: 80,
+        height: 80,
+        borderRadius: 40,
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginBottom: 8,
+    },
     card: {
-        borderRadius: 12,
+        borderRadius: 16,
         marginBottom: 16,
-        padding: 16,
+        padding: 18,
+        borderWidth: 1,
     },
     cardHeader: {
         flexDirection: 'row',
         justifyContent: 'space-between',
         alignItems: 'center',
-        marginBottom: 8,
+        marginBottom: 12,
     },
     labelContainer: {
         flexDirection: 'row',
         alignItems: 'center',
+        flex: 1,
+    },
+    iconBox: {
+        width: 42,
+        height: 42,
+        borderRadius: 21,
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginRight: 14,
     },
     cardLabel: {
-        marginLeft: 8,
         fontWeight: 'bold',
     },
     defaultBadge: {
         paddingHorizontal: 6,
-        paddingVertical: 2,
-        borderRadius: 4,
+        paddingVertical: 3,
+        borderRadius: 8,
         marginLeft: 8,
+        borderWidth: StyleSheet.hairlineWidth,
     },
     addButton: {
         position: 'absolute',
         bottom: 24,
         left: 20,
         right: 20,
-        borderRadius: 12,
-        elevation: 4,
+        borderRadius: 14,
+        elevation: 6,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.15,
+        shadowRadius: 8,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingVertical: 14,
     },
     modalContent: {
         margin: 20,
