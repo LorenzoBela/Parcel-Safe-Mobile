@@ -230,11 +230,27 @@ function Get-CombinedHash {
     }
 }
 
-# Step 0: Ensure Keystore Exists
-Write-Host "`nStep 0: Generating Keystore..." -ForegroundColor Yellow
+# Step 0: Ensure signing secrets are loaded
+Write-Host "`nStep 0: Loading signing configuration..." -ForegroundColor Yellow
 $KEYSTORE_PATH = Join-Path $SOURCE_DIR "release.keystore"
-$KEYSTORE_PASS = "parcelsafe123"
-$KEY_ALIAS = "parcelsafe"
+
+# Load build secrets from .env.build if it exists
+$envFile = Join-Path $SOURCE_DIR ".env.build"
+if (Test-Path $envFile) {
+    Get-Content $envFile | Where-Object { $_ -match "^[^#]*=" } | ForEach-Object {
+        $name, $value = $_.Split('=', 2)
+        Set-Item -Path "env:\$name" -Value $value.Trim()
+    }
+}
+
+$KEYSTORE_PASS = $env:RELEASE_KEYSTORE_PASSWORD
+$KEY_ALIAS = $env:RELEASE_KEYSTORE_ALIAS
+
+if ([string]::IsNullOrWhiteSpace($KEYSTORE_PASS) -or [string]::IsNullOrWhiteSpace($KEY_ALIAS)) {
+    Write-Host "[ERROR] RELEASE_KEYSTORE_PASSWORD or RELEASE_KEYSTORE_ALIAS missing in .env.build" -ForegroundColor Red
+    Write-Host "Please add them to your .env.build file to proceed with the build." -ForegroundColor Yellow
+    exit 1
+}
 
 if (-not (Test-Path $KEYSTORE_PATH)) {
     Write-Host "[INFO] Generating new release.keystore..." -ForegroundColor Yellow
@@ -1033,7 +1049,9 @@ if ($overallExit -eq 0) {
             if ($releaseId) {
                 # Delete old asset
                 $assets = Invoke-RestMethod -Uri "https://api.github.com/repos/$repo/releases/$releaseId/assets" -Headers @{ "Authorization" = "token $token" }
-                $existingAsset = $assets | Where-Object { $_.name -eq $apkFileName }
+                # GitHub automatically replaces spaces with dots in asset names, so we check both
+                $expectedAssetName = $apkFileName -replace ' ', '.'
+                $existingAsset = $assets | Where-Object { $_.name -eq $apkFileName -or $_.name -eq $expectedAssetName }
                 if ($existingAsset) {
                     Write-Host "Removing previous APK..." -ForegroundColor Gray
                     Invoke-RestMethod -Uri "https://api.github.com/repos/$repo/releases/assets/$($existingAsset.id)" -Method Delete -Headers @{ "Authorization" = "token $token" }
