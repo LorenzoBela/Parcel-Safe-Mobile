@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { View, StyleSheet, ScrollView, Switch, ImageBackground, Alert, RefreshControl, TouchableOpacity, Dimensions, Linking, Platform, AppState, Animated } from 'react-native';
-import { useEntryAnimation, useStaggerAnimation } from '../../hooks/useEntryAnimation';
+import { View, StyleSheet, ScrollView, Switch, ImageBackground, Alert, RefreshControl, TouchableOpacity, Dimensions, Linking, Platform, AppState, Animated, TouchableWithoutFeedback, FlatList } from 'react-native';
+import { useEntryAnimation, useStaggerAnimation, usePressScale } from '../../hooks/useEntryAnimation';
 import { Text, Card, Button, Avatar, ProgressBar, MD3Colors, Chip, useTheme, IconButton } from 'react-native-paper';
 import { useNavigation } from '@react-navigation/native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -167,6 +167,40 @@ const darkC = {
     blueBg: '#172554', blueText: '#93C5FD',
 };
 
+const { width: SCREEN_WIDTH } = Dimensions.get('window');
+const CAROUSEL_CARD_WIDTH = SCREEN_WIDTH * 0.75;
+
+const PROMO_SLIDES = [
+    {
+        id: '1',
+        icon: 'lightning-bolt' as const,
+        headline: 'Surge Pricing Active',
+        subtitle: 'Earn up to 1.5x more on deliveries in high-demand zones today.',
+        cta: 'View Map',
+    },
+    {
+        id: '2',
+        icon: 'shield-check-outline' as const,
+        headline: 'Safety First',
+        subtitle: 'Always follow traffic rules and wear your safety gear.',
+        cta: 'Guidelines',
+    },
+    {
+        id: '3',
+        icon: 'star-outline' as const,
+        headline: 'Deliver & Win',
+        subtitle: 'Complete 20 deliveries this week for an extra ₱500 bonus.',
+        cta: 'See Progress',
+    },
+    {
+        id: '4',
+        icon: 'account-group-outline' as const,
+        headline: 'Refer a Rider',
+        subtitle: 'Know someone who wants to ride with us? Refer them and earn ₱1000.',
+        cta: 'Invite',
+    },
+];
+
 export default function RiderDashboard() {
     const { showExitModal, setShowExitModal, handleExit } = useExitAppConfirmation();
     const navigation = useNavigation<any>();
@@ -190,6 +224,34 @@ export default function RiderDashboard() {
     const [boxState, setBoxState] = useState<BoxState | null>(null);
     const isLocked = boxState?.status === 'LOCKED';
     const animationRef = useRef<LottieView>(null);
+
+    // Carousel state
+    const [activeSlide, setActiveSlide] = useState(0);
+    const flatListRef = useRef<FlatList>(null);
+    const autoScrollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+
+    const handleCarouselScrollEnd = (event: any) => {
+        const offset = event.nativeEvent.contentOffset.x;
+        const index = Math.round(offset / (CAROUSEL_CARD_WIDTH + 8));
+        setActiveSlide(index);
+    };
+
+    useEffect(() => {
+        autoScrollTimer.current = setInterval(() => {
+            setActiveSlide((prev) => {
+                const nextSlide = (prev + 1) % PROMO_SLIDES.length;
+                flatListRef.current?.scrollToIndex({ index: nextSlide, animated: true });
+                return nextSlide;
+            });
+        }, 4000);
+        return () => {
+            if (autoScrollTimer.current) clearInterval(autoScrollTimer.current);
+        };
+    }, []);
+
+    const startTripPress = usePressScale();
+    const detailsPress = usePressScale();
+    const unlockPress = usePressScale();
 
     const MAPBOX_TOKEN = process.env.EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN;
 
@@ -1615,14 +1677,19 @@ export default function RiderDashboard() {
         return '#F44336';
     };
 
-    const QuickAction = ({ icon, label, onPress, color }) => (
-        <TouchableOpacity style={styles.actionItem} onPress={onPress} activeOpacity={0.7}>
-            <View style={[styles.actionIcon, { backgroundColor: color + '14', borderWidth: 1, borderColor: color + '30' }]}>
-                <MaterialCommunityIcons name={icon} size={22} color={color} />
-            </View>
-            <Text style={[styles.actionLabel, { color: c.textSec }]}>{label}</Text>
-        </TouchableOpacity>
-    );
+    const QuickAction = ({ icon, label, onPress, color }: any) => {
+        const pressScale = usePressScale();
+        return (
+            <TouchableWithoutFeedback onPressIn={pressScale.onPressIn} onPressOut={pressScale.onPressOut} onPress={onPress}>
+                <Animated.View style={[styles.actionItem, pressScale.style]}>
+                    <View style={[styles.actionIcon, { backgroundColor: color + '14', borderWidth: 1, borderColor: color + '30' }]}>
+                        <MaterialCommunityIcons name={icon as any} size={22} color={color} />
+                    </View>
+                    <Text style={[styles.actionLabel, { color: c.textSec }]}>{label}</Text>
+                </Animated.View>
+            </TouchableWithoutFeedback>
+        );
+    };
 
     const statusToggleAnim = useEntryAnimation(0);
     const gpsCardAnim = useEntryAnimation(55);
@@ -1879,11 +1946,10 @@ export default function RiderDashboard() {
                     </View>
                 )}
 
-                {/* Status Toggle - EC-ENHANCE: Clear Offline/Online distinction */}
                 <Animated.View style={statusToggleAnim.style}>
-                    <View style={[styles.statusToggleContainer, { backgroundColor: c.card, borderColor: c.border, borderWidth: 1 }]}>
+                    <View style={[styles.statusToggleContainer, { backgroundColor: c.card, borderColor: isOnline ? c.greenText + '40' : c.redText + '40', borderWidth: 1 }]}>
                         <View style={styles.statusContainer}>
-                            <View style={[styles.statusDot, { backgroundColor: isOnline ? c.greenText : c.textTer }]} />
+                            <View style={[styles.statusDot, { backgroundColor: isOnline ? c.greenText : c.redText }]} />
                             <View>
                                 <Text variant="titleMedium" style={[styles.statusText, { color: c.text }]}>
                                     {isOnline ? 'You are Online' : 'You are Offline'}
@@ -1893,7 +1959,7 @@ export default function RiderDashboard() {
                                 </Text>
                             </View>
                         </View>
-                        <Switch value={isOnline} onValueChange={setIsOnline} trackColor={{ true: c.accent, false: c.search }} thumbColor={isDarkMode ? c.text : c.bg} />
+                        <Switch value={isOnline} onValueChange={setIsOnline} trackColor={{ true: c.greenText, false: c.redBg }} thumbColor={isDarkMode ? c.text : c.bg} />
                     </View>
                 </Animated.View>
 
@@ -2198,49 +2264,55 @@ export default function RiderDashboard() {
                             </Card.Content>
 
                             <Card.Content style={styles.jobActions}>
-                                <Button
-                                    mode="contained"
-                                    style={{ width: '100%', borderRadius: 8, marginBottom: 12 }}
-                                    contentStyle={{ height: 56 }}
-                                    labelStyle={{ fontSize: 18, fontWeight: 'bold' }}
-                                    onPress={() => {
-                                        const isPickup = !['PICKED_UP', 'IN_TRANSIT', 'ARRIVED', 'COMPLETED'].includes(activeDelivery.status);
-                                        navigation.navigate('Arrival', {
-                                            deliveryId: nextDelivery.id,
-                                            boxId: nextDelivery.boxId,
-                                            targetLat: isPickup ? (nextDelivery.snappedPickupLat ?? nextDelivery.pickupLat) : (nextDelivery.snappedDropoffLat ?? nextDelivery.dropoffLat),
-                                            targetLng: isPickup ? (nextDelivery.snappedPickupLng ?? nextDelivery.pickupLng) : (nextDelivery.snappedDropoffLng ?? nextDelivery.dropoffLng),
-                                            targetAddress: isPickup ? nextDelivery.pickupAddress : nextDelivery.address,
-                                            customerPhone: nextDelivery.phone,
-                                            senderName: (nextDelivery as any).sender_name || (activeDelivery as any)?.sender_name,
-                                            senderPhone: (nextDelivery as any).sender_phone || (activeDelivery as any)?.sender_phone,
-                                            recipientName: (nextDelivery as any).recipient_name || (activeDelivery as any)?.recipient_name,
-                                            deliveryNotes: (nextDelivery as any).delivery_notes || (activeDelivery as any)?.delivery_notes,
-                                            riderName: riderName,
-                                            pickupAddress: nextDelivery.pickupAddress,
-                                            pickupLat: nextDelivery.pickupLat,
-                                            pickupLng: nextDelivery.pickupLng,
-                                            dropoffAddress: nextDelivery.address,
-                                            dropoffLat: nextDelivery.dropoffLat,
-                                            dropoffLng: nextDelivery.dropoffLng,
-                                        });
-                                    }}
-                                    buttonColor={c.accent}
-                                    textColor={c.accentText}
-                                    icon="navigation"
-                                >
-                                    {['PICKED_UP', 'IN_TRANSIT', 'ARRIVED'].includes(activeDelivery.status) ? 'Resume Trip' : 'Start Trip'}
-                                </Button>
+                                <TouchableWithoutFeedback onPressIn={startTripPress.onPressIn} onPressOut={startTripPress.onPressOut} onPress={() => {
+                                    const isPickup = !['PICKED_UP', 'IN_TRANSIT', 'ARRIVED', 'COMPLETED'].includes(activeDelivery.status);
+                                    navigation.navigate('Arrival', {
+                                        deliveryId: nextDelivery.id,
+                                        boxId: nextDelivery.boxId,
+                                        targetLat: isPickup ? (nextDelivery.snappedPickupLat ?? nextDelivery.pickupLat) : (nextDelivery.snappedDropoffLat ?? nextDelivery.dropoffLat),
+                                        targetLng: isPickup ? (nextDelivery.snappedPickupLng ?? nextDelivery.pickupLng) : (nextDelivery.snappedDropoffLng ?? nextDelivery.dropoffLng),
+                                        targetAddress: isPickup ? nextDelivery.pickupAddress : nextDelivery.address,
+                                        customerPhone: nextDelivery.phone,
+                                        senderName: (nextDelivery as any).sender_name || (activeDelivery as any)?.sender_name,
+                                        senderPhone: (nextDelivery as any).sender_phone || (activeDelivery as any)?.sender_phone,
+                                        recipientName: (nextDelivery as any).recipient_name || (activeDelivery as any)?.recipient_name,
+                                        deliveryNotes: (nextDelivery as any).delivery_notes || (activeDelivery as any)?.delivery_notes,
+                                        riderName: riderName,
+                                        pickupAddress: nextDelivery.pickupAddress,
+                                        pickupLat: nextDelivery.pickupLat,
+                                        pickupLng: nextDelivery.pickupLng,
+                                        dropoffAddress: nextDelivery.address,
+                                        dropoffLat: nextDelivery.dropoffLat,
+                                        dropoffLng: nextDelivery.dropoffLng,
+                                    });
+                                }}>
+                                    <Animated.View style={[{ width: '100%', marginBottom: 12 }, startTripPress.style]}>
+                                        <Button
+                                            mode="contained"
+                                            style={{ borderRadius: 8 }}
+                                            contentStyle={{ height: 56 }}
+                                            labelStyle={{ fontSize: 18, fontWeight: 'bold' }}
+                                            buttonColor={c.accent}
+                                            textColor={c.accentText}
+                                            icon="navigation"
+                                        >
+                                            {['PICKED_UP', 'IN_TRANSIT', 'ARRIVED'].includes(activeDelivery.status) ? 'Resume Trip' : 'Start Trip'}
+                                        </Button>
+                                    </Animated.View>
+                                </TouchableWithoutFeedback>
 
-                                <Button
-                                    mode="outlined"
-                                    style={{ width: '100%', borderRadius: 8, borderColor: c.border, marginBottom: 12 }}
-                                    onPress={() => navigation.navigate('JobDetail', { job: nextDelivery })}
-                                    textColor={c.text}
-                                    icon="file-document-outline"
-                                >
-                                    View Job Details
-                                </Button>
+                                <TouchableWithoutFeedback onPressIn={detailsPress.onPressIn} onPressOut={detailsPress.onPressOut} onPress={() => navigation.navigate('JobDetail', { job: nextDelivery })}>
+                                    <Animated.View style={[{ width: '100%', marginBottom: 12 }, detailsPress.style]}>
+                                        <Button
+                                            mode="outlined"
+                                            style={{ borderRadius: 8, borderColor: c.border }}
+                                            textColor={c.text}
+                                            icon="file-document-outline"
+                                        >
+                                            View Job Details
+                                        </Button>
+                                    </Animated.View>
+                                </TouchableWithoutFeedback>
 
                                 {!['RETURNING', 'CANCELLED', 'TAMPERED'].includes(activeDelivery.status) && (
                                     <Button
@@ -2256,10 +2328,14 @@ export default function RiderDashboard() {
                         </Card>
                     ) : (
                         <Card style={[styles.jobCard, { backgroundColor: c.search, borderColor: 'transparent', borderWidth: 0 }]} mode="contained">
-                            <Card.Content style={{ alignItems: 'center', paddingVertical: 32 }}>
-                                <MaterialCommunityIcons name="truck-delivery-outline" size={48} color={c.textTer} />
-                                <Text variant="bodyLarge" style={{ color: c.textSec, marginTop: 12 }}>No current job</Text>
-                                <Text variant="bodySmall" style={{ color: c.textTer, marginTop: 4 }}>Waiting for incoming orders</Text>
+                            <Card.Content style={{ alignItems: 'center', paddingVertical: 40 }}>
+                                <View style={[styles.emptyIconWrap, { backgroundColor: c.textTer + '20' }]}>
+                                    <MaterialCommunityIcons name="truck-delivery-outline" size={40} color={c.textSec} />
+                                </View>
+                                <Text variant="titleMedium" style={{ color: c.text, fontWeight: '700', marginTop: 12 }}>No Active Job</Text>
+                                <Text variant="bodySmall" style={{ color: c.textSec, marginTop: 4, textAlign: 'center', marginHorizontal: 20 }}>
+                                    Waiting for nearby orders to be assigned.
+                                </Text>
                             </Card.Content>
                         </Card>
                     )}
@@ -2277,24 +2353,23 @@ export default function RiderDashboard() {
                                 {!isPaired ? 'No Box Connected' : (isLocked ? 'Securely Locked' : 'Unlocked')}
                             </Text>
                         </View>
-                        <TouchableOpacity
-                            style={[
+                        <TouchableWithoutFeedback onPressIn={unlockPress.onPressIn} onPressOut={unlockPress.onPressOut} onPress={toggleLock} disabled={!isPaired}>
+                            <Animated.View style={[
                                 styles.unlockButton,
                                 {
                                     backgroundColor: !isPaired ? c.search : (isLocked ? c.greenBg : c.redBg),
                                     borderWidth: 1,
-                                    borderColor: !isPaired ? c.border : (isLocked ? c.greenText : c.redText)
+                                    borderColor: !isPaired ? c.border : (isLocked ? c.greenText : c.redText),
+                                    ...unlockPress.style
                                 }
-                            ]}
-                            onPress={toggleLock}
-                            disabled={!isPaired}
-                        >
-                            <MaterialCommunityIcons
-                                name={!isPaired ? "shield-off-outline" : (isLocked ? "shield-lock" : "shield-lock-open")}
-                                size={40}
-                                color={!isPaired ? c.textTer : (isLocked ? c.greenText : c.redText)}
-                            />
-                        </TouchableOpacity>
+                            ]}>
+                                <MaterialCommunityIcons
+                                    name={!isPaired ? "shield-off-outline" : (isLocked ? "shield-lock" : "shield-lock-open")}
+                                    size={40}
+                                    color={!isPaired ? c.textTer : (isLocked ? c.greenText : c.redText)}
+                                />
+                            </Animated.View>
+                        </TouchableWithoutFeedback>
                     </View>
 
                     <View style={[styles.divider, { backgroundColor: c.divider }]} />
@@ -2376,7 +2451,63 @@ export default function RiderDashboard() {
                     )}
                 </View>
 
-
+                {/* Rider Resources Carousel */}
+                <Animated.View style={actionsAnim[0].style}>
+                    <Text variant="titleMedium" style={[styles.sectionTitle, { color: c.text, marginTop: 16 }]}>Rider Resources</Text>
+                    <FlatList
+                        ref={flatListRef}
+                        data={PROMO_SLIDES}
+                        keyExtractor={(item) => item.id}
+                        horizontal
+                        pagingEnabled
+                        showsHorizontalScrollIndicator={false}
+                        snapToInterval={CAROUSEL_CARD_WIDTH + 8}
+                        decelerationRate="fast"
+                        contentContainerStyle={{ paddingHorizontal: 0 }}
+                        onMomentumScrollEnd={handleCarouselScrollEnd}
+                        renderItem={({ item }) => (
+                            <TouchableOpacity activeOpacity={0.8} onPress={() => {
+                                if (item.id === '1') {
+                                    PremiumAlert.alert('Surge Pricing Active', 'High demand in downtown areas. Head there to earn 1.5x on your next 3 deliveries.', [{ text: 'Go Online', style: 'default' }], undefined, 'lightning-bolt', c.accent);
+                                } else if (item.id === '2') {
+                                    PremiumAlert.alert('Safety First', 'Please ensure you are wearing your helmet and reflective gear while on duty.', [{ text: 'I Understand', style: 'default' }], undefined, 'shield-check', c.blueText);
+                                } else if (item.id === '3') {
+                                    PremiumAlert.alert('Deliver & Win', 'You have completed 12/20 deliveries this week. Keep going to earn your ₱500 bonus!', [{ text: 'View Progress', style: 'default' }], undefined, 'trophy', '#F59E0B');
+                                } else if (item.id === '4') {
+                                    PremiumAlert.alert('Refer a Rider', 'Your referral code is: RIDER2026. Share it with friends and earn ₱1000 when they complete 50 deliveries.', [{ text: 'Share Code', style: 'default' }], undefined, 'account-multiple-plus', c.accent);
+                                }
+                            }}>
+                                <View style={[styles.promoCard, { backgroundColor: c.card, borderColor: c.border, width: CAROUSEL_CARD_WIDTH }]}>
+                                    <View style={[styles.promoIconWrap, { backgroundColor: c.accent + '10' }]}>
+                                        <MaterialCommunityIcons name={item.icon as any} size={28} color={c.accent} />
+                                    </View>
+                                    <View style={styles.promoText}>
+                                        <Text style={[styles.promoHeadline, { color: c.text }]}>{item.headline}</Text>
+                                        <Text style={[styles.promoSub, { color: c.textSec }]} numberOfLines={2}>{item.subtitle}</Text>
+                                    </View>
+                                    <View style={[styles.promoCta, { backgroundColor: c.accent + '0D' }]}>
+                                        <Text style={[styles.promoCtaText, { color: c.accent }]}>{item.cta}</Text>
+                                        <MaterialCommunityIcons name="arrow-right" size={14} color={c.accent} />
+                                    </View>
+                                </View>
+                            </TouchableOpacity>
+                        )}
+                    />
+                    <View style={styles.dotsRow}>
+                        {PROMO_SLIDES.map((_, i) => (
+                            <View
+                                key={i}
+                                style={[
+                                    styles.dot,
+                                    {
+                                        backgroundColor: i === activeSlide ? c.accent : c.border,
+                                        width: i === activeSlide ? 18 : 6,
+                                    },
+                                ]}
+                            />
+                        ))}
+                    </View>
+                </Animated.View>
 
             </ScrollView >
             {/* Phone Entry Modal */}
@@ -2783,5 +2914,30 @@ const styles = StyleSheet.create({
     badge: {
         justifyContent: 'center',
         alignItems: 'center',
-    }
+    },
+    promoCard: {
+        borderRadius: 16, borderWidth: 1, padding: 18,
+        marginRight: 8, overflow: 'hidden',
+    },
+    promoIconWrap: {
+        width: 48, height: 48, borderRadius: 14,
+        alignItems: 'center', justifyContent: 'center', marginBottom: 12,
+    },
+    promoText: { marginBottom: 14 },
+    promoHeadline: { fontSize: 17, fontWeight: '800', marginBottom: 4 },
+    promoSub: { fontSize: 13, lineHeight: 18 },
+    promoCta: {
+        flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-start',
+        gap: 4, paddingHorizontal: 14, paddingVertical: 7, borderRadius: 20,
+    },
+    promoCtaText: { fontSize: 12, fontWeight: '700' },
+    dotsRow: {
+        flexDirection: 'row', justifyContent: 'center',
+        alignItems: 'center', marginTop: 12, gap: 5, marginBottom: 10,
+    },
+    dot: { height: 6, borderRadius: 3 },
+    emptyIconWrap: {
+        width: 56, height: 56, borderRadius: 28,
+        alignItems: 'center', justifyContent: 'center', marginBottom: 6,
+    },
 });

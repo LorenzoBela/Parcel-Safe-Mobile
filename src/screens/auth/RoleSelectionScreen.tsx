@@ -5,7 +5,6 @@ import {
     Pressable,
     Animated,
     Image,
-    useColorScheme,
     StatusBar
 } from 'react-native';
 import { useEntryAnimation, useStaggerAnimation } from '../../hooks/useEntryAnimation';
@@ -14,6 +13,7 @@ import { Text, useTheme } from 'react-native-paper';
 import { useNavigation } from '@react-navigation/native';
 import useAuthStore from '../../store/authStore';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { useAppTheme } from '../../context/ThemeContext';
 
 // Uber-inspired minimalist colors
 const COLORS = {
@@ -60,10 +60,9 @@ const DASHBOARD_OPTIONS = {
 export default function RoleSelectionScreen() {
     const navigation = useNavigation<any>();
     const theme = useTheme();
-    const colorScheme = useColorScheme();
+    const { isDarkMode: isDark } = useAppTheme();
     const { role, user } = useAuthStore((state: any) => state);
 
-    const isDark = colorScheme === 'dark';
     const colors = isDark ? COLORS.dark : COLORS.light;
 
     const handleNavigation = (targetApp: 'RiderApp' | 'CustomerApp' | 'AdminApp') => {

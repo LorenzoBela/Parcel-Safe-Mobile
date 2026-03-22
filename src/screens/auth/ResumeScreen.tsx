@@ -14,7 +14,6 @@ import {
     View,
     ActivityIndicator,
     StyleSheet,
-    useColorScheme,
     StatusBar,
     Animated,
     Dimensions,
@@ -25,6 +24,7 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { supabase } from '../../services/supabaseClient';
 import useAuthStore from '../../store/authStore';
 import { runForegroundResumePipeline } from '../../services/foregroundResumePipelineService';
+import { useAppTheme } from '../../context/ThemeContext';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -63,8 +63,7 @@ const LOAD_STEPS = [
 const HARD_CAP_MS = 1500;
 
 export default function ResumeScreen({ onReady }: Props) {
-    const colorScheme = useColorScheme();
-    const isDark = colorScheme === 'dark';
+    const { isDarkMode: isDark } = useAppTheme();
     const colors = isDark ? COLORS.dark : COLORS.light;
 
     const logoPulse = usePulseAnimation(0.5, 800);

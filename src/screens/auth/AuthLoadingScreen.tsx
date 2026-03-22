@@ -3,7 +3,6 @@ import {
     View,
     ActivityIndicator,
     StyleSheet,
-    useColorScheme,
     StatusBar,
     Animated,
     Dimensions,
@@ -16,6 +15,7 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import useAuthStore from '../../store/authStore';
 import { supabase } from '../../services/supabaseClient';
 import { warmUpLocationServices } from '../../services/gpsWarmupService';
+import { useAppTheme } from '../../context/ThemeContext';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -77,10 +77,9 @@ const ADS = [
 
 export default function AuthLoadingScreen() {
     const navigation = useNavigation<any>();
-    const colorScheme = useColorScheme();
+    const { isDarkMode: isDark } = useAppTheme();
     const login = useAuthStore((state: any) => state.login);
 
-    const isDark = colorScheme === 'dark';
     const colors = isDark ? COLORS.dark : COLORS.light;
 
     const logoPulse = usePulseAnimation(0.5, 800);

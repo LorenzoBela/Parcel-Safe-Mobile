@@ -1,7 +1,7 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import NotificationBell from '../../components/NotificationBell';
-import { View, StyleSheet, ScrollView, TouchableOpacity, ImageBackground, StatusBar, Alert, RefreshControl, Share, Animated } from 'react-native';
-import { useEntryAnimation, useStaggerAnimation } from '../../hooks/useEntryAnimation';
+import { View, StyleSheet, ScrollView, TouchableOpacity, ImageBackground, StatusBar, Alert, RefreshControl, Share, Animated, FlatList, Dimensions } from 'react-native';
+import { useEntryAnimation, useStaggerAnimation, usePressScale } from '../../hooks/useEntryAnimation';
 import { Text, Avatar, Portal, Modal, IconButton } from 'react-native-paper';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -43,6 +43,41 @@ const darkC: ColorPalette = {
     accent: '#FFFFFF', red: '#FF453A', green: '#30D158', orange: '#FFB340',
     pillBg: '#1C1C1E', modalBg: 'rgba(0,0,0,0.7)', statusBar: 'light-content' as const,
 };
+
+const { width: SCREEN_WIDTH } = Dimensions.get('window');
+const CAROUSEL_CARD_WIDTH = SCREEN_WIDTH - 32;
+
+// ─── Promo Carousel Data ────────────────────────────────────────────────────────
+const PROMO_SLIDES = [
+    {
+        id: '1',
+        icon: 'gift-outline' as const,
+        headline: 'Refer a Friend',
+        subtitle: 'Share the love — earn free deliveries for every referral.',
+        cta: 'Learn More',
+    },
+    {
+        id: '2',
+        icon: 'lightning-bolt' as const,
+        headline: 'Try Premium Delivery',
+        subtitle: 'Priority handling & real-time photo proof for your parcels.',
+        cta: 'Upgrade Now',
+    },
+    {
+        id: '3',
+        icon: 'star-outline' as const,
+        headline: 'Rate Your Experience',
+        subtitle: 'Your feedback helps us improve Parcel-Safe for everyone.',
+        cta: 'Rate Us',
+    },
+    {
+        id: '4',
+        icon: 'shield-check-outline' as const,
+        headline: 'Safety First',
+        subtitle: 'Your package is always photographed before unlock for security.',
+        cta: 'See How',
+    },
+];
 
 // ─── Status helpers ─────────────────────────────────────────────────────────────
 function formatStatus(status: string): string {
@@ -87,6 +122,14 @@ export default function CustomerDashboard() {
     const [displayStatus, setDisplayStatus] = useState<'OK' | 'DEGRADED' | 'FAILED'>('OK');
     const [cancellation, setCancellation] = useState<CancellationState | null>(null);
     const [weather, setWeather] = useState<WeatherData | null>(null);
+    const [totalDeliveries, setTotalDeliveries] = useState(0);
+    const [completedDeliveries, setCompletedDeliveries] = useState(0);
+    const [inTransitDeliveries, setInTransitDeliveries] = useState(0);
+
+    // Carousel state
+    const [activeSlide, setActiveSlide] = useState(0);
+    const flatListRef = useRef<FlatList>(null);
+    const autoScrollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
     const [deviceCoords, setDeviceCoords] = useState<{ lat: number; lng: number } | null>(null);
 
     const authedUser = useAuthStore((state: any) => state.user) as any;
@@ -197,16 +240,43 @@ export default function CustomerDashboard() {
         } catch { /* silent */ }
     }, [authedUser?.userId]);
 
+    // ─── Delivery stats ─────────────────────────────────────────────────────
+    const fetchDeliveryStats = useCallback(async () => {
+        if (!authedUser?.userId) return;
+        try {
+            const { count: total } = await supabase
+                .from('deliveries')
+                .select('*', { count: 'exact', head: true })
+                .eq('customer_id', authedUser.userId);
+            setTotalDeliveries(total ?? 0);
+
+            const { count: completed } = await supabase
+                .from('deliveries')
+                .select('*', { count: 'exact', head: true })
+                .eq('customer_id', authedUser.userId)
+                .eq('status', 'COMPLETED');
+            setCompletedDeliveries(completed ?? 0);
+
+            const { count: inTransit } = await supabase
+                .from('deliveries')
+                .select('*', { count: 'exact', head: true })
+                .eq('customer_id', authedUser.userId)
+                .in('status', ['IN_TRANSIT', 'ASSIGNED', 'ARRIVED']);
+            setInTransitDeliveries(inTransit ?? 0);
+        } catch { /* silent */ }
+    }, [authedUser?.userId]);
+
     const onRefresh = useCallback(async () => {
         setRefreshing(true);
-        await Promise.all([fetchLocation(), fetchActiveDelivery(), fetchRecentActivity()]);
+        await Promise.all([fetchLocation(), fetchActiveDelivery(), fetchRecentActivity(), fetchDeliveryStats()]);
         setRefreshing(false);
-    }, [fetchLocation, fetchActiveDelivery, fetchRecentActivity]);
+    }, [fetchLocation, fetchActiveDelivery, fetchRecentActivity, fetchDeliveryStats]);
 
     useFocusEffect(useCallback(() => {
         fetchActiveDelivery();
         fetchRecentActivity();
-    }, [fetchActiveDelivery, fetchRecentActivity]));
+        fetchDeliveryStats();
+    }, [fetchActiveDelivery, fetchRecentActivity, fetchDeliveryStats]));
 
     const getGreeting = () => {
         const h = currentTime.hour();
@@ -216,9 +286,31 @@ export default function CustomerDashboard() {
     };
 
     const greetAnim = useEntryAnimation(0);
-    const deliveryAnim = useEntryAnimation(60);
-    const actionsAnim = useEntryAnimation(110);
-    const activityAnim = useStaggerAnimation(3, 60, 160);
+    const statsAnim = useEntryAnimation(40);
+    const deliveryAnim = useEntryAnimation(80);
+    const actionsAnim = useEntryAnimation(130);
+    const activityAnim = useStaggerAnimation(3, 60, 180);
+    const carouselAnim = useEntryAnimation(360);
+    const trackBtnScale = usePressScale();
+
+    // ─── Carousel auto-scroll ───────────────────────────────────────────────
+    useEffect(() => {
+        autoScrollTimer.current = setInterval(() => {
+            setActiveSlide((prev) => {
+                const next = (prev + 1) % PROMO_SLIDES.length;
+                flatListRef.current?.scrollToIndex({ index: next, animated: true });
+                return next;
+            });
+        }, 4000);
+        return () => {
+            if (autoScrollTimer.current) clearInterval(autoScrollTimer.current);
+        };
+    }, []);
+
+    const handleCarouselScrollEnd = useCallback((e: any) => {
+        const idx = Math.round(e.nativeEvent.contentOffset.x / CAROUSEL_CARD_WIDTH);
+        setActiveSlide(idx);
+    }, []);
 
     // ═══════════════════════════════════════════════════════════════════════
     //  RENDER
@@ -282,6 +374,22 @@ export default function CustomerDashboard() {
                     )}
                 </Animated.View>
 
+                {/* ── Stats Strip ──────────────────────────────────────── */}
+                <Animated.View style={[styles.statsRow, statsAnim.style]}>
+                    <View style={[styles.statItem, { backgroundColor: c.card, borderColor: c.border }]}>
+                        <Text style={[styles.statValue, { color: c.text }]}>{totalDeliveries}</Text>
+                        <Text style={[styles.statLabel, { color: c.textTer }]}>TOTAL</Text>
+                    </View>
+                    <View style={[styles.statItem, { backgroundColor: c.card, borderColor: c.border }]}>
+                        <Text style={[styles.statValue, { color: c.text }]}>{completedDeliveries}</Text>
+                        <Text style={[styles.statLabel, { color: c.textTer }]}>COMPLETED</Text>
+                    </View>
+                    <View style={[styles.statItem, { backgroundColor: c.card, borderColor: c.border }]}>
+                        <Text style={[styles.statValue, { color: c.text }]}>{inTransitDeliveries}</Text>
+                        <Text style={[styles.statLabel, { color: c.textTer }]}>ACTIVE</Text>
+                    </View>
+                </Animated.View>
+
                 {/* Banners */}
                 <NetworkStatusBanner />
                 <CustomerHardwareBanner displayStatus={displayStatus} />
@@ -333,14 +441,18 @@ export default function CustomerDashboard() {
                         </View>
                         {/* Actions */}
                         <View style={styles.deliveryActions}>
+                            <Animated.View style={trackBtnScale.style}>
                             <TouchableOpacity
                                 style={[styles.primaryBtn, { backgroundColor: c.accent }]}
                                 onPress={() => navigation.navigate('TrackOrder', { bookingId: activeDelivery.id })}
+                                onPressIn={trackBtnScale.onPressIn}
+                                onPressOut={trackBtnScale.onPressOut}
                                 activeOpacity={0.8}
                             >
                                 <MaterialCommunityIcons name="map" size={18} color={c.bg} />
                                 <Text style={[styles.primaryBtnText, { color: c.bg }]}>Track Order</Text>
                             </TouchableOpacity>
+                            </Animated.View>
                             <View style={styles.secondaryBtnRow}>
                                 <TouchableOpacity
                                     style={[styles.secondaryBtn, { backgroundColor: c.pillBg, borderColor: c.border }]}
@@ -363,9 +475,11 @@ export default function CustomerDashboard() {
                     </View>
                 ) : (
                     <View style={[styles.emptyCard, { backgroundColor: c.card, borderColor: c.border }]}>
-                        <MaterialCommunityIcons name="package-variant" size={40} color={c.textTer} />
+                        <View style={[styles.emptyIconWrap, { backgroundColor: c.accent + '08' }]}>
+                            <MaterialCommunityIcons name="package-variant" size={32} color={c.textTer} />
+                        </View>
                         <Text style={[styles.emptyTitle, { color: c.textSec }]}>No active delivery</Text>
-                        <Text style={[styles.emptySub, { color: c.textTer }]}>Book a service to get started</Text>
+                        <Text style={[styles.emptySub, { color: c.textTer }]}>Tap "Send a Package" below to book your first delivery</Text>
                     </View>
                 )}
                 </Animated.View>
@@ -420,10 +534,71 @@ export default function CustomerDashboard() {
                     })
                 ) : (
                     <View style={[styles.emptyCard, { backgroundColor: c.card, borderColor: c.border }]}>
-                        <MaterialCommunityIcons name="history" size={36} color={c.textTer} />
+                        <View style={[styles.emptyIconWrap, { backgroundColor: c.accent + '08' }]}>
+                            <MaterialCommunityIcons name="history" size={28} color={c.textTer} />
+                        </View>
                         <Text style={[styles.emptyTitle, { color: c.textSec }]}>No recent activity</Text>
+                        <Text style={[styles.emptySub, { color: c.textTer }]}>Your delivery history will appear here</Text>
                     </View>
                 )}
+
+                {/* ── Promo Carousel ────────────────────────────────────────── */}
+                <Animated.View style={carouselAnim.style}>
+                    <Text style={[styles.sectionTitle, { color: c.text }]}>For You</Text>
+                    <FlatList
+                        ref={flatListRef}
+                        data={PROMO_SLIDES}
+                        keyExtractor={(item) => item.id}
+                        horizontal
+                        pagingEnabled
+                        showsHorizontalScrollIndicator={false}
+                        snapToInterval={CAROUSEL_CARD_WIDTH + 8}
+                        decelerationRate="fast"
+                        contentContainerStyle={{ paddingHorizontal: 0 }}
+                        onMomentumScrollEnd={handleCarouselScrollEnd}
+                        renderItem={({ item }) => (
+                            <TouchableOpacity activeOpacity={0.8} onPress={() => {
+                                if (item.id === '1') {
+                                    PremiumAlert.alert('Refer a Friend', 'Your referral code is: PARCEL2026. Share it to earn free deliveries!', [{ text: 'Share Code', style: 'default' }], undefined, 'account-multiple-plus', c.accent);
+                                } else if (item.id === '2') {
+                                    PremiumAlert.alert('Premium Delivery', 'Upgrade to Premium for real-time photo proof and priority handling.', [{ text: 'Upgrade Now', style: 'default' }], undefined, 'star', '#F59E0B');
+                                } else if (item.id === '3') {
+                                    PremiumAlert.alert('Rate Us', 'We appreciate your feedback! Keep enjoying Parcel-Safe.', [{ text: 'Rate Now', style: 'default' }], undefined, 'star-circle', c.accent);
+                                } else if (item.id === '4') {
+                                    PremiumAlert.alert('Safety First', 'Learn more about our tamper-proof technology and secure OTP process on our website.', [{ text: 'Learn More', style: 'default' }], undefined, 'shield-check', '#10B981');
+                                }
+                            }}>
+                                <View style={[styles.promoCard, { backgroundColor: c.card, borderColor: c.border, width: CAROUSEL_CARD_WIDTH }]}>
+                                    <View style={[styles.promoIconWrap, { backgroundColor: c.accent + '10' }]}>
+                                        <MaterialCommunityIcons name={item.icon as any} size={28} color={c.accent} />
+                                    </View>
+                                    <View style={styles.promoText}>
+                                        <Text style={[styles.promoHeadline, { color: c.text }]}>{item.headline}</Text>
+                                        <Text style={[styles.promoSub, { color: c.textSec }]} numberOfLines={2}>{item.subtitle}</Text>
+                                    </View>
+                                    <View style={[styles.promoCta, { backgroundColor: c.accent + '0D' }]}>
+                                        <Text style={[styles.promoCtaText, { color: c.accent }]}>{item.cta}</Text>
+                                        <MaterialCommunityIcons name="arrow-right" size={14} color={c.accent} />
+                                    </View>
+                                </View>
+                            </TouchableOpacity>
+                        )}
+                    />
+                    <View style={styles.dotsRow}>
+                        {PROMO_SLIDES.map((_, i) => (
+                            <View
+                                key={i}
+                                style={[
+                                    styles.dot,
+                                    {
+                                        backgroundColor: i === activeSlide ? c.accent : c.border,
+                                        width: i === activeSlide ? 18 : 6,
+                                    },
+                                ]}
+                            />
+                        ))}
+                    </View>
+                </Animated.View>
             </ScrollView>
 
             {/* ── Share Warning Modal ────────────────────────────────────── */}
@@ -555,12 +730,51 @@ const styles = StyleSheet.create({
         paddingVertical: 12, borderRadius: 12, borderWidth: 1, gap: 6,
     },
     secondaryBtnText: { fontSize: 13, fontWeight: '600' },
+    // Stats
+    statsRow: {
+        flexDirection: 'row', justifyContent: 'space-between',
+        marginBottom: 16, gap: 8,
+    },
+    statItem: {
+        flex: 1, alignItems: 'center', paddingVertical: 14,
+        borderRadius: 14, borderWidth: 1, gap: 2,
+    },
+    statValue: { fontSize: 20, fontWeight: '800' },
+    statLabel: { fontSize: 9, fontWeight: '600', letterSpacing: 0.5 },
     // Empty
     emptyCard: {
         alignItems: 'center', padding: 28, borderRadius: 16, borderWidth: 1, marginBottom: 20,
     },
-    emptyTitle: { fontSize: 15, fontWeight: '600', marginTop: 10 },
-    emptySub: { fontSize: 13, marginTop: 3 },
+    emptyIconWrap: {
+        width: 56, height: 56, borderRadius: 28,
+        alignItems: 'center', justifyContent: 'center', marginBottom: 4,
+    },
+    emptyTitle: { fontSize: 15, fontWeight: '600', marginTop: 8 },
+    emptySub: { fontSize: 13, marginTop: 3, textAlign: 'center', paddingHorizontal: 20 },
+    // Carousel
+    promoCard: {
+        borderRadius: 16, borderWidth: 1, padding: 18,
+        marginRight: 8, overflow: 'hidden',
+    },
+    promoIconWrap: {
+        width: 48, height: 48, borderRadius: 14,
+        alignItems: 'center', justifyContent: 'center', marginBottom: 12,
+    },
+    promoText: { marginBottom: 14 },
+    promoHeadline: { fontSize: 17, fontWeight: '800', marginBottom: 4 },
+    promoSub: { fontSize: 13, lineHeight: 18 },
+    promoCta: {
+        flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-start',
+        gap: 4, paddingHorizontal: 14, paddingVertical: 7, borderRadius: 20,
+    },
+    promoCtaText: { fontSize: 12, fontWeight: '700' },
+    dotsRow: {
+        flexDirection: 'row', justifyContent: 'center',
+        alignItems: 'center', marginTop: 12, gap: 5, marginBottom: 10,
+    },
+    dot: {
+        height: 6, borderRadius: 3,
+    },
     // Book card
     bookCard: {
         flexDirection: 'row', alignItems: 'center', padding: 18, borderRadius: 16, marginBottom: 20,

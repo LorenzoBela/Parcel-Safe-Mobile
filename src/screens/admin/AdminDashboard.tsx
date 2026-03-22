@@ -439,7 +439,7 @@ export default function AdminDashboard() {
                         )}
                     </View>
                     <TouchableOpacity style={[styles.pairingBtn, { backgroundColor: c.accent }]} onPress={() => navigation.navigate('PairBox')}>
-                        <Text style={styles.pairingBtnText}>Pair</Text>
+                        <Text style={[styles.pairingBtnText, { color: c.bg }]}>Pair</Text>
                     </TouchableOpacity>
                 </View>
                 </Animated.View>
@@ -573,7 +573,7 @@ export default function AdminDashboard() {
                             onPress={handleOverrideDelivery}
                             disabled={isProcessing}
                         >
-                            <Text style={styles.modalConfirmText}>{isProcessing ? 'Processing…' : 'Complete Delivery'}</Text>
+                            <Text style={[styles.modalConfirmText, { color: c.bg }]}>{isProcessing ? 'Processing…' : 'Complete Delivery'}</Text>
                         </TouchableOpacity>
                     </View>
                 </Modal>
@@ -724,7 +724,7 @@ export default function AdminDashboard() {
                                 <Text style={[styles.modalCancelText, { color: c.textPrimary }]}>Share</Text>
                             </TouchableOpacity>
                             <TouchableOpacity style={[styles.modalConfirmBtn, { backgroundColor: c.accent }]} onPress={shareQrImage}>
-                                <Text style={styles.modalConfirmText}>Share QR</Text>
+                                <Text style={[styles.modalConfirmText, { color: c.bg }]}>Share QR</Text>
                             </TouchableOpacity>
                         </View>
                     </ScrollView>
@@ -912,7 +912,6 @@ const styles = StyleSheet.create({
         borderRadius: 10,
     },
     pairingBtnText: {
-        color: '#FFFFFF',
         fontWeight: '700',
         fontSize: 14,
     },
@@ -1087,7 +1086,6 @@ const styles = StyleSheet.create({
         borderRadius: 10,
     },
     modalConfirmText: {
-        color: '#FFFFFF',
         fontWeight: '700',
         fontSize: 14,
     },

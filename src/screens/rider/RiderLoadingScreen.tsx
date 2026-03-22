@@ -15,7 +15,6 @@ import React, { useEffect, useRef, useState } from 'react';
 import {
     View,
     StyleSheet,
-    useColorScheme,
     StatusBar,
     Animated,
     Dimensions,
@@ -36,6 +35,7 @@ import { supabase } from '../../services/supabaseClient';
 import { getAuth } from 'firebase/auth';
 import { subscribeToRiderPairing, BoxPairingState } from '../../services/boxPairingService';
 import { fetchNotifications } from '../../services/notificationService';
+import { useAppTheme } from '../../context/ThemeContext';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -73,8 +73,7 @@ const MIN_DISPLAY_MS = 2000; // Increased slightly for the new data fetch step
 
 export default function RiderLoadingScreen() {
     const navigation = useNavigation<any>();
-    const colorScheme = useColorScheme();
-    const isDark = colorScheme === 'dark';
+    const { isDarkMode: isDark } = useAppTheme();
     const colors = isDark ? COLORS.dark : COLORS.light;
 
     const logoPulse = usePulseAnimation(0.5, 800);
