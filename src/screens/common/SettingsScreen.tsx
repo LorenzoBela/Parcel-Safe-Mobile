@@ -1,6 +1,6 @@
-import React, { useState, useCallback } from 'react';
-import { View, Animated, StyleSheet, ScrollView, TouchableOpacity, StatusBar } from 'react-native';
-import { useEntryAnimation, useStaggerAnimation } from '../../hooks/useEntryAnimation';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
+import { View, Animated, StyleSheet, ScrollView, TouchableOpacity, StatusBar, ActivityIndicator, Dimensions } from 'react-native';
+import { useEntryAnimation, useStaggerAnimation, usePulseAnimation } from '../../hooks/useEntryAnimation';
 import { Text, Switch, Avatar } from 'react-native-paper';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { useAppTheme } from '../../context/ThemeContext';
@@ -8,7 +8,7 @@ import { supabase } from '../../services/supabaseClient';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { signOut, signInWithGoogleAndSyncProfile } from '../../services/auth';
 import useAuthStore from '../../store/authStore';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useSafeAreaInsets, SafeAreaView } from 'react-native-safe-area-context';
 import {
     clearNotificationPreferencesCache,
 } from '../../services/pushNotificationService';
@@ -24,6 +24,8 @@ const dark = {
     text: '#FFFFFF', textSec: '#8E8E93', textTer: '#636366',
     accent: '#FFFFFF', red: '#FF453A', switchTrack: '#FFFFFF',
 };
+
+const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
 // ─── Row Component ──────────────────────────────────────────────────────────────
 function SettingsRow({ icon, label, subtitle, onPress, right, c }: {
@@ -62,6 +64,25 @@ export default function SettingsScreen() {
     const [profile, setProfile] = useState<any>(null);
     const [isSwitching, setIsSwitching] = useState(false);
 
+    const logoPulse = usePulseAnimation(0.5, 800);
+    const progressAnim = useRef(new Animated.Value(0)).current;
+
+    useEffect(() => {
+        if (isSwitching) {
+            progressAnim.setValue(0);
+            Animated.timing(progressAnim, {
+                toValue: 0.8,
+                duration: 2000,
+                useNativeDriver: false,
+            }).start();
+        }
+    }, [isSwitching]);
+
+    const progressWidth = progressAnim.interpolate({
+        inputRange: [0, 1],
+        outputRange: [0, SCREEN_WIDTH - 64],
+    });
+
     const fetchProfile = async () => {
         const { data: { user } } = await supabase!.auth.getUser();
         if (user) {
@@ -97,15 +118,22 @@ export default function SettingsScreen() {
             logout();
             const result = await signInWithGoogleAndSyncProfile();
             login(result);
-            if (result.role === 'customer') {
-                navigation.replace('CustomerApp');
-            } else {
-                navigation.replace('RoleSelection');
-            }
+            
+            Animated.timing(progressAnim, {
+                toValue: 1,
+                duration: 400,
+                useNativeDriver: false,
+            }).start(() => {
+                if (result.role === 'customer') {
+                    navigation.replace('CustomerApp');
+                } else {
+                    navigation.replace('RoleSelection');
+                }
+                setTimeout(() => setIsSwitching(false), 500);
+            });
         } catch (error: any) {
             console.error('Switch account failed:', error);
             navigation.replace('Login');
-        } finally {
             setIsSwitching(false);
         }
     };
@@ -114,6 +142,40 @@ export default function SettingsScreen() {
     const profileAnim = useEntryAnimation(0);
     const sectionAnims = useStaggerAnimation(4, 60, 80);
     const footerAnim = useEntryAnimation(340);
+
+    if (isSwitching) {
+        return (
+            <SafeAreaView style={[styles.loadingContainer, { backgroundColor: c.bg }]}>
+                <StatusBar barStyle={isDarkMode ? 'light-content' : 'dark-content'} backgroundColor={c.bg} />
+                
+                <Animated.View style={[styles.loadingIconBox, { backgroundColor: c.card, borderColor: c.border }, logoPulse.style]}>
+                    <MaterialCommunityIcons name="account-switch" size={36} color={c.text} />
+                </Animated.View>
+
+                <Text style={[styles.loadingTitle, { color: c.text }]}>Switching Accounts</Text>
+                <Text style={[styles.loadingSubtitle, { color: c.textSec }]}>
+                    Please wait a moment...
+                </Text>
+
+                <View style={styles.loadingProgressSection}>
+                    <View style={[styles.loadingProgressTrack, { backgroundColor: c.border }]}>
+                        <Animated.View
+                            style={[
+                                styles.loadingProgressFill,
+                                { backgroundColor: c.text, width: progressWidth },
+                            ]}
+                        />
+                    </View>
+                    <View style={styles.loadingStatusRow}>
+                        <ActivityIndicator size="small" color={c.textSec} />
+                        <Text style={[styles.loadingStatusText, { color: c.textSec }]}>
+                            Authenticating...
+                        </Text>
+                    </View>
+                </View>
+            </SafeAreaView>
+        );
+    }
 
     return (
         <Animated.View style={[{ flex: 1 }, profileAnim.style]}>
@@ -266,4 +328,58 @@ const styles = StyleSheet.create({
     },
     logoutText: { fontSize: 15, fontWeight: '600' },
     version: { textAlign: 'center', fontSize: 12, marginTop: 16 },
+
+    // Loading Screen Styles
+    loadingContainer: {
+        flex: 1,
+        justifyContent: 'center',
+        alignItems: 'center',
+        paddingHorizontal: 32,
+    },
+    loadingIconBox: {
+        width: 72,
+        height: 72,
+        borderRadius: 20,
+        borderWidth: 1,
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginBottom: 20,
+    },
+    loadingTitle: {
+        fontSize: 26,
+        fontWeight: '700',
+        letterSpacing: -0.5,
+        marginBottom: 4,
+    },
+    loadingSubtitle: {
+        fontSize: 13,
+        fontWeight: '400',
+        letterSpacing: 0.1,
+        marginBottom: 40,
+    },
+    loadingProgressSection: {
+        width: '100%',
+        alignItems: 'center',
+    },
+    loadingProgressTrack: {
+        width: '100%',
+        height: 3,
+        borderRadius: 2,
+        overflow: 'hidden',
+        marginBottom: 12,
+    },
+    loadingProgressFill: {
+        height: '100%',
+        borderRadius: 2,
+    },
+    loadingStatusRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+    },
+    loadingStatusText: {
+        fontSize: 12,
+        fontWeight: '500',
+        letterSpacing: 0.1,
+    },
 });

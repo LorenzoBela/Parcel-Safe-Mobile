@@ -77,7 +77,39 @@ export default function BookServiceScreen() {
     const insets = useSafeAreaInsets();
     // EC-Update: Get userId and name for persistence check and booking
     const userId = useAuthStore((state: any) => state.user?.userId);
-    const userFullName = useAuthStore((state: any) => state.user?.fullName || state.user?.name);
+    const userFullName = useAuthStore((state: any) => {
+        const name = state.user?.fullName || state.user?.name;
+        if (name) return name;
+        if (state.user?.email) return state.user.email.split('@')[0];
+        if (state.user?.phone) return `User ${state.user.phone.slice(-4)}`;
+        return 'Customer';
+    });
+
+    const [customerName, setCustomerName] = useState<string>(userFullName);
+
+    useEffect(() => {
+        const fetchFreshName = async () => {
+            if (!userId) return;
+            try {
+                const { data } = await supabase
+                    .from('profiles')
+                    .select('full_name, phone_number')
+                    .eq('id', userId)
+                    .single();
+                
+                if (data) {
+                    if (data.full_name) {
+                        setCustomerName(data.full_name);
+                    } else if (data.phone_number) {
+                        setCustomerName(`User ${data.phone_number.slice(-4)}`);
+                    }
+                }
+            } catch (err) {
+                console.warn('[BookServiceScreen] Failed to fetch fresh customer name', err);
+            }
+        };
+        fetchFreshName();
+    }, [userId]);
     const MAPBOX_TOKEN = process.env.EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN;
     const GOOGLE_MAPS_TOKEN = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY;
 
@@ -979,7 +1011,7 @@ export default function BookServiceScreen() {
             estimatedCost: routeData?.cost,
             distance: routeData?.distance, // EC-Fix: Added
             duration: routeData?.duration, // EC-Fix: Added
-            customerName: userFullName, // EC-Fix: Pass customer name for rider preview
+            customerName: customerName, // EC-Fix: Pass customer name for rider preview
             senderName,
             senderPhone,
             recipientName,

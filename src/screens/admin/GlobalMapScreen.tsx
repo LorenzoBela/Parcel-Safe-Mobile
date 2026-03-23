@@ -59,6 +59,13 @@ type BoxMarker = {
     batteryPct?: number;
     batteryVolt?: number;
     distanceTrav?: number;
+    phoneBatteryPct?: number;
+    hasActiveDelivery?: boolean;
+    deliveryId?: string;
+    hwLastUpdated?: number;
+    phoneLastUpdated?: number;
+    phoneConnected?: boolean;
+    rawStatus?: string;
 };
 
 type AnimationState = {
@@ -283,6 +290,8 @@ export default function GlobalMapScreen() {
     const [listVisible, setListVisible] = useState(false);
     const [fleetFilter, setFleetFilter] = useState<FleetFilter>('ALL');
 
+    const [sidebarAddresses, setSidebarAddresses] = useState<Map<string, string>>(new Map());
+
     const [cameraCenter, setCameraCenter] = useState<[number, number]>(DEFAULT_CENTER);
     const [cameraZoom, setCameraZoom] = useState<number>(12);
     const [cameraBearing, setCameraBearing] = useState<number>(0);
@@ -322,6 +331,25 @@ export default function GlobalMapScreen() {
             MapboxGL.setAccessToken(MAPBOX_TOKEN);
             MapboxGL.setTelemetryEnabled(false);
         }
+    }, [MAPBOX_TOKEN]);
+
+    const fetchAndCacheAddress = useCallback(async (deviceId: string, lat: number, lng: number) => {
+        if (!MAPBOX_TOKEN || !Number.isFinite(lat) || !Number.isFinite(lng)) return;
+        try {
+            const res = await fetch(
+                `https://api.mapbox.com/geocoding/v5/mapbox.places/${lng},${lat}.json?access_token=${MAPBOX_TOKEN}&types=address,poi,place&limit=1`
+            );
+            if (!res.ok) return;
+            const data = await res.json();
+            const placeName = data.features?.[0]?.place_name;
+            if (placeName) {
+                setSidebarAddresses(prev => {
+                    const next = new Map(prev);
+                    next.set(deviceId, placeName);
+                    return next;
+                });
+            }
+        } catch {}
     }, [MAPBOX_TOKEN]);
 
     useEffect(() => {
@@ -410,10 +438,26 @@ export default function GlobalMapScreen() {
                     batteryPct: hw?.batt_pct,
                     batteryVolt: hw?.batt_v,
                     distanceTrav: hw?.geo_dist_m,
+                    phoneBatteryPct: (hw as any)?.phone_status?.battery_level,
+                    hasActiveDelivery: !!(hw as any)?.delivery_id,
+                    deliveryId: (hw as any)?.delivery_id,
+                    hwLastUpdated: hw?.last_updated,
+                    phoneLastUpdated: (hw as any)?.phone_status?.timestamp,
+                    phoneConnected: (hw as any)?.phone_status?.is_connected,
+                    rawStatus: hw?.status,
                 };
             })
             .filter((b) => isValidLat(b.lat) && isValidLng(b.lng));
     }, [locationsByBox, hardwareByBox]);
+
+    useEffect(() => {
+        if (selectedBoxId) {
+            const box = activeBoxes.find(b => b.id === selectedBoxId);
+            if (box && !sidebarAddresses.has(selectedBoxId)) {
+                fetchAndCacheAddress(selectedBoxId, box.lat, box.lng);
+            }
+        }
+    }, [selectedBoxId, activeBoxes, sidebarAddresses, fetchAndCacheAddress]);
 
     const tamperAlertCount = useMemo(() => activeBoxes.filter((b) => b.alert).length, [activeBoxes]);
     const activeMoveCount = useMemo(
@@ -659,71 +703,77 @@ export default function GlobalMapScreen() {
             );
         }
 
-        const bars = getSignalBars(selectedBox.csq);
-        const sigColor = getSignalColor(bars);
-        const sigIcon = getSignalIcon(bars);
-        const statusColor = getStatusColor(selectedBox.status, selectedBox.alert);
-        const displayStatus = selectedBox.alert ? 'TAMPER' : selectedBox.status;
+        const now = Date.now();
+        const isAppOnline = (selectedBox.phoneConnected === true && (now - (selectedBox.phoneLastUpdated || 0) < 120000)) ||
+            (selectedBox.gpsSource === 'phone' && (now - (selectedBox.timestamp || 0) < 60000));
+        
+        const boxStateMs = selectedBox.hwLastUpdated 
+            ? (selectedBox.hwLastUpdated > 1e12 ? selectedBox.hwLastUpdated : selectedBox.hwLastUpdated * 1000) 
+            : 0;
+        const isBoxOnline = boxStateMs > 0 && (now - boxStateMs < 30000);
+        
+        const isOnline = isAppOnline || isBoxOnline;
+        let sourceText = 'OFFLINE';
+        if (isOnline) {
+            if (isAppOnline && isBoxOnline) sourceText = 'ONLINE (BOTH)';
+            else if (isAppOnline) sourceText = 'ONLINE (APP)';
+            else if (isBoxOnline) sourceText = 'ONLINE (BOX)';
+        }
+
+        const ts = selectedBox.timestamp || Date.now();
+        const updatedStr = new Date(ts > 1e12 ? ts : ts * 1000).toLocaleTimeString('en-US', {
+            timeZone: 'Asia/Manila', hour: '2-digit', minute: '2-digit', hour12: true
+        });
+
+        const hwStatus = selectedBox.rawStatus || '—';
+        const isLocked = hwStatus === 'LOCKED' || hwStatus === 'IDLE';
+        const lockLabel = isLocked ? 'LOCKED' : (hwStatus === 'UNLOCKING' ? 'UNLOCKING' : 'UNLOCKED');
+        const stateLabel = hwStatus.replace(/_/g, ' ');
+
+        const boxBatt = selectedBox.batteryPct != null ? `${Math.round(selectedBox.batteryPct)}%` : '—';
+        const phoneBatt = selectedBox.phoneBatteryPct != null ? `${Math.round(selectedBox.phoneBatteryPct)}%` : '—';
+        const signal = selectedBox.rssi != null ? `${selectedBox.rssi} dBm [${selectedBox.connection || '—'}]` : '—';
+        const speed = formatSpeed(selectedBox.speed);
+        
+        const deliveryId = selectedBox.deliveryId ? selectedBox.deliveryId.substring(0, 6) + '…' : '—';
+        const deliveryState = selectedBox.hasActiveDelivery ? stateLabel : 'None';
+
+        const address = sidebarAddresses.get(selectedBox.id);
 
         return (
             <Card style={[styles.infoCard, { backgroundColor: uiBg }]}>
-                <Card.Content style={styles.diagCompactContent}>
-                    <View style={styles.diagHeaderCompact}>
-                        <Text variant="titleSmall" style={{ fontWeight: 'bold', flex: 1, color: uiText }}>
-                            {selectedBox.id}
-                        </Text>
-                        <Chip
-                            compact
-                            style={[styles.statusChip, { backgroundColor: statusColor + '22' }]}
-                            textStyle={{ color: statusColor, fontSize: 11, fontWeight: 'bold' }}
-                        >
-                            {displayStatus}
-                        </Chip>
-                    </View>
-                    <View style={styles.diagPillRow}>
-                        <View style={[styles.diagPill, { backgroundColor: uiPill }]}>
-                            <MaterialCommunityIcons name={selectedBox.connection === 'WiFi' ? 'wifi' : 'antenna'} size={14} color={uiAccent} />
-                            <Text style={[styles.diagPillText, { color: uiText }]}>{selectedBox.connection ?? '—'}</Text>
-                        </View>
-                        <View style={[styles.diagPill, { backgroundColor: uiPill }]}>
-                            <MaterialCommunityIcons name={sigIcon as any} size={14} color={sigColor} />
-                            <Text style={[styles.diagPillText, { color: sigColor }]}>{selectedBox.rssi != null ? `${selectedBox.rssi} dBm` : '—'}</Text>
-                        </View>
-                        <View style={[styles.diagPill, { backgroundColor: uiPill }]}>
-                            <MaterialCommunityIcons name={selectedBox.gpsFix ? 'crosshairs-gps' : 'crosshairs-off'} size={14} color={selectedBox.gpsFix ? '#16A34A' : '#DC2626'} />
-                            <Text style={[styles.diagPillText, { color: uiText }]}>{selectedBox.gpsFix ? 'GPS Fix' : 'No Fix'}</Text>
-                        </View>
-                        <View style={[styles.diagPill, { backgroundColor: uiPill }]}>
-                            <MaterialCommunityIcons name="clock-outline" size={14} color="#F59E0B" />
-                            <Text style={[styles.diagPillText, { color: uiText }]}>{formatTimeAgo(selectedBox.lastUpdated || selectedBox.timestamp)}</Text>
-                        </View>
-                        <View style={[styles.diagPill, { backgroundColor: uiPill }]}>
-                            <MaterialCommunityIcons name={selectedBox.gpsSource === 'phone' ? 'cellphone' : 'box'} size={14} color={uiAccent} />
-                            <Text style={[styles.diagPillText, { color: uiText }]}>{selectedBox.gpsSource === 'phone' ? 'Phone' : 'Box'}</Text>
-                        </View>
-                        <View style={[styles.diagPill, { backgroundColor: uiPill }]}>
-                            <MaterialCommunityIcons name="speedometer" size={14} color={uiAccent} />
-                            <Text style={[styles.diagPillText, { color: uiText }]}>{formatSpeed(selectedBox.speed)}</Text>
-                        </View>
-                        <View style={[styles.diagPill, { backgroundColor: uiPill }]}>
-                            <MaterialCommunityIcons 
-                                name={selectedBox.batteryPct != null && selectedBox.batteryPct <= 20 ? 'battery-alert' : 'battery'} 
-                                size={14} 
-                                color={selectedBox.batteryPct != null && selectedBox.batteryPct <= 20 ? '#DC2626' : '#16A34A'} 
-                            />
-                            <Text style={[styles.diagPillText, { color: uiText }]}>
-                                {selectedBox.batteryPct != null ? `${selectedBox.batteryPct}%` : '—'}
-                            </Text>
-                        </View>
-                        <View style={[styles.diagPill, { backgroundColor: uiPill }]}>
-                            <MaterialCommunityIcons name="map-marker-distance" size={14} color={uiAccent} />
-                            <Text style={[styles.diagPillText, { color: uiText }]}>
-                                {selectedBox.distanceTrav != null 
-                                    ? (selectedBox.distanceTrav >= 1000 ? `${(selectedBox.distanceTrav / 1000).toFixed(1)} km` : `${Math.round(selectedBox.distanceTrav)} m`) 
-                                    : '—'}
-                            </Text>
+                <Card.Content style={{ padding: 12 }}>
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                        <Text style={{ fontSize: 14, fontWeight: 'bold', color: uiText }}>{selectedBox.id}</Text>
+                        <View style={{ paddingHorizontal: 8, paddingVertical: 2, borderRadius: 12, borderWidth: 1, borderColor: isOnline ? uiText : uiTextSec }}>
+                            <Text style={{ fontSize: 10, fontWeight: '700', color: isOnline ? uiText : uiTextSec }}>{sourceText}</Text>
                         </View>
                     </View>
+                    
+                    <View style={{ height: 1, backgroundColor: uiBorder, marginBottom: 6 }} />
+                    
+                    <View style={styles.webPopupRow}><Text style={styles.webPopupLbl}>Lock</Text><Text style={[styles.webPopupVal, { color: uiText }]}>{lockLabel}</Text></View>
+                    <View style={styles.webPopupRow}><Text style={styles.webPopupLbl}>State</Text><Text style={[styles.webPopupVal, { color: uiText }]}>{stateLabel}</Text></View>
+                    <View style={styles.webPopupRow}><Text style={styles.webPopupLbl}>Box Battery</Text><Text style={[styles.webPopupVal, { color: uiText }]}>{boxBatt}</Text></View>
+                    <View style={styles.webPopupRow}><Text style={styles.webPopupLbl}>Phone Battery</Text><Text style={[styles.webPopupVal, { color: uiText }]}>{phoneBatt}</Text></View>
+                    <View style={styles.webPopupRow}><Text style={styles.webPopupLbl}>Signal</Text><Text style={[styles.webPopupVal, { color: uiText }]}>{signal}</Text></View>
+                    <View style={styles.webPopupRow}><Text style={styles.webPopupLbl}>Speed</Text><Text style={[styles.webPopupVal, { color: uiText }]}>{speed}</Text></View>
+                    
+                    <View style={{ height: 1, backgroundColor: uiBorder, marginVertical: 6 }} />
+                    
+                    <View style={styles.webPopupRow}><Text style={styles.webPopupLbl}>Delivery</Text><Text style={[styles.webPopupVal, { color: uiText }]}>{deliveryState}</Text></View>
+                    <View style={styles.webPopupRow}><Text style={styles.webPopupLbl}>ID</Text><Text style={{ fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace', fontSize: 11, color: uiTextSec }}>{deliveryId}</Text></View>
+                    
+                    {address ? (
+                        <>
+                            <View style={{ height: 1, backgroundColor: uiBorder, marginVertical: 6 }} />
+                            <Text style={{ fontSize: 11, color: uiTextSec, lineHeight: 16 }}>{address}</Text>
+                        </>
+                    ) : null}
+                    
+                    <Text style={{ marginTop: 4, fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace', fontSize: 9, color: uiTextSec }}>
+                        {selectedBox.lat.toFixed(4)}, {selectedBox.lng.toFixed(4)} · {updatedStr}
+                    </Text>
                 </Card.Content>
             </Card>
         );
@@ -1288,5 +1338,21 @@ const styles = StyleSheet.create({
     listItemMetaText: {
         fontSize: 11,
         color: '#666',
+    },
+    webPopupRow: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        paddingVertical: 2,
+    },
+    webPopupLbl: {
+        color: '#71717a',
+        fontSize: 10,
+        textTransform: 'uppercase',
+        letterSpacing: 0.4,
+    },
+    webPopupVal: {
+        fontWeight: '600',
+        fontSize: 12,
     },
 });

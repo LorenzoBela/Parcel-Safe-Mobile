@@ -15,6 +15,27 @@ dayjs.extend(timezone);
 const PH_TIMEZONE = 'Asia/Manila';
 
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useAppTheme } from '../../context/ThemeContext';
+
+function buildGeofenceCircleGeoJSON(
+    centerLng: number,
+    centerLat: number,
+    radiusM: number,
+    segments: number = 64
+): GeoJSON.Feature<GeoJSON.Polygon> {
+    const coords: [number, number][] = [];
+    for (let i = 0; i <= segments; i++) {
+        const angle = (i / segments) * 2 * Math.PI;
+        const dLat = (radiusM / 111320) * Math.cos(angle);
+        const dLng = (radiusM / (111320 * Math.cos((centerLat * Math.PI) / 180))) * Math.sin(angle);
+        coords.push([centerLng + dLng, centerLat + dLat]);
+    }
+    return {
+        type: 'Feature',
+        properties: {},
+        geometry: { type: 'Polygon', coordinates: [coords] },
+    };
+}
 
 /** Haversine formula — returns distance in km */
 function getDistanceKm(lat1: number, lng1: number, lat2: number, lng2: number): number {
@@ -32,6 +53,7 @@ export default function JobDetailScreen() {
     const navigation = useNavigation<any>();
     const route = useRoute<any>();
     const theme = useTheme();
+    const { isDarkMode } = useAppTheme();
     const insets = useSafeAreaInsets();
     const MAPBOX_TOKEN = process.env.EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN;
 
@@ -108,8 +130,17 @@ export default function JobDetailScreen() {
         const fetchRoute = async () => {
             if (!MAPBOX_TOKEN) return;
 
+            const isReturn = ['RETURNING', 'TAMPERED'].includes(jobData.status);
+            
+            // For a return, the origin is the dropoff (where they started the return) 
+            // and the destination is the pickup (where they are returning it to).
+            const startLng = isReturn ? jobData.dropoffLng : jobData.pickupLng;
+            const startLat = isReturn ? jobData.dropoffLat : jobData.pickupLat;
+            const endLng = isReturn ? jobData.pickupLng : jobData.dropoffLng;
+            const endLat = isReturn ? jobData.pickupLat : jobData.dropoffLat;
+
             try {
-                const url = `https://api.mapbox.com/directions/v5/mapbox/driving/${jobData.pickupLng},${jobData.pickupLat};${jobData.dropoffLng},${jobData.dropoffLat}?geometries=geojson&access_token=${MAPBOX_TOKEN}`;
+                const url = `https://api.mapbox.com/directions/v5/mapbox/driving/${startLng},${startLat};${endLng},${endLat}?geometries=geojson&access_token=${MAPBOX_TOKEN}`;
 
                 const response = await fetch(url);
                 const data = await response.json();
@@ -206,13 +237,15 @@ export default function JobDetailScreen() {
 
             {/* Map Section - Fixed at top */}
             <View style={styles.mapContainer}>
-                {MAPBOX_TOKEN ? (
+                {MAPBOX_TOKEN ? (() => {
+                    const isReturn = ['RETURNING', 'TAMPERED'].includes(jobData.status);
+                    return (
                     <>
                         <MapboxGL.MapView
                             style={styles.map}
                             logoEnabled={false}
                             attributionEnabled={false}
-                            styleURL={MapboxGL.StyleURL.Street}
+                            styleURL={isDarkMode ? MapboxGL.StyleURL.Dark : MapboxGL.StyleURL.Street}
                             scrollEnabled={true}
                             pitchEnabled={true}
                             rotateEnabled={true}
@@ -245,25 +278,75 @@ export default function JobDetailScreen() {
                                 animationDuration={2000}
                             />
 
-                            {/* Pickup Marker */}
-                            <MapboxGL.PointAnnotation
-                                id="pickup-marker"
-                                coordinate={[jobData.pickupLng, jobData.pickupLat]}
-                            >
-                                <View style={styles.pickupMarker}>
-                                    <MaterialCommunityIcons name="package-variant" size={20} color="white" />
-                                </View>
-                            </MapboxGL.PointAnnotation>
+                            {/* Origin/Destination Markers based on journey phase */}
+                            {!isReturn ? (
+                                <>
+                                    <MapboxGL.PointAnnotation
+                                        id="pickup-marker"
+                                        coordinate={[jobData.pickupLng, jobData.pickupLat]}
+                                    >
+                                        <View style={styles.pickupMarker}>
+                                            <MaterialCommunityIcons name="package-variant" size={20} color="white" />
+                                        </View>
+                                    </MapboxGL.PointAnnotation>
 
-                            {/* Dropoff Marker */}
-                            <MapboxGL.PointAnnotation
-                                id="dropoff-marker"
-                                coordinate={[jobData.dropoffLng, jobData.dropoffLat]}
-                            >
-                                <View style={styles.dropoffMarker}>
-                                    <MaterialCommunityIcons name="map-marker" size={24} color="white" />
-                                </View>
-                            </MapboxGL.PointAnnotation>
+                                    <MapboxGL.PointAnnotation
+                                        id="dropoff-marker"
+                                        coordinate={[jobData.dropoffLng, jobData.dropoffLat]}
+                                    >
+                                        <View style={styles.dropoffMarker}>
+                                            <MaterialCommunityIcons name="map-marker" size={24} color="white" />
+                                        </View>
+                                    </MapboxGL.PointAnnotation>
+                                </>
+                            ) : (
+                                <>
+                                    <MapboxGL.PointAnnotation
+                                        id="return-dropoff-marker"
+                                        coordinate={[jobData.dropoffLng, jobData.dropoffLat]}
+                                    >
+                                        <View style={[styles.pickupMarker, { backgroundColor: '#757575' }]}>
+                                            <MaterialCommunityIcons name="map-marker-off" size={20} color="white" />
+                                        </View>
+                                    </MapboxGL.PointAnnotation>
+
+                                    <MapboxGL.PointAnnotation
+                                        id="return-pickup-marker"
+                                        coordinate={[jobData.pickupLng, jobData.pickupLat]}
+                                    >
+                                        <View style={styles.dropoffMarker}>
+                                            <MaterialCommunityIcons name="keyboard-return" size={24} color="white" />
+                                        </View>
+                                    </MapboxGL.PointAnnotation>
+                                </>
+                            )}
+
+                            {/* Geofences */}
+                            {!isReturn ? (
+                                <>
+                                    <MapboxGL.ShapeSource id="pickup-geofence" shape={buildGeofenceCircleGeoJSON(jobData.pickupLng, jobData.pickupLat, 50)}>
+                                        <MapboxGL.FillLayer id="pickup-geofence-fill" style={{ fillColor: '#2196F3', fillOpacity: 0.2 }} />
+                                        <MapboxGL.LineLayer id="pickup-geofence-line" style={{ lineColor: '#2196F3', lineWidth: 2, lineOpacity: 0.8 }} />
+                                    </MapboxGL.ShapeSource>
+
+                                    <MapboxGL.ShapeSource id="dropoff-geofence" shape={buildGeofenceCircleGeoJSON(jobData.dropoffLng, jobData.dropoffLat, 50)}>
+                                        <MapboxGL.FillLayer id="dropoff-geofence-fill" style={{ fillColor: '#F44336', fillOpacity: 0.2 }} />
+                                        <MapboxGL.LineLayer id="dropoff-geofence-line" style={{ lineColor: '#F44336', lineWidth: 2, lineOpacity: 0.8 }} />
+                                    </MapboxGL.ShapeSource>
+                                </>
+                            ) : (
+                                <>
+                                    <MapboxGL.ShapeSource id="return-dropoff-geofence" shape={buildGeofenceCircleGeoJSON(jobData.dropoffLng, jobData.dropoffLat, 50)}>
+                                        <MapboxGL.FillLayer id="return-dropoff-geofence-fill" style={{ fillColor: '#757575', fillOpacity: 0.2 }} />
+                                        <MapboxGL.LineLayer id="return-dropoff-geofence-line" style={{ lineColor: '#757575', lineWidth: 2, lineOpacity: 0.8 }} />
+                                    </MapboxGL.ShapeSource>
+
+                                    <MapboxGL.ShapeSource id="return-pickup-geofence" shape={buildGeofenceCircleGeoJSON(jobData.pickupLng, jobData.pickupLat, 50)}>
+                                        <MapboxGL.FillLayer id="return-pickup-geofence-fill" style={{ fillColor: '#F44336', fillOpacity: 0.2 }} />
+                                        <MapboxGL.LineLayer id="return-pickup-geofence-line" style={{ lineColor: '#F44336', lineWidth: 2, lineOpacity: 0.8 }} />
+                                    </MapboxGL.ShapeSource>
+                                </>
+                            )}
 
                             {/* Route Line */}
                             {routeGeometry && (
@@ -278,7 +361,7 @@ export default function JobDetailScreen() {
                                     <MapboxGL.LineLayer
                                         id="route-line-layer"
                                         style={{
-                                            lineColor: '#2196F3',
+                                            lineColor: isReturn ? '#F44336' : '#2196F3',
                                             lineWidth: 4,
                                             lineOpacity: 0.8,
                                         }}
@@ -305,9 +388,9 @@ export default function JobDetailScreen() {
                             />
                         </Surface>
                     </>
-                ) : (
-                    <View style={[styles.map, styles.mapFallback]}>
-                        <Text>Map unavailable</Text>
+                );})() : (
+                    <View style={[styles.map, styles.mapFallback, isDarkMode && { backgroundColor: '#1e1e1e' }]}>
+                        <Text style={{ color: theme.colors.onSurfaceVariant }}>Map unavailable</Text>
                     </View>
                 )}
             </View>
@@ -347,7 +430,9 @@ export default function JobDetailScreen() {
                                 <MaterialCommunityIcons name="cash" size={20} color="#4CAF50" />
                                 <View style={{ flex: 1, marginLeft: 12 }}>
                                     <Text variant="labelMedium" style={{ color: theme.colors.onSurfaceVariant }}>Fare</Text>
-                                    <Text variant="bodyLarge" style={{ fontWeight: 'bold', color: '#4CAF50' }}>{jobData.fare}</Text>
+                                    <Text variant="bodyLarge" style={{ fontWeight: 'bold', color: '#4CAF50' }}>
+                                        {jobData.fare && jobData.fare !== 'N/A' && jobData.fare !== '--' ? (jobData.fare.toString().includes('₱') ? jobData.fare : `₱${Number(jobData.fare).toFixed(2)}`) : 'N/A'}
+                                    </Text>
                                 </View>
                             </View>
                         </Card.Content>
@@ -357,18 +442,16 @@ export default function JobDetailScreen() {
                     <Card style={{ marginBottom: 16 }} mode="elevated">
                         <Card.Content>
                             <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>
-                                <View style={[styles.badge, { backgroundColor: '#E3F2FD' }]}>
+                                <View style={[styles.badge, { backgroundColor: isDarkMode ? 'rgba(33, 150, 243, 0.2)' : '#E3F2FD' }]}>
                                     <MaterialCommunityIcons name="package-variant" size={20} color="#2196F3" />
                                 </View>
                                 <Text variant="titleMedium" style={{ fontWeight: 'bold', marginLeft: 8 }}>Pickup</Text>
                             </View>
 
-                            {jobData.senderName ? (
-                                <View style={styles.detailRow}>
-                                    <MaterialCommunityIcons name="account" size={18} color={theme.colors.onSurfaceVariant} />
-                                    <Text variant="bodyMedium" style={{ flex: 1, marginLeft: 8 }}>{jobData.senderName}</Text>
-                                </View>
-                            ) : null}
+                            <View style={styles.detailRow}>
+                                <MaterialCommunityIcons name="account" size={18} color={theme.colors.onSurfaceVariant} />
+                                <Text variant="bodyMedium" style={{ flex: 1, marginLeft: 8 }}>{jobData.senderName || 'Unknown Sender'}</Text>
+                            </View>
 
                             {jobData.senderPhone ? (
                                 <View style={[styles.detailRow, { alignItems: 'center' }]}>
@@ -395,7 +478,7 @@ export default function JobDetailScreen() {
                     <Card style={{ marginBottom: 16 }} mode="elevated">
                         <Card.Content>
                             <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>
-                                <View style={[styles.badge, { backgroundColor: '#FFEBEE' }]}>
+                                <View style={[styles.badge, { backgroundColor: isDarkMode ? 'rgba(244, 67, 54, 0.2)' : '#FFEBEE' }]}>
                                     <MaterialCommunityIcons name="map-marker" size={20} color="#F44336" />
                                 </View>
                                 <Text variant="titleMedium" style={{ fontWeight: 'bold', marginLeft: 8 }}>Dropoff</Text>
@@ -403,7 +486,7 @@ export default function JobDetailScreen() {
 
                             <View style={styles.detailRow}>
                                 <MaterialCommunityIcons name="account" size={18} color={theme.colors.onSurfaceVariant} />
-                                <Text variant="bodyMedium" style={{ flex: 1, marginLeft: 8 }}>{jobData.recipientName || jobData.customer}</Text>
+                                <Text variant="bodyMedium" style={{ flex: 1, marginLeft: 8 }}>{jobData.recipientName || jobData.customer || 'Unknown Recipient'}</Text>
                             </View>
 
                             {jobData.phone && jobData.phone !== 'N/A' ? (
@@ -445,14 +528,14 @@ export default function JobDetailScreen() {
                 >
                     Back
                 </Button>
-                {!['CANCELLED', 'COMPLETED', 'RETURNING', 'RETURNED'].includes(jobData.status) && (
+                {!['CANCELLED', 'COMPLETED', 'RETURNED'].includes(jobData.status) && (
                     <Button
                         mode="contained"
                         onPress={handleStartTrip}
                         style={{ flex: 2 }}
                         icon="navigation"
                     >
-                        Start Trip
+                        {['RETURNING', 'TAMPERED'].includes(jobData.status) ? 'Continue Return' : 'Start Trip'}
                     </Button>
                 )}
             </Surface>

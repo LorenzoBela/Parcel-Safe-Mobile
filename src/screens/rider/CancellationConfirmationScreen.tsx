@@ -29,6 +29,7 @@ interface RouteParams {
     pickupAddress?: string;
     pickupLat?: number;
     pickupLng?: number;
+    isPickedUp?: boolean;
 }
 
 export default function CancellationConfirmationScreen() {
@@ -49,13 +50,14 @@ export default function CancellationConfirmationScreen() {
         pickupAddress = 'Return to pickup location',
         pickupLat,
         pickupLng,
+        isPickedUp = false,
     } = params || {};
 
     // Prevent accidental back navigation
     useFocusEffect(
         useCallback(() => {
             const onBackPress = () => {
-                navigation.navigate('RiderDashboard');
+                navigation.navigate('RiderApp');
                 return true;
             };
 
@@ -76,7 +78,7 @@ export default function CancellationConfirmationScreen() {
     };
 
     const handleDone = () => {
-        navigation.navigate('RiderDashboard');
+        navigation.navigate('RiderApp');
     };
 
     return (
@@ -121,91 +123,97 @@ export default function CancellationConfirmationScreen() {
 
 
 
-                {/* Next Steps Card */}
-                <Surface style={[styles.stepsCard, { backgroundColor: theme.colors.surface }]} elevation={1}>
-                    <Text variant="titleMedium" style={{ fontWeight: 'bold', marginBottom: 16, color: theme.colors.onSurface }}>
-                        Next Steps
-                    </Text>
+                {isPickedUp && (
+                    <>
+                        {/* Next Steps Card */}
+                        <Surface style={[styles.stepsCard, { backgroundColor: theme.colors.surface }]} elevation={1}>
+                            <Text variant="titleMedium" style={{ fontWeight: 'bold', marginBottom: 16, color: theme.colors.onSurface }}>
+                                Next Steps
+                            </Text>
 
-                    <View style={styles.stepRow}>
-                        <Avatar.Text size={28} label="1" style={{ backgroundColor: theme.colors.primary }} />
-                        <View style={styles.stepContent}>
-                            <Text variant="bodyMedium" style={{ fontWeight: '600', color: theme.colors.onSurface }}>
-                                Return to Pickup Location
-                            </Text>
-                            <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
-                                Navigate back to where you picked up the package
-                            </Text>
-                        </View>
-                    </View>
+                            <View style={styles.stepRow}>
+                                <Avatar.Text size={28} label="1" style={{ backgroundColor: theme.colors.primary }} />
+                                <View style={styles.stepContent}>
+                                    <Text variant="bodyMedium" style={{ fontWeight: '600', color: theme.colors.onSurface }}>
+                                        Return to Pickup Location
+                                    </Text>
+                                    <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
+                                        Navigate back to where you picked up the package
+                                    </Text>
+                                </View>
+                            </View>
 
-                    <View style={styles.stepConnector} />
+                            <View style={styles.stepConnector} />
 
-                    <View style={styles.stepRow}>
-                        <Avatar.Text size={28} label="2" style={{ backgroundColor: theme.colors.primary }} />
-                        <View style={styles.stepContent}>
-                            <Text variant="bodyMedium" style={{ fontWeight: '600', color: theme.colors.onSurface }}>
-                                Meet the Sender
-                            </Text>
-                            <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
-                                Contact the sender and arrange handover
-                            </Text>
-                        </View>
-                    </View>
+                            <View style={styles.stepRow}>
+                                <Avatar.Text size={28} label="2" style={{ backgroundColor: theme.colors.primary }} />
+                                <View style={styles.stepContent}>
+                                    <Text variant="bodyMedium" style={{ fontWeight: '600', color: theme.colors.onSurface }}>
+                                        Meet the Sender
+                                    </Text>
+                                    <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
+                                        Contact the sender and arrange handover
+                                    </Text>
+                                </View>
+                            </View>
 
-                    <View style={styles.stepConnector} />
+                            <View style={styles.stepConnector} />
 
-                    <View style={styles.stepRow}>
-                        <Avatar.Text size={28} label="3" style={{ backgroundColor: theme.colors.primary }} />
-                        <View style={styles.stepContent}>
-                            <Text variant="bodyMedium" style={{ fontWeight: '600', color: theme.colors.onSurface }}>
-                                Sender Retrieves Package
-                            </Text>
-                            <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
-                                The sender receives the Return OTP on their app to unlock
-                            </Text>
-                        </View>
-                    </View>
-                </Surface>
+                            <View style={styles.stepRow}>
+                                <Avatar.Text size={28} label="3" style={{ backgroundColor: theme.colors.primary }} />
+                                <View style={styles.stepContent}>
+                                    <Text variant="bodyMedium" style={{ fontWeight: '600', color: theme.colors.onSurface }}>
+                                        Sender Retrieves Package
+                                    </Text>
+                                    <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
+                                        The sender receives the Return OTP on their app to unlock
+                                    </Text>
+                                </View>
+                            </View>
+                        </Surface>
 
-                {/* Return Address Card */}
-                <Surface style={[styles.addressCard, { backgroundColor: theme.colors.surface }]} elevation={1}>
-                    <View style={styles.addressHeader}>
-                        <MaterialCommunityIcons name="map-marker-radius" size={24} color={theme.colors.error} />
-                        <View style={{ marginLeft: 12, flex: 1 }}>
-                            <Text variant="labelMedium" style={{ color: theme.colors.onSurfaceVariant }}>
-                                RETURN DESTINATION
-                            </Text>
-                            <Text variant="bodyMedium" style={{ fontWeight: '600', color: theme.colors.onSurface }}>
-                                {senderName}
-                            </Text>
-                            <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant, marginTop: 2 }}>
-                                {pickupAddress}
-                            </Text>
-                        </View>
-                    </View>
-                </Surface>
+                        {/* Return Address Card */}
+                        <Surface style={[styles.addressCard, { backgroundColor: theme.colors.surface }]} elevation={1}>
+                            <View style={styles.addressHeader}>
+                                <MaterialCommunityIcons name="map-marker-radius" size={24} color={theme.colors.error} />
+                                <View style={{ marginLeft: 12, flex: 1 }}>
+                                    <Text variant="labelMedium" style={{ color: theme.colors.onSurfaceVariant }}>
+                                        RETURN DESTINATION
+                                    </Text>
+                                    <Text variant="bodyMedium" style={{ fontWeight: '600', color: theme.colors.onSurface }}>
+                                        {senderName}
+                                    </Text>
+                                    <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant, marginTop: 2 }}>
+                                        {pickupAddress}
+                                    </Text>
+                                </View>
+                            </View>
+                        </Surface>
+                    </>
+                )}
 
             </ScrollView>
 
             {/* Bottom Actions */}
             <Surface style={[styles.bottomActions, { backgroundColor: theme.colors.surface, paddingBottom: Math.max(insets.bottom, 16) + 16 }]} elevation={4}>
                 <Button
-                    mode="outlined"
+                    mode={isPickedUp ? "outlined" : "contained"}
                     onPress={handleDone}
-                    style={{ flex: 1, marginRight: 8 }}
-                    textColor={theme.colors.primary}
+                    style={{ flex: 1, marginRight: isPickedUp ? 8 : 0 }}
+                    textColor={isPickedUp ? theme.colors.primary : undefined}
                 >
                     Back to Dashboard
                 </Button>
-                <Button
-                    mode="contained"
-                    onPress={handleStartReturn}
-                    style={{ flex: 1 }}
-                    icon="navigation"
-                >
-                    Start Navigation
-                </Button>
+                {isPickedUp && (
+                    <Button
+                        mode="contained"
+                        onPress={handleStartReturn}
+                        style={{ flex: 1 }}
+                        icon="navigation"
+                    >
+                        Start Navigation
+                    </Button>
+                )}
             </Surface>
         </View>
     );

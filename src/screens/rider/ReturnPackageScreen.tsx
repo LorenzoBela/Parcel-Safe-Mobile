@@ -6,9 +6,9 @@
  * The Return OTP is entered by the sender on the physical box — not on this screen.
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
-    View, StyleSheet, ScrollView, Alert, Linking, Platform,
+    View, StyleSheet, ScrollView, Alert, Linking, Platform, Image,
 } from 'react-native';
 import { Text, Surface, Button, useTheme, Chip, ProgressBar, ActivityIndicator } from 'react-native-paper';
 import { useNavigation, useRoute } from '@react-navigation/native';
@@ -25,6 +25,41 @@ import {
     subscribeToBoxState,
     LockEvent,
 } from '../../services/firebaseClient';
+import { useAppTheme } from '../../context/ThemeContext';
+
+// Import MapboxWrapper for geofence preview map
+import MapboxGL, { isMapboxNativeAvailable, StyleURL } from '../../components/map/MapboxWrapper';
+import AnimatedRiderMarker from '../../components/map/AnimatedRiderMarker';
+
+// ───────────── Distance Formatter ─────────────
+function formatDistanceValue(meters: number | null | undefined): string {
+    if (meters == null || meters === Infinity) return 'Calculating...';
+    if (meters >= 1000) {
+        return `${(meters / 1000).toFixed(1)}km`;
+    }
+    return `${Math.round(meters)}m`;
+}
+
+// ───────────── Geofence Circle GeoJSON Builder ─────────────
+function buildGeofenceCircleGeoJSON(
+    centerLng: number,
+    centerLat: number,
+    radiusM: number,
+    segments: number = 64
+): GeoJSON.Feature<GeoJSON.Polygon> {
+    const coords: [number, number][] = [];
+    for (let i = 0; i <= segments; i++) {
+        const angle = (i / segments) * 2 * Math.PI;
+        const dLat = (radiusM / 111320) * Math.cos(angle);
+        const dLng = (radiusM / (111320 * Math.cos((centerLat * Math.PI) / 180))) * Math.sin(angle);
+        coords.push([centerLng + dLng, centerLat + dLat]);
+    }
+    return {
+        type: 'Feature',
+        properties: {},
+        geometry: { type: 'Polygon', coordinates: [coords] },
+    };
+}
 
 interface RouteParams {
     deliveryId: string;
@@ -53,6 +88,7 @@ export default function ReturnPackageScreen() {
     const navigation = useNavigation<any>();
     const route = useRoute();
     const theme = useTheme();
+    const { isDarkMode } = useAppTheme();
     const params = route.params as RouteParams;
 
     const {
@@ -65,9 +101,21 @@ export default function ReturnPackageScreen() {
     } = params || {};
 
     const [currentStep, setCurrentStep] = useState<ReturnStep>('NAVIGATING');
-    const [distanceM, setDistanceM] = useState<number>(Infinity);
+    const [distanceM, setDistanceM] = useState<number | null>(null);
     const [isInsideGeofence, setIsInsideGeofence] = useState(false);
     const [cancellationState, setCancellationState] = useState<CancellationState | null>(null);
+
+    // Rider live position for map preview
+    const [riderLat, setRiderLat] = useState(0);
+    const [riderLng, setRiderLng] = useState(0);
+
+    // Geofence circle for map preview
+    const mapAvailable = isMapboxNativeAvailable;
+    const hasRiderPosition = riderLat !== 0 || riderLng !== 0;
+    const geofenceCircle = useMemo(
+        () => buildGeofenceCircleGeoJSON(pickupLng, pickupLat, GEOFENCE_RADIUS_M),
+        [pickupLng, pickupLat]
+    );
 
     // ── Hardware box state (primary photo source) ──
     const [hardwareSuccess, setHardwareSuccess] = useState(false);    const [hardwareProofUrl, setHardwareProofUrl] = useState<string | null>(null);    const [cameraFailed, setCameraFailed] = useState(false);
@@ -168,39 +216,46 @@ export default function ReturnPackageScreen() {
         }
     }, [hardwareSuccess]);
 
-    // Continuous location tracking with Haversine distance to pickup geofence
+    // Continuous high-accuracy location tracking (replaces old 10s polling interval)
     useEffect(() => {
-        let interval: ReturnType<typeof setInterval>;
+        let subscription: Location.LocationSubscription | null = null;
 
-        const fetchLocation = async () => {
+        const startTracking = async () => {
             const { status } = await Location.requestForegroundPermissionsAsync();
             if (status !== 'granted') return;
 
-            const location = await Location.getCurrentPositionAsync({});
-            const R = 6371000; // Earth radius in metres
-            const dLat = (pickupLat - location.coords.latitude) * Math.PI / 180;
-            const dLon = (pickupLng - location.coords.longitude) * Math.PI / 180;
-            const a =
-                Math.sin(dLat / 2) ** 2 +
-                Math.cos(location.coords.latitude * Math.PI / 180) *
-                Math.cos(pickupLat * Math.PI / 180) *
-                Math.sin(dLon / 2) ** 2;
-            const d = R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-            setDistanceM(d);
-            setIsInsideGeofence(d <= GEOFENCE_RADIUS_M);
+            subscription = await Location.watchPositionAsync(
+                {
+                    accuracy: Location.Accuracy.High,
+                    timeInterval: 2000,
+                    distanceInterval: 5,
+                },
+                (location) => {
+                    const { latitude, longitude } = location.coords;
+                    setRiderLat(latitude);
+                    setRiderLng(longitude);
+
+                    // Haversine distance
+                    const R = 6371000;
+                    const dLat = (pickupLat - latitude) * Math.PI / 180;
+                    const dLon = (pickupLng - longitude) * Math.PI / 180;
+                    const a =
+                        Math.sin(dLat / 2) ** 2 +
+                        Math.cos(latitude * Math.PI / 180) *
+                        Math.cos(pickupLat * Math.PI / 180) *
+                        Math.sin(dLon / 2) ** 2;
+                    const d = R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+                    setDistanceM(Math.round(d));
+                    setIsInsideGeofence(d <= GEOFENCE_RADIUS_M);
+                }
+            );
         };
 
-        fetchLocation();
-        interval = setInterval(fetchLocation, 10000);
-        return () => clearInterval(interval);
+        startTracking();
+        return () => { subscription?.remove(); };
     }, [pickupLat, pickupLng]);
 
-    const formatDistance = () => {
-        if (distanceM === Infinity) return 'Calculating...';
-        return distanceM < 1000
-            ? `${Math.round(distanceM)} m`
-            : `${(distanceM / 1000).toFixed(1)} km`;
-    };
+    const formatDistance = () => formatDistanceValue(distanceM);
 
     const openNavigation = async () => {
         const latLng = `${pickupLat},${pickupLng}`;
@@ -287,7 +342,7 @@ export default function ReturnPackageScreen() {
         }
     };
 
-    const handleDone = () => navigation.navigate('RiderDashboard');
+    const handleDone = () => navigation.navigate('RiderApp');
 
     // ── Progress helpers ────────────────────────────────────────────────────────
     const getStepProgress = () => (STEP_ORDER.indexOf(currentStep) + 1) / STEP_ORDER.length;
@@ -377,9 +432,88 @@ export default function ReturnPackageScreen() {
                     </View>
                 </Surface>
 
-                {/* Destination Card */}
-                <Surface style={[styles.card, { backgroundColor: theme.colors.surface }]} elevation={1}>
-                    <View style={styles.destinationHeader}>
+                {/* Destination & Map Card */}
+                <Surface style={[styles.card, { backgroundColor: theme.colors.surface, padding: 0, overflow: 'hidden' }]} elevation={1}>
+                    {/* Map Preview */}
+                    <View style={styles.mapContainer}>
+                        {mapAvailable && hasRiderPosition ? (
+                            <MapboxGL.MapView
+                                style={styles.map}
+                                logoEnabled={false}
+                                compassEnabled={false}
+                                scaleBarEnabled={false}
+                                attributionEnabled={false}
+                                scrollEnabled={false}
+                                pitchEnabled={false}
+                                rotateEnabled={false}
+                                zoomEnabled={false}
+                                styleURL={isDarkMode ? StyleURL.Dark : StyleURL.Street}
+                            >
+                                <MapboxGL.Camera
+                                    zoomLevel={16}
+                                    centerCoordinate={[pickupLng, pickupLat]}
+                                    animationMode="flyTo"
+                                />
+
+                                {/* 1. The Geofence Zone Circle */}
+                                <MapboxGL.ShapeSource id="geofence-source" shape={geofenceCircle}>
+                                    <MapboxGL.FillLayer
+                                        id="geofence-fill"
+                                        style={{
+                                            fillColor: isInsideGeofence ? '#4CAF50' : '#2196F3',
+                                            fillOpacity: 0.2,
+                                        }}
+                                    />
+                                    <MapboxGL.LineLayer
+                                        id="geofence-line"
+                                        style={{
+                                            lineColor: isInsideGeofence ? '#4CAF50' : '#2196F3',
+                                            lineWidth: 2,
+                                        }}
+                                    />
+                                </MapboxGL.ShapeSource>
+
+                                {/* 2. The Return/Pickup Point Marker */}
+                                <MapboxGL.PointAnnotation id="return-marker" coordinate={[pickupLng, pickupLat]}>
+                                    <View style={[styles.targetMarker, { backgroundColor: isInsideGeofence ? '#4CAF50' : theme.colors.primary }]}>
+                                        <MaterialCommunityIcons name="home-map-marker" size={16} color="white" />
+                                    </View>
+                                </MapboxGL.PointAnnotation>
+
+                                {/* 3. The Rider's Current Position */}
+                                {riderLat != null && riderLng != null && (
+                                    <AnimatedRiderMarker
+                                        latitude={riderLat}
+                                        longitude={riderLng}
+                                    />
+                                )}
+                            </MapboxGL.MapView>
+                        ) : (
+                            <View style={[styles.mapPlaceholder, { backgroundColor: theme.colors.surfaceVariant }]}>
+                                {!hasRiderPosition ? (
+                                    <>
+                                        <ActivityIndicator size="small" color={theme.colors.primary} />
+                                        <Text style={{ marginTop: 8, color: theme.colors.onSurfaceVariant }}>Acquiring GPS...</Text>
+                                    </>
+                                ) : (
+                                    <MaterialCommunityIcons name="map-marker-off" size={32} color={theme.colors.onSurfaceVariant} />
+                                )}
+                            </View>
+                        )}
+
+                        {/* Floating Distance Badge overlay on the map */}
+                        {distanceM !== null && (
+                            <View style={[styles.mapDistanceBadge, { backgroundColor: theme.colors.surface, borderColor: theme.colors.outlineVariant }]}>
+                                <Text variant="labelMedium" style={{ fontWeight: 'bold', color: theme.colors.onSurface }}>
+                                    {formatDistance()}
+                                </Text>
+                                <Text variant="labelSmall" style={{ color: theme.colors.onSurfaceVariant }}>to zone</Text>
+                            </View>
+                        )}
+                    </View>
+
+                    {/* Destination details below map */}
+                    <View style={styles.destinationDetails}>
                         <View style={[styles.markerIcon, { backgroundColor: theme.colors.errorContainer }]}>
                             <MaterialCommunityIcons name="map-marker" size={24} color={theme.colors.error} />
                         </View>
@@ -388,12 +522,14 @@ export default function ReturnPackageScreen() {
                             <Text variant="titleMedium" style={{ fontWeight: 'bold', color: theme.colors.onSurface }}>{senderName}</Text>
                             <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>{pickupAddress}</Text>
                         </View>
-                        <Chip icon="map-marker-distance" compact>{formatDistance()}</Chip>
                     </View>
+
                     {currentStep === 'NAVIGATING' && (
-                        <Button mode="contained" icon="navigation" onPress={openNavigation} style={{ marginTop: 16 }}>
-                            Open Navigation
-                        </Button>
+                        <View style={styles.navigationButtonContainer}>
+                            <Button mode="contained" icon="navigation" onPress={openNavigation}>
+                                Open Navigation
+                            </Button>
+                        </View>
                     )}
                 </Surface>
 
@@ -619,5 +755,77 @@ const styles = StyleSheet.create({
         paddingBottom: 24,
         borderTopLeftRadius: 20,
         borderTopRightRadius: 20,
+    },
+    mapContainer: {
+        height: 160,
+        width: '100%',
+        backgroundColor: '#e5e5e5',
+        position: 'relative',
+    },
+    map: { flex: 1 },
+    mapPlaceholder: {
+        flex: 1,
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    mapDistanceBadge: {
+        position: 'absolute',
+        top: 12,
+        right: 12,
+        paddingHorizontal: 10,
+        paddingVertical: 4,
+        borderRadius: 16,
+        alignItems: 'center',
+        justifyContent: 'center',
+        borderWidth: 1,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.1,
+        shadowRadius: 4,
+        elevation: 3,
+    },
+    targetMarker: {
+        width: 28,
+        height: 28,
+        borderRadius: 14,
+        alignItems: 'center',
+        justifyContent: 'center',
+        borderWidth: 2,
+        borderColor: 'white',
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.3,
+        shadowRadius: 3,
+        elevation: 4,
+    },
+    riderMarkerContainer: {
+        width: 36,
+        height: 36,
+        borderRadius: 18,
+        backgroundColor: 'white',
+        alignItems: 'center',
+        justifyContent: 'center',
+        borderWidth: 2,
+        borderColor: '#4CAF50',
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.3,
+        shadowRadius: 3,
+        elevation: 4,
+    },
+    riderMarkerImage: {
+        width: 32,
+        height: 32,
+        borderRadius: 16,
+        resizeMode: 'cover',
+    },
+    destinationDetails: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        padding: 16,
+    },
+    navigationButtonContainer: {
+        paddingHorizontal: 16,
+        paddingBottom: 16,
     },
 });

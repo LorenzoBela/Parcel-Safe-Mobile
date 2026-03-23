@@ -498,7 +498,7 @@ export function startPairingExpirationMonitor(
                             .select('id')
                             .eq('rider_id', riderId)
                             .eq('box_id', state.box_id)
-                            .in('status', ['ASSIGNED', 'PICKED_UP', 'IN_TRANSIT', 'ARRIVED'])
+                            .in('status', ['ASSIGNED', 'IN_TRANSIT', 'ARRIVED'])
                             .limit(1);
 
                         if (!error && data && data.length > 0) {

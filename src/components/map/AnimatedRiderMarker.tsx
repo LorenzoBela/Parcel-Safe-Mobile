@@ -1,5 +1,5 @@
 import React, { useRef, useEffect, useState } from 'react';
-import { View, Image, Animated, Easing, StyleSheet, Text } from 'react-native';
+import { View, Image, Animated, Easing, StyleSheet, Text, TouchableOpacity } from 'react-native';
 import MapboxGL from './MapboxWrapper';
 import length from '@turf/length';
 import along from '@turf/along';
@@ -198,18 +198,16 @@ const AnimatedRiderMarker: React.FC<AnimatedRiderMarkerProps> = ({
     const visualRotation = normalizeAngle(renderRotation - mapBearing);
 
     return (
-        <MapboxGL.PointAnnotation
-            ref={annotationRef}
+        <MapboxGL.MarkerView
             id={id}
             coordinate={renderCoord}
             anchor={{ x: 0.5, y: 0.7 }}
-            onSelected={onSelected}
         >
-            <View style={{ alignItems: 'center' }}>
-                {/* Speed Badge — counter-rotated to stay upright */}
+            <TouchableOpacity activeOpacity={0.9} onPress={onSelected} style={{ alignItems: 'center' }}>
+                {/* Speed Badge — always upright since parent does not rotate */}
                 <View style={[
                     styles.speedBadge,
-                    { opacity: speed != null && speed >= 0 ? 1 : 0, transform: [{ rotate: `${-visualRotation}deg` }] }
+                    { opacity: speed != null && speed >= 0 ? 1 : 0 }
                 ]}>
                     <Text style={styles.speedBadgeText}>
                         {speed != null && speed >= 0 ? Math.round(speed * 3.6) : 0} km/h
@@ -245,11 +243,6 @@ const AnimatedRiderMarker: React.FC<AnimatedRiderMarkerProps> = ({
                             ]}
                             resizeMode="cover"
                             fadeDuration={0}
-                            onLoad={() => {
-                                if (annotationRef.current) {
-                                    annotationRef.current.refresh();
-                                }
-                            }}
                         />
                     </View>
 
@@ -262,8 +255,8 @@ const AnimatedRiderMarker: React.FC<AnimatedRiderMarkerProps> = ({
                         }
                     ]} />
                 </View>
-            </View>
-        </MapboxGL.PointAnnotation>
+            </TouchableOpacity>
+        </MapboxGL.MarkerView>
     );
 };
 

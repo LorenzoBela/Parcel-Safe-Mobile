@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { View, StyleSheet, Alert, Linking, Image } from 'react-native';
 import { Text, Card, Button, IconButton, Switch } from 'react-native-paper';
 import * as ImagePicker from 'expo-image-picker';
@@ -9,11 +9,51 @@ import { subscribeToDeliveryProof, DeliveryProofState, subscribeToPhotoAuditLog,
 import { loadDropoffVerificationSnapshot, saveDropoffVerificationSnapshot, clearDropoffVerificationSnapshot } from '../../../services/dropoffVerificationStorageService';
 import { enqueueBoxCommand, flushQueuedBoxCommands, markLatestSentCommandAcked } from '../../../services/boxCommandQueueService';
 import { PremiumAlert } from '../../../services/PremiumAlertService';
+import { useAppTheme } from '../../../context/ThemeContext';
+
+// Import MapboxWrapper for geofence preview map
+import MapboxGL, { isMapboxNativeAvailable, StyleURL } from '../../../components/map/MapboxWrapper';
+import AnimatedRiderMarker from '../../../components/map/AnimatedRiderMarker';
+
+// Same rider image used across all tracking pages (AnimatedRiderMarker)
+const RiderImage = require('../../../../assets/Rider.jpg');
+
+// ───────────── Distance Formatter ─────────────
+function formatDistance(meters: number | null | undefined): string {
+    if (meters == null) return '';
+    if (meters >= 1000) {
+        return `${(meters / 1000).toFixed(1)}km`;
+    }
+    return `${meters}m`;
+}
+
+// ───────────── Geofence Circle GeoJSON Builder ─────────────
+function buildGeofenceCircleGeoJSON(
+    centerLng: number,
+    centerLat: number,
+    radiusM: number,
+    segments: number = 64
+): GeoJSON.Feature<GeoJSON.Polygon> {
+    const coords: [number, number][] = [];
+    for (let i = 0; i <= segments; i++) {
+        const angle = (i / segments) * 2 * Math.PI;
+        const dLat = (radiusM / 111320) * Math.cos(angle);
+        const dLng = (radiusM / (111320 * Math.cos((centerLat * Math.PI) / 180))) * Math.sin(angle);
+        coords.push([centerLng + dLng, centerLat + dLat]);
+    }
+    return {
+        type: 'Feature',
+        properties: {},
+        geometry: { type: 'Polygon', coordinates: [coords] },
+    };
+}
 
 interface DropoffVerificationProps {
     deliveryId: string;
     boxId: string;
     targetAddress: string;
+    targetLat: number;
+    targetLng: number;
     recipientName?: string;
     customerPhone?: string;
     deliveryNotes?: string;
@@ -26,6 +66,11 @@ interface DropoffVerificationProps {
     isBoxOffline: boolean;
     lastBoxHeartbeatAt?: number;
     lastPhoneGpsAt?: number;
+
+    // Rider's current GPS position for map preview
+    currentLat: number;
+    currentLng: number;
+    geofenceRadiusM?: number;
 
     onDeliveryCompleted: () => void;
 
@@ -57,6 +102,8 @@ export default function DropoffVerification({
     deliveryId,
     boxId,
     targetAddress,
+    targetLat,
+    targetLng,
     recipientName,
     customerPhone,
     deliveryNotes,
@@ -68,6 +115,9 @@ export default function DropoffVerification({
     isBoxOffline,
     lastBoxHeartbeatAt,
     lastPhoneGpsAt,
+    currentLat,
+    currentLng,
+    geofenceRadiusM = 50,
     onDeliveryCompleted,
 
     onNavigate,
@@ -78,6 +128,36 @@ export default function DropoffVerification({
     canAutoArrive,
 }: DropoffVerificationProps) {
     const [isLoading, setIsLoading] = useState(false);
+    const { isDarkMode } = useAppTheme();
+
+    // ──── Geofence Map Preview memoized data ────
+    const mapAvailable = isMapboxNativeAvailable;
+    const hasRiderPosition = currentLat !== 0 || currentLng !== 0;
+    const geofenceCircle = useMemo(
+        () => buildGeofenceCircleGeoJSON(targetLng, targetLat, geofenceRadiusM),
+        [targetLng, targetLat, geofenceRadiusM]
+    );
+    const c = {
+        card: isDarkMode ? '#1e1e1e' : '#ffffff',
+        text: isDarkMode ? '#ffffff' : '#333333',
+        textTitle: isDarkMode ? '#ffffff' : '#1a1a1a',
+        textLabel: isDarkMode ? '#a1a1aa' : '#888888',
+        border: isDarkMode ? '#27272a' : '#E5E7EB',
+        borderHard: isDarkMode ? '#3f3f46' : '#f0f0f0',
+        badgeBg: isDarkMode ? '#27272a' : '#F3F4F6',
+        badgeText: isDarkMode ? '#d4d4d8' : '#4B5563',
+        successBg: isDarkMode ? '#064e3b' : '#DCFCE7',
+        successText: isDarkMode ? '#34d399' : '#15803d',
+        errorBg: isDarkMode ? '#7f1d1d' : '#FEE2E2',
+        errorText: isDarkMode ? '#f87171' : '#B91C1C',
+        warningBg: isDarkMode ? '#78350f' : '#FEF3C7',
+        warningText: isDarkMode ? '#fbbf24' : '#b45309',
+        hintText: isDarkMode ? '#a1a1aa' : '#6b7280',
+        subtleText: isDarkMode ? '#a1a1aa' : '#64748b',
+        blueBg: isDarkMode ? '#1e3a8a' : '#DBEAFE',
+        blueText: isDarkMode ? '#60a5fa' : '#1d4ed8',
+        whiteBorder: isDarkMode ? '#1e1e1e' : 'white',
+    };
     const [fallbackPhotoUri, setFallbackPhotoUri] = useState<string | null>(null);
     const [hardwareSuccess, setHardwareSuccess] = useState(false);
     const [hardwareProofUrl, setHardwareProofUrl] = useState<string | null>(null);
@@ -672,52 +752,52 @@ export default function DropoffVerification({
     // ━━━ Determine handover card status message ━━━
     const getHandoverStatusMessage = (): { text: string; color: string; bgColor: string } => {
         if (hardwareSuccess && hasHardwareProof) {
-            return { text: '✅ Box unlocked! OTP verified & face detected.', color: '#15803d', bgColor: '#DCFCE7' };
+            return { text: '✅ Box unlocked! OTP verified & face detected.', color: c.successText, bgColor: c.successBg };
         }
         if (boxOtpValidated && hardwareSuccess && !hasHardwareProof) {
-            return { text: '📷 Face verification passed. Waiting for hardware proof photo upload, or capture fallback photo now.', color: '#1d4ed8', bgColor: '#DBEAFE' };
+            return { text: '📷 Face verification passed. Waiting for hardware proof photo upload, or capture fallback photo now.', color: c.blueText, bgColor: c.blueBg };
         }
         if (boxOtpValidated && fallbackPhotoUri && boxReportedUnlocked) {
-            return { text: '✅ Fallback photo verified and unlock confirmed. Ready to complete.', color: '#15803d', bgColor: '#DCFCE7' };
+            return { text: '✅ Fallback photo verified and unlock confirmed. Ready to complete.', color: c.successText, bgColor: c.successBg };
         }
         if (boxOtpValidated && !faceDetected && !retryExhausted && typeof lockEvent?.face_attempts === 'number' && lockEvent.face_attempts > 0) {
             const attempt = Math.min(lockEvent.face_attempts, 3);
-            return { text: `🔎 Face scan attempt ${attempt}/3 in progress...`, color: '#1d4ed8', bgColor: '#DBEAFE' };
+            return { text: `🔎 Face scan attempt ${attempt}/3 in progress...`, color: c.blueText, bgColor: c.blueBg };
         }
         if (boxOtpValidated && retryExhausted && typeof lockEvent?.face_attempts === 'number' && lockEvent.face_attempts >= 3) {
-                return { text: '⚠️ Face scan attempt 3/3 failed. Capture fallback photo to proceed.', color: '#b45309', bgColor: '#FEF3C7' };
+                return { text: '⚠️ Face scan attempt 3/3 failed. Capture fallback photo to proceed.', color: c.warningText, bgColor: c.warningBg };
         }
         if (boxOtpValidated && !faceDetected && lockEvent?.otp_valid && lockEvent?.face_detected === false) {
-            return { text: '⚠️ OTP correct but NO face detected — box remains locked. Ask customer to stand in front of camera.', color: '#b45309', bgColor: '#FEF3C7' };
+            return { text: '⚠️ OTP correct but NO face detected — box remains locked. Ask customer to stand in front of camera.', color: c.warningText, bgColor: c.warningBg };
         }
         if (boxOtpValidated && retryExhausted && !fallbackPhotoUri) {
-            return { text: '⚠️ Face check failed after 3 attempts. Capture fallback photo to proceed.', color: '#b45309', bgColor: '#FEF3C7' };
+            return { text: '⚠️ Face check failed after 3 attempts. Capture fallback photo to proceed.', color: c.warningText, bgColor: c.warningBg };
         }
         if (fallbackPhotoUri && !hardwareSuccess && !unlockCommandAcked) {
-            return { text: '📤 Fallback photo uploaded. Waiting for box unlock confirmation...', color: '#1d4ed8', bgColor: '#DBEAFE' };
+            return { text: '📤 Fallback photo uploaded. Waiting for box unlock confirmation...', color: c.blueText, bgColor: c.blueBg };
         }
         if (boxOtpValidated && cameraFailed && fallbackPhotoUri) {
-            return { text: '📸 OTP verified ✓  Fallback photo captured. Ready to complete.', color: '#15803d', bgColor: '#DCFCE7' };
+            return { text: '📸 OTP verified ✓  Fallback photo captured. Ready to complete.', color: c.successText, bgColor: c.successBg };
         }
         if (cameraFailed && fallbackPhotoUri) {
-            return { text: '📸 Box camera failed. Fallback photo captured. Ready to complete.', color: '#15803d', bgColor: '#DCFCE7' };
+            return { text: '📸 Box camera failed. Fallback photo captured. Ready to complete.', color: c.successText, bgColor: c.successBg };
         }
         if (boxOtpValidated && cameraFailed) {
-            return { text: '⚠️ OTP verified ✓  Box camera failed. Please capture a fallback photo.', color: '#b45309', bgColor: '#FEF3C7' };
+            return { text: '⚠️ OTP verified ✓  Box camera failed. Please capture a fallback photo.', color: c.warningText, bgColor: c.warningBg };
         }
         if (cameraFailed) {
-            return { text: '⚠️ Box camera failed. Please capture a fallback photo to proceed.', color: '#b45309', bgColor: '#FEF3C7' };
+            return { text: '⚠️ Box camera failed. Please capture a fallback photo to proceed.', color: c.warningText, bgColor: c.warningBg };
         }
         if (boxOtpValidated && faceDetected) {
-            return { text: '🔓 OTP verified & face detected ✓  Finalizing unlock...', color: '#1d4ed8', bgColor: '#DBEAFE' };
+            return { text: '🔓 OTP verified & face detected ✓  Finalizing unlock...', color: c.blueText, bgColor: c.blueBg };
         }
         if (boxOtpValidated) {
-            return { text: '🔓 OTP verified ✓  Waiting for face detection...', color: '#1d4ed8', bgColor: '#DBEAFE' };
+            return { text: '🔓 OTP verified ✓  Waiting for face detection...', color: c.blueText, bgColor: c.blueBg };
         }
         if (lockEvent && !lockEvent.otp_valid) {
-            return { text: '❌ Wrong OTP entered! Customer should try again.', color: '#dc2626', bgColor: '#FEE2E2' };
+            return { text: '❌ Wrong OTP entered! Customer should try again.', color: c.errorText, bgColor: c.errorBg };
         }
-        return { text: '🔒 Waiting for customer to enter OTP on the box...', color: '#4b5563', bgColor: '#F3F4F6' };
+        return { text: '🔒 Waiting for customer to enter OTP on the box...', color: c.textLabel, bgColor: c.badgeBg };
     };
 
     // Can the rider swipe to complete?
@@ -747,15 +827,15 @@ export default function DropoffVerification({
 
     return (
         <View style={styles.container}>
-            <Card mode="elevated" style={[styles.statusCard, isInsideGeoFence ? styles.borderSuccess : styles.borderError]}>
+            <Card mode="elevated" style={[styles.statusCard, { backgroundColor: c.card }, isInsideGeoFence ? styles.borderSuccess : styles.borderError]}>
                 <Card.Content>
                     <View style={styles.statusHeader}>
-                        <Text variant="titleMedium" style={{ fontWeight: 'bold', color: '#333' }}>
+                        <Text variant="titleMedium" style={{ fontWeight: 'bold', color: c.textTitle }}>
                             Drop-Off Zone
                         </Text>
                         {distanceMeters !== null && (
-                            <View style={styles.distanceBadge}>
-                                <Text style={styles.distanceText}>
+                            <View style={[styles.distanceBadge, { backgroundColor: c.badgeBg }]}>
+                                <Text style={[styles.distanceText, { color: c.badgeText }]}>
                                     {distanceMeters > 999
                                         ? `${(distanceMeters / 1000).toFixed(1)} km away`
                                         : `${distanceMeters}m away`}
@@ -768,67 +848,144 @@ export default function DropoffVerification({
                         {/* Row 1: Phone GPS + Smart Box */}
                         <View style={styles.checksRow}>
                             <View style={styles.checkItem}>
-                                <View style={[styles.checkCircle, isPhoneInside ? styles.bgSuccess : styles.bgError]}>
+                                <View style={[styles.checkCircle, { borderColor: c.whiteBorder }, isPhoneInside ? styles.bgSuccess : styles.bgError]}>
                                     <Text style={styles.checkIcon}>{isPhoneInside ? '✓' : '✗'}</Text>
                                 </View>
-                                <Text style={styles.checkLabel}>Phone GPS</Text>
+                                <Text style={[styles.checkLabel, { color: c.textLabel }]}>Phone GPS</Text>
                             </View>
-                            <View style={styles.checkDivider} />
+                            <View style={[styles.checkDivider, { backgroundColor: c.border }]} />
                             <View style={styles.checkItem}>
                                 <View style={[
                                     styles.checkCircle,
+                                    { borderColor: c.whiteBorder },
                                     isBoxOffline ? styles.bgWarning : (isBoxInside ? styles.bgSuccess : styles.bgError)
                                 ]}>
                                     <Text style={styles.checkIcon}>
                                         {isBoxOffline ? '?' : (isBoxInside ? '✓' : '✗')}
                                     </Text>
                                 </View>
-                                <Text style={styles.checkLabel}>{isBoxOffline ? 'Box Offline' : 'Smart Box'}</Text>
+                                <Text style={[styles.checkLabel, { color: c.textLabel }]}>{isBoxOffline ? 'Box Offline' : 'Smart Box'}</Text>
                             </View>
                         </View>
-                        <Text style={{ textAlign: 'center', fontSize: 11, color: '#64748b', marginTop: 2 }}>
+                        <Text style={{ textAlign: 'center', fontSize: 11, color: c.subtleText, marginTop: 2 }}>
                             Phone GPS: {formatAge(lastPhoneGpsAt)} • Box heartbeat: {formatAge(lastBoxHeartbeatAt)}
                         </Text>
                         {/* Row 2: OTP Verified + Face Check */}
                         <View style={styles.checksRow}>
                             <View style={styles.checkItem}>
-                                <View style={[styles.checkCircle, boxOtpValidated ? styles.bgSuccess : (lockEvent && !lockEvent.otp_valid ? styles.bgError : styles.bgWarning)]}>
+                                <View style={[styles.checkCircle, { borderColor: c.whiteBorder }, boxOtpValidated ? styles.bgSuccess : (lockEvent && !lockEvent.otp_valid ? styles.bgError : styles.bgWarning)]}>
                                     <Text style={styles.checkIcon}>{boxOtpValidated ? '✓' : (lockEvent && !lockEvent.otp_valid ? '✗' : '⏳')}</Text>
                                 </View>
-                                <Text style={styles.checkLabel}>OTP Verified</Text>
+                                <Text style={[styles.checkLabel, { color: c.textLabel }]}>OTP Verified</Text>
                             </View>
-                            <View style={styles.checkDivider} />
+                            <View style={[styles.checkDivider, { backgroundColor: c.border }]} />
                             <View style={styles.checkItem}>
-                                <View style={[styles.checkCircle, faceDetected ? styles.bgSuccess : (lockEvent?.otp_valid && !lockEvent?.face_detected ? styles.bgError : styles.bgWarning)]}>
+                                <View style={[styles.checkCircle, { borderColor: c.whiteBorder }, faceDetected ? styles.bgSuccess : (lockEvent?.otp_valid && !lockEvent?.face_detected ? styles.bgError : styles.bgWarning)]}>
                                     <Text style={styles.checkIcon}>{faceDetected ? '✓' : (lockEvent?.otp_valid && !lockEvent?.face_detected ? '✗' : '⏳')}</Text>
                                 </View>
-                                <Text style={styles.checkLabel}>Face Check</Text>
+                                <Text style={[styles.checkLabel, { color: c.textLabel }]}>Face Check</Text>
                             </View>
                         </View>
                     </View>
 
-                    <View style={[styles.statusMessageContainer, isInsideGeoFence ? styles.bgSubtleSuccess : styles.bgSubtleError]}>
-                        <Text style={[styles.statusMessageText, isInsideGeoFence ? styles.textSuccess : styles.textError]}>
+                    <View style={[styles.statusMessageContainer, { backgroundColor: isInsideGeoFence ? c.successBg : c.errorBg }]}>
+                        <Text style={[styles.statusMessageText, { color: isInsideGeoFence ? c.successText : c.errorText }]}>
                             {isInsideGeoFence
                                 ? (deliveryStatus === 'ARRIVED' ? `Waiting for Customer OTP...` : `Approaching Drop-off...`)
                                 : 'Navigate to Drop-off Location.'}
                         </Text>
                     </View>
 
-                    <View style={styles.addressRow}>
+                    {/* ──── Geofence Map Preview ──── */}
+                    {mapAvailable && targetLat !== 0 && (
+                        <View style={styles.mapContainer}>
+                            <MapboxGL.MapView
+                                style={styles.map}
+                                styleURL={isDarkMode ? StyleURL.Dark : StyleURL.Light}
+                                logoEnabled={false}
+                                attributionEnabled={false}
+                                scrollEnabled={false}
+                                zoomEnabled={false}
+                                pitchEnabled={false}
+                                rotateEnabled={false}
+                            >
+                                <MapboxGL.Camera
+                                    centerCoordinate={[targetLng, targetLat]}
+                                    zoomLevel={16}
+                                    animationMode="none"
+                                />
+
+                                {/* Geofence circle */}
+                                <MapboxGL.ShapeSource id="dropoff-geofence-circle" shape={geofenceCircle}>
+                                    <MapboxGL.FillLayer
+                                        id="dropoff-geofence-fill"
+                                        style={{
+                                            fillColor: isInsideGeoFence ? 'rgba(34,197,94,0.15)' : 'rgba(239,68,68,0.12)',
+                                            fillOutlineColor: isInsideGeoFence ? '#22c55e' : '#ef4444',
+                                        }}
+                                    />
+                                </MapboxGL.ShapeSource>
+
+                                {/* Dropoff target marker */}
+                                <MapboxGL.MarkerView
+                                    id="dropoff-target"
+                                    coordinate={[targetLng, targetLat]}
+                                >
+                                    <View style={styles.targetMarker}>
+                                        <Text style={styles.targetMarkerText}>📍</Text>
+                                    </View>
+                                </MapboxGL.MarkerView>
+
+                                {/* Rider live position — same Rider.jpg icon as tracking pages */}
+                                {hasRiderPosition && currentLat != null && currentLng != null && (
+                                    <AnimatedRiderMarker
+                                        latitude={currentLat}
+                                        longitude={currentLng}
+                                        isSelected={isPhoneInside}
+                                    />
+                                )}
+                            </MapboxGL.MapView>
+
+                            {/* Distance overlay */}
+                            {distanceMeters !== null && (
+                                <View style={[styles.mapDistanceOverlay, { backgroundColor: isDarkMode ? 'rgba(0,0,0,0.7)' : 'rgba(255,255,255,0.85)' }]}>
+                                    <Text style={[styles.mapDistanceText, { color: isInsideGeoFence ? '#22c55e' : c.text }]}>
+                                        {isInsideGeoFence ? '✓ Inside Zone' : `${formatDistance(distanceMeters)} to zone`}
+                                    </Text>
+                                </View>
+                            )}
+                        </View>
+                    )}
+
+                    {/* Text-based proximity fallback when map isn't available */}
+                    {!mapAvailable && hasRiderPosition && distanceMeters !== null && (
+                        <View style={[styles.proximityFallback, { backgroundColor: c.badgeBg, borderColor: c.border }]}>
+                            <Text style={{ fontSize: 24, marginBottom: 4 }}>
+                                {isInsideGeoFence ? '📍' : '🧭'}
+                            </Text>
+                            <Text style={[styles.proximityText, { color: c.text }]}>
+                                {isInsideGeoFence
+                                    ? 'You are inside the drop-off zone'
+                                    : `${formatDistance(distanceMeters)} from drop-off zone (${formatDistance(geofenceRadiusM)} radius)`
+                                }
+                            </Text>
+                        </View>
+                    )}
+
+                    <View style={[styles.addressRow, { borderTopColor: c.borderHard }]}>
                         <View style={{ flex: 1 }}>
-                            <Text style={styles.addressLabel}>DROPOFF LOCATION</Text>
-                            <Text numberOfLines={2} style={styles.address}>{targetAddress}</Text>
+                            <Text style={[styles.addressLabel, { color: c.textLabel }]}>DROPOFF LOCATION</Text>
+                            <Text numberOfLines={2} style={[styles.address, { color: c.text }]}>{targetAddress}</Text>
 
                             {recipientName ? (
                                 <View style={{ marginTop: 12 }}>
-                                    <Text style={styles.addressLabel}>RECIPIENT</Text>
+                                    <Text style={[styles.addressLabel, { color: c.textLabel }]}>RECIPIENT</Text>
                                     <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                                        <Text style={[styles.address, { flex: 1, marginRight: 8 }]}>{recipientName}{customerPhone ? ` • ${customerPhone}` : ''}</Text>
+                                        <Text style={[styles.address, { flex: 1, marginRight: 8, color: c.text }]}>{recipientName}{customerPhone ? ` • ${customerPhone}` : ''}</Text>
                                         {customerPhone && (
                                             <View style={{ flexDirection: 'row' }}>
-                                                <IconButton icon="phone" size={20} mode="contained-tonal" iconColor="#1976D2" onPress={() => Linking.openURL(`tel:${customerPhone}`)} style={{ margin: 0, marginRight: 8 }} />
-                                                <IconButton icon="message-text" size={20} mode="contained-tonal" iconColor="#1976D2" onPress={() => Linking.openURL(`sms:${customerPhone}`)} style={{ margin: 0 }} />
+                                                <IconButton icon="phone" size={20} mode="contained-tonal" containerColor={c.blueBg} iconColor={c.blueText} onPress={() => Linking.openURL(`tel:${customerPhone}`)} style={{ margin: 0, marginRight: 8 }} />
+                                                <IconButton icon="message-text" size={20} mode="contained-tonal" containerColor={c.blueBg} iconColor={c.blueText} onPress={() => Linking.openURL(`sms:${customerPhone}`)} style={{ margin: 0 }} />
                                             </View>
                                         )}
                                     </View>
@@ -836,14 +993,14 @@ export default function DropoffVerification({
                             ) : null}
 
                             {deliveryNotes ? (
-                                <View style={{ marginTop: 12, padding: 8, backgroundColor: '#f1f5f9', borderRadius: 6 }}>
-                                    <Text style={[styles.addressLabel, { color: '#475569' }]}>DELIVERY NOTES</Text>
-                                    <Text style={[styles.address, { color: '#334155' }]}>{deliveryNotes}</Text>
+                                <View style={{ marginTop: 12, padding: 8, backgroundColor: c.badgeBg, borderRadius: 6 }}>
+                                    <Text style={[styles.addressLabel, { color: c.textLabel }]}>DELIVERY NOTES</Text>
+                                    <Text style={[styles.address, { color: c.text }]}>{deliveryNotes}</Text>
                                 </View>
                             ) : null}
                         </View>
                         <View style={styles.navActions}>
-                            <IconButton icon="navigation" mode="contained" containerColor="#E3F2FD" iconColor="#1976D2" size={24} onPress={onNavigate} />
+                            <IconButton icon="navigation" mode="contained" containerColor={c.blueBg} iconColor={c.blueText} size={24} onPress={onNavigate} />
                         </View>
                     </View>
                 </Card.Content>
@@ -851,9 +1008,9 @@ export default function DropoffVerification({
 
             {/* Handover Flow UI only shows if inside Geofence */}
             {isInsideGeoFence && (
-                <Card style={styles.actionCard}>
+                <Card style={[styles.actionCard, { backgroundColor: c.card }]}>
                     <Card.Content>
-                        <Text style={styles.actionTitle}>Handover Parcel</Text>
+                        <Text style={[styles.actionTitle, { color: c.textTitle }]}>Handover Parcel</Text>
 
                         {/* Dynamic status message */}
                         <View style={[styles.statusMessageContainer, { marginTop: 12, backgroundColor: statusMsg.bgColor }]}>
@@ -863,18 +1020,18 @@ export default function DropoffVerification({
                         </View>
 
                         {isSyncPending && (
-                            <View style={[styles.statusMessageContainer, { marginTop: 8, backgroundColor: '#fff7ed' }]}>
-                                <Text style={[styles.statusMessageText, { color: '#9a3412' }]}>
+                            <View style={[styles.statusMessageContainer, { marginTop: 8, backgroundColor: c.warningBg }]}>
+                                <Text style={[styles.statusMessageText, { color: c.warningText }]}>
                                     Sync pending: restoring local verification, waiting for cloud confirmation...
                                 </Text>
                             </View>
                         )}
 
-                        <View style={{ marginTop: 8, marginBottom: 8, padding: 12, borderRadius: 10, borderWidth: 1, borderColor: '#e2e8f0', backgroundColor: '#f8fafc' }}>
+                        <View style={{ marginTop: 8, marginBottom: 8, padding: 12, borderRadius: 10, borderWidth: 1, borderColor: c.borderHard, backgroundColor: c.badgeBg }}>
                             <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
                                 <View style={{ flex: 1, paddingRight: 10 }}>
-                                    <Text style={{ fontSize: 13, fontWeight: '700', color: '#0f172a' }}>Manual Box Mode</Text>
-                                    <Text style={{ fontSize: 12, color: '#475569', marginTop: 2 }}>
+                                    <Text style={{ fontSize: 13, fontWeight: '700', color: c.textTitle }}>Manual Box Mode</Text>
+                                    <Text style={{ fontSize: 12, color: c.textLabel, marginTop: 2 }}>
                                         Enable to allow manual lock/unlock after OTP + face verification.
                                     </Text>
                                 </View>
@@ -903,11 +1060,11 @@ export default function DropoffVerification({
                             </View>
 
                             {lockAwaitingClose && (
-                                <View style={{ marginTop: 10, padding: 10, borderRadius: 8, backgroundColor: '#fff7ed', borderWidth: 1, borderColor: '#fed7aa' }}>
-                                    <Text style={{ fontSize: 12, color: '#9a3412', fontWeight: '700' }}>
+                                <View style={{ marginTop: 10, padding: 10, borderRadius: 8, backgroundColor: c.warningBg, borderWidth: 1, borderColor: c.warningText }}>
+                                    <Text style={{ fontSize: 12, color: c.warningText, fontWeight: '700' }}>
                                         Lock pending physical close
                                     </Text>
-                                    <Text style={{ marginTop: 4, fontSize: 12, color: '#9a3412' }}>
+                                    <Text style={{ marginTop: 4, fontSize: 12, color: c.warningText }}>
                                         {lockAwaitingCloseNeedsAssist
                                             ? 'Close the lid until the latch aligns. If needed, press # on the keypad to retract briefly, then close again.'
                                             : 'Close the lid fully so the reed can confirm the lock.'}
@@ -916,37 +1073,37 @@ export default function DropoffVerification({
                             )}
 
                             {lockCloseConfirmed && (
-                                <View style={{ marginTop: 10, padding: 10, borderRadius: 8, backgroundColor: '#ecfdf5', borderWidth: 1, borderColor: '#bbf7d0' }}>
-                                    <Text style={{ fontSize: 12, color: '#166534', fontWeight: '700' }}>
+                                <View style={{ marginTop: 10, padding: 10, borderRadius: 8, backgroundColor: c.successBg, borderWidth: 1, borderColor: c.successText }}>
+                                    <Text style={{ fontSize: 12, color: c.successText, fontWeight: '700' }}>
                                         Lock confirmed
                                     </Text>
-                                    <Text style={{ marginTop: 4, fontSize: 12, color: '#166534' }}>
+                                    <Text style={{ marginTop: 4, fontSize: 12, color: c.successText }}>
                                         Reed close detected. The box is now physically locked.
                                     </Text>
                                 </View>
                             )}
 
                             {!canManualControl && (
-                                <Text style={{ marginTop: 8, fontSize: 12, color: '#64748b' }}>
+                                <Text style={{ marginTop: 8, fontSize: 12, color: c.subtleText }}>
                                     Requirements: inside geofence, OTP verified, face verified, and manual mode enabled.
                                 </Text>
                             )}
                         </View>
 
-                        <View style={styles.proofPanel}>
-                            <Text style={styles.proofTitle}>Verification Photo</Text>
+                        <View style={[styles.proofPanel, { borderColor: c.borderHard, backgroundColor: c.badgeBg }]}>
+                            <Text style={[styles.proofTitle, { color: c.textTitle }]}>Verification Photo</Text>
                             {hasHardwareProof && displayedHardwareProofUrl ? (
                                 <>
                                     <Image
                                         source={{ uri: displayedHardwareProofUrl }}
-                                        style={styles.proofImage}
+                                        style={[styles.proofImage, { backgroundColor: c.borderHard }]}
                                         resizeMode="cover"
                                         progressiveRenderingEnabled
                                     />
-                                    <Text style={styles.proofHintSuccess}>✅ ESP-CAM proof received. You can now swipe to complete.</Text>
+                                    <Text style={[styles.proofHintSuccess, { color: c.successText }]}>✅ ESP-CAM proof received. You can now swipe to complete.</Text>
                                 </>
                             ) : (
-                                <Text style={styles.proofHintPending}>
+                                <Text style={[styles.proofHintPending, { color: c.textLabel }]}>
                                     Waiting for ESP-CAM proof image to appear before swipe completion.
                                 </Text>
                             )}
@@ -964,7 +1121,7 @@ export default function DropoffVerification({
                                     {fallbackPhotoUri ? 'Retake fallback photo' : 'Capture fallback photo'}
                                 </Button>
                                 {fallbackPhotoUri && (
-                                    <Text style={{ marginTop: 6, color: '#15803d', textAlign: 'center', fontSize: 13 }}>
+                                    <Text style={{ marginTop: 6, color: c.successText, textAlign: 'center', fontSize: 13 }}>
                                         ✓ Fallback photo captured. You may now complete delivery.
                                     </Text>
                                 )}
@@ -988,8 +1145,8 @@ export default function DropoffVerification({
                     <Button
                         mode="outlined"
                         onPress={onShowCustomerNotHome}
-                        style={{ flex: 1, borderColor: '#cbd5e1' }}
-                        textColor="#475569"
+                        style={{ flex: 1, borderColor: c.borderHard }}
+                        textColor={c.textLabel}
                         disabled={isLoading}
                     >
                         Not Home
@@ -998,8 +1155,8 @@ export default function DropoffVerification({
                 <Button
                     mode="outlined"
                     onPress={onShowCancelModal}
-                    style={{ flex: 1, borderColor: '#fca5a5' }}
-                    textColor="#ef4444"
+                    style={{ flex: 1, borderColor: c.errorText }}
+                    textColor={c.errorText}
                     disabled={isLoading}
                 >
                     Cancel
@@ -1079,5 +1236,74 @@ const styles = StyleSheet.create({
         fontSize: 12,
         textAlign: 'center',
         fontWeight: '600',
+    },
+    // ──── Geofence Map Preview ────
+    mapContainer: {
+        height: 180,
+        borderRadius: 12,
+        overflow: 'hidden',
+        marginBottom: 16,
+        position: 'relative',
+    },
+    map: {
+        flex: 1,
+    },
+    targetMarker: {
+        width: 32,
+        height: 32,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    targetMarkerText: {
+        fontSize: 24,
+    },
+    riderMarkerOuter: {
+        width: 40,
+        height: 40,
+        borderRadius: 20,
+        backgroundColor: 'white',
+        alignItems: 'center',
+        justifyContent: 'center',
+        borderWidth: 2.5,
+        borderColor: '#0f172a',
+        overflow: 'hidden',
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.3,
+        shadowRadius: 4,
+        elevation: 6,
+    },
+    riderMarkerOuterInside: {
+        borderColor: '#22c55e',
+    },
+    riderMarkerImage: {
+        width: 35,
+        height: 35,
+        borderRadius: 17.5,
+    },
+    mapDistanceOverlay: {
+        position: 'absolute',
+        bottom: 8,
+        left: 8,
+        paddingHorizontal: 10,
+        paddingVertical: 4,
+        borderRadius: 8,
+    },
+    mapDistanceText: {
+        fontSize: 12,
+        fontWeight: 'bold',
+    },
+    // ──── Text Proximity Fallback ────
+    proximityFallback: {
+        padding: 16,
+        borderRadius: 10,
+        marginBottom: 16,
+        alignItems: 'center',
+        borderWidth: 1,
+    },
+    proximityText: {
+        fontSize: 13,
+        fontWeight: '600',
+        textAlign: 'center',
     },
 });

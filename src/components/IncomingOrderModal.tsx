@@ -126,7 +126,7 @@ export default function IncomingOrderModal({
             pointerEvents={visible ? 'auto' : 'none'}
         >
             <Animated.View style={{ transform: [{ scale: pulseAnim }] }}>
-                <Surface style={styles.card} elevation={5}>
+                <Surface style={[styles.card, { backgroundColor: theme.colors.elevation.level3 }]} elevation={5}>
                     {/* Header */}
                     <View style={styles.header}>
                         <View style={styles.headerLeft}>
@@ -136,10 +136,10 @@ export default function IncomingOrderModal({
                                 color={theme.colors.primary}
                             />
                             <View style={styles.headerText}>
-                                <Text variant="titleMedium" style={styles.title}>
+                                <Text variant="titleMedium" style={[styles.title, { color: theme.colors.onSurface }]}>
                                     New Order Request ({currentIndex + 1}/{requests.length})
                                 </Text>
-                                <Text variant="bodySmall" style={styles.timer}>
+                                <Text variant="bodySmall" style={[styles.timer, { color: theme.colors.error }]}>
                                     {timeLeft}s remaining
                                 </Text>
                             </View>
@@ -171,14 +171,13 @@ export default function IncomingOrderModal({
                         /> */}
                     </View>
 
-                    {/* Timer Progress Bar */}
-                    <View style={styles.timerBar}>
+                    <View style={[styles.timerBar, { backgroundColor: theme.colors.surfaceVariant }]}>
                         <View
                             style={[
                                 styles.timerProgress,
                                 {
                                     width: `${(timeLeft / 15) * 100}%`,
-                                    backgroundColor: timeLeft <= 5 ? '#F44336' : theme.colors.primary,
+                                    backgroundColor: timeLeft <= 5 ? theme.colors.error : theme.colors.primary,
                                 },
                             ]}
                         />
@@ -190,12 +189,12 @@ export default function IncomingOrderModal({
                     <View style={styles.details}>
                         {/* Pickup */}
                         <View style={styles.locationRow}>
-                            <View style={[styles.locationIcon, { backgroundColor: '#E8F5E9' }]}>
-                                <MaterialCommunityIcons name="circle-slice-8" size={16} color="#4CAF50" />
+                            <View style={[styles.locationIcon, { backgroundColor: theme.colors.primaryContainer }]}>
+                                <MaterialCommunityIcons name="circle-slice-8" size={16} color={theme.colors.primary} />
                             </View>
                             <View style={styles.locationInfo}>
-                                <Text variant="labelSmall" style={styles.locationLabel}>PICKUP</Text>
-                                <Text variant="bodyMedium" numberOfLines={2} style={styles.address}>
+                                <Text variant="labelSmall" style={[styles.locationLabel, { color: theme.colors.outline }]}>PICKUP</Text>
+                                <Text variant="bodyMedium" numberOfLines={2} style={[styles.address, { color: theme.colors.onSurface }]}>
                                     {currentRequest.pickupAddress}
                                 </Text>
                             </View>
@@ -203,17 +202,17 @@ export default function IncomingOrderModal({
 
                         {/* Vertical connector */}
                         <View style={styles.connector}>
-                            <View style={styles.connectorLine} />
+                            <View style={[styles.connectorLine, { backgroundColor: theme.colors.outlineVariant }]} />
                         </View>
 
                         {/* Dropoff */}
                         <View style={styles.locationRow}>
-                            <View style={[styles.locationIcon, { backgroundColor: '#FFEBEE' }]}>
-                                <MaterialCommunityIcons name="map-marker" size={16} color="#F44336" />
+                            <View style={[styles.locationIcon, { backgroundColor: theme.colors.errorContainer }]}>
+                                <MaterialCommunityIcons name="map-marker" size={16} color={theme.colors.error} />
                             </View>
                             <View style={styles.locationInfo}>
-                                <Text variant="labelSmall" style={styles.locationLabel}>DROPOFF</Text>
-                                <Text variant="bodyMedium" numberOfLines={2} style={styles.address}>
+                                <Text variant="labelSmall" style={[styles.locationLabel, { color: theme.colors.outline }]}>DROPOFF</Text>
+                                <Text variant="bodyMedium" numberOfLines={2} style={[styles.address, { color: theme.colors.onSurface }]}>
                                     {currentRequest.dropoffAddress}
                                 </Text>
                             </View>
@@ -225,13 +224,13 @@ export default function IncomingOrderModal({
                     {/* Fare and Distance */}
                     <View style={styles.infoRow}>
                         <View style={styles.infoItem}>
-                            <MaterialCommunityIcons name="map-marker-distance" size={20} color="#666" />
-                            <Text variant="bodyMedium" style={styles.infoText}>
+                            <MaterialCommunityIcons name="map-marker-distance" size={20} color={theme.colors.outline} />
+                            <Text variant="bodyMedium" style={[styles.infoText, { color: theme.colors.outline }]}>
                                 {currentRequest.distanceToPickupKm.toFixed(1)} km away
                             </Text>
                         </View>
                         <View style={styles.fareContainer}>
-                            <Text variant="labelSmall" style={styles.fareLabel}>ESTIMATED FARE</Text>
+                            <Text variant="labelSmall" style={[styles.fareLabel, { color: theme.colors.outline }]}>ESTIMATED FARE</Text>
                             <Text variant="headlineSmall" style={[styles.fare, { color: theme.colors.primary }]}>
                                 {formatCurrency(currentRequest.estimatedFare)}
                             </Text>
@@ -243,8 +242,8 @@ export default function IncomingOrderModal({
                         <Button
                             mode="outlined"
                             onPress={() => onReject(currentRequestWrapper.requestId)}
-                            style={[styles.button, styles.rejectButton]}
-                            textColor="#F44336"
+                            style={[styles.button, styles.rejectButton, { borderColor: theme.colors.error }]}
+                            textColor={theme.colors.error}
                             icon="close"
                         >
                             Reject
@@ -252,8 +251,8 @@ export default function IncomingOrderModal({
                         <Button
                             mode="contained"
                             onPress={() => onAccept(currentRequestWrapper)}
-                            style={[styles.button, styles.acceptButton]}
-                            buttonColor="#4CAF50"
+                            style={[styles.button, styles.acceptButton, { backgroundColor: theme.colors.primary }]}
+                            textColor={theme.colors.onPrimary}
                             icon="check"
                         >
                             Accept

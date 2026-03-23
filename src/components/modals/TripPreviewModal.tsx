@@ -70,7 +70,7 @@ export default function TripPreviewModal({ visible, onDismiss, onStartTrip, trip
             onRequestClose={onDismiss}
         >
             <View style={styles.modalOverlay}>
-                <Surface style={styles.modalContent} elevation={5}>
+                <Surface style={[styles.modalContent, { backgroundColor: theme.colors.elevation.level3 }]} elevation={5}>
                     <View style={styles.header}>
                         <Text variant="titleMedium" style={styles.title}>New Request Accepted!</Text>
                         <IconButton icon="close" size={24} onPress={onDismiss} />
@@ -80,7 +80,7 @@ export default function TripPreviewModal({ visible, onDismiss, onStartTrip, trip
 
                     {/* Customer Name */}
                     {tripDetails.customerName && (
-                        <View style={styles.customerContainer}>
+                        <View style={[styles.customerContainer, { backgroundColor: theme.colors.elevation.level1 }]}>
                             <Avatar.Text
                                 size={40}
                                 label={tripDetails.customerName.charAt(0).toUpperCase()}
@@ -107,7 +107,7 @@ export default function TripPreviewModal({ visible, onDismiss, onStartTrip, trip
                         </View>
 
                         {/* Connector Line */}
-                        <View style={styles.connectorLine} />
+                        <View style={[styles.connectorLine, { backgroundColor: theme.colors.outlineVariant }]} />
 
                         {/* Dropoff */}
                         <View style={styles.row}>
@@ -119,20 +119,20 @@ export default function TripPreviewModal({ visible, onDismiss, onStartTrip, trip
                         </View>
                     </View>
 
-                    <View style={styles.statsContainer}>
+                    <View style={[styles.statsContainer, { backgroundColor: theme.colors.elevation.level1 }]}>
                         <View style={styles.statItem}>
                             <Text variant="headlineSmall" style={{ color: theme.colors.primary, fontWeight: 'bold' }}>
                                 ₱{tripDetails.estimatedFare.toFixed(2)}
                             </Text>
                             <Text variant="bodySmall">Est. Fare</Text>
                         </View>
-                        <View style={styles.verticalDivider} />
+                        <View style={[styles.verticalDivider, { backgroundColor: theme.colors.outlineVariant }]} />
                         <View style={styles.statItem}>
                             <Text variant="titleMedium">{tripDetails.distance}</Text>
                             <Text variant="bodySmall">Distance</Text>
                         </View>
                         {/* Duration is optional if not available immediately */}
-                        <View style={styles.verticalDivider} />
+                        <View style={[styles.verticalDivider, { backgroundColor: theme.colors.outlineVariant }]} />
                         <View style={styles.statItem}>
                             <Text variant="titleMedium">{tripDetails.duration || '-- min'}</Text>
                             <Text variant="bodySmall">Est. Time</Text>
@@ -144,7 +144,7 @@ export default function TripPreviewModal({ visible, onDismiss, onStartTrip, trip
                             mode="outlined"
                             icon="google-maps"
                             onPress={handleOpenMaps}
-                            style={styles.mapButton}
+                            style={[styles.mapButton, { borderColor: theme.colors.outline }]}
                         >
                             Open Maps
                         </Button>
@@ -171,7 +171,6 @@ const styles = StyleSheet.create({
         justifyContent: 'flex-end',
     },
     modalContent: {
-        backgroundColor: 'white',
         borderTopLeftRadius: 24,
         borderTopRightRadius: 24,
         padding: 20,
@@ -196,7 +195,6 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         alignItems: 'center',
         paddingVertical: 10,
-        backgroundColor: '#f9f9f9',
         borderRadius: 12,
         paddingHorizontal: 12,
         marginBottom: 16
@@ -213,7 +211,6 @@ const styles = StyleSheet.create({
     connectorLine: {
         width: 2,
         height: 30, // Adjust based on spacing
-        backgroundColor: '#ddd',
         marginLeft: 11, // Align with icon center (24/2 - 1)
         marginVertical: 4,
     },
@@ -221,7 +218,6 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         justifyContent: 'space-between',
         alignItems: 'center',
-        backgroundColor: '#f8f9fa',
         borderRadius: 12,
         padding: 16,
         marginBottom: 24,
@@ -233,13 +229,11 @@ const styles = StyleSheet.create({
     verticalDivider: {
         width: 1,
         height: 24,
-        backgroundColor: '#ddd',
     },
     actionButtons: {
         gap: 12,
     },
     mapButton: {
-        borderColor: '#ddd',
     },
     startButton: {
         // Primary button style

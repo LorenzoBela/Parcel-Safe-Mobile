@@ -644,20 +644,28 @@ export default function RiderDashboard() {
             };
         }
 
-        const isPickup = !['PICKED_UP', 'IN_TRANSIT', 'ARRIVED', 'COMPLETED'].includes(activeDelivery.status);
+        const isReturn = ['RETURNING', 'TAMPERED'].includes(activeDelivery.status);
+        const isPickup = !isReturn && !['PICKED_UP', 'IN_TRANSIT', 'ARRIVED', 'COMPLETED'].includes(activeDelivery.status);
 
         if (isPickup) {
             return {
                 latitude: activeDelivery.snapped_pickup_lat ?? activeDelivery.pickup_lat,
                 longitude: activeDelivery.snapped_pickup_lng ?? activeDelivery.pickup_lng,
-                title: "Pickup Location",
+                title: "Heading to Pickup",
+                description: activeDelivery.pickup_address
+            };
+        } else if (isReturn) {
+             return {
+                latitude: activeDelivery.snapped_pickup_lat ?? activeDelivery.pickup_lat,
+                longitude: activeDelivery.snapped_pickup_lng ?? activeDelivery.pickup_lng,
+                title: "Returning to Sender",
                 description: activeDelivery.pickup_address
             };
         } else {
             return {
                 latitude: activeDelivery.snapped_dropoff_lat ?? activeDelivery.dropoff_lat,
                 longitude: activeDelivery.snapped_dropoff_lng ?? activeDelivery.dropoff_lng,
-                title: "Dropoff Destination",
+                title: "Heading to Dropoff",
                 description: activeDelivery.dropoff_address
             };
         }
@@ -680,13 +688,19 @@ export default function RiderDashboard() {
                 .from('deliveries')
                 .select('*, customer:profiles!deliveries_customer_id_fkey(full_name, phone_number)')
                 .eq('rider_id', riderId)
-                .in('status', ['ASSIGNED', 'PENDING', 'IN_TRANSIT', 'ARRIVED', 'RETURNING', 'TAMPERED'])
+                .in('status', ['ASSIGNED', 'PENDING', 'IN_TRANSIT', 'ARRIVED', 'TAMPERED', 'RETURNING'])
                 .limit(1);
 
             if (!error && data && data.length > 0) {
+                console.log('[RiderDashboard] Found active delivery:', data[0].id, data[0].status);
                 setHasActiveDelivery(true);
                 setActiveDelivery(data[0]);
             } else {
+                if (error) {
+                    console.error('[RiderDashboard] Error fetching active delivery:', error);
+                } else {
+                    console.log('[RiderDashboard] No active delivery found for rider:', riderId);
+                }
                 setHasActiveDelivery(false);
                 setActiveDelivery(null);
             }
@@ -761,6 +775,8 @@ export default function RiderDashboard() {
                 if (TERMINAL_STATUSES.includes(data.status)) {
                     setActiveDelivery(null);
                     setHasActiveDelivery(false);
+                } else {
+                    setActiveDelivery((prev: any) => prev ? { ...prev, status: data.status, cancellation_reason: data.cancellation_reason || prev.cancellation_reason } : null);
                 }
             }
             prevRiderDeliveryStatus.current = data?.status ?? null;
@@ -1231,6 +1247,27 @@ export default function RiderDashboard() {
             setHasActiveDelivery(true); // Stop listening for new requests immediately
             checkActiveDeliveries(); // Fetch active delivery details right away for the dashboard
 
+            let freshCustomerName = requestItem.data.customerName || 'Customer';
+            try {
+                if (requestItem.data.customerId) {
+                    const { data: profile } = await supabase
+                        .from('profiles')
+                        .select('full_name, phone_number')
+                        .eq('id', requestItem.data.customerId)
+                        .single();
+
+                    if (profile) {
+                        if (profile.full_name) {
+                            freshCustomerName = profile.full_name;
+                        } else if (profile.phone_number) {
+                            freshCustomerName = `User ${profile.phone_number.slice(-4)}`;
+                        }
+                    }
+                }
+            } catch (err) {
+                console.warn('[RiderDashboard] Failed to fetch fresh customer name', err);
+            }
+
             // Prepare trip details for preview
             const tripDetails = {
                 pickupAddress: requestItem.data.pickupAddress,
@@ -1243,7 +1280,7 @@ export default function RiderDashboard() {
                 dropoffLat: requestItem.data.dropoffLat,
                 dropoffLng: requestItem.data.dropoffLng,
                 bookingId: requestItem.data.bookingId, // Store ID for start
-                customerName: requestItem.data.customerName || 'Customer', // EC-Fix: Added
+                customerName: freshCustomerName, // EC-Fix: Added fresh query
             };
 
             setAcceptedTripDetails(tripDetails);
@@ -1310,6 +1347,7 @@ export default function RiderDashboard() {
                     reasonDetails: details,
                     senderName: nextDelivery.customer,
                     pickupAddress: nextDelivery.address,
+                    isPickedUp: ['IN_TRANSIT', 'ARRIVED', 'COMPLETED', 'RETURNING', 'TAMPERED'].includes(nextDelivery.status),
                 });
             } else {
                 PremiumAlert.alert('Cancellation Failed', result.error || 'Unknown error');
@@ -2116,7 +2154,7 @@ export default function RiderDashboard() {
                                         <MapboxGL.PointAnnotation
                                             id="destination"
                                             coordinate={[destination.longitude, destination.latitude]}
-                                            title="Destination"
+                                            title={destination.title}
                                         >
                                             <View style={{
                                                 width: 30,
@@ -2182,28 +2220,30 @@ export default function RiderDashboard() {
                                 <View style={[styles.divider, { backgroundColor: c.divider }]} />
 
                                 {/* Pickup Section */}
-                                <View style={{ marginBottom: 16 }}>
-                                    <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
-                                        <View style={[styles.badge, { backgroundColor: c.blueBg, width: 24, height: 24, borderRadius: 12, marginRight: 8 }]}>
-                                            <MaterialCommunityIcons name="package-variant" size={14} color={c.blueText} />
+                                {!['RETURNING', 'TAMPERED'].includes(activeDelivery.status) && (
+                                    <View style={{ marginBottom: 16 }}>
+                                        <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
+                                            <View style={[styles.badge, { backgroundColor: c.blueBg, width: 24, height: 24, borderRadius: 12, marginRight: 8 }]}>
+                                                <MaterialCommunityIcons name="package-variant" size={14} color={c.blueText} />
+                                            </View>
+                                            <Text variant="labelSmall" style={{ color: c.blueText, fontWeight: 'bold' }}>PICKUP</Text>
                                         </View>
-                                        <Text variant="labelSmall" style={{ color: c.blueText, fontWeight: 'bold' }}>PICKUP</Text>
+                                        <View style={[styles.addressContainer, { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }]}>
+                                            <Text variant="bodyMedium" style={[styles.address, { flex: 1, marginBottom: 0, marginLeft: 0, color: c.text }]}>
+                                                {nextDelivery.pickupAddress || 'Pickup Address'}
+                                            </Text>
+                                            <IconButton
+                                                icon="navigation"
+                                                mode="contained"
+                                                containerColor={c.search}
+                                                iconColor={c.text}
+                                                size={20}
+                                                onPress={() => handleNavigate('PICKUP')}
+                                                style={{ margin: 0, marginLeft: 8 }}
+                                            />
+                                        </View>
                                     </View>
-                                    <View style={[styles.addressContainer, { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }]}>
-                                        <Text variant="bodyMedium" style={[styles.address, { flex: 1, marginBottom: 0, marginLeft: 0, color: c.text }]}>
-                                            {nextDelivery.pickupAddress || 'Pickup Address'}
-                                        </Text>
-                                        <IconButton
-                                            icon="navigation"
-                                            mode="contained"
-                                            containerColor={c.search}
-                                            iconColor={c.text}
-                                            size={20}
-                                            onPress={() => handleNavigate('PICKUP')}
-                                            style={{ margin: 0, marginLeft: 8 }}
-                                        />
-                                    </View>
-                                </View>
+                                )}
 
                                 {/* Conditional Dropoff/Return Section */}
                                 {['RETURNING', 'TAMPERED'].includes(activeDelivery.status) ? (
@@ -2296,7 +2336,12 @@ export default function RiderDashboard() {
                                             textColor={c.accentText}
                                             icon="navigation"
                                         >
-                                            {['PICKED_UP', 'IN_TRANSIT', 'ARRIVED'].includes(activeDelivery.status) ? 'Resume Trip' : 'Start Trip'}
+                                            {(() => {
+                                                if (['RETURNING', 'TAMPERED'].includes(activeDelivery.status)) return 'Return to Sender';
+                                                if (['PICKED_UP', 'IN_TRANSIT'].includes(activeDelivery.status)) return 'Head to Dropoff';
+                                                if (activeDelivery.status === 'ARRIVED') return 'Scan Package';
+                                                return 'Head to Pickup';
+                                            })()}
                                         </Button>
                                     </Animated.View>
                                 </TouchableWithoutFeedback>

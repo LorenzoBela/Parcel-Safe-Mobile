@@ -865,6 +865,11 @@ export async function acceptOrder(
             try {
                 // Ensure rider profile exists (FK constraint)
                 await ensureProfileExists(riderId);
+                
+                // Ensure customer profile exists (FK constraint)
+                if (booking.customer_id) {
+                    await ensureProfileExists(booking.customer_id);
+                }
 
                 // Validate box_id FK: only include if box exists in Supabase
                 let safeBoxId: string | null = null;
@@ -1779,7 +1784,7 @@ export async function checkActiveBookings(userId: string): Promise<any | null> {
                 .from('deliveries')
                 .select('*')
                 .eq('customer_id', userId)
-                .in('status', ['PENDING', 'ASSIGNED', 'PICKED_UP', 'IN_TRANSIT', 'ARRIVED'])
+                .in('status', ['PENDING', 'ASSIGNED', 'IN_TRANSIT', 'ARRIVED'])
                 .order('created_at', { ascending: false })
                 .limit(1);
 

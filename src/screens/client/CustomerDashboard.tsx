@@ -200,7 +200,7 @@ export default function CustomerDashboard() {
                 .from('deliveries')
                 .select('*, rider:rider_id(full_name)')
                 .eq('customer_id', authedUser.userId)
-                .in('status', ['PENDING', 'ASSIGNED', 'IN_TRANSIT', 'ARRIVED', 'RETURNING'])
+                .in('status', ['PENDING', 'ASSIGNED', 'IN_TRANSIT', 'ARRIVED'])
                 .order('created_at', { ascending: false })
                 .limit(1)
                 .single();

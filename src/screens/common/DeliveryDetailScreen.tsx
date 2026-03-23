@@ -1,5 +1,25 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import circle from '@turf/circle';
+import { useAppTheme } from '../../context/ThemeContext';
+
+function buildGeofenceCircleGeoJSON(
+    centerLng: number,
+    centerLat: number,
+    radiusM: number,
+    segments: number = 64
+): GeoJSON.Feature<GeoJSON.Polygon> {
+    const coords: [number, number][] = [];
+    for (let i = 0; i <= segments; i++) {
+        const angle = (i / segments) * 2 * Math.PI;
+        const dLat = (radiusM / 111320) * Math.cos(angle);
+        const dLng = (radiusM / (111320 * Math.cos((centerLat * Math.PI) / 180))) * Math.sin(angle);
+        coords.push([centerLng + dLng, centerLat + dLat]);
+    }
+    return {
+        type: 'Feature',
+        properties: {},
+        geometry: { type: 'Polygon', coordinates: [coords] },
+    };
+}
 import { View, Animated, StyleSheet, ScrollView, Image, Dimensions, Linking } from 'react-native';
 import { useEntryAnimation } from '../../hooks/useEntryAnimation';
 import { Text, Card, Button, useTheme, Chip, Surface, IconButton } from 'react-native-paper';
@@ -38,6 +58,13 @@ export default function DeliveryDetailScreen() {
     const navigation = useNavigation<any>();
     const route = useRoute<any>();
     const theme = useTheme();
+    const { isDarkMode } = useAppTheme();
+    const c = {
+        background: isDarkMode ? '#121212' : '#F7F9FC',
+        text: isDarkMode ? '#ffffff' : '#1a1a1a',
+        card: isDarkMode ? '#1e1e1e' : '#ffffff',
+        border: isDarkMode ? '#27272a' : '#e5e7eb',
+    };
     const { delivery } = route.params;
     console.log('[DeliveryDetail] Received delivery params:', JSON.stringify(delivery, null, 2));
     const MAPBOX_TOKEN = process.env.EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN;
@@ -83,11 +110,7 @@ export default function DeliveryDetailScreen() {
                 }));
             }
 
-            if (delivery.pickup_lat && delivery.pickup_lng && delivery.dropoff_lat && delivery.dropoff_lng) {
-                // If we have all coordinates, we can stop here for initial data.
-                // Further processing (like route fetching) will use deliveryData state.
-                return;
-            }
+
 
             console.log('[DeliveryDetail] Missing coordinates, fetching from Supabase for ID:', delivery.id);
             setLoading(true);
@@ -196,8 +219,14 @@ export default function DeliveryDetailScreen() {
     const dropoffLng = deliveryData.dropoff_lng || deliveryData.dropoffLng || deliveryData.lng || 120.9842;
 
     const displayDistance = useMemo(() => {
-        if (deliveryData.distance && deliveryData.distance !== 'N/A') return deliveryData.distance;
-        if (deliveryData.distance_text && deliveryData.distance_text !== 'N/A') return deliveryData.distance_text;
+        if (deliveryData.distance && deliveryData.distance !== 'N/A') {
+            const distStr = String(deliveryData.distance);
+            return distStr.includes('km') ? distStr : `${distStr} km`;
+        }
+        if (deliveryData.distance_text && deliveryData.distance_text !== 'N/A') {
+            const distStr = String(deliveryData.distance_text);
+            return distStr.includes('km') ? distStr : `${distStr} km`;
+        }
 
         const pLat = parseFloat(pickupLat);
         const pLng = parseFloat(pickupLng);
@@ -293,7 +322,7 @@ export default function DeliveryDetailScreen() {
         const lng = Number(pickupLng);
         console.log('[DeliveryDetail] Pickup Geofence Config:', { lat, lng, valid: !isNaN(lat) && !isNaN(lng) });
         if (isNaN(lat) || isNaN(lng)) return null;
-        return circle([lng, lat], 0.05, { steps: 64, units: 'kilometers' });
+        return buildGeofenceCircleGeoJSON(lng, lat, 50);
     }, [pickupLat, pickupLng]);
 
     const dropoffGeofenceCircle = useMemo(() => {
@@ -301,7 +330,7 @@ export default function DeliveryDetailScreen() {
         const lng = Number(dropoffLng);
         console.log('[DeliveryDetail] Dropoff Geofence Config:', { lat, lng, valid: !isNaN(lat) && !isNaN(lng) });
         if (isNaN(lat) || isNaN(lng)) return null;
-        return circle([lng, lat], 0.05, { steps: 64, units: 'kilometers' });
+        return buildGeofenceCircleGeoJSON(lng, lat, 50);
     }, [dropoffLat, dropoffLng]);
 
     useEffect(() => {
@@ -315,10 +344,10 @@ export default function DeliveryDetailScreen() {
     const screenAnim = useEntryAnimation(0);
 
     return (
-        <Animated.View style={[styles.container, screenAnim.style]}>
-            <View style={styles.header}>
-                <IconButton icon="arrow-left" onPress={() => navigation.goBack()} />
-                <Text variant="titleLarge" style={styles.headerTitle}>Delivery Details</Text>
+        <Animated.View style={[styles.container, screenAnim.style, { backgroundColor: c.background }]}>
+            <View style={[styles.header, { backgroundColor: c.card }]}>
+                <IconButton icon="arrow-left" onPress={() => navigation.goBack()} iconColor={c.text} />
+                <Text variant="titleLarge" style={[styles.headerTitle, { color: c.text }]}>Delivery Details</Text>
                 <View style={{ width: 48 }} />
             </View>
 
@@ -338,6 +367,7 @@ export default function DeliveryDetailScreen() {
                                 style={styles.map}
                                 logoEnabled={false}
                                 attributionEnabled={false}
+                                styleURL={isDarkMode ? MapboxGL.StyleURL.Dark : MapboxGL.StyleURL.Street}
                                 scrollEnabled={true}
                                 pitchEnabled={true}
                                 rotateEnabled={true}
@@ -418,38 +448,42 @@ export default function DeliveryDetailScreen() {
 
                                 {/* Geo-fence Visuals */}
                                 {/* Pickup Geo-fence (Blue) */}
-                                {pickupGeofenceCircle && (
-                                    <MapboxGL.ShapeSource id="pickup-fence-source" shape={pickupGeofenceCircle}>
+                                {pickupGeofenceCircle && !isNaN(pickupLat) && !isNaN(pickupLng) && (
+                                    <MapboxGL.ShapeSource id="pickup-fence-source" shape={pickupGeofenceCircle as any}>
                                         <MapboxGL.FillLayer
                                             id="pickup-fence-fill"
                                             style={{
-                                                fillColor: 'rgba(33, 150, 243, 0.4)', // Increased opacity
+                                                fillColor: '#2196F3', // Solid blue
+                                                fillOpacity: 0.2, // 20% opacity
                                             }}
                                         />
                                         <MapboxGL.LineLayer
                                             id="pickup-fence-outline"
                                             style={{
-                                                lineColor: 'rgba(33, 150, 243, 1)', // Solid border
+                                                lineColor: '#2196F3',
                                                 lineWidth: 2,
+                                                lineOpacity: 0.8,
                                             }}
                                         />
                                     </MapboxGL.ShapeSource>
                                 )}
 
                                 {/* Dropoff Geo-fence (Green) */}
-                                {dropoffGeofenceCircle && (
-                                    <MapboxGL.ShapeSource id="dropoff-fence-source" shape={dropoffGeofenceCircle}>
+                                {dropoffGeofenceCircle && !isNaN(dropoffLat) && !isNaN(dropoffLng) && (
+                                    <MapboxGL.ShapeSource id="dropoff-fence-source" shape={dropoffGeofenceCircle as any}>
                                         <MapboxGL.FillLayer
                                             id="dropoff-fence-fill"
                                             style={{
-                                                fillColor: 'rgba(76, 175, 80, 0.4)',
+                                                fillColor: '#4CAF50',
+                                                fillOpacity: 0.2,
                                             }}
                                         />
                                         <MapboxGL.LineLayer
                                             id="dropoff-fence-outline"
                                             style={{
-                                                lineColor: 'rgba(76, 175, 80, 1)',
+                                                lineColor: '#4CAF50',
                                                 lineWidth: 2,
+                                                lineOpacity: 0.8,
                                             }}
                                         />
                                     </MapboxGL.ShapeSource>
@@ -496,7 +530,7 @@ export default function DeliveryDetailScreen() {
                             </Surface>
                         </View>
                     ) : (
-                        <View style={[styles.map, styles.mapFallback]}>
+                        <View style={[styles.map, styles.mapFallback, isDarkMode && { backgroundColor: '#1e1e1e' }]}>
                             <Text style={{ color: theme.colors.onSurfaceVariant }}>
                                 Map unavailable: set EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN in .env
                             </Text>
@@ -505,11 +539,11 @@ export default function DeliveryDetailScreen() {
                 </View>
 
                 {/* Status Card */}
-                <Surface style={styles.statusCard} elevation={2}>
+                <Surface style={[styles.statusCard, { backgroundColor: c.card }]} elevation={2}>
                     <View style={styles.statusHeader}>
                         <View style={{ flex: 1, marginRight: 10 }}>
                             <Text variant="labelSmall" style={{ color: '#888' }}>Tracking Number</Text>
-                            <Text variant="titleMedium" style={{ fontWeight: 'bold' }} numberOfLines={1} ellipsizeMode="middle">{deliveryData.trk || deliveryData.tracking_number || deliveryData.id}</Text>
+                            <Text variant="titleMedium" style={{ fontWeight: 'bold', color: c.text }} numberOfLines={1} ellipsizeMode="middle">{deliveryData.trk || deliveryData.tracking_number || deliveryData.id}</Text>
                         </View>
                         <Chip
                             icon={getStatusIcon(deliveryData.status)}
@@ -523,82 +557,85 @@ export default function DeliveryDetailScreen() {
                     <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 8 }}>
                         <View>
                             <Text variant="labelSmall" style={{ color: '#888' }}>Date</Text>
-                            <Text variant="bodyMedium" style={{ fontWeight: '500' }}>{deliveryData.date || deliveryData.time || 'N/A'}</Text>
+                            <Text variant="bodyMedium" style={{ fontWeight: '500', color: c.text }}>{deliveryData.date || deliveryData.time || 'N/A'}</Text>
                         </View>
                         <View>
                             <Text variant="labelSmall" style={{ color: '#888' }}>Distance</Text>
-                            <Text variant="bodyMedium" style={{ fontWeight: '500' }}>{displayDistance}</Text>
+                            <Text variant="bodyMedium" style={{ fontWeight: '500', color: c.text }}>{displayDistance}</Text>
                         </View>
                         <View>
                             <Text variant="labelSmall" style={{ color: '#888' }}>Fare</Text>
                             <Text variant="bodyMedium" style={{ fontWeight: '500', color: theme.colors.primary }}>
-                                {deliveryData.estimated_fare ? `₱${Number(deliveryData.estimated_fare).toFixed(2)}` : (deliveryData.price && deliveryData.price !== '—' ? deliveryData.price : 'N/A')}
+                                {(() => {
+                                    const fare = deliveryData.fare || deliveryData.estimated_fare || deliveryData.price;
+                                    if (!fare || fare === 'N/A' || fare === '--') return 'N/A';
+                                    const fareStr = String(fare);
+                                    if (fareStr.includes('₱')) return fareStr;
+                                    const num = Number(fareStr.replace(/[^0-9.-]+/g, ""));
+                                    return isNaN(num) ? 'N/A' : `₱${num.toFixed(2)}`;
+                                })()}
                             </Text>
                         </View>
                     </View>
                 </Surface>
 
                 {/* Item Details */}
-                <Card style={styles.card} mode="elevated">
+                <Card style={[styles.card, { backgroundColor: c.card }]} mode="elevated">
                     <Card.Content>
-                        <Text variant="titleMedium" style={styles.sectionTitle}>Item Details</Text>
+                        <Text variant="titleMedium" style={[styles.sectionTitle, { color: c.text }]}>Item Details</Text>
 
                         <View style={styles.detailRow}>
                             <MaterialCommunityIcons name="account" size={24} color={theme.colors.primary} />
                             <View style={styles.detailTextContainer}>
-                                <Text variant="bodyLarge" style={styles.detailLabel}>Customer Name</Text>
-                                <Text variant="bodyMedium" style={styles.detailValue}>{deliveryData.customer || deliveryData.customerName || 'N/A'}</Text>
+                                <Text variant="bodyLarge" style={[styles.detailLabel, { color: c.text }]}>Customer Name</Text>
+                                <Text variant="bodyMedium" style={[styles.detailValue, isDarkMode && { color: '#a1a1aa' }]}>{deliveryData.customer || deliveryData.customerName || 'N/A'}</Text>
                             </View>
                         </View>
 
                         {/* Sender Contact */}
-                        {(deliveryData.sender_name || deliveryData.senderName) ? (
-                            <View style={styles.detailRow}>
-                                <MaterialCommunityIcons name="account-arrow-right" size={24} color="#2196F3" />
-                                <View style={[styles.detailTextContainer, { flex: 1 }]}>
-                                    <Text variant="bodyLarge" style={styles.detailLabel}>Sender</Text>
-                                    <Text variant="bodyMedium" style={styles.detailValue}>{deliveryData.sender_name || deliveryData.senderName}</Text>
-                                </View>
-                                {(deliveryData.sender_phone || deliveryData.senderPhone) ? (
-                                    <View style={{ flexDirection: 'row' }}>
-                                        <IconButton icon="phone" size={18} mode="contained-tonal" iconColor="#1976D2" onPress={() => Linking.openURL(`tel:${deliveryData.sender_phone || deliveryData.senderPhone}`)} style={{ margin: 0, marginRight: 4 }} />
-                                        <IconButton icon="message-text" size={18} mode="contained-tonal" iconColor="#1976D2" onPress={() => Linking.openURL(`sms:${deliveryData.sender_phone || deliveryData.senderPhone}`)} style={{ margin: 0 }} />
-                                    </View>
-                                ) : null}
+                        <View style={styles.detailRow}>
+                            <MaterialCommunityIcons name="account-arrow-right" size={24} color="#2196F3" />
+                            <View style={[styles.detailTextContainer, { flex: 1 }]}>
+                                <Text variant="bodyLarge" style={[styles.detailLabel, { color: c.text }]}>Sender</Text>
+                                <Text variant="bodyMedium" style={[styles.detailValue, isDarkMode && { color: '#a1a1aa' }]}>{deliveryData.sender_name || deliveryData.senderName || deliveryData.profiles?.full_name || 'Unknown Sender'}</Text>
                             </View>
-                        ) : null}
+                            {(deliveryData.sender_phone || deliveryData.senderPhone) ? (
+                                <View style={{ flexDirection: 'row' }}>
+                                    <IconButton icon="phone" size={18} mode="contained-tonal" iconColor="#1976D2" onPress={() => Linking.openURL(`tel:${deliveryData.sender_phone || deliveryData.senderPhone}`)} style={{ margin: 0, marginRight: 4 }} />
+                                    <IconButton icon="message-text" size={18} mode="contained-tonal" iconColor="#1976D2" onPress={() => Linking.openURL(`sms:${deliveryData.sender_phone || deliveryData.senderPhone}`)} style={{ margin: 0 }} />
+                                </View>
+                            ) : null}
+                        </View>
 
                         {/* Recipient Contact */}
-                        {(deliveryData.recipient_name || deliveryData.recipientName) ? (
-                            <View style={styles.detailRow}>
-                                <MaterialCommunityIcons name="account-arrow-left" size={24} color="#4CAF50" />
-                                <View style={[styles.detailTextContainer, { flex: 1 }]}>
-                                    <Text variant="bodyLarge" style={styles.detailLabel}>Recipient</Text>
-                                    <Text variant="bodyMedium" style={styles.detailValue}>{deliveryData.recipient_name || deliveryData.recipientName}</Text>
-                                </View>
-                                {(deliveryData.profiles?.phone_number) ? (
-                                    <View style={{ flexDirection: 'row' }}>
-                                        <IconButton icon="phone" size={18} mode="contained-tonal" iconColor="#1976D2" onPress={() => Linking.openURL(`tel:${deliveryData.profiles.phone_number}`)} style={{ margin: 0, marginRight: 4 }} />
-                                        <IconButton icon="message-text" size={18} mode="contained-tonal" iconColor="#1976D2" onPress={() => Linking.openURL(`sms:${deliveryData.profiles.phone_number}`)} style={{ margin: 0 }} />
-                                    </View>
-                                ) : null}
+                        <View style={styles.detailRow}>
+                            <MaterialCommunityIcons name="account-arrow-left" size={24} color="#4CAF50" />
+                            <View style={[styles.detailTextContainer, { flex: 1 }]}>
+                                <Text variant="bodyLarge" style={[styles.detailLabel, { color: c.text }]}>Recipient</Text>
+                                <Text variant="bodyMedium" style={[styles.detailValue, isDarkMode && { color: '#a1a1aa' }]}>{deliveryData.recipient_name || deliveryData.recipientName || deliveryData.customer || deliveryData.customerName || 'Unknown Recipient'}</Text>
                             </View>
-                        ) : null}
+                            {(deliveryData.recipient_phone || deliveryData.recipientPhone || deliveryData.profiles?.phone_number) ? (
+                                <View style={{ flexDirection: 'row' }}>
+                                    <IconButton icon="phone" size={18} mode="contained-tonal" iconColor="#1976D2" onPress={() => Linking.openURL(`tel:${deliveryData.recipient_phone || deliveryData.recipientPhone || deliveryData.profiles?.phone_number}`)} style={{ margin: 0, marginRight: 4 }} />
+                                    <IconButton icon="message-text" size={18} mode="contained-tonal" iconColor="#1976D2" onPress={() => Linking.openURL(`sms:${deliveryData.recipient_phone || deliveryData.recipientPhone || deliveryData.profiles?.phone_number}`)} style={{ margin: 0 }} />
+                                </View>
+                            ) : null}
+                        </View>
 
                         <View style={styles.detailRow}>
                             <MaterialCommunityIcons name="map-marker-outline" size={24} color={theme.colors.primary} />
-                            <View style={styles.detailTextContainer}>
-                                <Text variant="bodyLarge" style={styles.detailLabel}>Pickup Address</Text>
-                                <Text variant="bodyMedium" style={styles.detailValue}>{deliveryData.pickupAddress || deliveryData.pickup_address || 'N/A'}</Text>
+                            <View style={[styles.detailTextContainer, { flex: 1 }]}>
+                                <Text variant="bodyLarge" style={[styles.detailLabel, { color: c.text }]}>Pickup Address</Text>
+                                <Text variant="bodyMedium" style={[styles.detailValue, isDarkMode && { color: '#a1a1aa' }]}>{deliveryData.pickupAddress || deliveryData.pickup_address || 'N/A'}</Text>
                             </View>
                         </View>
                         <View style={styles.detailRow}>
                             <MaterialCommunityIcons name="map-marker" size={24} color={theme.colors.primary} />
-                            <View style={styles.detailTextContainer}>
-                                <Text variant="bodyLarge" style={styles.detailLabel}>
+                            <View style={[styles.detailTextContainer, { flex: 1 }]}>
+                                <Text variant="bodyLarge" style={[styles.detailLabel, { color: c.text }]}>
                                     {deliveryData.status === 'Cancelled' ? 'Return Destination (Pickup Point)' : 'Dropoff Address'}
                                 </Text>
-                                <Text variant="bodyMedium" style={styles.detailValue}>
+                                <Text variant="bodyMedium" style={[styles.detailValue, isDarkMode && { color: '#a1a1aa' }]}>
                                     {deliveryData.status === 'Cancelled'
                                         ? (deliveryData.pickupAddress || deliveryData.pickup_address || 'N/A')
                                         : (deliveryData.dropoffAddress || deliveryData.dropoff_address || deliveryData.address || 'N/A')}
@@ -617,7 +654,7 @@ export default function DeliveryDetailScreen() {
                 </Card>
 
                 {/* Pickup Photo */}
-                <Text variant="titleMedium" style={styles.sectionTitle}>Pickup Photo</Text>
+                <Text variant="titleMedium" style={[styles.sectionTitle, { color: c.text }]}>Pickup Photo</Text>
                 {
                     pickupImageUri ? (
                         <Card style={styles.imageCard} mode="elevated">
@@ -634,7 +671,7 @@ export default function DeliveryDetailScreen() {
                 }
 
                 {/* Proof of Delivery */}
-                <Text variant="titleMedium" style={styles.sectionTitle}>
+                <Text variant="titleMedium" style={[styles.sectionTitle, { color: c.text }]}>
                     {String(deliveryData.status || '').toUpperCase() === 'RETURNED' ? 'Return Verification' : 'Proof of Delivery'}
                 </Text>
                 {
@@ -747,6 +784,7 @@ const styles = StyleSheet.create({
     },
     detailTextContainer: {
         marginLeft: 16,
+        flex: 1,
     },
     detailLabel: {
         fontWeight: 'bold',

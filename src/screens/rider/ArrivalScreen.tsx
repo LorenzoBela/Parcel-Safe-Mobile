@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { View, StyleSheet, Alert, ScrollView, Platform, Linking, Animated } from 'react-native';
+import { View, StyleSheet, Alert, ScrollView, Platform, Linking, Animated, ActivityIndicator } from 'react-native';
 import { useEntryAnimation } from '../../hooks/useEntryAnimation';
 import { Text, Button, Card, TextInput, Portal, Modal, IconButton } from 'react-native-paper';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import * as Location from 'expo-location';
+import { useAppTheme } from '../../context/ThemeContext';
 
 import * as ImagePicker from 'expo-image-picker';
 
@@ -99,6 +100,30 @@ import useAuthStore from '../../store/authStore';
 import PickupVerification from './components/PickupVerification';
 import DropoffVerification from './components/DropoffVerification';
 
+// Mapbox for geofence preview
+import MapboxGL, { isMapboxNativeAvailable, StyleURL } from '../../components/map/MapboxWrapper';
+import AnimatedRiderMarker from '../../components/map/AnimatedRiderMarker';
+
+function buildGeofenceCircleGeoJSON(
+    centerLng: number,
+    centerLat: number,
+    radiusM: number,
+    segments: number = 64
+): GeoJSON.Feature<GeoJSON.Polygon> {
+    const coords: [number, number][] = [];
+    for (let i = 0; i <= segments; i++) {
+        const angle = (i / segments) * 2 * Math.PI;
+        const dLat = (radiusM / 111320) * Math.cos(angle);
+        const dLng = (radiusM / (111320 * Math.cos((centerLat * Math.PI) / 180))) * Math.sin(angle);
+        coords.push([centerLng + dLng, centerLat + dLat]);
+    }
+    return {
+        type: 'Feature',
+        properties: {},
+        geometry: { type: 'Polygon', coordinates: [coords] },
+    };
+}
+
 
 interface RouteParams {
     deliveryId: string;
@@ -130,11 +155,20 @@ export default function ArrivalScreen() {
     const route = useRoute();
     const params = route.params as RouteParams | undefined;
     const insets = useSafeAreaInsets();
+    const { isDarkMode } = useAppTheme();
+    const c = {
+        background: isDarkMode ? '#121212' : '#f8f9fa',
+        text: isDarkMode ? '#ffffff' : '#1a1a1a',
+        modalBg: isDarkMode ? '#1e1e1e' : 'white',
+        modalText: isDarkMode ? '#e4e4e7' : '#666',
+        card: isDarkMode ? '#1e1e1e' : '#ffffff',
+        border: isDarkMode ? '#27272a' : '#e5e7eb',
+    };
 
     if (!params?.deliveryId || !params?.boxId) {
         return (
-            <View style={[styles.container, { justifyContent: 'center', padding: 24 }]}>
-                <Text variant="titleMedium" style={{ marginBottom: 12 }}>
+            <View style={[styles.container, { justifyContent: 'center', padding: 24, backgroundColor: c.background }]}>
+                <Text variant="titleMedium" style={{ marginBottom: 12, color: c.text }}>
                     Missing delivery context.
                 </Text>
                 <Button mode="contained" onPress={() => navigation.goBack()}>
@@ -146,10 +180,11 @@ export default function ArrivalScreen() {
 
     // Geofence State
     // EC-XX: Dual-Check Geofence State
-    const [isInsideGeoFence, setIsInsideGeoFence] = useState(false); // Master switch (Phone && (Box || Offline))
+    const [isInsideGeoFence, setIsInsideGeoFence] = useState(false); // Master switch (Phone && (Box || Offline || Fallback))
     const [isPhoneInside, setIsPhoneInside] = useState(false);
     const [isBoxInside, setIsBoxInside] = useState(false);
     const [isBoxOffline, setIsBoxOffline] = useState(false);
+    const [isPhoneOnlyFallback, setIsPhoneOnlyFallback] = useState(false); // EC-FIX: Phone-only fallback when box is stuck
     const [boxLocationLastSeen, setBoxLocationLastSeen] = useState<number>(0);
     const [phoneLocationLastSeen, setPhoneLocationLastSeen] = useState<number>(0);
     const [boxLocationSubscriptionEpoch, setBoxLocationSubscriptionEpoch] = useState(0);
@@ -159,13 +194,54 @@ export default function ArrivalScreen() {
     const masterDecisionRef = useRef<boolean>(false);
     const boxOfflineRef = useRef<boolean>(false);
     const boxOfflineTransitionStartRef = useRef<number>(0);
+    const boxFirstLoadReceivedRef = useRef<boolean>(false); // Tracks whether we've received first box location callback
+    const phoneInsideSinceRef = useRef<number>(0); // Tracks when phone first entered geofence
 
     const [currentPosition, setCurrentPosition] = useState({ lat: 0, lng: 0, accuracy: 25 });
+
+    // EC-FIX: GPS Acquisition Gate — show a loading screen until phone GPS is acquired
+    const [gpsAcquired, setGpsAcquired] = useState(false);
+    const gpsAcquireTimerRef = useRef<NodeJS.Timeout | null>(null);
     const [geofence, setGeofence] = useState<GeofenceConfig>(
         createDefaultGeofence(params.targetLat, params.targetLng)
     );
     const [geofenceTarget, setGeofenceTarget] = useState<'pickup' | 'dropoff' | 'return_pickup'>('pickup');
     const [distanceMeters, setDistanceMeters] = useState<number | null>(null);
+
+    // EC-FIX: Derive gpsAcquired — phone GPS is required, box is best-effort (4s timeout)
+    useEffect(() => {
+        if (gpsAcquired) return; // Once acquired, never revert
+
+        const hasPhoneGps = currentPosition.lat !== 0 || currentPosition.lng !== 0;
+        const hasBoxData = boxFirstLoadReceivedRef.current;
+
+        if (hasPhoneGps && (hasBoxData || isBoxOffline)) {
+            setGpsAcquired(true);
+            return;
+        }
+
+        // If phone GPS arrived but box is still pending, wait up to 4s then proceed
+        if (hasPhoneGps && !hasBoxData && !isBoxOffline) {
+            if (!gpsAcquireTimerRef.current) {
+                gpsAcquireTimerRef.current = setTimeout(() => {
+                    setGpsAcquired(true);
+                }, 4000);
+            }
+        }
+
+        // 8s hard timeout — proceed with whatever we have
+        const hardTimeout = setTimeout(() => {
+            setGpsAcquired(true);
+        }, 8000);
+
+        return () => {
+            clearTimeout(hardTimeout);
+            if (gpsAcquireTimerRef.current) {
+                clearTimeout(gpsAcquireTimerRef.current);
+                gpsAcquireTimerRef.current = null;
+            }
+        };
+    }, [currentPosition.lat, currentPosition.lng, isBoxOffline, gpsAcquired]);
 
     // EC-11: Customer Not Home State
     const [waitTimerState, setWaitTimerState] = useState<WaitTimerState>(
@@ -546,6 +622,13 @@ export default function ArrivalScreen() {
         masterDecisionRef.current = false;
         boxOfflineRef.current = false;
         boxOfflineTransitionStartRef.current = 0;
+        // EC-FIX: Also reset the new fallback tracking refs
+        boxFirstLoadReceivedRef.current = false;
+        phoneInsideSinceRef.current = 0;
+        setIsPhoneOnlyFallback(false);
+        // EC-FIX: Clear stale distance so the old geofence's distance
+        // doesn't bleed into the new target (e.g. pickup distance showing in dropoff phase)
+        setDistanceMeters(null);
 
         if (isPickupConfirmed && isReturning && hasPickupCoords) {
             setGeofence(createDefaultGeofence(params.pickupLat as number, params.pickupLng as number));
@@ -624,28 +707,9 @@ export default function ArrivalScreen() {
                 setPhoneLocationLastSeen(now);
             };
 
-            // Stage 1: Seed immediately from last-known OS cache.
-            // When backgroundLocationService has been running during transit, this fix
-            // is only seconds old — zero wait, geofence check runs instantly.
-            let seededFresh = false;
-            try {
-                const lastKnown = await Location.getLastKnownPositionAsync({ maxAge: 30000 });
-                if (lastKnown) {
-                    applyPosition(lastKnown.coords, 50);
-                    // If background service is active the fix is already GPS-accurate;
-                    // no need for a redundant Balanced round-trip.
-                    seededFresh = isBackgroundLocationRunning();
-                }
-            } catch { /* silent — best-effort seed */ }
-
-            // Stage 2: Fast balanced fix using cell/Wi-Fi (~1-3 s) — only when GPS is
-            // cold (background service not running). Skipped when GPS is already hot.
-            if (!seededFresh) {
-                try {
-                    const fast = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
-                    applyPosition(fast.coords, 30);
-                } catch { /* GPS unavailable — watchPositionAsync will still provide updates */ }
-            }
+            // Now that we have a loading gate, we no longer need to seed with fast/inaccurate 
+            // cached locations (which caused the 'bouncing' effect the user noticed).
+            // We directly wait for the continuous high-accuracy watch to yield its first accurate fix.
 
             // Stage 3: High-accuracy continuous GPS watch for precise ongoing checks.
             subscription = await Location.watchPositionAsync(
@@ -670,9 +734,21 @@ export default function ArrivalScreen() {
     }, [geofence]);
 
     // 2. Track BOX Location (The "Secondary Check")
+    // EC-FIX: Improved offline detection — null data = immediate offline (no debounce),
+    // stale data = debounced offline transition.
     useEffect(() => {
         const OFFLINE_SWITCH_DEBOUNCE_MS = 5000;
 
+        /** Mark box as immediately offline (skip debounce) — used when data is null/missing */
+        const markOfflineImmediate = () => {
+            if (!boxOfflineRef.current) {
+                boxOfflineRef.current = true;
+                setIsBoxOffline(true);
+                boxOfflineTransitionStartRef.current = 0;
+            }
+        };
+
+        /** Debounced offline state transition — used for stale data */
         const updateOfflineState = (desiredOffline: boolean, now: number) => {
             if (desiredOffline === boxOfflineRef.current) {
                 boxOfflineTransitionStartRef.current = 0;
@@ -693,9 +769,13 @@ export default function ArrivalScreen() {
 
         const unsubscribeLocation = subscribeToLocation(params.boxId, (location) => {
             const now = Date.now();
+            boxFirstLoadReceivedRef.current = true;
 
+            // EC-FIX: No location data at all → box has never reported GPS → immediate offline.
+            // Previously this went through the 5s debounce, which blocked pickup for 5+ seconds
+            // even when the box was clearly powered off.
             if (!location) {
-                updateOfflineState(true, now);
+                markOfflineImmediate();
                 return;
             }
 
@@ -703,6 +783,14 @@ export default function ArrivalScreen() {
             const isStale = (now - dataTimestamp) > 120000; // 2 minutes
 
             setBoxLocationLastSeen(dataTimestamp);
+
+            // EC-FIX: If data is extremely stale (> 5 min), also skip debounce.
+            // This handles the case where box was online hours ago but is clearly down now.
+            if ((now - dataTimestamp) > 300000) {
+                markOfflineImmediate();
+                return;
+            }
+
             updateOfflineState(isStale, now);
 
             if (!isStale) {
@@ -725,7 +813,19 @@ export default function ArrivalScreen() {
             }
         });
 
-        return unsubscribeLocation;
+        // EC-FIX: If the Firebase listener fires with no data on mount (box node doesn't exist),
+        // that callback already marks offline immediately. But if the subscription itself is slow
+        // to fire, set a safety timeout to mark offline after 3s if no callback received.
+        const safetyTimeout = setTimeout(() => {
+            if (!boxFirstLoadReceivedRef.current) {
+                markOfflineImmediate();
+            }
+        }, 3000);
+
+        return () => {
+            clearTimeout(safetyTimeout);
+            unsubscribeLocation();
+        };
     }, [geofence, params.boxId, boxLocationSubscriptionEpoch]);
 
     // Listener watchdog: if box stream goes stale while marked online, resubscribe.
@@ -742,13 +842,14 @@ export default function ArrivalScreen() {
     }, [boxLocationLastSeen, isBoxOffline]);
 
     // 3. The "Master Switch" (Dual Check Logic)
+    // EC-FIX: Now includes phone-only fallback path
     useEffect(() => {
         if (masterSwitchDebounceRef.current) {
             clearTimeout(masterSwitchDebounceRef.current);
         }
 
         masterSwitchDebounceRef.current = setTimeout(() => {
-            const nextInside = isPhoneInside && (isBoxOffline || isBoxInside);
+            const nextInside = isPhoneInside && (isBoxOffline || isBoxInside || isPhoneOnlyFallback);
             if (nextInside !== masterDecisionRef.current) {
                 masterDecisionRef.current = nextInside;
                 setIsInsideGeoFence(nextInside);
@@ -761,7 +862,43 @@ export default function ArrivalScreen() {
                 masterSwitchDebounceRef.current = null;
             }
         };
-    }, [isPhoneInside, isBoxInside, isBoxOffline]);
+    }, [isPhoneInside, isBoxInside, isBoxOffline, isPhoneOnlyFallback]);
+
+    // 3b. EC-FIX: Phone-Only Fallback Timer
+    // If phone has been stably inside the geofence for 15 seconds but box status
+    // is stuck (neither offline nor inside), activate phone-only fallback.
+    // This safeguards against the debounce/hysteresis gap that blocks pickup indefinitely.
+    useEffect(() => {
+        const PHONE_ONLY_FALLBACK_MS = 15000;
+
+        if (isPhoneInside && !isBoxOffline && !isBoxInside && !isPhoneOnlyFallback) {
+            // Phone is inside but box status is stuck — start fallback countdown
+            if (phoneInsideSinceRef.current === 0) {
+                phoneInsideSinceRef.current = Date.now();
+            }
+
+            const timer = setTimeout(() => {
+                // Double-check conditions still hold after timeout
+                if (phoneInsideSinceRef.current > 0 && !boxOfflineRef.current) {
+                    console.log('[ArrivalScreen] EC-FIX: Phone-only fallback activated — box status stuck for 15s');
+                    setIsPhoneOnlyFallback(true);
+                }
+            }, PHONE_ONLY_FALLBACK_MS);
+
+            return () => clearTimeout(timer);
+        }
+
+        // Reset fallback timer if phone leaves geofence or box comes online
+        if (!isPhoneInside) {
+            phoneInsideSinceRef.current = 0;
+            if (isPhoneOnlyFallback) setIsPhoneOnlyFallback(false);
+        }
+        if (isBoxOffline || isBoxInside) {
+            phoneInsideSinceRef.current = 0;
+            // Don't clear fallback here — it's no longer needed but clearing could cause flicker.
+            // The master switch will use the correct path (isBoxOffline or isBoxInside) instead.
+        }
+    }, [isPhoneInside, isBoxOffline, isBoxInside, isPhoneOnlyFallback]);
 
     // 4. Pickup Arrival Notification — fires once when rider first enters pickup geofence
     useEffect(() => {
@@ -922,7 +1059,7 @@ export default function ArrivalScreen() {
                         const newState = initiateReturn(waitTimerState, Date.now());
                         setWaitTimerState(newState);
                         await writeWaitTimerToFirebase(newState);
-                        navigation.navigate('RiderDashboard');
+                        navigation.navigate('RiderApp');
                     }
                 }
             ]
@@ -1016,6 +1153,7 @@ export default function ArrivalScreen() {
                     pickupAddress: params.pickupAddress || params.targetAddress,
                     pickupLat: params.pickupLat,
                     pickupLng: params.pickupLng,
+                    isPickedUp: ['IN_TRANSIT', 'ARRIVED', 'COMPLETED', 'RETURNING', 'TAMPERED'].includes(params.status || 'PENDING'),
                 });
             } else {
                 PremiumAlert.alert('Cancellation Failed', result.error || 'Unknown error');
@@ -1069,19 +1207,19 @@ export default function ArrivalScreen() {
             PremiumAlert.alert(
                 'Delivery Reassigned',
                 'This delivery has been assigned to another rider. Returning to dashboard.',
-                [{ text: 'OK', onPress: () => navigation.navigate('RiderDashboard') }]
+                [{ text: 'OK', onPress: () => navigation.navigate('RiderApp') }]
             );
         }
     };
 
     // Render different UI based on wait timer state
     const renderWaitingUI = () => (
-        <Card style={styles.waitCard}>
+        <Card style={[styles.waitCard, isDarkMode && { backgroundColor: '#451a03', borderColor: '#b45309' }]}>
             <Card.Content>
                 <View style={styles.timerContainer}>
-                    <Text style={styles.timerLabel}>WAITING FOR CUSTOMER</Text>
-                    <Text style={styles.timerDisplay}>{displayTime}</Text>
-                    <Text style={styles.timerSubtext}>
+                    <Text style={[styles.timerLabel, isDarkMode && { color: '#fbbf24' }]}>WAITING FOR CUSTOMER</Text>
+                    <Text style={[styles.timerDisplay, isDarkMode && { color: '#f59e0b' }]}>{displayTime}</Text>
+                    <Text style={[styles.timerSubtext, isDarkMode && { color: '#fcd34d' }]}>
                         {waitTimerState.status === 'EXPIRED'
                             ? 'Timer expired - You may return'
                             : 'Customer has been notified'}
@@ -1276,8 +1414,51 @@ export default function ArrivalScreen() {
 
     const screenAnim = useEntryAnimation(0);
 
+    // ──── GPS Acquisition Loading Gate ────
+    if (!gpsAcquired) {
+        const hasPhoneGps = currentPosition.lat !== 0 || currentPosition.lng !== 0;
+        const hasBoxData = boxFirstLoadReceivedRef.current;
+        return (
+            <View style={[styles.container, { backgroundColor: c.background, justifyContent: 'center', alignItems: 'center', padding: 32 }]}>
+                <View style={{ alignItems: 'center', marginBottom: 32 }}>
+                    <ActivityIndicator size="large" color={isDarkMode ? '#60a5fa' : '#2563eb'} style={{ marginBottom: 20 }} />
+                    <Text variant="headlineSmall" style={{ color: c.text, fontWeight: 'bold', marginBottom: 8 }}>
+                        Acquiring GPS Signal
+                    </Text>
+                    <Text variant="bodyMedium" style={{ color: isDarkMode ? '#a1a1aa' : '#6b7280', textAlign: 'center' }}>
+                        Locking onto your position for accurate geofence detection...
+                    </Text>
+                </View>
+
+                <View style={[styles.gpsGateCard, { backgroundColor: c.card, borderColor: c.border }]}>
+                    <View style={styles.gpsGateRow}>
+                        <Text style={{ fontSize: 18 }}>{hasPhoneGps ? '✅' : '📡'}</Text>
+                        <Text variant="bodyMedium" style={{ color: c.text, flex: 1, marginLeft: 12 }}>
+                            Phone GPS
+                        </Text>
+                        <Text variant="bodySmall" style={{ color: hasPhoneGps ? '#22c55e' : (isDarkMode ? '#a1a1aa' : '#9ca3af') }}>
+                            {hasPhoneGps ? 'Locked' : 'Acquiring...'}
+                        </Text>
+                    </View>
+
+                    <View style={[styles.gpsGateDivider, { backgroundColor: c.border }]} />
+
+                    <View style={styles.gpsGateRow}>
+                        <Text style={{ fontSize: 18 }}>{hasBoxData ? '✅' : (isBoxOffline ? '⚠️' : '📦')}</Text>
+                        <Text variant="bodyMedium" style={{ color: c.text, flex: 1, marginLeft: 12 }}>
+                            Smart Box
+                        </Text>
+                        <Text variant="bodySmall" style={{ color: hasBoxData ? '#22c55e' : (isBoxOffline ? '#f59e0b' : (isDarkMode ? '#a1a1aa' : '#9ca3af')) }}>
+                            {hasBoxData ? 'Connected' : (isBoxOffline ? 'Offline' : 'Connecting...')}
+                        </Text>
+                    </View>
+                </View>
+            </View>
+        );
+    }
+
     return (
-        <ScrollView style={styles.container} contentContainerStyle={[styles.content, { paddingTop: Math.max(insets.top, 20), paddingBottom: insets.bottom + 20 }]}>
+        <ScrollView style={[styles.container, { backgroundColor: c.background }]} contentContainerStyle={[styles.content, { paddingTop: Math.max(insets.top, 20), paddingBottom: insets.bottom + 20 }]}>
             <Animated.View style={screenAnim.style}>
                 {/* Critical Security Alerts (Full Width) */}
                 {tamperState?.detected && (
@@ -1295,7 +1476,7 @@ export default function ArrivalScreen() {
                 {/* System Status Pills */}
                 {renderSystemStatus()}
 
-                <Text variant="headlineMedium" style={styles.pageTitle}>
+                <Text variant="headlineMedium" style={[styles.pageTitle, { color: c.text }]}>
                     Arrival & Verification
                 </Text>
 
@@ -1326,6 +1507,7 @@ export default function ArrivalScreen() {
                 {isDropoffPhase && deliveryStatus === 'ARRIVED' && arrivedAt && (
                     <Card style={[
                         styles.gracePeriodCard,
+                        { backgroundColor: c.card, borderColor: c.border },
                         gracePeriodExpired ? styles.gracePeriodExpired : styles.gracePeriodActive
                     ]}>
                         <Card.Content>
@@ -1334,16 +1516,16 @@ export default function ArrivalScreen() {
                                     {gracePeriodExpired ? '⏰' : '⏳'}
                                 </Text>
                                 <View style={{ flex: 1 }}>
-                                    <Text style={styles.gracePeriodTitle}>
+                                    <Text style={[styles.gracePeriodTitle, { color: c.text }]}>
                                         {gracePeriodExpired ? 'Grace Period Expired' : 'Grace Period Active'}
                                     </Text>
-                                    <Text style={styles.gracePeriodSubtext}>
+                                    <Text style={[styles.gracePeriodSubtext, { color: isDarkMode ? '#a1a1aa' : '#6b7280' }]}>
                                         {gracePeriodExpired
                                             ? 'Customer did not appear. You may mark as No-Show.'
                                             : 'Waiting for customer to arrive at location...'}
                                     </Text>
                                 </View>
-                                <View style={styles.gracePeriodTimerBox}>
+                                <View style={[styles.gracePeriodTimerBox, { backgroundColor: c.card, borderColor: c.border }]}>
                                     <Text style={[
                                         styles.gracePeriodTimer,
                                         gracePeriodExpired && { color: '#dc2626' }
@@ -1380,23 +1562,109 @@ export default function ArrivalScreen() {
                     isPickupConfirmed ? (
                         isReturning ? (
                             // ── EC-32: Return Journey Card ──────────────────────────────────────────
-                            <Card style={{ margin: 16, borderRadius: 12 }} elevation={2}>
-                                <Card.Content>
+                            <Card style={{ margin: 16, borderRadius: 12, backgroundColor: c.card, overflow: 'hidden' }} elevation={2}>
+                                {/* Map Preview */}
+                                <View style={{ height: 160, width: '100%', backgroundColor: '#e5e5e5', position: 'relative' }}>
+                                    {isMapboxNativeAvailable && currentPosition.lat !== 0 && params.pickupLng && params.pickupLat ? (
+                                        <MapboxGL.MapView
+                                            style={{ flex: 1 }}
+                                            logoEnabled={false}
+                                            compassEnabled={false}
+                                            scaleBarEnabled={false}
+                                            attributionEnabled={false}
+                                            scrollEnabled={false}
+                                            pitchEnabled={false}
+                                            rotateEnabled={false}
+                                            zoomEnabled={false}
+                                            styleURL={isDarkMode ? StyleURL.Dark : StyleURL.Street}
+                                        >
+                                            <MapboxGL.Camera
+                                                zoomLevel={16}
+                                                centerCoordinate={[params.pickupLng, params.pickupLat]}
+                                                animationMode="flyTo"
+                                            />
+
+                                            {/* 1. The Geofence Zone Circle */}
+                                            <MapboxGL.ShapeSource id="return-geofence" shape={buildGeofenceCircleGeoJSON(params.pickupLng, params.pickupLat, 50)}>
+                                                <MapboxGL.FillLayer
+                                                    id="return-geofence-fill"
+                                                    style={{
+                                                        fillColor: isInsideGeoFence ? '#4CAF50' : '#2196F3',
+                                                        fillOpacity: 0.2,
+                                                    }}
+                                                />
+                                                <MapboxGL.LineLayer
+                                                    id="return-geofence-line"
+                                                    style={{
+                                                        lineColor: isInsideGeoFence ? '#4CAF50' : '#2196F3',
+                                                        lineWidth: 2,
+                                                    }}
+                                                />
+                                            </MapboxGL.ShapeSource>
+
+                                            {/* 2. The Return Target Point Marker */}
+                                            <MapboxGL.PointAnnotation id="return-target" coordinate={[params.pickupLng, params.pickupLat]}>
+                                                <View style={{
+                                                    width: 28, height: 28, borderRadius: 14,
+                                                    alignItems: 'center', justifyContent: 'center',
+                                                    borderWidth: 2, borderColor: 'white',
+                                                    backgroundColor: isInsideGeoFence ? '#4CAF50' : '#2196F3',
+                                                    shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.3, shadowRadius: 3, elevation: 4
+                                                }}>
+                                                    <Text style={{ color: 'white', fontSize: 16 }}>↩️</Text>
+                                                </View>
+                                            </MapboxGL.PointAnnotation>
+
+                                            {/* 3. Rider Current Position */}
+                                            {currentPosition.lat != null && currentPosition.lng != null && (
+                                                <AnimatedRiderMarker
+                                                    latitude={currentPosition.lat}
+                                                    longitude={currentPosition.lng}
+                                                />
+                                            )}
+                                        </MapboxGL.MapView>
+                                    ) : (
+                                        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: isDarkMode ? '#27272a' : '#f4f4f5' }}>
+                                            {currentPosition.lat === 0 ? (
+                                                <>
+                                                    <ActivityIndicator size="small" color="#4CAF50" />
+                                                    <Text style={{ marginTop: 8, color: isDarkMode ? '#a1a1aa' : '#71717a' }}>Acquiring GPS...</Text>
+                                                </>
+                                            ) : (
+                                                <Text style={{ fontSize: 32 }}>📍</Text>
+                                            )}
+                                        </View>
+                                    )}
+
+                                    {distanceMeters !== null && (
+                                        <View style={{
+                                            position: 'absolute', top: 12, right: 12,
+                                            paddingHorizontal: 10, paddingVertical: 4, borderRadius: 16,
+                                            alignItems: 'center', justifyContent: 'center', borderWidth: 1,
+                                            backgroundColor: c.card, borderColor: isDarkMode ? '#3f3f46' : '#e4e4e7',
+                                            shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 4, elevation: 3
+                                        }}>
+                                            <Text variant="labelMedium" style={{ fontWeight: 'bold', color: c.text }}>
+                                                {distanceMeters < 1000 ? `${Math.round(distanceMeters)}m` : `${(distanceMeters / 1000).toFixed(1)}km`}
+                                            </Text>
+                                            <Text variant="labelSmall" style={{ color: isDarkMode ? '#a1a1aa' : '#71717a' }}>away</Text>
+                                        </View>
+                                    )}
+                                </View>
+
+                                {/* Destination Info & Buttons below map */}
+                                <Card.Content style={{ paddingTop: 16 }}>
                                     <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>
-                                        <Text variant="titleMedium" style={{ fontWeight: 'bold', flex: 1 }}>Return Journey</Text>
-                                        <Text style={{ fontSize: 24 }}>↩️</Text>
+                                        <Text variant="titleMedium" style={{ fontWeight: 'bold', flex: 1, color: c.text }}>Return Journey</Text>
+                                        <View style={{ backgroundColor: '#2196F3', width: 28, height: 28, borderRadius: 6, alignItems: 'center', justifyContent: 'center' }}>
+                                            <Text style={{ color: 'white', fontSize: 16 }}>↩️</Text>
+                                        </View>
                                     </View>
-                                    <Text variant="bodySmall" style={{ color: '#666', marginBottom: 4 }}>Return destination</Text>
-                                    <Text variant="bodyMedium" style={{ fontWeight: '600', marginBottom: 16 }}>
+                                    <Text variant="bodySmall" style={{ color: isDarkMode ? '#a1a1aa' : '#666', marginBottom: 4 }}>Return destination</Text>
+                                    <Text variant="bodyMedium" style={{ fontWeight: '600', marginBottom: 16, color: c.text }}>
                                         {params.pickupAddress || params.targetAddress}
                                     </Text>
-                                    {distanceMeters !== null && (
-                                        <Text variant="bodySmall" style={{ color: '#888', marginBottom: 16 }}>
-                                            {distanceMeters < 1000
-                                                ? `${Math.round(distanceMeters)} m away`
-                                                : `${(distanceMeters / 1000).toFixed(1)} km away`}
-                                        </Text>
-                                    )}
+
                                     <Button
                                         mode="outlined"
                                         icon="navigation"
@@ -1428,6 +1696,7 @@ export default function ArrivalScreen() {
                                                     pickupAddress: params.pickupAddress || params.targetAddress,
                                                     pickupLat: params.pickupLat,
                                                     pickupLng: params.pickupLng,
+                                                    isPickedUp: ['IN_TRANSIT', 'ARRIVED', 'COMPLETED', 'RETURNING', 'TAMPERED'].includes(params.status || 'PENDING'),
                                                 });
                                             }
                                         }}
@@ -1442,6 +1711,8 @@ export default function ArrivalScreen() {
                                 deliveryId={params.deliveryId}
                                 boxId={params.boxId}
                                 targetAddress={params.dropoffAddress || params.targetAddress}
+                                targetLat={params.dropoffLat || params.targetLat}
+                                targetLng={params.dropoffLng || params.targetLng}
                                 recipientName={params.recipientName}
                                 customerPhone={params.customerPhone}
                                 deliveryNotes={params.deliveryNotes}
@@ -1453,6 +1724,9 @@ export default function ArrivalScreen() {
                                 isBoxOffline={isBoxOffline}
                                 lastBoxHeartbeatAt={boxLocationLastSeen}
                                 lastPhoneGpsAt={phoneLocationLastSeen}
+                                currentLat={currentPosition.lat}
+                                currentLng={currentPosition.lng}
+                                geofenceRadiusM={geofence.radiusMeters}
                                 onDeliveryCompleted={() => navigation.goBack()}
 
                                 onNavigate={handleNavigate}
@@ -1478,6 +1752,10 @@ export default function ArrivalScreen() {
                             isPhoneInside={isPhoneInside}
                             isBoxInside={isBoxInside}
                             isBoxOffline={isBoxOffline}
+                            isPhoneOnlyFallback={isPhoneOnlyFallback}
+                            currentLat={currentPosition.lat}
+                            currentLng={currentPosition.lng}
+                            geofenceRadiusM={geofence.radiusMeters}
                             onPickupConfirmed={() => {
                                 // The Firebase listener will pick up the 'IN_TRANSIT' status change
                                 // and automatically switch to DropoffVerification. No navigation needed.
@@ -1496,9 +1774,9 @@ export default function ArrivalScreen() {
                     <Modal
                         visible={showBleModal}
                         onDismiss={closeBleModal}
-                        contentContainerStyle={styles.bleModal}
+                        contentContainerStyle={[styles.modal, { backgroundColor: c.modalBg }]}
                     >
-                        <Text variant="titleLarge" style={{ marginBottom: 16, fontWeight: 'bold' }}>
+                        <Text variant="titleLarge" style={{ marginBottom: 16, fontWeight: 'bold', color: c.text }}>
                             BLE OTP Transfer
                         </Text>
 
@@ -1510,14 +1788,14 @@ export default function ArrivalScreen() {
                             {bleStatus === 'error' && <Text style={styles.bleStatusIcon}>❌</Text>}
                         </View>
 
-                        <Text style={styles.bleStatusText}>
+                        <Text style={[styles.bleStatusText, { color: c.text }]}>
                             {bleStatus === 'scanning' ? 'Scanning...' :
                                 bleStatus === 'connecting' ? 'Connecting...' :
                                     bleStatus === 'transferring' ? 'Transferring...' :
                                         bleStatus === 'success' ? 'Success!' :
                                             bleStatus === 'error' ? 'Failed' : 'Ready'}
                         </Text>
-                        <Text style={styles.bleMessageText}>{bleMessage}</Text>
+                        <Text style={[styles.bleMessageText, { color: c.modalText }]}>{bleMessage}</Text>
 
                         <View style={styles.bleActions}>
                             {bleStatus === 'error' && (
@@ -1928,5 +2206,22 @@ const styles = StyleSheet.create({
         color: '#9ca3af',
         letterSpacing: 0.5,
         textTransform: 'uppercase',
+    },
+    // EC-FIX: GPS Acquisition Loading Gate styles
+    gpsGateCard: {
+        width: '100%',
+        borderRadius: 16,
+        borderWidth: 1,
+        padding: 16,
+        elevation: 2,
+    },
+    gpsGateRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingVertical: 12,
+    },
+    gpsGateDivider: {
+        height: 1,
+        marginVertical: 2,
     },
 });

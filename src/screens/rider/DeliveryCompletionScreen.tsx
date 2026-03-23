@@ -105,7 +105,7 @@ export default function DeliveryCompletionScreen() {
             return true;
         }
         PremiumAlert.alert('Missing Delivery', 'Delivery ID is missing. Returning to dashboard.');
-        navigation.navigate('RiderDashboard');
+        navigation.navigate('RiderApp');
         return false;
     };
 
@@ -361,7 +361,7 @@ export default function DeliveryCompletionScreen() {
             PremiumAlert.alert('Delivery Completed', 'All required delivery states are now satisfied.', [
                 {
                     text: 'Back to Dashboard',
-                    onPress: () => navigation.navigate('RiderDashboard'),
+                    onPress: () => navigation.navigate('RiderApp'),
                 },
             ]);
         } finally {
@@ -507,7 +507,7 @@ export default function DeliveryCompletionScreen() {
                 </Card.Content>
             </Card>
 
-            <Button mode="outlined" onPress={() => navigation.navigate('RiderDashboard')} style={styles.backButton}>
+            <Button mode="outlined" onPress={() => navigation.navigate('RiderApp')} style={styles.backButton}>
                 Back to Dashboard
             </Button>
             </Animated.View>
