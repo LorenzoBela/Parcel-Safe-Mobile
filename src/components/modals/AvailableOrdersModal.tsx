@@ -86,48 +86,48 @@ export default function AvailableOrdersModal({
         }, [fadeAnim]);
 
         return (
-            <Surface style={styles.orderCard} elevation={2}>
+            <Surface style={[styles.orderCard, { backgroundColor: theme.colors.surface, borderColor: theme.colors.outlineVariant }]} elevation={2}>
                 <Animated.View style={{ opacity: fadeAnim }}>
                     <View style={styles.cardHeader}>
                         <View style={styles.cardHeaderLeft}>
-                            <View style={[styles.skeletonBlock, { width: 32, height: 32, borderRadius: 16 }]} />
-                            <View style={[styles.skeletonBlock, { width: 100, height: 20, marginLeft: 12 }]} />
+                            <View style={[styles.skeletonBlock, { backgroundColor: theme.colors.surfaceVariant, width: 32, height: 32, borderRadius: 16 }]} />
+                            <View style={[styles.skeletonBlock, { backgroundColor: theme.colors.surfaceVariant, width: 100, height: 20, marginLeft: 12 }]} />
                         </View>
-                        <View style={[styles.skeletonBlock, { width: 60, height: 16 }]} />
+                        <View style={[styles.skeletonBlock, { backgroundColor: theme.colors.surfaceVariant, width: 60, height: 16 }]} />
                     </View>
                     <Divider style={styles.divider} />
                     <View style={styles.locationRow}>
-                        <View style={[styles.skeletonBlock, { width: 28, height: 28, borderRadius: 14 }]} />
+                        <View style={[styles.skeletonBlock, { backgroundColor: theme.colors.surfaceVariant, width: 28, height: 28, borderRadius: 14 }]} />
                         <View style={styles.locationInfo}>
-                            <View style={[styles.skeletonBlock, { width: 50, height: 12, marginBottom: 4 }]} />
-                            <View style={[styles.skeletonBlock, { width: '80%', height: 16 }]} />
+                            <View style={[styles.skeletonBlock, { backgroundColor: theme.colors.surfaceVariant, width: 50, height: 12, marginBottom: 4 }]} />
+                            <View style={[styles.skeletonBlock, { backgroundColor: theme.colors.surfaceVariant, width: '80%', height: 16 }]} />
                         </View>
                     </View>
                     <View style={styles.locationRow}>
-                        <View style={[styles.skeletonBlock, { width: 28, height: 28, borderRadius: 14 }]} />
+                        <View style={[styles.skeletonBlock, { backgroundColor: theme.colors.surfaceVariant, width: 28, height: 28, borderRadius: 14 }]} />
                         <View style={styles.locationInfo}>
-                            <View style={[styles.skeletonBlock, { width: 50, height: 12, marginBottom: 4 }]} />
-                            <View style={[styles.skeletonBlock, { width: '80%', height: 16 }]} />
+                            <View style={[styles.skeletonBlock, { backgroundColor: theme.colors.surfaceVariant, width: 50, height: 12, marginBottom: 4 }]} />
+                            <View style={[styles.skeletonBlock, { backgroundColor: theme.colors.surfaceVariant, width: '80%', height: 16 }]} />
                         </View>
                     </View>
-                    <View style={styles.fareRow}>
-                        <View style={[styles.skeletonBlock, { width: 80, height: 16 }]} />
-                        <View style={[styles.skeletonBlock, { width: 60, height: 24 }]} />
+                    <View style={[styles.fareRow, { borderTopColor: theme.colors.outlineVariant }]}>
+                        <View style={[styles.skeletonBlock, { backgroundColor: theme.colors.surfaceVariant, width: 80, height: 16 }]} />
+                        <View style={[styles.skeletonBlock, { backgroundColor: theme.colors.surfaceVariant, width: 60, height: 24 }]} />
                     </View>
-                    <View style={[styles.skeletonBlock, { width: '100%', height: 40, borderRadius: 12 }]} />
+                    <View style={[styles.skeletonBlock, { backgroundColor: theme.colors.surfaceVariant, width: '100%', height: 40, borderRadius: 12 }]} />
                 </Animated.View>
             </Surface>
         );
     };
 
     const renderOrderItem = ({ item }: { item: RiderOrderRequest }) => (
-        <Surface style={styles.orderCard} elevation={2}>
+        <Surface style={[styles.orderCard, { backgroundColor: theme.colors.surface, borderColor: theme.colors.outlineVariant }]} elevation={2}>
             <View style={styles.cardHeader}>
                 <View style={styles.cardHeaderLeft}>
-                    <MaterialCommunityIcons name="bike-fast" size={24} color={theme.colors.primary} />
+                    <MaterialCommunityIcons name="bike-fast" size={24} color={theme.colors.onSurface} />
                     <Text variant="titleMedium" style={styles.cardTitle}>Nearby Order</Text>
                 </View>
-                <Text variant="labelMedium" style={{ color: theme.colors.primary, fontWeight: 'bold' }}>
+                <Text variant="labelMedium" style={{ color: theme.colors.onSurface, fontWeight: 'bold' }}>
                     {item.distanceToPickupKm.toFixed(1)} km away
                 </Text>
             </View>
@@ -135,28 +135,28 @@ export default function AvailableOrdersModal({
             <Divider style={styles.divider} />
 
             <View style={styles.locationRow}>
-                <View style={[styles.locationIcon, { backgroundColor: '#E8F5E9' }]}>
-                    <MaterialCommunityIcons name="circle-slice-8" size={14} color="#4CAF50" />
+                <View style={[styles.locationIcon, { backgroundColor: theme.colors.surfaceVariant }]}>
+                    <MaterialCommunityIcons name="circle-slice-8" size={14} color={theme.colors.onSurfaceVariant} />
                 </View>
                 <View style={styles.locationInfo}>
-                    <Text variant="labelSmall" style={styles.locationLabel}>PICKUP</Text>
+                    <Text variant="labelSmall" style={[styles.locationLabel, { color: theme.colors.onSurfaceVariant }]}>PICKUP</Text>
                     <Text variant="bodyMedium" numberOfLines={2}>{item.pickupAddress}</Text>
                 </View>
             </View>
 
             <View style={styles.locationRow}>
-                <View style={[styles.locationIcon, { backgroundColor: '#FFEBEE' }]}>
-                    <MaterialCommunityIcons name="map-marker" size={14} color="#F44336" />
+                <View style={[styles.locationIcon, { backgroundColor: theme.colors.surfaceVariant }]}>
+                    <MaterialCommunityIcons name="map-marker" size={14} color={theme.colors.onSurfaceVariant} />
                 </View>
                 <View style={styles.locationInfo}>
-                    <Text variant="labelSmall" style={styles.locationLabel}>DROPOFF</Text>
+                    <Text variant="labelSmall" style={[styles.locationLabel, { color: theme.colors.onSurfaceVariant }]}>DROPOFF</Text>
                     <Text variant="bodyMedium" numberOfLines={2}>{item.dropoffAddress}</Text>
                 </View>
             </View>
 
-            <View style={styles.fareRow}>
-                <Text variant="labelMedium" style={styles.fareLabel}>Estimated Fare</Text>
-                <Text variant="titleMedium" style={[styles.fareAmount, { color: theme.colors.primary }]}>
+            <View style={[styles.fareRow, { borderTopColor: theme.colors.outlineVariant }]}>
+                <Text variant="labelMedium" style={[styles.fareLabel, { color: theme.colors.onSurfaceVariant }]}>Estimated Fare</Text>
+                <Text variant="titleMedium" style={[styles.fareAmount, { color: theme.colors.onSurface }]}>
                     {formatCurrency(item.estimatedFare)}
                 </Text>
             </View>
@@ -166,6 +166,8 @@ export default function AvailableOrdersModal({
                 onPress={() => onAccept(item)}
                 style={styles.acceptButton}
                 icon="check-circle"
+                buttonColor={theme.colors.onSurface}
+                textColor={theme.colors.surface}
             >
                 Accept Order
             </Button>
@@ -180,8 +182,8 @@ export default function AvailableOrdersModal({
             onRequestClose={onClose}
         >
             <View style={styles.modalOverlay}>
-                <Surface style={styles.modalContent} elevation={5}>
-                    <View style={styles.header}>
+                <Surface style={[styles.modalContent, { backgroundColor: theme.colors.surface }]} elevation={5}>
+                    <View style={[styles.header, { borderBottomColor: theme.colors.outlineVariant }]}>
                         <Text variant="titleLarge" style={styles.title}>Available Orders</Text>
                         <IconButton
                             icon="close"
@@ -196,14 +198,14 @@ export default function AvailableOrdersModal({
                         contentContainerStyle={styles.listContent}
                         renderItem={({ item }) => isLoading ? <SkeletonOrderCard /> : renderOrderItem({ item: item as RiderOrderRequest })}
                         refreshControl={
-                            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={[theme.colors.primary]} />
+                            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={[theme.colors.onSurface]} />
                         }
                         ListEmptyComponent={
                             !isLoading ? (
                                 <View style={styles.emptyContainer}>
-                                    <MaterialCommunityIcons name="clock-outline" size={64} color="#CCC" />
-                                    <Text variant="bodyLarge" style={styles.emptyText}>No available orders nearby at the moment.</Text>
-                                    <Text variant="bodyMedium" style={styles.emptySubText}>Pull down to refresh and check again.</Text>
+                                    <MaterialCommunityIcons name="clock-outline" size={64} color={theme.colors.onSurfaceVariant} />
+                                    <Text variant="bodyLarge" style={[styles.emptyText, { color: theme.colors.onSurfaceVariant }]}>No available orders nearby at the moment.</Text>
+                                    <Text variant="bodyMedium" style={[styles.emptySubText, { color: theme.colors.onSurfaceVariant }]}>Pull down to refresh and check again.</Text>
                                 </View>
                             ) : null
                         }

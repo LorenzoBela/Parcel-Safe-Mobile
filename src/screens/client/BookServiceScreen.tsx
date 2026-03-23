@@ -1086,12 +1086,12 @@ export default function BookServiceScreen() {
         <Animated.View style={[styles.container, pageAnim.style]}>
             {bookingStep === 'contacts' ? (
                 // --- CONTACTS STEP ---
-                <View style={[styles.contactStepContainer, { paddingTop: insets.top }]}>
-                    <View style={styles.header}>
+                <View style={[styles.contactStepContainer, { paddingTop: insets.top, backgroundColor: theme.colors.background }]}>
+                    <View style={[styles.header, { backgroundColor: theme.colors.surface, borderBottomColor: theme.colors.outlineVariant }]}>
                         <TouchableOpacity onPress={() => setBookingStep('location')} style={styles.iconButton}>
                             <MaterialCommunityIcons name="arrow-left" size={24} color={theme.colors.onSurface} />
                         </TouchableOpacity>
-                        <Text variant="titleMedium" style={{ fontWeight: '600', color: '#000' }}>Contact Details</Text>
+                        <Text variant="titleMedium" style={{ fontWeight: '600', color: theme.colors.onSurface }}>Contact Details</Text>
                         <View style={{ width: 40 }} />
                     </View>
                     <ScrollView style={{ padding: 20 }} showsVerticalScrollIndicator={false}>
@@ -1102,21 +1102,21 @@ export default function BookServiceScreen() {
                                 <View style={{ flex: 1 }}>
                                     <TouchableOpacity
                                         onPress={() => { setShowSenderPicker(!showSenderPicker); setShowReceiverPicker(false); }}
-                                        style={{ backgroundColor: '#000', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}
+                                        style={{ backgroundColor: theme.colors.surfaceVariant, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}
                                     >
-                                        <Text style={{ fontSize: 12, color: '#fff', fontWeight: '600' }}>Fill Sender</Text>
-                                        <MaterialCommunityIcons name={showSenderPicker ? 'chevron-up' : 'chevron-down'} size={16} color="#fff" />
+                                        <Text style={{ fontSize: 12, color: theme.colors.onSurfaceVariant, fontWeight: '600' }}>Fill Sender</Text>
+                                        <MaterialCommunityIcons name={showSenderPicker ? 'chevron-up' : 'chevron-down'} size={16} color={theme.colors.onSurfaceVariant} />
                                     </TouchableOpacity>
                                     {showSenderPicker && (
-                                        <View style={{ backgroundColor: '#f5f5f5', borderRadius: 10, marginTop: 4, overflow: 'hidden', borderWidth: 1, borderColor: '#e0e0e0' }}>
+                                        <View style={{ backgroundColor: theme.colors.background, borderRadius: 10, marginTop: 4, overflow: 'hidden', borderWidth: 1, borderColor: theme.colors.outlineVariant }}>
                                             {savedContacts.map((c) => (
                                                 <TouchableOpacity
                                                     key={c.id}
                                                     onPress={() => { setSenderName(c.name); setSenderPhone(c.phone); setShowSenderPicker(false); }}
-                                                    style={{ paddingHorizontal: 12, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#e0e0e0' }}
+                                                    style={{ paddingHorizontal: 12, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: theme.colors.outlineVariant }}
                                                 >
-                                                    <Text style={{ fontSize: 13, fontWeight: '600', color: '#212121' }}>{c.name}</Text>
-                                                    <Text style={{ fontSize: 11, color: '#757575' }}>{c.phone}</Text>
+                                                    <Text style={{ fontSize: 13, fontWeight: '600', color: theme.colors.onSurface }}>{c.name}</Text>
+                                                    <Text style={{ fontSize: 11, color: theme.colors.onSurfaceVariant }}>{c.phone}</Text>
                                                 </TouchableOpacity>
                                             ))}
                                         </View>
@@ -1126,21 +1126,21 @@ export default function BookServiceScreen() {
                                 <View style={{ flex: 1 }}>
                                     <TouchableOpacity
                                         onPress={() => { setShowReceiverPicker(!showReceiverPicker); setShowSenderPicker(false); }}
-                                        style={{ backgroundColor: '#000', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}
+                                        style={{ backgroundColor: theme.colors.surfaceVariant, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}
                                     >
-                                        <Text style={{ fontSize: 12, color: '#fff', fontWeight: '600' }}>Fill Receiver</Text>
-                                        <MaterialCommunityIcons name={showReceiverPicker ? 'chevron-up' : 'chevron-down'} size={16} color="#fff" />
+                                        <Text style={{ fontSize: 12, color: theme.colors.onSurfaceVariant, fontWeight: '600' }}>Fill Receiver</Text>
+                                        <MaterialCommunityIcons name={showReceiverPicker ? 'chevron-up' : 'chevron-down'} size={16} color={theme.colors.onSurfaceVariant} />
                                     </TouchableOpacity>
                                     {showReceiverPicker && (
-                                        <View style={{ backgroundColor: '#f5f5f5', borderRadius: 10, marginTop: 4, overflow: 'hidden', borderWidth: 1, borderColor: '#e0e0e0' }}>
+                                        <View style={{ backgroundColor: theme.colors.background, borderRadius: 10, marginTop: 4, overflow: 'hidden', borderWidth: 1, borderColor: theme.colors.outlineVariant }}>
                                             {savedContacts.map((c) => (
                                                 <TouchableOpacity
                                                     key={c.id}
                                                     onPress={() => { setRecipientName(c.name); setRecipientPhone(c.phone); setShowReceiverPicker(false); }}
-                                                    style={{ paddingHorizontal: 12, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#e0e0e0' }}
+                                                    style={{ paddingHorizontal: 12, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: theme.colors.outlineVariant }}
                                                 >
-                                                    <Text style={{ fontSize: 13, fontWeight: '600', color: '#212121' }}>{c.name}</Text>
-                                                    <Text style={{ fontSize: 11, color: '#757575' }}>{c.phone}</Text>
+                                                    <Text style={{ fontSize: 13, fontWeight: '600', color: theme.colors.onSurface }}>{c.name}</Text>
+                                                    <Text style={{ fontSize: 11, color: theme.colors.onSurfaceVariant }}>{c.phone}</Text>
                                                 </TouchableOpacity>
                                             ))}
                                         </View>
@@ -1148,25 +1148,25 @@ export default function BookServiceScreen() {
                                 </View>
                             </View>
                         ) : (
-                            <View style={{ marginBottom: 12, padding: 12, backgroundColor: '#f5f5f5', borderRadius: 12, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                                <MaterialCommunityIcons name="account-plus-outline" size={18} color="#9e9e9e" />
-                                <Text style={{ fontSize: 12, color: '#757575', flex: 1 }}>Fill in contacts below and tap "Save" to quick-fill next time.</Text>
+                            <View style={{ marginBottom: 12, padding: 12, backgroundColor: theme.colors.background, borderRadius: 12, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                                <MaterialCommunityIcons name="account-plus-outline" size={18} color={theme.colors.onSurfaceVariant} />
+                                <Text style={{ fontSize: 12, color: theme.colors.onSurfaceVariant, flex: 1 }}>Fill in contacts below and tap "Save" to quick-fill next time.</Text>
                             </View>
                         )}
 
                         <View style={styles.formSection}>
                             <Text variant="titleSmall" style={styles.sectionTitle}>Pickup Contact</Text>
                             <View style={styles.inputRow}>
-                                <TextInput mode="flat" placeholder="Sender Name" value={senderName} onChangeText={setSenderName} style={styles.modernInput} activeUnderlineColor="#000" underlineColor="#E0E0E0" />
-                                <TextInput mode="flat" placeholder="09XXXXXXXXX" value={senderPhone} onChangeText={(value) => setSenderPhone(normalizePhoneInput(value))} keyboardType="phone-pad" style={styles.modernInput} activeUnderlineColor="#E0E0E0" maxLength={11} />
+                                <TextInput mode="flat" placeholder="Sender Name" value={senderName} onChangeText={setSenderName} style={styles.modernInput} activeUnderlineColor={theme.colors.primary} underlineColor={theme.colors.outlineVariant} />
+                                <TextInput mode="flat" placeholder="09XXXXXXXXX" value={senderPhone} onChangeText={(value) => setSenderPhone(normalizePhoneInput(value))} keyboardType="phone-pad" style={styles.modernInput} activeUnderlineColor={theme.colors.outlineVariant} maxLength={11} />
                             </View>
                             {senderName.trim() && senderPhone.length === 11 && !savedContacts.some(c => c.name === senderName.trim() && c.phone === senderPhone.trim()) && (
                                 <TouchableOpacity
                                     onPress={() => handleQuickSaveContact(senderName, senderPhone)}
                                     style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 4 }}
                                 >
-                                    <MaterialCommunityIcons name="content-save-outline" size={14} color="#1565c0" />
-                                    <Text style={{ fontSize: 11, color: '#1565c0', fontWeight: '600' }}>Save sender to contacts</Text>
+                                    <MaterialCommunityIcons name="content-save-outline" size={14} color={theme.colors.primary} />
+                                    <Text style={{ fontSize: 11, color: theme.colors.primary, fontWeight: '600' }}>Save sender to contacts</Text>
                                 </TouchableOpacity>
                             )}
                         </View>
@@ -1174,23 +1174,23 @@ export default function BookServiceScreen() {
                         <View style={styles.formSection}>
                             <Text variant="titleSmall" style={styles.sectionTitle}>Drop-off Contact</Text>
                             <View style={styles.inputRow}>
-                                <TextInput mode="flat" placeholder="Recipient Name" value={recipientName} onChangeText={setRecipientName} style={styles.modernInput} activeUnderlineColor="#000" underlineColor="#E0E0E0" />
-                                <TextInput mode="flat" placeholder="09XXXXXXXXX" value={recipientPhone} onChangeText={(value) => setRecipientPhone(normalizePhoneInput(value))} keyboardType="phone-pad" style={styles.modernInput} activeUnderlineColor="#E0E0E0" maxLength={11} />
+                                <TextInput mode="flat" placeholder="Recipient Name" value={recipientName} onChangeText={setRecipientName} style={styles.modernInput} activeUnderlineColor={theme.colors.primary} underlineColor={theme.colors.outlineVariant} />
+                                <TextInput mode="flat" placeholder="09XXXXXXXXX" value={recipientPhone} onChangeText={(value) => setRecipientPhone(normalizePhoneInput(value))} keyboardType="phone-pad" style={styles.modernInput} activeUnderlineColor={theme.colors.outlineVariant} maxLength={11} />
                             </View>
                             {recipientName.trim() && recipientPhone.length === 11 && !savedContacts.some(c => c.name === recipientName.trim() && c.phone === recipientPhone.trim()) && (
                                 <TouchableOpacity
                                     onPress={() => handleQuickSaveContact(recipientName, recipientPhone)}
                                     style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 4 }}
                                 >
-                                    <MaterialCommunityIcons name="content-save-outline" size={14} color="#c62828" />
-                                    <Text style={{ fontSize: 11, color: '#c62828', fontWeight: '600' }}>Save receiver to contacts</Text>
+                                    <MaterialCommunityIcons name="content-save-outline" size={14} color={theme.colors.error} />
+                                    <Text style={{ fontSize: 11, color: theme.colors.error, fontWeight: '600' }}>Save receiver to contacts</Text>
                                 </TouchableOpacity>
                             )}
                         </View>
 
                         <View style={styles.formSection}>
                             <Text variant="titleSmall" style={styles.sectionTitle}>Delivery Notes (Optional)</Text>
-                            <TextInput mode="flat" placeholder="E.g. Call upon arrival" value={deliveryNotes} onChangeText={setDeliveryNotes} style={[styles.modernInput, { marginBottom: 24 }]} multiline numberOfLines={2} activeUnderlineColor="#000" underlineColor="#E0E0E0" />
+                            <TextInput mode="flat" placeholder="E.g. Call upon arrival" value={deliveryNotes} onChangeText={setDeliveryNotes} style={[styles.modernInput, { marginBottom: 24 }]} multiline numberOfLines={2} activeUnderlineColor={theme.colors.primary} underlineColor={theme.colors.outlineVariant} />
                         </View>
 
                         <View style={styles.previewHeader}>
@@ -1205,8 +1205,8 @@ export default function BookServiceScreen() {
                         <Button
                             mode="contained"
                             onPress={handleConfirm}
-                            style={{ marginTop: 12, borderRadius: 8, backgroundColor: '#000' }}
-                            textColor="#FFF"
+                            style={{ marginTop: 12, borderRadius: 8, backgroundColor: theme.colors.onSurface }}
+                            textColor={theme.colors.surface}
                             contentStyle={{ paddingVertical: 6 }}
                         >
                             Confirm Booking
@@ -1297,7 +1297,7 @@ export default function BookServiceScreen() {
                         </MapboxGL.MapView>
                     ) : (
                         <View style={[StyleSheet.absoluteFillObject, styles.mapFallback]}>
-                            <Text>Map unavailable</Text>
+                            <Text style={{ color: theme.colors.onSurface }}>Map unavailable</Text>
                         </View>
                     )}
 
@@ -1332,40 +1332,40 @@ export default function BookServiceScreen() {
                         // Route Preview Panel (both pins confirmed)
                         <View style={[styles.bottomMapActionPanel, { bottom: 20 + insets.bottom }]}>
                             {routeData ? (
-                                <View style={{ backgroundColor: 'white', padding: 16, borderRadius: 16, elevation: 6, shadowColor: '#000', shadowOpacity: 0.12, shadowRadius: 8, shadowOffset: { width: 0, height: -2 } }}>
+                                <View style={{ backgroundColor: theme.colors.surface, padding: 16, borderRadius: 16, elevation: 6, shadowColor: theme.colors.onSurface, shadowOpacity: 0.12, shadowRadius: 8, shadowOffset: { width: 0, height: -2 } }}>
                                     {/* Header label */}
-                                    <Text style={{ fontSize: 11, color: '#9e9e9e', fontWeight: '700', letterSpacing: 0.8, marginBottom: 10 }}>ROUTE PREVIEW</Text>
+                                    <Text style={{ fontSize: 11, color: theme.colors.onSurfaceVariant, fontWeight: '700', letterSpacing: 0.8, marginBottom: 10 }}>ROUTE PREVIEW</Text>
 
                                     {/* Pickup row */}
                                     <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
                                         <MaterialCommunityIcons name="map-marker" size={18} color="#10b981" style={{ width: 24 }} />
-                                        <Text numberOfLines={1} style={{ flex: 1, color: '#424242', fontSize: 13 }}>{pickupText || 'Pickup'}</Text>
+                                        <Text numberOfLines={1} style={{ flex: 1, color: theme.colors.onSurface, fontSize: 13 }}>{pickupText || 'Pickup'}</Text>
                                     </View>
 
                                     {/* Connector */}
-                                    <View style={{ width: 2, height: 10, backgroundColor: '#E0E0E0', marginLeft: 11, marginBottom: 4 }} />
+                                    <View style={{ width: 2, height: 10, backgroundColor: theme.colors.outlineVariant, marginLeft: 11, marginBottom: 4 }} />
 
                                     {/* Dropoff row */}
                                     <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 14 }}>
                                         <MaterialCommunityIcons name="map-marker" size={18} color="#f43f5e" style={{ width: 24 }} />
-                                        <Text numberOfLines={1} style={{ flex: 1, color: '#424242', fontSize: 13 }}>{dropoffText || 'Dropoff'}</Text>
+                                        <Text numberOfLines={1} style={{ flex: 1, color: theme.colors.onSurface, fontSize: 13 }}>{dropoffText || 'Dropoff'}</Text>
                                     </View>
 
                                     {/* Stats row */}
-                                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', backgroundColor: '#f5f5f5', borderRadius: 10, padding: 10, marginBottom: 14 }}>
+                                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', backgroundColor: theme.colors.background, borderRadius: 10, padding: 10, marginBottom: 14 }}>
                                         <View style={{ alignItems: 'center', flex: 1 }}>
-                                            <Text style={{ fontSize: 11, color: '#9e9e9e', marginBottom: 2 }}>Distance</Text>
-                                            <Text style={{ fontSize: 14, fontWeight: '700', color: '#212121' }}>{routeData.distance.toFixed(1)} km</Text>
+                                            <Text style={{ fontSize: 11, color: theme.colors.onSurfaceVariant, marginBottom: 2 }}>Distance</Text>
+                                            <Text style={{ fontSize: 14, fontWeight: '700', color: theme.colors.onSurface }}>{routeData.distance.toFixed(1)} km</Text>
                                         </View>
-                                        <View style={{ width: 1, backgroundColor: '#E0E0E0' }} />
+                                        <View style={{ width: 1, backgroundColor: theme.colors.outlineVariant }} />
                                         <View style={{ alignItems: 'center', flex: 1 }}>
-                                            <Text style={{ fontSize: 11, color: '#9e9e9e', marginBottom: 2 }}>Est. Time</Text>
-                                            <Text style={{ fontSize: 14, fontWeight: '700', color: '#212121' }}>{Math.round(routeData.duration)} min</Text>
+                                            <Text style={{ fontSize: 11, color: theme.colors.onSurfaceVariant, marginBottom: 2 }}>Est. Time</Text>
+                                            <Text style={{ fontSize: 14, fontWeight: '700', color: theme.colors.onSurface }}>{Math.round(routeData.duration)} min</Text>
                                         </View>
-                                        <View style={{ width: 1, backgroundColor: '#E0E0E0' }} />
+                                        <View style={{ width: 1, backgroundColor: theme.colors.outlineVariant }} />
                                         <View style={{ alignItems: 'center', flex: 1 }}>
-                                            <Text style={{ fontSize: 11, color: '#9e9e9e', marginBottom: 2 }}>Fare</Text>
-                                            <Text style={{ fontSize: 14, fontWeight: '700', color: '#212121' }}>₱{routeData.cost}</Text>
+                                            <Text style={{ fontSize: 11, color: theme.colors.onSurfaceVariant, marginBottom: 2 }}>Fare</Text>
+                                            <Text style={{ fontSize: 14, fontWeight: '700', color: theme.colors.onSurface }}>₱{routeData.cost}</Text>
                                         </View>
                                     </View>
 
@@ -1415,18 +1415,18 @@ export default function BookServiceScreen() {
                                     </View>
                                     {/* Row 2: confirm */}
                                     <TouchableOpacity
-                                        style={{ borderRadius: 8, backgroundColor: '#000', paddingVertical: 11, alignItems: 'center' }}
+                                        style={{ borderRadius: 8, backgroundColor: theme.colors.onSurface, paddingVertical: 11, alignItems: 'center' }}
                                         onPress={() => { setIsMapVisible(false); setBookingStep('contacts'); }}
                                     >
-                                        <Text style={{ color: '#FFF', fontWeight: '700', fontSize: 14 }}>Looks Good  →</Text>
+                                        <Text style={{ color: theme.colors.surface, fontWeight: '700', fontSize: 14 }}>Looks Good  →</Text>
                                     </TouchableOpacity>
                                 </View>
                             ) : (
                                 // Calculating state
-                                <View style={{ backgroundColor: 'white', padding: 16, borderRadius: 16, elevation: 4, shadowColor: '#000', shadowOpacity: 0.1, shadowRadius: 4, shadowOffset: { width: 0, height: 2 } }}>
+                                <View style={{ backgroundColor: theme.colors.surface, padding: 16, borderRadius: 16, elevation: 4, shadowColor: theme.colors.onSurface, shadowOpacity: 0.1, shadowRadius: 4, shadowOffset: { width: 0, height: 2 } }}>
                                     <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 10 }}>
-                                        <ActivityIndicator size="small" color="#000" />
-                                        <Text style={{ marginLeft: 10, color: '#757575', fontSize: 14 }}>Calculating route...</Text>
+                                        <ActivityIndicator size="small" color={theme.colors.onSurface} />
+                                        <Text style={{ marginLeft: 10, color: theme.colors.onSurfaceVariant, fontSize: 14 }}>Calculating route...</Text>
                                     </View>
                                 </View>
                             )}
@@ -1434,8 +1434,8 @@ export default function BookServiceScreen() {
                     ) : (
                         // Single-pin selection panel — shows pending location until confirmed
                         <View style={[styles.bottomMapActionPanel, { bottom: 20 + insets.bottom }]}>
-                            <View style={{ backgroundColor: 'white', padding: 16, borderRadius: 16, elevation: 4, shadowColor: '#000', shadowOpacity: 0.1, shadowRadius: 4, shadowOffset: { width: 0, height: 2 }, marginBottom: 12 }}>
-                                <Text variant="labelMedium" style={{ color: '#757575', marginBottom: 4 }}>
+                            <View style={{ backgroundColor: theme.colors.surface, padding: 16, borderRadius: 16, elevation: 4, shadowColor: theme.colors.onSurface, shadowOpacity: 0.1, shadowRadius: 4, shadowOffset: { width: 0, height: 2 }, marginBottom: 12 }}>
+                                <Text variant="labelMedium" style={{ color: theme.colors.onSurfaceVariant, marginBottom: 4 }}>
                                     {activeField === 'pickup' ? 'SELECT PICKUP LOCATION' : 'SELECT DROPOFF LOCATION'}
                                 </Text>
                                 <Text variant="titleMedium" style={{ fontWeight: 'bold', color: pendingCoords ? '#212121' : '#9e9e9e' }} numberOfLines={2}>
@@ -1457,10 +1457,10 @@ export default function BookServiceScreen() {
                             {/* Keep Current Location — only shown when repositioning an existing pin */}
                             {pendingCoords && ((activeField === 'pickup' && !!pickupCoords) || (activeField === 'dropoff' && !!dropoffCoords)) && (
                                 <TouchableOpacity
-                                    style={{ borderRadius: 8, borderWidth: 1.5, borderColor: '#757575', paddingVertical: 10, alignItems: 'center', marginBottom: 8, backgroundColor: 'white' }}
+                                    style={{ borderRadius: 8, borderWidth: 1.5, borderColor: theme.colors.onSurfaceVariant, paddingVertical: 10, alignItems: 'center', marginBottom: 8, backgroundColor: theme.colors.surface }}
                                     onPress={handleCancelPendingLocation}
                                 >
-                                    <Text style={{ color: '#424242', fontWeight: '600', fontSize: 13 }}>Keep Current Location</Text>
+                                    <Text style={{ color: theme.colors.onSurface, fontWeight: '600', fontSize: 13 }}>Keep Current Location</Text>
                                 </TouchableOpacity>
                             )}
 
@@ -1468,8 +1468,8 @@ export default function BookServiceScreen() {
                                 mode="contained"
                                 onPress={handleConfirmPendingLocation}
                                 disabled={!pendingCoords || pendingAddress === 'Locating...'}
-                                style={{ borderRadius: 8, backgroundColor: (!pendingCoords || pendingAddress === 'Locating...') ? '#bdbdbd' : '#000' }}
-                                textColor="#FFF"
+                                style={{ borderRadius: 8, backgroundColor: (!pendingCoords || pendingAddress === 'Locating...') ? '#bdbdbd' : theme.colors.onSurface }}
+                                textColor={theme.colors.surface}
                                 contentStyle={{ paddingVertical: 8 }}
                             >
                                 {pendingAddress === 'Locating...' ? 'Locating…' : 'Confirm Location'}
@@ -1479,8 +1479,8 @@ export default function BookServiceScreen() {
                 </View>
             ) : (
                 // --- SEARCH VIEW ---
-                <View style={[styles.container, { backgroundColor: '#FFFFFF' }]}>
-                    <View style={[styles.searchHeader, { paddingTop: insets.top + 10 }]}>
+                <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
+                    <View style={[styles.searchHeader, { backgroundColor: theme.colors.surface, paddingTop: insets.top + 10 }]}>
                         <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, marginBottom: 16 }}>
                             <TouchableOpacity onPress={() => navigation.goBack()}>
                                 <MaterialCommunityIcons name="arrow-left" size={24} color={theme.colors.onSurface} />
@@ -1489,9 +1489,9 @@ export default function BookServiceScreen() {
                         </View>
 
 
-                        <View style={[styles.minimalCard, { marginHorizontal: 20, backgroundColor: 'white', borderColor: '#000', borderWidth: 2, borderRadius: 8 }]}>
+                        <View style={[styles.minimalCard, { marginHorizontal: 20, backgroundColor: theme.colors.surface, borderColor: theme.colors.outlineVariant, borderWidth: 2, borderRadius: 8 }]}>
                             <View style={[styles.inputsColumn, { paddingRight: 0 }]}>
-                                <View style={[styles.minimalInputWrapper, activeField === 'pickup' && { backgroundColor: '#f0f8ff' }]}>
+                                <View style={[styles.minimalInputWrapper, activeField === 'pickup' && { backgroundColor: theme.colors.surfaceVariant }]}>
                                     <TextInput
                                         mode="flat"
                                         placeholder="Pick-up point"
@@ -1508,7 +1508,7 @@ export default function BookServiceScreen() {
                                         left={<TextInput.Icon icon="map-marker" size={16} color="green" />}
                                         right={
                                             activeField === 'pickup' && pickupText.length === 0 ? (
-                                                <TextInput.Icon icon="crosshairs-gps" size={18} color="#000" onPress={handleSetPickupToCurrent} />
+                                                <TextInput.Icon icon="crosshairs-gps" size={18} color={theme.colors.onSurface} onPress={handleSetPickupToCurrent} />
                                             ) : pickupText.length > 0 ? (
                                                 <TextInput.Icon icon="close-circle" size={16} onPress={() => { setPickupText(''); setPickupCoords(null); setRouteData(null); }} />
                                             ) : null
@@ -1517,15 +1517,15 @@ export default function BookServiceScreen() {
                                         onBlur={() => setFocusedField(null)}
                                     />
                                     <TouchableOpacity style={{ justifyContent: 'center', paddingRight: 12 }} onPress={() => setIsMapVisible(true)}>
-                                        <View style={{ width: 32, height: 32, borderRadius: 8, backgroundColor: '#f0f0f0', alignItems: 'center', justifyContent: 'center' }}>
-                                            <MaterialCommunityIcons name="map-search-outline" size={18} color="#000" />
+                                        <View style={{ width: 32, height: 32, borderRadius: 8, backgroundColor: theme.colors.surfaceVariant, alignItems: 'center', justifyContent: 'center' }}>
+                                            <MaterialCommunityIcons name="map-search-outline" size={18} color={theme.colors.onSurface} />
                                         </View>
                                     </TouchableOpacity>
                                 </View>
 
-                                <View style={{ height: 1, backgroundColor: '#E0E0E0', marginLeft: 40 }} />
+                                <View style={{ height: 1, backgroundColor: theme.colors.outlineVariant, marginLeft: 40 }} />
 
-                                <View style={[styles.minimalInputWrapper, activeField === 'dropoff' && { backgroundColor: '#fff8f0' }]}>
+                                <View style={[styles.minimalInputWrapper, activeField === 'dropoff' && { backgroundColor: theme.colors.surfaceVariant }]}>
                                     <TextInput
                                         ref={dropoffInputRef}
                                         mode="flat"
@@ -1546,8 +1546,8 @@ export default function BookServiceScreen() {
                                         onBlur={() => setFocusedField(null)}
                                     />
                                     <TouchableOpacity style={{ justifyContent: 'center', paddingRight: 12 }} onPress={() => setIsMapVisible(true)}>
-                                        <View style={{ width: 32, height: 32, borderRadius: 8, backgroundColor: '#f0f0f0', alignItems: 'center', justifyContent: 'center' }}>
-                                            <MaterialCommunityIcons name="map-search-outline" size={18} color="#000" />
+                                        <View style={{ width: 32, height: 32, borderRadius: 8, backgroundColor: theme.colors.surfaceVariant, alignItems: 'center', justifyContent: 'center' }}>
+                                            <MaterialCommunityIcons name="map-search-outline" size={18} color={theme.colors.onSurface} />
                                         </View>
                                     </TouchableOpacity>
                                 </View>
@@ -1573,9 +1573,9 @@ export default function BookServiceScreen() {
                                         <Button
                                             mode="contained"
                                             onPress={() => setBookingStep('contacts')}
-                                            style={{ marginTop: 12, borderRadius: 8, backgroundColor: '#000' }}
+                                            style={{ marginTop: 12, borderRadius: 8, backgroundColor: theme.colors.primary }}
                                             contentStyle={{ paddingVertical: 6 }}
-                                            textColor="#FFF"
+                                            textColor={theme.colors.onPrimary}
                                         >
                                             Proceed to Contact Details
                                         </Button>
@@ -1637,10 +1637,10 @@ export default function BookServiceScreen() {
                                 {savedAddresses.map((addr: any) => (
                                     <TouchableOpacity
                                         key={addr.id}
-                                        style={styles.suggestionItem}
+                                        style={[styles.suggestionItem, { borderBottomColor: theme.colors.outlineVariant }]}
                                         onPress={() => handleSelectSavedAddress(addr)}
                                     >
-                                        <View style={[styles.iconCircle, { backgroundColor: '#f5f5f5' }]}>
+                                        <View style={[styles.iconCircle, { backgroundColor: theme.colors.background }]}>
                                             <MaterialCommunityIcons
                                                 name={addr.label?.toLowerCase().includes('home') ? 'home' : addr.label?.toLowerCase().includes('office') ? 'office-building' : 'map-marker-outline'}
                                                 size={20}
@@ -1648,14 +1648,14 @@ export default function BookServiceScreen() {
                                             />
                                         </View>
                                         <View style={{ marginLeft: 12, flex: 1 }}>
-                                            <Text variant="bodyMedium" style={{ fontWeight: 'bold', color: '#424242' }}>
+                                            <Text variant="bodyMedium" style={{ fontWeight: 'bold', color: theme.colors.onSurface }}>
                                                 {addr.label}
                                             </Text>
-                                            <Text variant="bodySmall" numberOfLines={1} style={{ color: '#757575' }}>
+                                            <Text variant="bodySmall" numberOfLines={1} style={{ color: theme.colors.onSurfaceVariant }}>
                                                 {addr.address}
                                             </Text>
                                         </View>
-                                        <MaterialCommunityIcons name="dots-vertical" size={20} color="#9e9e9e" />
+                                        <MaterialCommunityIcons name="dots-vertical" size={20} color={theme.colors.onSurfaceVariant} />
                                     </TouchableOpacity>
                                 ))}
                             </View>
@@ -1670,24 +1670,24 @@ export default function BookServiceScreen() {
                         {suggestions.map((item) => (
                             <TouchableOpacity
                                 key={item.id}
-                                style={styles.suggestionItem}
+                                style={[styles.suggestionItem, { borderBottomColor: theme.colors.outlineVariant }]}
                                 onPress={() => handleSelectSuggestion(item)}
                             >
-                                <View style={[styles.iconCircle, { backgroundColor: '#f5f5f5' }]}>
-                                    <MaterialCommunityIcons name="map-marker-outline" size={20} color="#757575" />
+                                <View style={[styles.iconCircle, { backgroundColor: theme.colors.background }]}>
+                                    <MaterialCommunityIcons name="map-marker-outline" size={20} color={theme.colors.onSurfaceVariant} />
                                 </View>
                                 <View style={{ marginLeft: 12, flex: 1 }}>
-                                    <Text variant="bodyMedium" style={{ color: '#424242', fontWeight: '600' }} numberOfLines={1}>
+                                    <Text variant="bodyMedium" style={{ color: theme.colors.onSurface, fontWeight: '600' }} numberOfLines={1}>
                                         {item.name}
                                     </Text>
                                     {item.address ? (
-                                        <Text variant="bodySmall" style={{ color: '#757575' }} numberOfLines={1}>
+                                        <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }} numberOfLines={1}>
                                             {item.address}
                                         </Text>
                                     ) : null}
                                 </View>
                                 <TouchableOpacity onPress={() => handleSaveSuggestion(item)} style={{ padding: 4 }}>
-                                    <MaterialCommunityIcons name="bookmark-outline" size={20} color="#9e9e9e" />
+                                    <MaterialCommunityIcons name="bookmark-outline" size={20} color={theme.colors.onSurfaceVariant} />
                                 </TouchableOpacity>
                             </TouchableOpacity>
                         ))}
@@ -1696,13 +1696,13 @@ export default function BookServiceScreen() {
                     </ScrollView>
 
 
-                    <View style={styles.fixedBottomButtonContainer}>
+                    <View style={[styles.fixedBottomButtonContainer, { backgroundColor: theme.colors.surface, borderTopColor: theme.colors.outlineVariant }]}>
                         <TouchableOpacity
-                            style={styles.setOnMapBtn}
+                            style={[styles.setOnMapBtn, { backgroundColor: theme.colors.surfaceVariant }]}
                             onPress={() => setIsMapVisible(true)}
                         >
-                            <MaterialCommunityIcons name="map-outline" size={20} color="#424242" style={{ marginRight: 8 }} />
-                            <Text variant="bodyMedium" style={{ fontWeight: 'bold', color: '#424242' }}>
+                            <MaterialCommunityIcons name="map-outline" size={20} color={theme.colors.primary} style={{ marginRight: 8 }} />
+                            <Text variant="bodyMedium" style={{ fontWeight: 'bold', color: theme.colors.primary }}>
                                 Set on map
                             </Text>
                         </TouchableOpacity>
@@ -1745,7 +1745,7 @@ const styles = StyleSheet.create({
     },
     minimalCard: {
         borderRadius: 12,
-        backgroundColor: 'white',
+        backgroundColor: '#FFFFFF',
         flexDirection: 'row',
         overflow: 'hidden',
         paddingVertical: 4,
@@ -1892,7 +1892,7 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         paddingHorizontal: 20,
         paddingVertical: 16,
-        backgroundColor: 'white',
+        backgroundColor: '#FFFFFF',
         borderBottomWidth: 1,
         borderBottomColor: '#E0E0E0',
         justifyContent: 'space-between'
@@ -1934,7 +1934,7 @@ const styles = StyleSheet.create({
         elevation: 0,
     },
     searchHeader: {
-        backgroundColor: 'white',
+        backgroundColor: '#FFFFFF',
         paddingBottom: 20,
         borderBottomLeftRadius: 0,
         borderBottomRightRadius: 0,
@@ -1958,7 +1958,7 @@ const styles = StyleSheet.create({
         backgroundColor: '#212121',
     },
     pillTextActive: {
-        color: 'white',
+        color: '#FFFFFF',
         fontWeight: 'bold',
     },
     fixedBottomButtonContainer: {
@@ -1966,7 +1966,7 @@ const styles = StyleSheet.create({
         bottom: 0,
         left: 0,
         right: 0,
-        backgroundColor: 'white',
+        backgroundColor: '#FFFFFF',
         paddingVertical: 12,
         paddingHorizontal: 20,
         borderTopWidth: 1,

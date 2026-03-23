@@ -11,6 +11,7 @@ import {
     checkActiveBookings,
     BookingRequest,
     SEARCH_RADIUS_KM,
+    forceDeliverySync,
 } from '../../services/riderMatchingService';
 import { generateShareToken } from '../../utils/tokenUtils';
 import {
@@ -187,7 +188,14 @@ export default function SearchingRiderScreen() {
                 }
 
                 console.log(`[Booking] Creating new booking request: ${bookingId}`);
-                await createPendingBooking(bookingRequest);
+                const createSuccess = await createPendingBooking(bookingRequest);
+                if (!createSuccess) {
+                    console.error(`[Booking] Failed to create booking in DB.`);
+                    setSearchFailed(true);
+                    setStatusText('Failed to sync booking with database. Please try again.');
+                    return;
+                }
+                
                 // Notify riders within 3km radius
                 const result = await notifyNearbyRiders(bookingRequest);
                 console.log(`[Booking] Notified ${result.notifiedCount} riders`);
@@ -210,6 +218,9 @@ export default function SearchingRiderScreen() {
                 // Rider accepted! Navigate to tracking
                 console.log(`[Booking] Rider ${riderId} accepted booking ${bookingId}`);
                 setStatusText('Rider found! Connecting...');
+
+                // Force delivery sync to ensure Supabase matches Firebase
+                await forceDeliverySync();
 
                 // Start ongoing notification for tracking
                 await startOngoingNotification(bookingId, 'RIDER_ASSIGNED');

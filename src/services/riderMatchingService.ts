@@ -187,6 +187,13 @@ export { generateShareToken };
 async function ensureProfileExists(userId: string): Promise<void> {
     if (!supabase || !userId) return;
     try {
+        // EC-Fix: Only insert placeholder if acting on own profile to prevent overwriting others' real emails
+        const { data: authData } = await supabase.auth.getUser();
+        if (!authData?.user || authData.user.id !== userId) {
+            console.log(`[Profile] Skip placeholder check for ${userId} (Mismatch with active session)`);
+            return;
+        }
+
         const { data } = await supabase
             .from('profiles')
             .select('id')
@@ -432,10 +439,11 @@ export async function createPendingBooking(request: BookingRequest): Promise<boo
                         status: 'PENDING',
                         created_at: new Date(request.createdAt).toISOString(),
                         updated_at: new Date(request.createdAt).toISOString(),
-                        snapped_pickup_lat: request.snappedPickupLat || null,
-                        snapped_pickup_lng: request.snappedPickupLng || null,
-                        snapped_dropoff_lat: request.snappedDropoffLat || null,
-                        snapped_dropoff_lng: request.snappedDropoffLng || null,
+                        // EC-Fix: Remove snapped_ coordinates as they might not exist in Supabase schema
+                        // snapped_pickup_lat: request.snappedPickupLat || null,
+                        // snapped_pickup_lng: request.snappedPickupLng || null,
+                        // snapped_dropoff_lat: request.snappedDropoffLat || null,
+                        // snapped_dropoff_lng: request.snappedDropoffLng || null,
                     }, { onConflict: 'id' });
 
                 if (error) {
@@ -447,6 +455,7 @@ export async function createPendingBooking(request: BookingRequest): Promise<boo
                     });
                     // Queue for retry
                     await statusUpdateService.queueStatusUpdate(request.bookingId, 'UNKNOWN_BOX', 'PENDING');
+                    return false; // EC-Fix: Reject creation to prevent inconsistent state
                 } else {
                     console.log(`[Booking] Synced booking to Supabase: ${request.bookingId}`);
                 }
@@ -920,10 +929,11 @@ export async function acceptOrder(
                     created_at: new Date(booking.created_at || acceptedAt).toISOString(),
                 };
 
-                if (booking.snapped_pickup_lat) upsertData.snapped_pickup_lat = booking.snapped_pickup_lat;
-                if (booking.snapped_pickup_lng) upsertData.snapped_pickup_lng = booking.snapped_pickup_lng;
-                if (booking.snapped_dropoff_lat) upsertData.snapped_dropoff_lat = booking.snapped_dropoff_lat;
-                if (booking.snapped_dropoff_lng) upsertData.snapped_dropoff_lng = booking.snapped_dropoff_lng;
+                // EC-Fix: Remove snapped_ coordinates as they might not exist in Supabase schema
+                // if (booking.snapped_pickup_lat) upsertData.snapped_pickup_lat = booking.snapped_pickup_lat;
+                // if (booking.snapped_pickup_lng) upsertData.snapped_pickup_lng = booking.snapped_pickup_lng;
+                // if (booking.snapped_dropoff_lat) upsertData.snapped_dropoff_lat = booking.snapped_dropoff_lat;
+                // if (booking.snapped_dropoff_lng) upsertData.snapped_dropoff_lng = booking.snapped_dropoff_lng;
 
                 if (safeBoxId) {
                     upsertData.box_id = safeBoxId;
@@ -940,6 +950,8 @@ export async function acceptOrder(
                         details: error.details,
                         hint: error.hint,
                     });
+                    // Note: We don't return false because Firebase already committed the claim.
+                    // The subsequent forceDeliverySync() will attempt self-healing.
                 } else {
                     console.log('[RiderMatching] Upserted Supabase delivery on accept:', bookingId);
                 }
@@ -1965,4 +1977,20 @@ export function subscribeToAvailableOrders(
     });
 
     return () => off(pendingRef, 'value', unsubscribe);
+}
+
+/**
+ * Force trigger the next.js delivery sync API to ensure source-of-truth is updated
+ */
+export async function forceDeliverySync(): Promise<void> {
+    try {
+        console.log('[Booking] Triggering forced delivery sync to Supabase...');
+        const response = await fetch(`${API_BASE_URL}/api/sync-deliveries`, {
+            method: 'GET',
+        });
+        const result = await response.json();
+        console.log('[Booking] Force sync result:', result);
+    } catch (e) {
+        console.warn('[Booking] Force sync failed (non-fatal):', e);
+    }
 }
