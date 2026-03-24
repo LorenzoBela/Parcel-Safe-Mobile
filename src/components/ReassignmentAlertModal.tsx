@@ -183,7 +183,7 @@ const styles = StyleSheet.create({
         marginLeft: 12,
     },
     title: {
-        fontWeight: 'bold',
+        fontFamily: 'Inter_700Bold',
     },
     content: {
         paddingHorizontal: 16,

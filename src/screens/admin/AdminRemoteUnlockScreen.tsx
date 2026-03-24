@@ -274,7 +274,7 @@ const styles = StyleSheet.create({
     },
     title: {
         fontSize: 22,
-        fontWeight: '700',
+        fontFamily: 'Inter_700Bold',
         marginLeft: 4,
         letterSpacing: -0.3,
     },
@@ -304,7 +304,7 @@ const styles = StyleSheet.create({
     },
     sectionTitle: {
         fontSize: 14,
-        fontWeight: '700',
+        fontFamily: 'Inter_700Bold',
     },
     refreshButton: {
         flexDirection: 'row',
@@ -317,7 +317,7 @@ const styles = StyleSheet.create({
     },
     refreshButtonText: {
         fontSize: 12,
-        fontWeight: '700',
+        fontFamily: 'Inter_700Bold',
     },
     loadingWrap: {
         width: '100%',
@@ -328,7 +328,7 @@ const styles = StyleSheet.create({
     },
     loadingText: {
         fontSize: 12,
-        fontWeight: '600',
+        fontFamily: 'Inter_600SemiBold',
     },
     errorBanner: {
         width: '100%',
@@ -374,12 +374,12 @@ const styles = StyleSheet.create({
     },
     boxTitle: {
         fontSize: 13,
-        fontWeight: '700',
+        fontFamily: 'Inter_700Bold',
     },
     boxMeta: {
         marginTop: 2,
         fontSize: 11,
-        fontWeight: '500',
+        fontFamily: 'Inter_500Medium',
     },
     activePill: {
         borderRadius: 999,
@@ -388,7 +388,7 @@ const styles = StyleSheet.create({
     },
     activePillText: {
         fontSize: 10,
-        fontWeight: '700',
+        fontFamily: 'Inter_700Bold',
     },
     input: {
         width: '100%',
@@ -405,7 +405,7 @@ const styles = StyleSheet.create({
     },
     buttonText: {
         color: '#FFFFFF',
-        fontWeight: '700',
+        fontFamily: 'Inter_700Bold',
         fontSize: 15,
     },
     successBanner: {
@@ -418,7 +418,7 @@ const styles = StyleSheet.create({
     },
     successText: {
         marginLeft: 12,
-        fontWeight: '700',
+        fontFamily: 'Inter_700Bold',
         flex: 1,
         fontSize: 14,
     },

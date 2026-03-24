@@ -128,7 +128,7 @@ const styles = StyleSheet.create({
     },
     title: {
         fontSize: 15,
-        fontWeight: '600',
+        fontFamily: 'Inter_600SemiBold',
         marginBottom: 4,
     },
     message: {
@@ -138,7 +138,7 @@ const styles = StyleSheet.create({
     },
     action: {
         fontSize: 13,
-        fontWeight: '500',
+        fontFamily: 'Inter_500Medium',
         marginTop: 6,
     },
     dismissButton: {

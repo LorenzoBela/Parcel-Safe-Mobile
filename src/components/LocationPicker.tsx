@@ -231,7 +231,7 @@ export default function LocationPicker({
                 contentContainerStyle={[styles.modalContent, { backgroundColor: theme.colors.surface }]}
             >
                 <View style={styles.header}>
-                    <Text variant="headlineSmall" style={{ fontWeight: 'bold', color: theme.colors.onSurface }}>
+                    <Text variant="headlineSmall" style={{ fontFamily: 'Inter_700Bold', color: theme.colors.onSurface }}>
                         {title}
                     </Text>
                     <Text variant="bodyMedium" style={{ color: theme.colors.onSurfaceVariant, marginTop: 4 }}>
@@ -272,7 +272,7 @@ export default function LocationPicker({
                                         >
                                             <MaterialCommunityIcons name="map-marker" size={20} color={theme.colors.primary} />
                                             <View style={styles.suggestionText}>
-                                                <Text variant="bodyMedium" style={{ fontWeight: 'bold' }}>{item.name}</Text>
+                                                <Text variant="bodyMedium" style={{ fontFamily: 'Inter_700Bold' }}>{item.name}</Text>
                                                 {item.address && (
                                                     <Text variant="bodySmall" numberOfLines={1} style={{ color: theme.colors.onSurfaceVariant }}>
                                                         {item.address}

@@ -271,7 +271,7 @@ const styles = StyleSheet.create({
     speedBadgeText: {
         color: '#FFFFFF',
         fontSize: 10,
-        fontWeight: '700',
+        fontFamily: 'Inter_700Bold',
     },
     riderMarkerOuter: {
         width: 84,

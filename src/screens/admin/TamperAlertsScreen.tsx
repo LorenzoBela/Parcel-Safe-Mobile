@@ -165,7 +165,7 @@ export default function TamperAlertsScreen() {
                 {clearingBoxId === item.id ? (
                     <ActivityIndicator size={16} color="#FFF" />
                 ) : (
-                    <Text style={{ color: '#FFF', fontSize: 12, fontWeight: '600' }}>Clear</Text>
+                    <Text style={{ color: '#FFF', fontSize: 12, fontFamily: 'Inter_600SemiBold' }}>Clear</Text>
                 )}
             </TouchableOpacity>
         </View>
@@ -287,7 +287,7 @@ const styles = StyleSheet.create({
     },
     overlayText: {
         fontSize: 13,
-        fontWeight: '700',
+        fontFamily: 'Inter_700Bold',
     },
     listContainer: {
         flex: 1,
@@ -299,7 +299,7 @@ const styles = StyleSheet.create({
         padding: 20,
         paddingBottom: 12,
         fontSize: 17,
-        fontWeight: '700',
+        fontFamily: 'Inter_700Bold',
         borderBottomWidth: 0.5,
     },
     listContent: {
@@ -322,7 +322,7 @@ const styles = StyleSheet.create({
     },
     alertTitle: {
         fontSize: 14,
-        fontWeight: '700',
+        fontFamily: 'Inter_700Bold',
     },
     alertSub: {
         fontSize: 12,

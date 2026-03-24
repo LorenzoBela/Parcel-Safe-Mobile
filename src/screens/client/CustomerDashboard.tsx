@@ -330,23 +330,25 @@ export default function CustomerDashboard() {
                 <View style={{ position: 'absolute', top: 0, left: 0, right: 0, height: insets.top, backgroundColor: 'rgba(0,0,0,0.3)' }} />
                 <View style={[styles.headerOverlay, { paddingTop: insets.top + 12 }]}>
                     <View style={styles.headerRow}>
-                        <View style={{ flex: 1 }}>
+                        <View style={[styles.headerInfoBox, { flex: 1 }]}>
                             <View style={styles.locRow}>
-                                <MaterialCommunityIcons name="map-marker" size={14} color="rgba(255,255,255,0.85)" />
-                                <Text style={styles.locText}>{locationName}</Text>
+                                <MaterialCommunityIcons name="map-marker" size={14} color="rgba(255,255,255,0.85)" style={styles.textShadow} />
+                                <Text style={[styles.locText, styles.textShadow]}>{locationName}</Text>
                             </View>
-                            <Text style={styles.dateText}>{currentTime.format('dddd, MMMM D')}</Text>
-                            <Text style={styles.timeText}>{currentTime.format('h:mm A')}</Text>
+                            <Text style={[styles.dateText, styles.textShadow]}>{currentTime.format('dddd, MMMM D')}</Text>
+                            <Text style={[styles.timeText, styles.textShadow]}>{currentTime.format('h:mm A')}</Text>
                         </View>
                         <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                             {weather && (
                                 <View style={styles.weatherPill}>
-                                    <MaterialCommunityIcons name={weather.icon as any} size={26} color="#FFFFFF" />
-                                    <Text style={styles.weatherTemp}>{weather.temp}</Text>
-                                    <Text style={styles.weatherCond}>{weather.condition}</Text>
+                                    <MaterialCommunityIcons name={weather.icon as any} size={26} color="#FFFFFF" style={styles.textShadow} />
+                                    <Text style={[styles.weatherTemp, styles.textShadow]}>{weather.temp}</Text>
+                                    <Text style={[styles.weatherCond, styles.textShadow]}>{weather.condition}</Text>
                                 </View>
                             )}
-                            <NotificationBell color="#FFFFFF" size={24} />
+                            <View style={styles.iconBox}>
+                                <NotificationBell color="#FFFFFF" size={24} />
+                            </View>
                         </View>
                     </View>
                 </View>
@@ -613,7 +615,7 @@ export default function CustomerDashboard() {
                         <Text style={[styles.modalTitle, { color: c.red }]}>Security Warning</Text>
                         <Text style={[styles.modalBody, { color: c.text }]}>
                             You are about to share a live tracking link.{'\n\n'}
-                            <Text style={{ fontWeight: '700' }}>Only share with the intended recipient.</Text>
+                            <Text style={{ fontFamily: 'Inter_700Bold' }}>Only share with the intended recipient.</Text>
                             {'\n'}They may be able to unlock the box.
                         </Text>
                         <TouchableOpacity
@@ -683,38 +685,55 @@ const styles = StyleSheet.create({
         backgroundColor: 'rgba(0,0,0,0.15)', borderBottomLeftRadius: 24, borderBottomRightRadius: 24,
     },
     headerRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-end' },
+    headerInfoBox: {
+        backgroundColor: 'rgba(0,0,0,0.15)',
+        padding: 12,
+        borderRadius: 16,
+        marginRight: 8,
+    },
+    iconBox: {
+        backgroundColor: 'rgba(0,0,0,0.15)',
+        padding: 8,
+        borderRadius: 12,
+        marginLeft: 8,
+    },
+    textShadow: {
+        textShadowColor: 'rgba(0, 0, 0, 0.6)',
+        textShadowOffset: { width: 0, height: 1 },
+        textShadowRadius: 3,
+    },
     locRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 2 },
-    locText: { color: 'rgba(255,255,255,0.85)', fontSize: 12, fontWeight: '600', marginLeft: 4 },
-    dateText: { color: 'rgba(255,255,255,0.9)', fontSize: 13, fontWeight: '600' },
-    timeText: { color: '#FFFFFF', fontSize: 30, fontWeight: '800' },
-    weatherPill: { alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.35)', padding: 8, borderRadius: 14 },
-    weatherTemp: { color: '#FFFFFF', fontSize: 16, fontWeight: '700' },
-    weatherCond: { color: 'rgba(255,255,255,0.8)', fontSize: 11 },
+    locText: { color: 'rgba(255,255,255,0.95)', fontSize: 13, fontFamily: 'Inter_600SemiBold', marginLeft: 4 },
+    dateText: { color: 'rgba(255,255,255,0.95)', fontSize: 13, fontFamily: 'Inter_600SemiBold' },
+    timeText: { color: '#FFFFFF', fontSize: 28, fontFamily: 'SpaceGrotesk_700Bold' },
+    weatherPill: { alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.15)', paddingVertical: 6, paddingHorizontal: 10, borderRadius: 12 },
+    weatherTemp: { color: '#FFFFFF', fontSize: 14, fontFamily: 'SpaceGrotesk_700Bold' },
+    weatherCond: { color: 'rgba(255,255,255,0.95)', fontSize: 10, fontFamily: 'Inter_500Medium' },
     // Scroll
     scroll: { paddingHorizontal: 16, paddingTop: 16 },
     // Greeting
     greetRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 20 },
     greetLabel: { fontSize: 14 },
-    greetName: { fontSize: 26, fontWeight: '800' },
+    greetName: { fontSize: 26, fontFamily: 'Inter_700Bold', letterSpacing: -1 },
     avatarFallback: { width: 46, height: 46, borderRadius: 23, alignItems: 'center', justifyContent: 'center' },
-    avatarLetter: { fontSize: 20, fontWeight: '700' },
+    avatarLetter: { fontSize: 20, fontFamily: 'Inter_700Bold' },
     // Cancellation
     cancelBanner: {
         flexDirection: 'row', alignItems: 'center', padding: 14, borderRadius: 14,
         borderWidth: 1, marginBottom: 16,
     },
     cancelIcon: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
-    cancelTitle: { fontSize: 14, fontWeight: '700' },
+    cancelTitle: { fontSize: 14, fontFamily: 'Inter_700Bold' },
     cancelSub: { fontSize: 12, marginTop: 1 },
     // Section
-    sectionTitle: { fontSize: 18, fontWeight: '700', marginBottom: 10, marginTop: 6 },
+    sectionTitle: { fontSize: 14, fontFamily: 'JetBrainsMono_700Bold', letterSpacing: 1.2, textTransform: 'uppercase', marginBottom: 10, marginTop: 6 },
     // Delivery card
     deliveryCard: { borderRadius: 16, borderWidth: 1, marginBottom: 20, overflow: 'hidden' },
     deliveryHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 14, borderBottomWidth: StyleSheet.hairlineWidth },
     deliveryIdRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-    deliveryId: { fontSize: 14, fontWeight: '700' },
+    deliveryId: { fontSize: 14, fontFamily: 'Inter_700Bold' },
     statusPill: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 20 },
-    statusPillText: { fontSize: 12, fontWeight: '700' },
+    statusPillText: { fontSize: 12, fontFamily: 'Inter_700Bold' },
     deliveryBody: { padding: 14, gap: 8 },
     infoRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
     infoText: { fontSize: 14 },
@@ -723,13 +742,13 @@ const styles = StyleSheet.create({
         flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
         paddingVertical: 14, borderRadius: 14, gap: 8,
     },
-    primaryBtnText: { fontSize: 15, fontWeight: '700' },
+    primaryBtnText: { fontSize: 15, fontFamily: 'Inter_700Bold' },
     secondaryBtnRow: { flexDirection: 'row', gap: 10 },
     secondaryBtn: {
         flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
         paddingVertical: 12, borderRadius: 12, borderWidth: 1, gap: 6,
     },
-    secondaryBtnText: { fontSize: 13, fontWeight: '600' },
+    secondaryBtnText: { fontSize: 13, fontFamily: 'Inter_600SemiBold' },
     // Stats
     statsRow: {
         flexDirection: 'row', justifyContent: 'space-between',
@@ -739,8 +758,8 @@ const styles = StyleSheet.create({
         flex: 1, alignItems: 'center', paddingVertical: 14,
         borderRadius: 14, borderWidth: 1, gap: 2,
     },
-    statValue: { fontSize: 20, fontWeight: '800' },
-    statLabel: { fontSize: 9, fontWeight: '600', letterSpacing: 0.5 },
+    statValue: { fontSize: 20, fontFamily: 'Inter_700Bold' },
+    statLabel: { fontSize: 9, fontFamily: 'Inter_600SemiBold', letterSpacing: 0.5 },
     // Empty
     emptyCard: {
         alignItems: 'center', padding: 28, borderRadius: 16, borderWidth: 1, marginBottom: 20,
@@ -749,7 +768,7 @@ const styles = StyleSheet.create({
         width: 56, height: 56, borderRadius: 28,
         alignItems: 'center', justifyContent: 'center', marginBottom: 4,
     },
-    emptyTitle: { fontSize: 15, fontWeight: '600', marginTop: 8 },
+    emptyTitle: { fontSize: 15, fontFamily: 'Inter_600SemiBold', marginTop: 8 },
     emptySub: { fontSize: 13, marginTop: 3, textAlign: 'center', paddingHorizontal: 20 },
     // Carousel
     promoCard: {
@@ -761,13 +780,13 @@ const styles = StyleSheet.create({
         alignItems: 'center', justifyContent: 'center', marginBottom: 12,
     },
     promoText: { marginBottom: 14 },
-    promoHeadline: { fontSize: 17, fontWeight: '800', marginBottom: 4 },
+    promoHeadline: { fontSize: 17, fontFamily: 'Inter_700Bold', marginBottom: 4 },
     promoSub: { fontSize: 13, lineHeight: 18 },
     promoCta: {
         flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-start',
         gap: 4, paddingHorizontal: 14, paddingVertical: 7, borderRadius: 20,
     },
-    promoCtaText: { fontSize: 12, fontWeight: '700' },
+    promoCtaText: { fontSize: 12, fontFamily: 'Inter_700Bold' },
     dotsRow: {
         flexDirection: 'row', justifyContent: 'center',
         alignItems: 'center', marginTop: 12, gap: 5, marginBottom: 10,
@@ -779,14 +798,14 @@ const styles = StyleSheet.create({
     bookCard: {
         flexDirection: 'row', alignItems: 'center', padding: 18, borderRadius: 16, marginBottom: 20,
     },
-    bookTitle: { fontSize: 18, fontWeight: '800' },
+    bookTitle: { fontSize: 18, fontFamily: 'Inter_700Bold' },
     bookSub: { fontSize: 13, marginTop: 2 },
     bookIcon: { width: 50, height: 50, borderRadius: 25, alignItems: 'center', justifyContent: 'center' },
     // Quick actions
     quickRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 24 },
     quickItem: { alignItems: 'center', width: '30%' },
     quickIcon: { width: 52, height: 52, borderRadius: 16, alignItems: 'center', justifyContent: 'center', borderWidth: 1, marginBottom: 6 },
-    quickLabel: { fontSize: 12, fontWeight: '500' },
+    quickLabel: { fontSize: 12, fontFamily: 'Inter_500Medium' },
     // Activity
     activityRow: {
         flexDirection: 'row', alignItems: 'center', padding: 14, borderRadius: 14,
@@ -794,14 +813,14 @@ const styles = StyleSheet.create({
     },
     activityDot: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
     activityDotInner: { width: 10, height: 10, borderRadius: 5 },
-    activityId: { fontSize: 14, fontWeight: '600' },
+    activityId: { fontSize: 14, fontFamily: 'Inter_600SemiBold' },
     activitySub: { fontSize: 12, marginTop: 1 },
-    activityStatus: { fontSize: 12, fontWeight: '700' },
+    activityStatus: { fontSize: 12, fontFamily: 'Inter_700Bold' },
     activityDate: { fontSize: 11, marginTop: 1 },
     // Modal
     modal: { padding: 24, margin: 24, borderRadius: 20, alignItems: 'center' },
     modalIcon: { width: 72, height: 72, borderRadius: 36, alignItems: 'center', justifyContent: 'center', marginBottom: 12 },
-    modalTitle: { fontSize: 18, fontWeight: '700', marginBottom: 12 },
+    modalTitle: { fontSize: 18, fontFamily: 'Inter_700Bold', marginBottom: 12 },
     modalBody: { textAlign: 'center', lineHeight: 22, marginBottom: 20, fontSize: 14 },
     modalClose: { position: 'absolute', right: 0, top: 0 },
 });

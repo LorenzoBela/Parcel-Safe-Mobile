@@ -92,7 +92,7 @@ const styles = StyleSheet.create({
     container: { flex: 1 },
     title: {
         fontSize: 22,
-        fontWeight: '700',
+        fontFamily: 'Inter_700Bold',
         padding: 20,
         paddingBottom: 12,
         letterSpacing: -0.3,
@@ -108,18 +108,18 @@ const styles = StyleSheet.create({
     },
     infoLabel: {
         fontSize: 11,
-        fontWeight: '600',
+        fontFamily: 'Inter_600SemiBold',
         textTransform: 'uppercase',
         letterSpacing: 0.5,
         marginBottom: 2,
     },
     infoValue: {
         fontSize: 14,
-        fontWeight: '500',
+        fontFamily: 'Inter_500Medium',
     },
     sectionTitle: {
         fontSize: 17,
-        fontWeight: '700',
+        fontFamily: 'Inter_700Bold',
         padding: 20,
         paddingBottom: 8,
     },
@@ -140,7 +140,7 @@ const styles = StyleSheet.create({
     },
     linkText: {
         fontSize: 14,
-        fontWeight: '600',
+        fontFamily: 'Inter_600SemiBold',
         marginBottom: 12,
     },
 });

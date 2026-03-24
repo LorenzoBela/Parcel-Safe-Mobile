@@ -1422,7 +1422,7 @@ export default function ArrivalScreen() {
             <View style={[styles.container, { backgroundColor: c.background, justifyContent: 'center', alignItems: 'center', padding: 32 }]}>
                 <View style={{ alignItems: 'center', marginBottom: 32 }}>
                     <ActivityIndicator size="large" color={isDarkMode ? '#60a5fa' : '#2563eb'} style={{ marginBottom: 20 }} />
-                    <Text variant="headlineSmall" style={{ color: c.text, fontWeight: 'bold', marginBottom: 8 }}>
+                    <Text variant="headlineSmall" style={{ color: c.text, fontFamily: 'Inter_700Bold', marginBottom: 8 }}>
                         Acquiring GPS Signal
                     </Text>
                     <Text variant="bodyMedium" style={{ color: isDarkMode ? '#a1a1aa' : '#6b7280', textAlign: 'center' }}>
@@ -1644,7 +1644,7 @@ export default function ArrivalScreen() {
                                             backgroundColor: c.card, borderColor: isDarkMode ? '#3f3f46' : '#e4e4e7',
                                             shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 4, elevation: 3
                                         }}>
-                                            <Text variant="labelMedium" style={{ fontWeight: 'bold', color: c.text }}>
+                                            <Text variant="labelMedium" style={{ fontFamily: 'Inter_700Bold', color: c.text }}>
                                                 {distanceMeters < 1000 ? `${Math.round(distanceMeters)}m` : `${(distanceMeters / 1000).toFixed(1)}km`}
                                             </Text>
                                             <Text variant="labelSmall" style={{ color: isDarkMode ? '#a1a1aa' : '#71717a' }}>away</Text>
@@ -1655,13 +1655,13 @@ export default function ArrivalScreen() {
                                 {/* Destination Info & Buttons below map */}
                                 <Card.Content style={{ paddingTop: 16 }}>
                                     <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>
-                                        <Text variant="titleMedium" style={{ fontWeight: 'bold', flex: 1, color: c.text }}>Return Journey</Text>
+                                        <Text variant="titleMedium" style={{ fontFamily: 'Inter_700Bold', flex: 1, color: c.text }}>Return Journey</Text>
                                         <View style={{ backgroundColor: '#2196F3', width: 28, height: 28, borderRadius: 6, alignItems: 'center', justifyContent: 'center' }}>
                                             <Text style={{ color: 'white', fontSize: 16 }}>↩️</Text>
                                         </View>
                                     </View>
                                     <Text variant="bodySmall" style={{ color: isDarkMode ? '#a1a1aa' : '#666', marginBottom: 4 }}>Return destination</Text>
-                                    <Text variant="bodyMedium" style={{ fontWeight: '600', marginBottom: 16, color: c.text }}>
+                                    <Text variant="bodyMedium" style={{ fontFamily: 'Inter_600SemiBold', marginBottom: 16, color: c.text }}>
                                         {params.pickupAddress || params.targetAddress}
                                     </Text>
 
@@ -1776,7 +1776,7 @@ export default function ArrivalScreen() {
                         onDismiss={closeBleModal}
                         contentContainerStyle={[styles.modal, { backgroundColor: c.modalBg }]}
                     >
-                        <Text variant="titleLarge" style={{ marginBottom: 16, fontWeight: 'bold', color: c.text }}>
+                        <Text variant="titleLarge" style={{ marginBottom: 16, fontFamily: 'Inter_700Bold', color: c.text }}>
                             BLE OTP Transfer
                         </Text>
 
@@ -1849,7 +1849,7 @@ const styles = StyleSheet.create({
     pageTitle: {
         textAlign: 'center',
         marginBottom: 20,
-        fontWeight: 'bold',
+        fontFamily: 'Inter_700Bold',
         color: '#1a1a1a',
     },
 
@@ -1878,12 +1878,12 @@ const styles = StyleSheet.create({
     },
     pillTitle: {
         fontSize: 10,
-        fontWeight: 'bold',
+        fontFamily: 'Inter_700Bold',
         textTransform: 'uppercase',
     },
     pillText: {
         fontSize: 12,
-        fontWeight: '600',
+        fontFamily: 'Inter_600SemiBold',
     },
 
     // Status Colors
@@ -1920,7 +1920,7 @@ const styles = StyleSheet.create({
     },
     distanceText: {
         fontSize: 12,
-        fontWeight: 'bold',
+        fontFamily: 'Inter_700Bold',
         color: '#4B5563',
     },
 
@@ -1949,7 +1949,7 @@ const styles = StyleSheet.create({
     checkIcon: {
         fontSize: 24,
         color: 'white',
-        fontWeight: 'bold',
+        fontFamily: 'Inter_700Bold',
     },
     bgSuccess: { backgroundColor: '#22c55e' },
     bgError: { backgroundColor: '#ef4444' },
@@ -1957,7 +1957,7 @@ const styles = StyleSheet.create({
     checkLabel: {
         fontSize: 12,
         color: '#555',
-        fontWeight: '600',
+        fontFamily: 'Inter_600SemiBold',
     },
     checkDivider: {
         height: 2,
@@ -1979,7 +1979,7 @@ const styles = StyleSheet.create({
     statusMessageText: {
         textAlign: 'center',
         fontSize: 13,
-        fontWeight: '600',
+        fontFamily: 'Inter_600SemiBold',
     },
 
     // Address
@@ -1993,7 +1993,7 @@ const styles = StyleSheet.create({
     addressLabel: {
         fontSize: 10,
         color: '#888',
-        fontWeight: 'bold',
+        fontFamily: 'Inter_700Bold',
         marginBottom: 2,
     },
     address: {
@@ -2014,7 +2014,7 @@ const styles = StyleSheet.create({
     },
     actionTitle: {
         fontSize: 14,
-        fontWeight: 'bold',
+        fontFamily: 'Inter_700Bold',
         color: '#1a1a1a',
         marginBottom: 4,
     },
@@ -2046,7 +2046,7 @@ const styles = StyleSheet.create({
     },
     helperTitle: {
         fontSize: 12,
-        fontWeight: 'bold',
+        fontFamily: 'Inter_700Bold',
         color: '#333',
     },
     helperText: {
@@ -2075,7 +2075,7 @@ const styles = StyleSheet.create({
     },
     bleStatusText: {
         fontSize: 18,
-        fontWeight: 'bold',
+        fontFamily: 'Inter_700Bold',
         marginBottom: 8,
         textAlign: 'center',
     },
@@ -2099,7 +2099,7 @@ const styles = StyleSheet.create({
     },
     modalTitle: {
         textAlign: 'center',
-        fontWeight: 'bold',
+        fontFamily: 'Inter_700Bold',
         marginBottom: 8,
     },
     modalSubtext: {
@@ -2137,18 +2137,18 @@ const styles = StyleSheet.create({
         borderRadius: 16,
     },
     timerContainer: { alignItems: 'center', marginBottom: 20 },
-    timerLabel: { fontSize: 12, fontWeight: '800', color: '#b45309', letterSpacing: 1.5 },
-    timerDisplay: { fontSize: 64, fontWeight: 'bold', fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace', color: '#d97706' },
+    timerLabel: { fontSize: 12, fontFamily: 'Inter_700Bold', color: '#b45309', letterSpacing: 1.5 },
+    timerDisplay: { fontSize: 64, fontFamily: 'Inter_700Bold', fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace', color: '#d97706' },
     timerSubtext: { fontSize: 14, color: '#78350f' },
     photoPreview: { backgroundColor: '#ecfccb', padding: 12, borderRadius: 8, marginBottom: 16 },
-    photoLabel: { color: '#365314', textAlign: 'center', fontWeight: 'bold' },
+    photoLabel: { color: '#365314', textAlign: 'center', fontFamily: 'Inter_700Bold' },
     waitActions: { gap: 12 },
 
     // Retained for critical banner compatibility if needed
     bannerContent: { flexDirection: 'row', alignItems: 'center' },
     bannerIcon: { fontSize: 24, marginRight: 12 },
     tamperBanner: { backgroundColor: '#DC2626', marginBottom: 12, borderRadius: 12 },
-    tamperTitle: { color: 'white', fontWeight: 'bold', fontSize: 14 },
+    tamperTitle: { color: 'white', fontFamily: 'Inter_700Bold', fontSize: 14 },
     tamperText: { color: 'rgba(255,255,255,0.9)', fontSize: 12 },
 
     // Grace Period Card
@@ -2176,7 +2176,7 @@ const styles = StyleSheet.create({
     },
     gracePeriodTitle: {
         fontSize: 14,
-        fontWeight: 'bold',
+        fontFamily: 'Inter_700Bold',
         color: '#1a1a1a',
         marginBottom: 2,
     },
@@ -2196,13 +2196,13 @@ const styles = StyleSheet.create({
     },
     gracePeriodTimer: {
         fontSize: 20,
-        fontWeight: 'bold',
+        fontFamily: 'Inter_700Bold',
         fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
         color: '#1d4ed8',
     },
     gracePeriodTimerLabel: {
         fontSize: 9,
-        fontWeight: '700',
+        fontFamily: 'Inter_700Bold',
         color: '#9ca3af',
         letterSpacing: 0.5,
         textTransform: 'uppercase',

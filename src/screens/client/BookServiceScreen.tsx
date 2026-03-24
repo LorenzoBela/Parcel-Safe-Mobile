@@ -1091,7 +1091,7 @@ export default function BookServiceScreen() {
                         <TouchableOpacity onPress={() => setBookingStep('location')} style={styles.iconButton}>
                             <MaterialCommunityIcons name="arrow-left" size={24} color={theme.colors.onSurface} />
                         </TouchableOpacity>
-                        <Text variant="titleMedium" style={{ fontWeight: '600', color: theme.colors.onSurface }}>Contact Details</Text>
+                        <Text variant="titleMedium" style={{ fontFamily: 'Inter_600SemiBold', color: theme.colors.onSurface }}>Contact Details</Text>
                         <View style={{ width: 40 }} />
                     </View>
                     <ScrollView style={{ padding: 20 }} showsVerticalScrollIndicator={false}>
@@ -1104,7 +1104,7 @@ export default function BookServiceScreen() {
                                         onPress={() => { setShowSenderPicker(!showSenderPicker); setShowReceiverPicker(false); }}
                                         style={{ backgroundColor: theme.colors.surfaceVariant, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}
                                     >
-                                        <Text style={{ fontSize: 12, color: theme.colors.onSurfaceVariant, fontWeight: '600' }}>Fill Sender</Text>
+                                        <Text style={{ fontSize: 12, color: theme.colors.onSurfaceVariant, fontFamily: 'Inter_600SemiBold' }}>Fill Sender</Text>
                                         <MaterialCommunityIcons name={showSenderPicker ? 'chevron-up' : 'chevron-down'} size={16} color={theme.colors.onSurfaceVariant} />
                                     </TouchableOpacity>
                                     {showSenderPicker && (
@@ -1115,7 +1115,7 @@ export default function BookServiceScreen() {
                                                     onPress={() => { setSenderName(c.name); setSenderPhone(c.phone); setShowSenderPicker(false); }}
                                                     style={{ paddingHorizontal: 12, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: theme.colors.outlineVariant }}
                                                 >
-                                                    <Text style={{ fontSize: 13, fontWeight: '600', color: theme.colors.onSurface }}>{c.name}</Text>
+                                                    <Text style={{ fontSize: 13, fontFamily: 'Inter_600SemiBold', color: theme.colors.onSurface }}>{c.name}</Text>
                                                     <Text style={{ fontSize: 11, color: theme.colors.onSurfaceVariant }}>{c.phone}</Text>
                                                 </TouchableOpacity>
                                             ))}
@@ -1128,7 +1128,7 @@ export default function BookServiceScreen() {
                                         onPress={() => { setShowReceiverPicker(!showReceiverPicker); setShowSenderPicker(false); }}
                                         style={{ backgroundColor: theme.colors.surfaceVariant, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}
                                     >
-                                        <Text style={{ fontSize: 12, color: theme.colors.onSurfaceVariant, fontWeight: '600' }}>Fill Receiver</Text>
+                                        <Text style={{ fontSize: 12, color: theme.colors.onSurfaceVariant, fontFamily: 'Inter_600SemiBold' }}>Fill Receiver</Text>
                                         <MaterialCommunityIcons name={showReceiverPicker ? 'chevron-up' : 'chevron-down'} size={16} color={theme.colors.onSurfaceVariant} />
                                     </TouchableOpacity>
                                     {showReceiverPicker && (
@@ -1139,7 +1139,7 @@ export default function BookServiceScreen() {
                                                     onPress={() => { setRecipientName(c.name); setRecipientPhone(c.phone); setShowReceiverPicker(false); }}
                                                     style={{ paddingHorizontal: 12, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: theme.colors.outlineVariant }}
                                                 >
-                                                    <Text style={{ fontSize: 13, fontWeight: '600', color: theme.colors.onSurface }}>{c.name}</Text>
+                                                    <Text style={{ fontSize: 13, fontFamily: 'Inter_600SemiBold', color: theme.colors.onSurface }}>{c.name}</Text>
                                                     <Text style={{ fontSize: 11, color: theme.colors.onSurfaceVariant }}>{c.phone}</Text>
                                                 </TouchableOpacity>
                                             ))}
@@ -1166,7 +1166,7 @@ export default function BookServiceScreen() {
                                     style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 4 }}
                                 >
                                     <MaterialCommunityIcons name="content-save-outline" size={14} color={theme.colors.primary} />
-                                    <Text style={{ fontSize: 11, color: theme.colors.primary, fontWeight: '600' }}>Save sender to contacts</Text>
+                                    <Text style={{ fontSize: 11, color: theme.colors.primary, fontFamily: 'Inter_600SemiBold' }}>Save sender to contacts</Text>
                                 </TouchableOpacity>
                             )}
                         </View>
@@ -1183,7 +1183,7 @@ export default function BookServiceScreen() {
                                     style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 4 }}
                                 >
                                     <MaterialCommunityIcons name="content-save-outline" size={14} color={theme.colors.error} />
-                                    <Text style={{ fontSize: 11, color: theme.colors.error, fontWeight: '600' }}>Save receiver to contacts</Text>
+                                    <Text style={{ fontSize: 11, color: theme.colors.error, fontFamily: 'Inter_600SemiBold' }}>Save receiver to contacts</Text>
                                 </TouchableOpacity>
                             )}
                         </View>
@@ -1194,7 +1194,7 @@ export default function BookServiceScreen() {
                         </View>
 
                         <View style={styles.previewHeader}>
-                            <Text variant="titleMedium" style={{ color: theme.colors.onSurface, fontWeight: 'bold' }}>
+                            <Text variant="titleMedium" style={{ color: theme.colors.onSurface, fontFamily: 'Inter_700Bold' }}>
                                 Total: ₱{routeData?.cost || 0}
                             </Text>
                             <Text variant="bodyMedium" style={{ color: theme.colors.onSurfaceVariant }}>
@@ -1334,7 +1334,7 @@ export default function BookServiceScreen() {
                             {routeData ? (
                                 <View style={{ backgroundColor: theme.colors.surface, padding: 16, borderRadius: 16, elevation: 6, shadowColor: theme.colors.onSurface, shadowOpacity: 0.12, shadowRadius: 8, shadowOffset: { width: 0, height: -2 } }}>
                                     {/* Header label */}
-                                    <Text style={{ fontSize: 11, color: theme.colors.onSurfaceVariant, fontWeight: '700', letterSpacing: 0.8, marginBottom: 10 }}>ROUTE PREVIEW</Text>
+                                    <Text style={{ fontSize: 11, color: theme.colors.onSurfaceVariant, fontFamily: 'Inter_700Bold', letterSpacing: 0.8, marginBottom: 10 }}>ROUTE PREVIEW</Text>
 
                                     {/* Pickup row */}
                                     <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
@@ -1355,17 +1355,17 @@ export default function BookServiceScreen() {
                                     <View style={{ flexDirection: 'row', justifyContent: 'space-between', backgroundColor: theme.colors.background, borderRadius: 10, padding: 10, marginBottom: 14 }}>
                                         <View style={{ alignItems: 'center', flex: 1 }}>
                                             <Text style={{ fontSize: 11, color: theme.colors.onSurfaceVariant, marginBottom: 2 }}>Distance</Text>
-                                            <Text style={{ fontSize: 14, fontWeight: '700', color: theme.colors.onSurface }}>{routeData.distance.toFixed(1)} km</Text>
+                                            <Text style={{ fontSize: 14, fontFamily: 'Inter_700Bold', color: theme.colors.onSurface }}>{routeData.distance.toFixed(1)} km</Text>
                                         </View>
                                         <View style={{ width: 1, backgroundColor: theme.colors.outlineVariant }} />
                                         <View style={{ alignItems: 'center', flex: 1 }}>
                                             <Text style={{ fontSize: 11, color: theme.colors.onSurfaceVariant, marginBottom: 2 }}>Est. Time</Text>
-                                            <Text style={{ fontSize: 14, fontWeight: '700', color: theme.colors.onSurface }}>{Math.round(routeData.duration)} min</Text>
+                                            <Text style={{ fontSize: 14, fontFamily: 'Inter_700Bold', color: theme.colors.onSurface }}>{Math.round(routeData.duration)} min</Text>
                                         </View>
                                         <View style={{ width: 1, backgroundColor: theme.colors.outlineVariant }} />
                                         <View style={{ alignItems: 'center', flex: 1 }}>
                                             <Text style={{ fontSize: 11, color: theme.colors.onSurfaceVariant, marginBottom: 2 }}>Fare</Text>
-                                            <Text style={{ fontSize: 14, fontWeight: '700', color: theme.colors.onSurface }}>₱{routeData.cost}</Text>
+                                            <Text style={{ fontSize: 14, fontFamily: 'Inter_700Bold', color: theme.colors.onSurface }}>₱{routeData.cost}</Text>
                                         </View>
                                     </View>
 
@@ -1390,7 +1390,7 @@ export default function BookServiceScreen() {
                                             }}
                                         >
                                             <MaterialCommunityIcons name="map-marker" size={15} color="#10b981" />
-                                            <Text style={{ color: '#10b981', fontWeight: '700', fontSize: 13 }}>Edit Pickup</Text>
+                                            <Text style={{ color: '#10b981', fontFamily: 'Inter_700Bold', fontSize: 13 }}>Edit Pickup</Text>
                                         </TouchableOpacity>
                                         <TouchableOpacity
                                             style={{ flex: 1, borderRadius: 8, borderWidth: 1.5, borderColor: '#f43f5e', paddingVertical: 9, alignItems: 'center', flexDirection: 'row', justifyContent: 'center', gap: 4 }}
@@ -1410,7 +1410,7 @@ export default function BookServiceScreen() {
                                             }}
                                         >
                                             <MaterialCommunityIcons name="map-marker" size={15} color="#f43f5e" />
-                                            <Text style={{ color: '#f43f5e', fontWeight: '700', fontSize: 13 }}>Edit Dropoff</Text>
+                                            <Text style={{ color: '#f43f5e', fontFamily: 'Inter_700Bold', fontSize: 13 }}>Edit Dropoff</Text>
                                         </TouchableOpacity>
                                     </View>
                                     {/* Row 2: confirm */}
@@ -1418,7 +1418,7 @@ export default function BookServiceScreen() {
                                         style={{ borderRadius: 8, backgroundColor: theme.colors.onSurface, paddingVertical: 11, alignItems: 'center' }}
                                         onPress={() => { setIsMapVisible(false); setBookingStep('contacts'); }}
                                     >
-                                        <Text style={{ color: theme.colors.surface, fontWeight: '700', fontSize: 14 }}>Looks Good  →</Text>
+                                        <Text style={{ color: theme.colors.surface, fontFamily: 'Inter_700Bold', fontSize: 14 }}>Looks Good  →</Text>
                                     </TouchableOpacity>
                                 </View>
                             ) : (
@@ -1438,7 +1438,7 @@ export default function BookServiceScreen() {
                                 <Text variant="labelMedium" style={{ color: theme.colors.onSurfaceVariant, marginBottom: 4 }}>
                                     {activeField === 'pickup' ? 'SELECT PICKUP LOCATION' : 'SELECT DROPOFF LOCATION'}
                                 </Text>
-                                <Text variant="titleMedium" style={{ fontWeight: 'bold', color: pendingCoords ? '#212121' : '#9e9e9e' }} numberOfLines={2}>
+                                <Text variant="titleMedium" style={{ fontFamily: 'Inter_700Bold', color: pendingCoords ? '#212121' : '#9e9e9e' }} numberOfLines={2}>
                                     {pendingCoords
                                         ? (pendingAddress || 'Locating...')
                                         : (activeField === 'pickup' ? (pickupText || 'Pan or tap to select') : (dropoffText || 'Pan or tap to select'))}
@@ -1447,7 +1447,7 @@ export default function BookServiceScreen() {
                                 {pendingCoords && ((activeField === 'pickup' && !!pickupCoords) || (activeField === 'dropoff' && !!dropoffCoords)) && (
                                     <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 8, gap: 4 }}>
                                         <MaterialCommunityIcons name="alert-circle-outline" size={14} color="#f59e0b" />
-                                        <Text style={{ fontSize: 11, color: '#f59e0b', fontWeight: '600' }}>
+                                        <Text style={{ fontSize: 11, color: '#f59e0b', fontFamily: 'Inter_600SemiBold' }}>
                                             This will replace your current {activeField} location
                                         </Text>
                                     </View>
@@ -1460,7 +1460,7 @@ export default function BookServiceScreen() {
                                     style={{ borderRadius: 8, borderWidth: 1.5, borderColor: theme.colors.onSurfaceVariant, paddingVertical: 10, alignItems: 'center', marginBottom: 8, backgroundColor: theme.colors.surface }}
                                     onPress={handleCancelPendingLocation}
                                 >
-                                    <Text style={{ color: theme.colors.onSurface, fontWeight: '600', fontSize: 13 }}>Keep Current Location</Text>
+                                    <Text style={{ color: theme.colors.onSurface, fontFamily: 'Inter_600SemiBold', fontSize: 13 }}>Keep Current Location</Text>
                                 </TouchableOpacity>
                             )}
 
@@ -1485,7 +1485,7 @@ export default function BookServiceScreen() {
                             <TouchableOpacity onPress={() => navigation.goBack()}>
                                 <MaterialCommunityIcons name="arrow-left" size={24} color={theme.colors.onSurface} />
                             </TouchableOpacity>
-                            <Text variant="titleMedium" style={{ marginLeft: 16, fontWeight: 'bold' }}>Select an Address</Text>
+                            <Text variant="titleMedium" style={{ marginLeft: 16, fontFamily: 'Inter_700Bold' }}>Select an Address</Text>
                         </View>
 
 
@@ -1563,7 +1563,7 @@ export default function BookServiceScreen() {
                                 <Card style={{ backgroundColor: theme.colors.surface, borderRadius: 16 }} elevation={2}>
                                     <Card.Content>
                                         <View style={styles.previewHeader}>
-                                            <Text variant="titleMedium" style={{ color: theme.colors.onSurface, fontWeight: 'bold' }}>
+                                            <Text variant="titleMedium" style={{ color: theme.colors.onSurface, fontFamily: 'Inter_700Bold' }}>
                                                 Total: ₱{routeData.cost}
                                             </Text>
                                             <Text variant="bodyMedium" style={{ color: theme.colors.onSurfaceVariant }}>
@@ -1615,7 +1615,7 @@ export default function BookServiceScreen() {
                         {activeTab === 'suggested' && !isSearching && suggestions.length === 0 && !routeData && !loadingRoute && (
                             <View style={{ alignItems: 'center', marginTop: 40, marginBottom: 40 }}>
                                 <MaterialCommunityIcons name="map-marker-star" size={80} color={theme.colors.surfaceVariant} />
-                                <Text variant="titleMedium" style={{ fontWeight: 'bold', marginTop: 16 }}>No suggestions yet</Text>
+                                <Text variant="titleMedium" style={{ fontFamily: 'Inter_700Bold', marginTop: 16 }}>No suggestions yet</Text>
                                 <Text variant="bodyMedium" style={{ textAlign: 'center', marginTop: 8, color: theme.colors.onSurfaceVariant }}>
                                     Your recent trips and suggested places will appear here.
                                 </Text>
@@ -1625,7 +1625,7 @@ export default function BookServiceScreen() {
                         {activeTab === 'saved' && !isSearching && suggestions.length === 0 && savedAddresses.length === 0 && !routeData && !loadingRoute && (
                             <View style={{ alignItems: 'center', marginTop: 40, marginBottom: 40 }}>
                                 <MaterialCommunityIcons name="bookmark-outline" size={80} color={theme.colors.surfaceVariant} />
-                                <Text variant="titleMedium" style={{ fontWeight: 'bold', marginTop: 16 }}>No saved addresses yet</Text>
+                                <Text variant="titleMedium" style={{ fontFamily: 'Inter_700Bold', marginTop: 16 }}>No saved addresses yet</Text>
                                 <Text variant="bodyMedium" style={{ textAlign: 'center', marginTop: 8, color: theme.colors.onSurfaceVariant }}>
                                     Go to your profile to save addresses for quicker booking.
                                 </Text>
@@ -1648,7 +1648,7 @@ export default function BookServiceScreen() {
                                             />
                                         </View>
                                         <View style={{ marginLeft: 12, flex: 1 }}>
-                                            <Text variant="bodyMedium" style={{ fontWeight: 'bold', color: theme.colors.onSurface }}>
+                                            <Text variant="bodyMedium" style={{ fontFamily: 'Inter_700Bold', color: theme.colors.onSurface }}>
                                                 {addr.label}
                                             </Text>
                                             <Text variant="bodySmall" numberOfLines={1} style={{ color: theme.colors.onSurfaceVariant }}>
@@ -1677,7 +1677,7 @@ export default function BookServiceScreen() {
                                     <MaterialCommunityIcons name="map-marker-outline" size={20} color={theme.colors.onSurfaceVariant} />
                                 </View>
                                 <View style={{ marginLeft: 12, flex: 1 }}>
-                                    <Text variant="bodyMedium" style={{ color: theme.colors.onSurface, fontWeight: '600' }} numberOfLines={1}>
+                                    <Text variant="bodyMedium" style={{ color: theme.colors.onSurface, fontFamily: 'Inter_600SemiBold' }} numberOfLines={1}>
                                         {item.name}
                                     </Text>
                                     {item.address ? (
@@ -1702,7 +1702,7 @@ export default function BookServiceScreen() {
                             onPress={() => setIsMapVisible(true)}
                         >
                             <MaterialCommunityIcons name="map-outline" size={20} color={theme.colors.primary} style={{ marginRight: 8 }} />
-                            <Text variant="bodyMedium" style={{ fontWeight: 'bold', color: theme.colors.primary }}>
+                            <Text variant="bodyMedium" style={{ fontFamily: 'Inter_700Bold', color: theme.colors.primary }}>
                                 Set on map
                             </Text>
                         </TouchableOpacity>
@@ -1949,7 +1949,7 @@ const styles = StyleSheet.create({
     },
     pillText: {
         color: '#757575',
-        fontWeight: 'bold',
+        fontFamily: 'Inter_700Bold',
     },
     pillButtonActive: {
         paddingHorizontal: 16,
@@ -1959,7 +1959,7 @@ const styles = StyleSheet.create({
     },
     pillTextActive: {
         color: '#FFFFFF',
-        fontWeight: 'bold',
+        fontFamily: 'Inter_700Bold',
     },
     fixedBottomButtonContainer: {
         position: 'absolute',
@@ -1987,7 +1987,7 @@ const styles = StyleSheet.create({
     sectionTitle: {
         marginBottom: 8,
         color: '#424242',
-        fontWeight: '600',
+        fontFamily: 'Inter_600SemiBold',
     },
     inputRow: {
         flexDirection: 'row',

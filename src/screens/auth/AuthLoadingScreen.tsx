@@ -352,13 +352,13 @@ const styles = StyleSheet.create({
     },
     appName: {
         fontSize: 26,
-        fontWeight: '700',
+        fontFamily: 'Inter_700Bold',
         letterSpacing: -0.5,
         marginBottom: 4,
     },
     tagline: {
         fontSize: 13,
-        fontWeight: '400',
+        fontFamily: 'Inter_400Regular',
         letterSpacing: 0.1,
     },
 
@@ -388,14 +388,14 @@ const styles = StyleSheet.create({
     },
     adTitle: {
         fontSize: 13,
-        fontWeight: '600',
+        fontFamily: 'Inter_600SemiBold',
         marginBottom: 3,
         letterSpacing: -0.1,
     },
     adBody: {
         fontSize: 12,
         lineHeight: 17,
-        fontWeight: '400',
+        fontFamily: 'Inter_400Regular',
     },
 
     // Dots
@@ -433,7 +433,7 @@ const styles = StyleSheet.create({
     },
     statusText: {
         fontSize: 12,
-        fontWeight: '500',
+        fontFamily: 'Inter_500Medium',
         letterSpacing: 0.1,
     },
 });

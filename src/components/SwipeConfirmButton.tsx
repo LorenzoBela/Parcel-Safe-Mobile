@@ -106,7 +106,7 @@ const styles = StyleSheet.create({
     label: {
         color: '#ffffff',
         textAlign: 'center',
-        fontWeight: '700',
+        fontFamily: 'Inter_700Bold',
         letterSpacing: 0.3,
     },
     labelDisabled: {
@@ -128,6 +128,6 @@ const styles = StyleSheet.create({
     knobIcon: {
         color: '#ffffff',
         fontSize: 18,
-        fontWeight: '900',
+        fontFamily: 'Inter_700Bold',
     },
 });

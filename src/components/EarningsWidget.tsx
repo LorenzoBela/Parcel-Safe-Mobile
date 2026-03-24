@@ -126,7 +126,7 @@ export default function EarningsWidget({ riderId, dailyGoal: initialDailyGoal = 
                     </Text>
                 </View>
                 {!isLoading && (
-                    <Text variant="labelMedium" style={{ color: theme.colors.primary, fontWeight: 'bold' }}>
+                    <Text variant="labelMedium" style={{ color: theme.colors.primary, fontFamily: 'Inter_700Bold' }}>
                         {completedTrips} Trips
                     </Text>
                 )}
@@ -189,7 +189,7 @@ export default function EarningsWidget({ riderId, dailyGoal: initialDailyGoal = 
                         {isGoalMet && (
                             <View style={[styles.goalMetBadge, { backgroundColor: theme.dark ? '#052E16' : '#E8F5E9' }]}>
                                 <MaterialCommunityIcons name="check-decagram" size={14} color={theme.dark ? '#4ADE80' : '#4CAF50'} />
-                                <Text variant="labelSmall" style={{ color: theme.dark ? '#4ADE80' : '#4CAF50', marginLeft: 4, fontWeight: 'bold' }}>Goal Met!</Text>
+                                <Text variant="labelSmall" style={{ color: theme.dark ? '#4ADE80' : '#4CAF50', marginLeft: 4, fontFamily: 'Inter_700Bold' }}>Goal Met!</Text>
                             </View>
                         )}
                         <Text variant="labelSmall" style={{ color: theme.colors.outline }}>Daily Goal</Text>
@@ -219,7 +219,7 @@ const styles = StyleSheet.create({
     },
     title: {
         marginLeft: 8,
-        fontWeight: 'bold',
+        fontFamily: 'Inter_700Bold',
     },
     loadingContainer: {
         height: 60,
@@ -233,7 +233,7 @@ const styles = StyleSheet.create({
         marginBottom: 12,
     },
     amount: {
-        fontWeight: '900',
+        fontFamily: 'Inter_700Bold',
     },
     editableGoal: {
         flexDirection: 'row',
@@ -250,7 +250,7 @@ const styles = StyleSheet.create({
     },
     goalInput: {
         fontSize: 14,
-        fontWeight: 'bold',
+        fontFamily: 'Inter_700Bold',
         padding: 0,
         margin: 0,
         height: 20,
@@ -259,7 +259,7 @@ const styles = StyleSheet.create({
     goalText: {
         marginLeft: 4,
         color: '#888',
-        fontWeight: 'bold',
+        fontFamily: 'Inter_700Bold',
     },
     progressTrack: {
         height: 8,

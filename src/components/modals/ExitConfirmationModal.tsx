@@ -62,7 +62,7 @@ export default function ExitConfirmationModal({ visible, onDismiss, onConfirm }:
                     </Text>
 
                     <Text style={[styles.description, { color: c.textSecondary }]}>
-                        Closing the app will <Text style={{ fontWeight: '700', color: c.textPrimary }}>completely stop background tracking</Text>. Are you sure you want to end your session?
+                        Closing the app will <Text style={{ fontFamily: 'Inter_700Bold', color: c.textPrimary }}>completely stop background tracking</Text>. Are you sure you want to end your session?
                     </Text>
 
                     <View style={styles.buttonContainer}>
@@ -125,7 +125,7 @@ const styles = StyleSheet.create({
     },
     title: {
         fontSize: 22,
-        fontWeight: '800',
+        fontFamily: 'Inter_700Bold',
         marginBottom: 12,
         textAlign: 'center',
         letterSpacing: -0.5,
@@ -158,6 +158,6 @@ const styles = StyleSheet.create({
     },
     buttonText: {
         fontSize: 16,
-        fontWeight: '700',
+        fontFamily: 'Inter_700Bold',
     },
 });

@@ -175,15 +175,15 @@ const styles = StyleSheet.create({
     },
     textSmall: {
         fontSize: 11,
-        fontWeight: '500',
+        fontFamily: 'Inter_500Medium',
     },
     textMedium: {
         fontSize: 13,
-        fontWeight: '600',
+        fontFamily: 'Inter_600SemiBold',
     },
     textLarge: {
         fontSize: 15,
-        fontWeight: '600',
+        fontFamily: 'Inter_600SemiBold',
     },
     dot: {
         // Base styles set dynamically
@@ -202,7 +202,7 @@ const styles = StyleSheet.create({
     },
     indicatorLabel: {
         fontSize: 12,
-        fontWeight: '500',
+        fontFamily: 'Inter_500Medium',
     },
 });
 

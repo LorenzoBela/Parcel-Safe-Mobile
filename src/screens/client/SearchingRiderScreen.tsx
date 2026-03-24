@@ -470,7 +470,7 @@ const styles = StyleSheet.create({
         zIndex: 10,
     },
     statusTitle: {
-        fontWeight: 'bold',
+        fontFamily: 'Inter_700Bold',
         marginBottom: 8,
         textAlign: 'center',
     },

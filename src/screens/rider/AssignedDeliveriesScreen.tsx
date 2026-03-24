@@ -342,15 +342,15 @@ export default function AssignedDeliveriesScreen() {
                         <View style={{ padding: 16 }}>
                             <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16 }}>
                                 <View style={{ flex: 1, marginRight: 8 }}>
-                                    <Text style={{ fontSize: 16, fontWeight: '700', color: c.text }}>{item.customer}</Text>
+                                    <Text style={{ fontSize: 16, fontFamily: 'Inter_700Bold', color: c.text }}>{item.customer}</Text>
                                     <Text style={{ fontSize: 12, color: c.textSec, marginTop: 2 }}>{item.trk}</Text>
                                 </View>
                                 <View style={{ alignItems: 'flex-end', gap: 6 }}>
                                     <View style={[styles.statusPill, { backgroundColor: c.pillBg }]}>
-                                        <Text style={{ fontSize: 11, fontWeight: '700', color: c.text }}>{item.distance}</Text>
+                                        <Text style={{ fontSize: 11, fontFamily: 'Inter_700Bold', color: c.text }}>{item.distance}</Text>
                                     </View>
                                     <View style={[styles.statusPill, { backgroundColor: sc.bg }]}>
-                                        <Text style={{ fontSize: 11, fontWeight: '700', color: sc.text }}>{item.status.replace(/_/g, ' ')}</Text>
+                                        <Text style={{ fontSize: 11, fontFamily: 'Inter_700Bold', color: sc.text }}>{item.status.replace(/_/g, ' ')}</Text>
                                     </View>
                                 </View>
                             </View>
@@ -363,7 +363,7 @@ export default function AssignedDeliveriesScreen() {
                                     <View style={styles.locationDotContainer}>
                                         <MaterialCommunityIcons name="package-variant" size={14} color={c.textSec} />
                                     </View>
-                                    <Text style={{ fontSize: 11, color: c.textSec, fontWeight: '700' }}>PICKUP</Text>
+                                    <Text style={{ fontSize: 11, color: c.textSec, fontFamily: 'Inter_700Bold' }}>PICKUP</Text>
                                 </View>
                                 <View style={[styles.addressContainer, { backgroundColor: c.search }]}>
                                     <Text style={{ fontSize: 14, color: c.text, flex: 1 }} numberOfLines={1}>
@@ -384,7 +384,7 @@ export default function AssignedDeliveriesScreen() {
                                     <View style={styles.locationDotContainer}>
                                         <MaterialCommunityIcons name="map-marker" size={14} color={c.redText} />
                                     </View>
-                                    <Text style={{ fontSize: 11, color: c.textSec, fontWeight: '700' }}>DROPOFF</Text>
+                                    <Text style={{ fontSize: 11, color: c.textSec, fontFamily: 'Inter_700Bold' }}>DROPOFF</Text>
                                 </View>
                                 <View style={[styles.addressContainer, { backgroundColor: c.search }]}>
                                     <Text style={{ fontSize: 14, color: c.text, flex: 1 }} numberOfLines={1}>
@@ -403,12 +403,12 @@ export default function AssignedDeliveriesScreen() {
                                 {!['CANCELLED', 'COMPLETED'].includes(item.status) && (
                                     <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                                         <MaterialCommunityIcons name="clock-outline" size={16} color={c.textSec} />
-                                        <Text style={{ marginLeft: 4, color: c.textSec, fontSize: 13, fontWeight: '600' }}>{item.estimatedTime || '-- min'}</Text>
+                                        <Text style={{ marginLeft: 4, color: c.textSec, fontSize: 13, fontFamily: 'Inter_600SemiBold' }}>{item.estimatedTime || '-- min'}</Text>
                                     </View>
                                 )}
                                 <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                                     <MaterialCommunityIcons name="cash" size={16} color={c.textSec} />
-                                    <Text style={{ marginLeft: 4, color: c.textSec, fontSize: 13, fontWeight: '600' }}>{item.earnings}</Text>
+                                    <Text style={{ marginLeft: 4, color: c.textSec, fontSize: 13, fontFamily: 'Inter_600SemiBold' }}>{item.earnings}</Text>
                                 </View>
                             </View>
                         </View>
@@ -508,11 +508,11 @@ export default function AssignedDeliveriesScreen() {
                     <View style={{ padding: 12 }}>
                         <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 10 }}>
                             <View style={[styles.statusPill, { backgroundColor: sc.bg, alignSelf: 'flex-start' }]}>
-                                <Text style={{ fontSize: 10, fontWeight: '700', color: sc.text }}>{item.status.replace(/_/g, ' ')}</Text>
+                                <Text style={{ fontSize: 10, fontFamily: 'Inter_700Bold', color: sc.text }}>{item.status.replace(/_/g, ' ')}</Text>
                             </View>
                         </View>
 
-                        <Text style={{ fontSize: 14, fontWeight: '700', color: c.text }} numberOfLines={1}>{item.customer}</Text>
+                        <Text style={{ fontSize: 14, fontFamily: 'Inter_700Bold', color: c.text }} numberOfLines={1}>{item.customer}</Text>
                         <Text style={{ fontSize: 11, color: c.textSec, marginBottom: 8 }} numberOfLines={1}>{item.trk}</Text>
 
                         <View style={[styles.divider, { backgroundColor: c.divider }]} />
@@ -523,10 +523,10 @@ export default function AssignedDeliveriesScreen() {
                         </View>
 
                         <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 4 }}>
-                            <Text style={{ fontSize: 11, color: c.textSec, fontWeight: '500' }}>
+                            <Text style={{ fontSize: 11, color: c.textSec, fontFamily: 'Inter_500Medium' }}>
                                 {dayjs(item.date).tz(PH_TIMEZONE).format('M/D')} • {item.time}
                             </Text>
-                            <Text style={{ fontSize: 11, color: c.textSec, fontWeight: '600' }}>{item.distance}</Text>
+                            <Text style={{ fontSize: 11, color: c.textSec, fontFamily: 'Inter_600SemiBold' }}>{item.distance}</Text>
                         </View>
                     </View>
                 </TouchableOpacity>
@@ -541,7 +541,7 @@ export default function AssignedDeliveriesScreen() {
             <View style={[styles.header, { backgroundColor: c.bg, borderBottomColor: c.border, paddingTop: Math.max(insets.top, 20) }]}>
                 <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
                     <View>
-                        <Text style={{ fontSize: 26, fontWeight: '800', color: c.text }}>Assigned Deliveries</Text>
+                        <Text style={{ fontSize: 26, fontFamily: 'Inter_700Bold', color: c.text }}>Assigned Deliveries</Text>
                         <Text style={{ fontSize: 14, color: c.textSec, marginTop: 4 }}>{dayjs().format('dddd, MMM D')}</Text>
                     </View>
                     <View style={{ flexDirection: 'row', marginRight: 4 }}>
@@ -575,7 +575,7 @@ export default function AssignedDeliveriesScreen() {
                 {/* Collapsible Filters */}
                 {showFilters && (
                     <View style={[styles.filterSection, { borderTopColor: c.divider }]}>
-                        <Text style={{ fontSize: 13, fontWeight: '600', color: c.textSec, marginBottom: 8, marginTop: 4 }}>Status</Text>
+                        <Text style={{ fontSize: 13, fontFamily: 'Inter_600SemiBold', color: c.textSec, marginBottom: 8, marginTop: 4 }}>Status</Text>
                         <View style={styles.filterRow}>
                             {[
                                 { key: 'All', label: 'All' },
@@ -599,7 +599,7 @@ export default function AssignedDeliveriesScreen() {
                                             { backgroundColor: isSelected ? (key === 'All' ? c.accent : stColor + '1A') : c.pillBg },
                                         ]}
                                     >
-                                        <Text style={{ fontSize: 13, fontWeight: '600', color: isSelected ? (key === 'All' ? c.bg : stColor) : c.textSec }}>
+                                        <Text style={{ fontSize: 13, fontFamily: 'Inter_600SemiBold', color: isSelected ? (key === 'All' ? c.bg : stColor) : c.textSec }}>
                                             {label}
                                         </Text>
                                     </TouchableOpacity>
@@ -609,7 +609,7 @@ export default function AssignedDeliveriesScreen() {
 
                         <View style={{ height: 12 }} />
 
-                        <Text style={{ fontSize: 13, fontWeight: '600', color: c.textSec, marginBottom: 8 }}>Date</Text>
+                        <Text style={{ fontSize: 13, fontFamily: 'Inter_600SemiBold', color: c.textSec, marginBottom: 8 }}>Date</Text>
                         <View style={styles.filterRow}>
                             {['All', 'Today', 'Tomorrow', 'Week', 'Custom'].map((dateOpt) => (
                                 <TouchableOpacity
@@ -620,7 +620,7 @@ export default function AssignedDeliveriesScreen() {
                                         { backgroundColor: dateFilter === dateOpt ? c.accent : c.pillBg },
                                     ]}
                                 >
-                                    <Text style={{ fontSize: 13, fontWeight: '600', color: dateFilter === dateOpt ? c.bg : c.textSec }}>
+                                    <Text style={{ fontSize: 13, fontFamily: 'Inter_600SemiBold', color: dateFilter === dateOpt ? c.bg : c.textSec }}>
                                         {dateOpt}
                                     </Text>
                                 </TouchableOpacity>
@@ -634,10 +634,10 @@ export default function AssignedDeliveriesScreen() {
                                     style={[styles.dateInput, { borderColor: c.border, backgroundColor: c.bg }]}
                                     onPress={() => showDateMode('start')}
                                 >
-                                    <Text style={{ fontSize: 11, color: c.textSec, fontWeight: '600' }}>Start Date</Text>
+                                    <Text style={{ fontSize: 11, color: c.textSec, fontFamily: 'Inter_600SemiBold' }}>Start Date</Text>
                                     <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4 }}>
                                         <MaterialCommunityIcons name="calendar" size={16} color={c.text} style={{ marginRight: 6 }} />
-                                        <Text style={{ fontSize: 14, color: c.text, fontWeight: '500' }}>{dayjs(customStartDate).format('MMM D, YYYY')}</Text>
+                                        <Text style={{ fontSize: 14, color: c.text, fontFamily: 'Inter_500Medium' }}>{dayjs(customStartDate).format('MMM D, YYYY')}</Text>
                                     </View>
                                 </TouchableOpacity>
 
@@ -647,10 +647,10 @@ export default function AssignedDeliveriesScreen() {
                                     style={[styles.dateInput, { borderColor: c.border, backgroundColor: c.bg }]}
                                     onPress={() => showDateMode('end')}
                                 >
-                                    <Text style={{ fontSize: 11, color: c.textSec, fontWeight: '600' }}>End Date</Text>
+                                    <Text style={{ fontSize: 11, color: c.textSec, fontFamily: 'Inter_600SemiBold' }}>End Date</Text>
                                     <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4 }}>
                                         <MaterialCommunityIcons name="calendar" size={16} color={c.text} style={{ marginRight: 6 }} />
-                                        <Text style={{ fontSize: 14, color: c.text, fontWeight: '500' }}>{dayjs(customEndDate).format('MMM D, YYYY')}</Text>
+                                        <Text style={{ fontSize: 14, color: c.text, fontFamily: 'Inter_500Medium' }}>{dayjs(customEndDate).format('MMM D, YYYY')}</Text>
                                     </View>
                                 </TouchableOpacity>
                             </View>
@@ -683,7 +683,7 @@ export default function AssignedDeliveriesScreen() {
                 ListEmptyComponent={
                     <View style={[styles.emptyCard, { backgroundColor: c.card, borderColor: c.border }]}>
                         <MaterialCommunityIcons name="package-variant-closed" size={40} color={c.textTer} />
-                        <Text style={{ fontSize: 15, fontWeight: '600', color: c.textSec, marginTop: 10 }}>No deliveries found</Text>
+                        <Text style={{ fontSize: 15, fontFamily: 'Inter_600SemiBold', color: c.textSec, marginTop: 10 }}>No deliveries found</Text>
                     </View>
                 }
             />
@@ -721,8 +721,8 @@ const styles = StyleSheet.create({
     navBtn: { width: 34, height: 34, borderRadius: 17, justifyContent: 'center', alignItems: 'center' },
     cardActions: { gap: 10, paddingTop: 0 },
     primaryBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 14, borderRadius: 14, gap: 8 },
-    primaryBtnText: { fontSize: 15, fontWeight: '700' },
+    primaryBtnText: { fontSize: 15, fontFamily: 'Inter_700Bold' },
     secondaryBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 12, borderRadius: 12, borderWidth: 1, gap: 6 },
-    secondaryBtnText: { fontSize: 13, fontWeight: '600' },
+    secondaryBtnText: { fontSize: 13, fontFamily: 'Inter_600SemiBold' },
     emptyCard: { alignItems: 'center', padding: 32, borderRadius: 16, borderWidth: 1, marginTop: 40 },
 });

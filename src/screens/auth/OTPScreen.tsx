@@ -172,7 +172,7 @@ export default function OTPScreen() {
             {/* Header */}
             <View style={styles.header}>
                 <IconButton icon="close" size={24} onPress={() => navigation.goBack()} />
-                <Text variant="titleMedium" style={{ fontWeight: 'bold' }}>Secure Delivery Code</Text>
+                <Text variant="titleMedium" style={{ fontFamily: 'Inter_700Bold' }}>Secure Delivery Code</Text>
                 <View style={{ width: 40 }} />
             </View>
 
@@ -313,7 +313,7 @@ const styles = StyleSheet.create({
         marginBottom: 24,
     },
     title: {
-        fontWeight: 'bold',
+        fontFamily: 'Inter_700Bold',
         marginBottom: 12,
     },
     subtitle: {
@@ -339,7 +339,7 @@ const styles = StyleSheet.create({
     },
     cellText: {
         fontSize: 24,
-        fontWeight: 'bold',
+        fontFamily: 'Inter_700Bold',
     },
     warningCard: {
         flexDirection: 'row',
@@ -376,7 +376,7 @@ const styles = StyleSheet.create({
     },
     lockedText: {
         fontSize: 18,
-        fontWeight: 'bold',
+        fontFamily: 'Inter_700Bold',
         marginLeft: 12,
     },
 });

@@ -77,6 +77,6 @@ const styles = StyleSheet.create({
         backgroundColor: '#FF3B30',
         color: '#FFFFFF',
         fontSize: 10,
-        fontWeight: '700',
+        fontFamily: 'Inter_700Bold',
     },
 });

@@ -186,7 +186,7 @@ export default function DeliveryLogScreen() {
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
                     {selectedFilter !== 'All' && (
                         <TouchableOpacity onPress={() => setSelectedFilter('All')} activeOpacity={0.7}>
-                            <Text style={{ fontSize: 12, color: c.accent, fontWeight: '600' }}>Clear</Text>
+                            <Text style={{ fontSize: 12, color: c.accent, fontFamily: 'Inter_600SemiBold' }}>Clear</Text>
                         </TouchableOpacity>
                     )}
                     <TouchableOpacity
@@ -286,24 +286,24 @@ export default function DeliveryLogScreen() {
 const styles = StyleSheet.create({
     container: { flex: 1 },
     header: { paddingHorizontal: 20, paddingBottom: 8, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-    title: { fontSize: 28, fontWeight: '800' },
+    title: { fontSize: 28, fontFamily: 'Inter_700Bold' },
     filterToggle: { width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center' },
     searchRow: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 8, gap: 6, marginBottom: 6 },
     searchInput: { flex: 1, fontSize: 14, padding: 0 },
     filterRow: { flexDirection: 'row', flexWrap: 'wrap', paddingHorizontal: 16, paddingBottom: 4, gap: 6 },
     filterChip: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 10 },
-    filterChipText: { fontSize: 12, fontWeight: '600' },
+    filterChipText: { fontSize: 12, fontFamily: 'Inter_600SemiBold' },
     resultRow: { paddingHorizontal: 20, paddingBottom: 4, paddingTop: 2 },
-    resultText: { fontSize: 11, fontWeight: '500' },
+    resultText: { fontSize: 11, fontFamily: 'Inter_500Medium' },
     // Card
     card: { borderRadius: 14, borderWidth: 1, marginBottom: 12, overflow: 'hidden' },
     cardHeader: { flexDirection: 'row', alignItems: 'center', padding: 14 },
-    cardTrk: { fontSize: 15, fontWeight: '700' },
+    cardTrk: { fontSize: 15, fontFamily: 'Inter_700Bold' },
     cardSub: { fontSize: 12, marginTop: 1 },
     statusPill: { paddingHorizontal: 10, paddingVertical: 3, borderRadius: 20 },
-    statusPillText: { fontSize: 11, fontWeight: '700' },
+    statusPillText: { fontSize: 11, fontFamily: 'Inter_700Bold' },
     alertRow: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 14, paddingVertical: 6 },
-    alertText: { color: '#FF3B30', fontSize: 12, fontWeight: '700' },
+    alertText: { color: '#FF3B30', fontSize: 12, fontFamily: 'Inter_700Bold' },
     routeBlock: { paddingHorizontal: 14, paddingBottom: 10 },
     routeRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
     routeDot: { width: 8, height: 8, borderRadius: 4 },
@@ -312,9 +312,9 @@ const styles = StyleSheet.create({
     cardFooter: { flexDirection: 'row', alignItems: 'center', borderTopWidth: StyleSheet.hairlineWidth, padding: 12, gap: 12 },
     footerMeta: { flexDirection: 'row', alignItems: 'center', gap: 4 },
     footerText: { fontSize: 12 },
-    fareText: { fontSize: 14, fontWeight: '700', marginLeft: 'auto' },
+    fareText: { fontSize: 14, fontFamily: 'Inter_700Bold', marginLeft: 'auto' },
     // Empty
     emptyState: { alignItems: 'center', justifyContent: 'center', marginTop: 100 },
     emptyText: { marginTop: 10, fontSize: 14 },
-    retryText: { marginTop: 12, fontWeight: '700', fontSize: 14 },
+    retryText: { marginTop: 12, fontFamily: 'Inter_700Bold', fontSize: 14 },
 });

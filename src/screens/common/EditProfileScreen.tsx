@@ -135,7 +135,7 @@ export default function EditProfileScreen() {
         >
             <ScrollView contentContainerStyle={styles.scrollContent}>
                 <View style={styles.header}>
-                    <Text variant="headlineMedium" style={{ color: c.text, fontWeight: 'bold' }}>
+                    <Text variant="headlineMedium" style={{ color: c.text, fontFamily: 'Inter_700Bold' }}>
                         Edit Profile
                     </Text>
                     <Text variant="bodyMedium" style={{ color: c.textSec, marginTop: 4 }}>

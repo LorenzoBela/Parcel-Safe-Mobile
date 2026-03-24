@@ -393,7 +393,7 @@ export default function ReturnPackageScreen() {
                         color={currentStep === 'COMPLETED' ? '#4CAF50' : '#FF9800'}
                     />
                     <View style={styles.statusContent}>
-                        <Text variant="titleMedium" style={{ fontWeight: 'bold', color: theme.colors.onSurface }}>
+                        <Text variant="titleMedium" style={{ fontFamily: 'Inter_700Bold', color: theme.colors.onSurface }}>
                             {currentStep === 'NAVIGATING' && 'Navigating to Pickup'}
                             {currentStep === 'ARRIVED' && 'Confirm Arrival'}
                             {currentStep === 'PHOTO_CAPTURE' && 'Capture Sender Photo'}
@@ -504,7 +504,7 @@ export default function ReturnPackageScreen() {
                         {/* Floating Distance Badge overlay on the map */}
                         {distanceM !== null && (
                             <View style={[styles.mapDistanceBadge, { backgroundColor: theme.colors.surface, borderColor: theme.colors.outlineVariant }]}>
-                                <Text variant="labelMedium" style={{ fontWeight: 'bold', color: theme.colors.onSurface }}>
+                                <Text variant="labelMedium" style={{ fontFamily: 'Inter_700Bold', color: theme.colors.onSurface }}>
                                     {formatDistance()}
                                 </Text>
                                 <Text variant="labelSmall" style={{ color: theme.colors.onSurfaceVariant }}>to zone</Text>
@@ -519,7 +519,7 @@ export default function ReturnPackageScreen() {
                         </View>
                         <View style={{ flex: 1, marginLeft: 12 }}>
                             <Text variant="labelSmall" style={{ color: theme.colors.onSurfaceVariant }}>RETURN TO</Text>
-                            <Text variant="titleMedium" style={{ fontWeight: 'bold', color: theme.colors.onSurface }}>{senderName}</Text>
+                            <Text variant="titleMedium" style={{ fontFamily: 'Inter_700Bold', color: theme.colors.onSurface }}>{senderName}</Text>
                             <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>{pickupAddress}</Text>
                         </View>
                     </View>
@@ -626,7 +626,7 @@ export default function ReturnPackageScreen() {
                         variant="bodyMedium"
                         numberOfLines={1}
                         ellipsizeMode="middle"
-                        style={{ fontWeight: 'bold', marginTop: 4, color: theme.colors.onSurface }}
+                        style={{ fontFamily: 'Inter_700Bold', marginTop: 4, color: theme.colors.onSurface }}
                     >
                         {deliveryId}
                     </Text>
@@ -636,7 +636,7 @@ export default function ReturnPackageScreen() {
                 {currentStep === 'COMPLETED' && (
                     <Surface style={[styles.completedCard, { backgroundColor: theme.dark ? '#1B5E20' : '#E8F5E9' }]} elevation={2}>
                         <MaterialCommunityIcons name="check-decagram" size={64} color="#4CAF50" />
-                        <Text variant="headlineSmall" style={{ fontWeight: 'bold', marginTop: 16, color: theme.colors.onSurface }}>
+                        <Text variant="headlineSmall" style={{ fontFamily: 'Inter_700Bold', marginTop: 16, color: theme.colors.onSurface }}>
                             Return Successful!
                         </Text>
                         <Text variant="bodyMedium" style={{ textAlign: 'center', marginTop: 8, color: theme.colors.onSurfaceVariant }}>

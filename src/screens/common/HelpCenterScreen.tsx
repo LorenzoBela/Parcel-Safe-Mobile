@@ -60,7 +60,7 @@ export default function HelpCenterScreen() {
             </View>
 
             <List.Section>
-                <List.Subheader style={{ color: c.textSec, fontWeight: 'bold' }}>Frequently Asked Questions</List.Subheader>
+                <List.Subheader style={{ color: c.textSec, fontFamily: 'Inter_700Bold' }}>Frequently Asked Questions</List.Subheader>
                 {FAQs.map((faq, index) => (
                     <Card key={index} style={[styles.card, { backgroundColor: c.card, borderWidth: 1, borderColor: c.border }]} elevation={0}>
                         <Card.Content>
@@ -72,11 +72,11 @@ export default function HelpCenterScreen() {
             </List.Section>
 
             <List.Section>
-                <List.Subheader style={{ color: c.textSec, fontWeight: 'bold' }}>Contact Support</List.Subheader>
+                <List.Subheader style={{ color: c.textSec, fontFamily: 'Inter_700Bold' }}>Contact Support</List.Subheader>
                 <Card style={[styles.card, { backgroundColor: c.card, borderWidth: 1, borderColor: c.border }]} elevation={0}>
                     <List.Item
                         title="Customer Hotline"
-                        titleStyle={{ color: c.text, fontWeight: '500' }}
+                        titleStyle={{ color: c.text, fontFamily: 'Inter_500Medium' }}
                         description="(02) 8-123-4567"
                         descriptionStyle={{ color: c.textSec }}
                         left={props => <List.Icon {...props} icon="phone" color={c.accent} />}
@@ -85,7 +85,7 @@ export default function HelpCenterScreen() {
                     <Divider style={{ backgroundColor: c.border }} />
                     <List.Item
                         title="Email Support"
-                        titleStyle={{ color: c.text, fontWeight: '500' }}
+                        titleStyle={{ color: c.text, fontFamily: 'Inter_500Medium' }}
                         description="support@parcelsafe.com"
                         descriptionStyle={{ color: c.textSec }}
                         left={props => <List.Icon {...props} icon="email" color={c.accent} />}
@@ -113,7 +113,7 @@ const styles = StyleSheet.create({
         marginVertical: 20,
     },
     title: {
-        fontWeight: 'bold',
+        fontFamily: 'Inter_700Bold',
         marginVertical: 8,
     },
     card: {
@@ -121,7 +121,7 @@ const styles = StyleSheet.create({
         borderRadius: 16,
     },
     question: {
-        fontWeight: 'bold',
+        fontFamily: 'Inter_700Bold',
         marginBottom: 8,
     },
     button: {

@@ -78,7 +78,7 @@ const styles = StyleSheet.create({
     },
     title: {
         color: 'white',
-        fontWeight: 'bold',
+        fontFamily: 'Inter_700Bold',
         fontSize: 14,
     },
     subtitle: {
@@ -96,6 +96,6 @@ const styles = StyleSheet.create({
     syncBadgeText: {
         color: 'white',
         fontSize: 12,
-        fontWeight: 'bold',
+        fontFamily: 'Inter_700Bold',
     },
 });

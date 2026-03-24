@@ -426,7 +426,7 @@ export default function DeliveryCompletionScreen() {
                         </View>
                     )}
                     {!isPickedUp && !isInsideGeofence && (
-                        <Text style={{ color: '#ef4444', fontWeight: 'bold', marginTop: 4 }}>
+                        <Text style={{ color: '#ef4444', fontFamily: 'Inter_700Bold', marginTop: 4 }}>
                             ⚠️ Outside Geofence ({distanceToTarget}m). Move closer.
                         </Text>
                     )}
@@ -449,7 +449,7 @@ export default function DeliveryCompletionScreen() {
                         {isArrived ? 'Arrival is already recorded.' : 'Swipe to mark rider as arrived at destination.'}
                     </Text>
                     {!isArrived && !isInsideGeofence && (
-                        <Text style={{ color: '#ef4444', fontWeight: 'bold', marginTop: 4 }}>
+                        <Text style={{ color: '#ef4444', fontFamily: 'Inter_700Bold', marginTop: 4 }}>
                             ⚠️ Outside Geofence ({distanceToTarget}m). Move closer.
                         </Text>
                     )}
@@ -491,7 +491,7 @@ export default function DeliveryCompletionScreen() {
                         )}
                     </View>
                     {!isCompleted && !isInsideGeofence && (
-                        <Text style={{ color: '#ef4444', fontWeight: 'bold', marginTop: 4 }}>
+                        <Text style={{ color: '#ef4444', fontFamily: 'Inter_700Bold', marginTop: 4 }}>
                             ⚠️ Outside Geofence ({distanceToTarget}m). Move closer.
                         </Text>
                     )}
@@ -528,7 +528,7 @@ const styles = StyleSheet.create({
     },
     title: {
         textAlign: 'center',
-        fontWeight: '700',
+        fontFamily: 'Inter_700Bold',
         marginBottom: 8,
     },
     subtitle: {
@@ -541,7 +541,7 @@ const styles = StyleSheet.create({
         borderRadius: 12,
     },
     cardTitle: {
-        fontWeight: '700',
+        fontFamily: 'Inter_700Bold',
         marginBottom: 6,
         color: '#111827',
     },

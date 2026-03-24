@@ -297,14 +297,14 @@ const styles = StyleSheet.create({
         elevation: 6,
     },
     profileInfo: { flex: 1, marginLeft: 14 },
-    profileName: { fontSize: 18, fontWeight: '700' },
+    profileName: { fontSize: 18, fontFamily: 'Inter_700Bold' },
     profileEmail: { fontSize: 13, marginTop: 2 },
     profileChevron: {
         width: 32, height: 32, borderRadius: 16,
         alignItems: 'center', justifyContent: 'center',
     },
     sectionTitle: {
-        fontSize: 12, fontWeight: '600', letterSpacing: 0.8,
+        fontSize: 12, fontFamily: 'Inter_600SemiBold', letterSpacing: 0.8,
         marginHorizontal: 20, marginBottom: 6, marginTop: 4,
     },
     section: {
@@ -319,14 +319,14 @@ const styles = StyleSheet.create({
         width: 36, height: 36, borderRadius: 12, alignItems: 'center', justifyContent: 'center',
     },
     rowContent: { flex: 1, marginLeft: 12 },
-    rowLabel: { fontSize: 15, fontWeight: '500' },
+    rowLabel: { fontSize: 15, fontFamily: 'Inter_500Medium' },
     rowSub: { fontSize: 12, marginTop: 1 },
     logoutBtn: {
         flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
         marginHorizontal: 16, paddingVertical: 14, borderRadius: 14, borderWidth: 1,
         gap: 8, marginBottom: 8,
     },
-    logoutText: { fontSize: 15, fontWeight: '600' },
+    logoutText: { fontSize: 15, fontFamily: 'Inter_600SemiBold' },
     version: { textAlign: 'center', fontSize: 12, marginTop: 16 },
 
     // Loading Screen Styles
@@ -347,13 +347,13 @@ const styles = StyleSheet.create({
     },
     loadingTitle: {
         fontSize: 26,
-        fontWeight: '700',
+        fontFamily: 'Inter_700Bold',
         letterSpacing: -0.5,
         marginBottom: 4,
     },
     loadingSubtitle: {
         fontSize: 13,
-        fontWeight: '400',
+        fontFamily: 'Inter_400Regular',
         letterSpacing: 0.1,
         marginBottom: 40,
     },
@@ -379,7 +379,7 @@ const styles = StyleSheet.create({
     },
     loadingStatusText: {
         fontSize: 12,
-        fontWeight: '500',
+        fontFamily: 'Inter_500Medium',
         letterSpacing: 0.1,
     },
 });

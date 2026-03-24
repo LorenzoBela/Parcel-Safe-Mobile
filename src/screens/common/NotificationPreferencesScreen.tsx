@@ -130,6 +130,6 @@ const styles = StyleSheet.create({
         width: 36, height: 36, borderRadius: 10, alignItems: 'center', justifyContent: 'center',
     },
     rowContent: { flex: 1, marginLeft: 12 },
-    rowLabel: { fontSize: 15, fontWeight: '500' },
+    rowLabel: { fontSize: 15, fontFamily: 'Inter_500Medium' },
     rowSub: { fontSize: 12, marginTop: 1 },
 });

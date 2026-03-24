@@ -83,7 +83,7 @@ const CustomerNavigator = () => {
                     borderTopWidth: StyleSheet.hairlineWidth,
                     elevation: 0,
                 },
-                tabBarLabelStyle: { fontSize: 11, fontWeight: '600' },
+                tabBarLabelStyle: { fontSize: 11, fontFamily: 'Inter_600SemiBold' },
             }}
         >
             <Tab.Screen
@@ -131,7 +131,7 @@ const RiderNavigator = () => {
                     borderTopWidth: StyleSheet.hairlineWidth,
                     elevation: 0,
                 },
-                tabBarLabelStyle: { fontSize: 11, fontWeight: '600' },
+                tabBarLabelStyle: { fontSize: 11, fontFamily: 'Inter_600SemiBold' },
             }}
         >
             <Tab.Screen
@@ -184,7 +184,7 @@ const AdminNavigator = () => {
                 },
                 tabBarLabelStyle: {
                     fontSize: 11,
-                    fontWeight: '600',
+                    fontFamily: 'Inter_600SemiBold',
                     letterSpacing: 0.1,
                 },
             }}

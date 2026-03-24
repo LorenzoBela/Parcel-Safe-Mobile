@@ -68,11 +68,11 @@ const styles = StyleSheet.create({
         padding: 24,
     },
     title: {
-        fontWeight: 'bold',
+        fontFamily: 'Inter_700Bold',
         marginBottom: 8,
     },
     sectionTitle: {
-        fontWeight: 'bold',
+        fontFamily: 'Inter_700Bold',
         marginTop: 16,
         marginBottom: 8,
     },

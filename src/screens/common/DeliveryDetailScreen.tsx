@@ -543,11 +543,11 @@ export default function DeliveryDetailScreen() {
                     <View style={styles.statusHeader}>
                         <View style={{ flex: 1, marginRight: 10 }}>
                             <Text variant="labelSmall" style={{ color: '#888' }}>Tracking Number</Text>
-                            <Text variant="titleMedium" style={{ fontWeight: 'bold', color: c.text }} numberOfLines={1} ellipsizeMode="middle">{deliveryData.trk || deliveryData.tracking_number || deliveryData.id}</Text>
+                            <Text variant="titleMedium" style={{ fontFamily: 'Inter_700Bold', color: c.text }} numberOfLines={1} ellipsizeMode="middle">{deliveryData.trk || deliveryData.tracking_number || deliveryData.id}</Text>
                         </View>
                         <Chip
                             icon={getStatusIcon(deliveryData.status)}
-                            textStyle={{ color: 'white', fontWeight: 'bold' }}
+                            textStyle={{ color: 'white', fontFamily: 'Inter_700Bold' }}
                             style={{ backgroundColor: getStatusColor(deliveryData.status) }}
                         >
                             {formatStatus(deliveryData.status)}
@@ -557,15 +557,15 @@ export default function DeliveryDetailScreen() {
                     <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 8 }}>
                         <View>
                             <Text variant="labelSmall" style={{ color: '#888' }}>Date</Text>
-                            <Text variant="bodyMedium" style={{ fontWeight: '500', color: c.text }}>{deliveryData.date || deliveryData.time || 'N/A'}</Text>
+                            <Text variant="bodyMedium" style={{ fontFamily: 'Inter_500Medium', color: c.text }}>{deliveryData.date || deliveryData.time || 'N/A'}</Text>
                         </View>
                         <View>
                             <Text variant="labelSmall" style={{ color: '#888' }}>Distance</Text>
-                            <Text variant="bodyMedium" style={{ fontWeight: '500', color: c.text }}>{displayDistance}</Text>
+                            <Text variant="bodyMedium" style={{ fontFamily: 'Inter_500Medium', color: c.text }}>{displayDistance}</Text>
                         </View>
                         <View>
                             <Text variant="labelSmall" style={{ color: '#888' }}>Fare</Text>
-                            <Text variant="bodyMedium" style={{ fontWeight: '500', color: theme.colors.primary }}>
+                            <Text variant="bodyMedium" style={{ fontFamily: 'Inter_500Medium', color: theme.colors.primary }}>
                                 {(() => {
                                     const fare = deliveryData.fare || deliveryData.estimated_fare || deliveryData.price;
                                     if (!fare || fare === 'N/A' || fare === '--') return 'N/A';
@@ -694,7 +694,7 @@ export default function DeliveryDetailScreen() {
                         <Surface style={styles.tamperAlert} elevation={2}>
                             <MaterialCommunityIcons name="alert-circle" size={30} color="white" />
                             <View style={{ marginLeft: 12, flex: 1 }}>
-                                <Text variant="titleMedium" style={{ color: 'white', fontWeight: 'bold' }}>Tampering Detected</Text>
+                                <Text variant="titleMedium" style={{ color: 'white', fontFamily: 'Inter_700Bold' }}>Tampering Detected</Text>
                                 <Text variant="bodySmall" style={{ color: 'white' }}>
                                     This package showed signs of unauthorized access. Please contact support immediately.
                                 </Text>
@@ -727,7 +727,7 @@ const styles = StyleSheet.create({
         elevation: 2,
     },
     headerTitle: {
-        fontWeight: 'bold',
+        fontFamily: 'Inter_700Bold',
     },
     scrollContent: {
         padding: 20,
@@ -774,7 +774,7 @@ const styles = StyleSheet.create({
         borderRadius: 12,
     },
     sectionTitle: {
-        fontWeight: 'bold',
+        fontFamily: 'Inter_700Bold',
         marginBottom: 12,
     },
     detailRow: {
@@ -787,7 +787,7 @@ const styles = StyleSheet.create({
         flex: 1,
     },
     detailLabel: {
-        fontWeight: 'bold',
+        fontFamily: 'Inter_700Bold',
         fontSize: 14,
         color: '#333',
     },

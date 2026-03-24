@@ -212,7 +212,7 @@ const styles = StyleSheet.create({
         marginBottom: 16,
     },
     title: {
-        fontWeight: 'bold',
+        fontFamily: 'Inter_700Bold',
         marginBottom: 8,
     },
     warningBanner: {

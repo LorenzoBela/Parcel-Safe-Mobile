@@ -191,7 +191,7 @@ const styles = StyleSheet.create({
     },
     title: {
         fontSize: 20,
-        fontWeight: '600',
+        fontFamily: 'Inter_600SemiBold',
         marginBottom: 8,
         textAlign: 'center',
     },

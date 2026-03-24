@@ -209,7 +209,7 @@ export default function SavedAddressesScreen() {
                         <View style={[styles.emptyIconBox, { backgroundColor: c.accent + '10' }]}>
                             <MaterialCommunityIcons name="map-marker-off" size={48} color={c.textTer} />
                         </View>
-                        <Text variant="titleMedium" style={{ marginTop: 16, fontWeight: 'bold', color: c.text }}>No Addresses Found</Text>
+                        <Text variant="titleMedium" style={{ marginTop: 16, fontFamily: 'Inter_700Bold', color: c.text }}>No Addresses Found</Text>
                         <Text variant="bodyMedium" style={{ marginTop: 8, color: c.textSec, textAlign: 'center', paddingHorizontal: 32 }}>
                             Add your home, office, or other frequently used addresses for faster booking.
                         </Text>
@@ -231,7 +231,7 @@ export default function SavedAddressesScreen() {
                                             <Text variant="titleMedium" style={[styles.cardLabel, { color: c.text }]}>{addr.label}</Text>
                                             {addr.isDefault && (
                                                 <View style={[styles.defaultBadge, { backgroundColor: c.accent + '10', borderColor: c.accent }]}>
-                                                    <Text style={{ fontSize: 9, color: c.accent, fontWeight: 'bold', letterSpacing: 0.5 }}>DEFAULT</Text>
+                                                    <Text style={{ fontSize: 9, color: c.accent, fontFamily: 'Inter_700Bold', letterSpacing: 0.5 }}>DEFAULT</Text>
                                                 </View>
                                             )}
                                         </View>
@@ -250,7 +250,7 @@ export default function SavedAddressesScreen() {
                             {addr.latitude && addr.longitude ? (
                                 <View style={styles.locationTag}>
                                     <MaterialCommunityIcons name="map-marker-check" size={14} color={c.accent} />
-                                    <Text variant="bodySmall" style={{ color: c.accent, marginLeft: 4, fontWeight: '500' }}>Location coordinates verified</Text>
+                                    <Text variant="bodySmall" style={{ color: c.accent, marginLeft: 4, fontFamily: 'Inter_500Medium' }}>Location coordinates verified</Text>
                                 </View>
                             ) : null}
                         </Surface>
@@ -264,12 +264,12 @@ export default function SavedAddressesScreen() {
                 style={[styles.addButton, { bottom: 24 + insets.bottom, backgroundColor: c.accent }]}
             >
                 <MaterialCommunityIcons name="plus" size={20} color={c.bg} />
-                <Text style={{ color: c.bg, fontWeight: '600', marginLeft: 6 }}>Add New Address</Text>
+                <Text style={{ color: c.bg, fontFamily: 'Inter_600SemiBold', marginLeft: 6 }}>Add New Address</Text>
             </TouchableOpacity>
 
             <Portal>
                 <Modal visible={modalVisible} onDismiss={() => setModalVisible(false)} contentContainerStyle={[styles.modalContent, { backgroundColor: c.bg }]}>
-                    <Text variant="headlineSmall" style={{ marginBottom: 16, fontWeight: 'bold', color: c.text }}>
+                    <Text variant="headlineSmall" style={{ marginBottom: 16, fontFamily: 'Inter_700Bold', color: c.text }}>
                         {editingId ? 'Edit Address' : 'New Address'}
                     </Text>
 
@@ -406,7 +406,7 @@ const styles = StyleSheet.create({
         marginRight: 14,
     },
     cardLabel: {
-        fontWeight: 'bold',
+        fontFamily: 'Inter_700Bold',
     },
     defaultBadge: {
         paddingHorizontal: 6,

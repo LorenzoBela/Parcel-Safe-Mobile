@@ -1745,7 +1745,7 @@ export default function RiderDashboard() {
                         <Card.Content>
                             <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>
                                 <MaterialCommunityIcons name="shield-alert" size={28} color={c.redText} />
-                                <Text style={{ marginLeft: 8, fontWeight: 'bold', fontSize: 18, color: c.redText }}>
+                                <Text style={{ marginLeft: 8, fontFamily: 'Inter_700Bold', fontSize: 18, color: c.redText }}>
                                     Security Incident Lock
                                 </Text>
                             </View>
@@ -1821,23 +1821,25 @@ export default function RiderDashboard() {
             >
                 <View style={styles.headerOverlay}>
                     <View style={styles.headerContent}>
-                        <View>
+                        <View style={styles.headerInfoBox}>
                             <View style={styles.locationContainer}>
-                                <MaterialCommunityIcons name="map-marker" size={16} color="rgba(255,255,255,0.9)" />
-                                <Text style={styles.locationText}>{locationName}</Text>
+                                <MaterialCommunityIcons name="map-marker" size={16} color="rgba(255,255,255,0.9)" style={styles.textShadow} />
+                                <Text style={[styles.locationText, styles.textShadow]}>{locationName}</Text>
                             </View>
-                            <Text style={styles.dateText}>{currentTime.format('dddd, MMMM D')}</Text>
-                            <Text style={styles.timeText}>{currentTime.format('h:mm A')}</Text>
+                            <Text style={[styles.dateText, styles.textShadow]}>{currentTime.format('dddd, MMMM D')}</Text>
+                            <Text style={[styles.timeText, styles.textShadow]}>{currentTime.format('h:mm A')}</Text>
                         </View>
                         <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                             {weather && (
                                 <View style={styles.weatherContainer}>
-                                    <MaterialCommunityIcons name={weather.icon as any} size={30} color="white" />
-                                    <Text style={styles.weatherText}>{weather.temp}</Text>
-                                    <Text style={styles.weatherCondition}>{weather.condition}</Text>
+                                    <MaterialCommunityIcons name={weather.icon as any} size={30} color="white" style={styles.textShadow} />
+                                    <Text style={[styles.weatherText, styles.textShadow]}>{weather.temp}</Text>
+                                    <Text style={[styles.weatherCondition, styles.textShadow]}>{weather.condition}</Text>
                                 </View>
                             )}
-                            <NotificationBell color="#FFFFFF" size={24} />
+                            <View style={styles.iconBox}>
+                                <NotificationBell color="#FFFFFF" size={24} />
+                            </View>
                         </View>
                     </View>
                 </View>
@@ -1905,7 +1907,7 @@ export default function RiderDashboard() {
                             <Text style={[styles.bannerTitle, { color: c.redText }]}>PACKAGE RECALLED</Text>
                             <Text style={[styles.bannerText, { color: c.redText }]}>Return to Sender immediately!</Text>
                             {recallState.returnOtp && (
-                                <Text style={[styles.bannerText, { color: c.redText, fontWeight: 'bold', marginTop: 4 }]}>
+                                <Text style={[styles.bannerText, { color: c.redText, fontFamily: 'Inter_700Bold', marginTop: 4 }]}>
                                     Return OTP: {recallState.returnOtp}
                                 </Text>
                             )}
@@ -2019,7 +2021,7 @@ export default function RiderDashboard() {
                                 />
                             </View>
                             <View style={styles.gpsStatusInfo}>
-                                <Text variant="titleSmall" style={{ fontWeight: 'bold', color: c.text }}>GPS Tracking</Text>
+                                <Text variant="titleSmall" style={{ fontFamily: 'Inter_700Bold', color: c.text }}>GPS Tracking</Text>
                                 <Text variant="bodySmall" style={{ color: hasActiveDelivery ? (localPhoneLocation && gpsSource === 'none' ? c.orangeText : getStatusColor(gpsSource, isBoxOnline)) : c.textSec }}>
                                     {hasActiveDelivery ?
                                         (localPhoneLocation && gpsSource === 'none' ? 'Using Phone (Local Fallback)' : getStatusMessage(gpsSource, isBoxOnline))
@@ -2045,7 +2047,7 @@ export default function RiderDashboard() {
                     <View style={[styles.pairingCard, { backgroundColor: c.card, borderColor: c.border, borderWidth: 1 }]}>
                         <View style={styles.pairingRow}>
                             <View style={styles.pairingInfo}>
-                                <Text variant="titleSmall" style={{ fontWeight: 'bold', color: c.text }}>
+                                <Text variant="titleSmall" style={{ fontFamily: 'Inter_700Bold', color: c.text }}>
                                     {isPaired ? 'Box Paired' : 'No Box Paired'}
                                 </Text>
                                 <Text variant="bodySmall" style={{ color: c.textSec }}>
@@ -2208,12 +2210,12 @@ export default function RiderDashboard() {
                             <Card.Content style={styles.jobContent}>
                                 <View style={styles.jobHeader}>
                                     <View style={{ flex: 1, marginRight: 8 }}>
-                                        <Text variant="titleMedium" style={{ fontWeight: 'bold', color: c.text }}>{nextDelivery.customer}</Text>
+                                        <Text variant="titleMedium" style={{ fontFamily: 'Inter_700Bold', color: c.text }}>{nextDelivery.customer}</Text>
                                         <Text variant="bodySmall" style={{ color: c.textSec }}>{nextDelivery.id}</Text>
                                     </View>
                                     <View style={{ alignItems: 'flex-end' }}>
                                         <Chip icon="map-marker-distance" compact style={{ backgroundColor: c.search, marginBottom: 4 }} textStyle={{ color: c.text }}>{distance}</Chip>
-                                        <Chip compact style={{ backgroundColor: c.greenBg }} textStyle={{ fontSize: 10, color: c.greenText, fontWeight: 'bold' }}>{activeDelivery.status.replace(/_/g, ' ')}</Chip>
+                                        <Chip compact style={{ backgroundColor: c.greenBg }} textStyle={{ fontSize: 10, color: c.greenText, fontFamily: 'Inter_700Bold' }}>{activeDelivery.status.replace(/_/g, ' ')}</Chip>
                                     </View>
                                 </View>
 
@@ -2226,7 +2228,7 @@ export default function RiderDashboard() {
                                             <View style={[styles.badge, { backgroundColor: c.blueBg, width: 24, height: 24, borderRadius: 12, marginRight: 8 }]}>
                                                 <MaterialCommunityIcons name="package-variant" size={14} color={c.blueText} />
                                             </View>
-                                            <Text variant="labelSmall" style={{ color: c.blueText, fontWeight: 'bold' }}>PICKUP</Text>
+                                            <Text variant="labelSmall" style={{ color: c.blueText, fontFamily: 'Inter_700Bold' }}>PICKUP</Text>
                                         </View>
                                         <View style={[styles.addressContainer, { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }]}>
                                             <Text variant="bodyMedium" style={[styles.address, { flex: 1, marginBottom: 0, marginLeft: 0, color: c.text }]}>
@@ -2252,7 +2254,7 @@ export default function RiderDashboard() {
                                             <View style={[styles.badge, { backgroundColor: c.redBg, width: 24, height: 24, borderRadius: 12, marginRight: 8 }]}>
                                                 <MaterialCommunityIcons name="keyboard-return" size={14} color={c.redText} />
                                             </View>
-                                            <Text variant="labelSmall" style={{ color: c.redText, fontWeight: 'bold' }}>RETURN DESTINATION</Text>
+                                            <Text variant="labelSmall" style={{ color: c.redText, fontFamily: 'Inter_700Bold' }}>RETURN DESTINATION</Text>
                                         </View>
                                         <View style={[styles.addressContainer, { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }]}>
                                             <Text variant="bodyMedium" style={[styles.address, { flex: 1, marginBottom: 0, marginLeft: 0, color: c.text }]}>
@@ -2275,7 +2277,7 @@ export default function RiderDashboard() {
                                             <View style={[styles.badge, { backgroundColor: c.redBg, width: 24, height: 24, borderRadius: 12, marginRight: 8 }]}>
                                                 <MaterialCommunityIcons name="map-marker" size={14} color={c.redText} />
                                             </View>
-                                            <Text variant="labelSmall" style={{ color: c.redText, fontWeight: 'bold' }}>DROPOFF</Text>
+                                            <Text variant="labelSmall" style={{ color: c.redText, fontFamily: 'Inter_700Bold' }}>DROPOFF</Text>
                                         </View>
                                         <View style={[styles.addressContainer, { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }]}>
                                             <Text variant="bodyMedium" style={[styles.address, { flex: 1, marginBottom: 0, marginLeft: 0, color: c.text }]}>
@@ -2331,7 +2333,7 @@ export default function RiderDashboard() {
                                             mode="contained"
                                             style={{ borderRadius: 8 }}
                                             contentStyle={{ height: 56 }}
-                                            labelStyle={{ fontSize: 18, fontWeight: 'bold' }}
+                                            labelStyle={{ fontSize: 18, fontFamily: 'Inter_700Bold' }}
                                             buttonColor={c.accent}
                                             textColor={c.accentText}
                                             icon="navigation"
@@ -2377,7 +2379,7 @@ export default function RiderDashboard() {
                                 <View style={[styles.emptyIconWrap, { backgroundColor: c.textTer + '20' }]}>
                                     <MaterialCommunityIcons name="truck-delivery-outline" size={40} color={c.textSec} />
                                 </View>
-                                <Text variant="titleMedium" style={{ color: c.text, fontWeight: '700', marginTop: 12 }}>No Active Job</Text>
+                                <Text variant="titleMedium" style={{ color: c.text, fontFamily: 'Inter_700Bold', marginTop: 12 }}>No Active Job</Text>
                                 <Text variant="bodySmall" style={{ color: c.textSec, marginTop: 4, textAlign: 'center', marginHorizontal: 20 }}>
                                     Waiting for nearby orders to be assigned.
                                 </Text>
@@ -2393,7 +2395,7 @@ export default function RiderDashboard() {
                     {/* Enhanced Unlock Button with Lottie */}
                     <View style={styles.unlockContainer}>
                         <View style={styles.unlockInfo}>
-                            <Text variant="titleMedium" style={{ fontWeight: 'bold', color: c.text }}>Lock Mechanism</Text>
+                            <Text variant="titleMedium" style={{ fontFamily: 'Inter_700Bold', color: c.text }}>Lock Mechanism</Text>
                             <Text variant="bodyMedium" style={{ color: !isPaired ? c.textTer : (isLocked ? c.greenText : c.redText) }}>
                                 {!isPaired ? 'No Box Connected' : (isLocked ? 'Securely Locked' : 'Unlocked')}
                             </Text>
@@ -2435,7 +2437,7 @@ export default function RiderDashboard() {
                                     color={isPaired ? getBatteryColor() : c.textTer}
                                     style={styles.progressBar}
                                 />
-                                <Text variant="labelSmall" style={{ marginLeft: 8, fontWeight: 'bold', color: isPaired ? getBatteryColor() : c.textSec }}>
+                                <Text variant="labelSmall" style={{ marginLeft: 8, fontFamily: 'Inter_700Bold', color: isPaired ? getBatteryColor() : c.textSec }}>
                                     {isPaired ? (batteryState ? `${batteryState.percentage}%` : 'Syncing...') : '--%'}
                                 </Text>
                             </View>
@@ -2606,7 +2608,7 @@ export default function RiderDashboard() {
 
 const styles = StyleSheet.create({
     bannerTitle: {
-        fontWeight: 'bold',
+        fontFamily: 'Inter_700Bold',
         fontSize: 14,
     },
     bannerText: {
@@ -2649,41 +2651,59 @@ const styles = StyleSheet.create({
         justifyContent: 'space-between',
         alignItems: 'flex-end',
     },
+    headerInfoBox: {
+        backgroundColor: 'rgba(0,0,0,0.15)',
+        padding: 12,
+        borderRadius: 16,
+    },
+    iconBox: {
+        backgroundColor: 'rgba(0,0,0,0.15)',
+        padding: 8,
+        borderRadius: 12,
+        marginLeft: 8,
+    },
+    textShadow: {
+        textShadowColor: 'rgba(0, 0, 0, 0.6)',
+        textShadowOffset: { width: 0, height: 1 },
+        textShadowRadius: 3,
+    },
     locationContainer: {
         flexDirection: 'row',
         alignItems: 'center',
         marginBottom: 4,
     },
     locationText: {
-        color: 'rgba(255,255,255,0.9)',
+        color: 'rgba(255,255,255,0.95)',
         fontSize: 12,
-        fontWeight: '600',
+        fontFamily: 'Inter_600SemiBold',
         marginLeft: 4,
     },
     dateText: {
-        color: 'rgba(255,255,255,0.9)',
+        color: 'rgba(255,255,255,0.95)',
         fontSize: 14,
-        fontWeight: 'bold',
+        fontFamily: 'Inter_600SemiBold',
     },
     timeText: {
         color: 'white',
-        fontSize: 32,
-        fontWeight: 'bold',
+        fontSize: 30,
+        fontFamily: 'SpaceGrotesk_700Bold',
     },
     weatherContainer: {
         alignItems: 'center',
-        backgroundColor: 'rgba(255,255,255,0.2)',
-        padding: 8,
+        backgroundColor: 'rgba(0,0,0,0.15)',
+        paddingVertical: 6,
+        paddingHorizontal: 10,
         borderRadius: 12,
     },
     weatherText: {
         color: 'white',
-        fontSize: 18,
-        fontWeight: 'bold',
+        fontSize: 16,
+        fontFamily: 'SpaceGrotesk_700Bold',
     },
     weatherCondition: {
         color: 'rgba(255,255,255,0.9)',
-        fontSize: 12,
+        fontSize: 10,
+        fontFamily: 'Inter_500Medium',
     },
     scrollContent: {
         padding: 20,
@@ -2709,10 +2729,10 @@ const styles = StyleSheet.create({
         marginRight: 10,
     },
     statusText: {
-        fontWeight: 'bold',
+        fontFamily: 'Inter_700Bold',
     },
     sectionTitle: {
-        fontWeight: 'bold',
+        fontFamily: 'Inter_700Bold',
         marginBottom: 12,
     },
     jobCard: {
@@ -2770,7 +2790,7 @@ const styles = StyleSheet.create({
     metaText: {
         marginLeft: 4,
         fontSize: 12,
-        fontWeight: 'bold',
+        fontFamily: 'Inter_700Bold',
     },
     jobActions: {
         padding: 16,
@@ -2895,7 +2915,7 @@ const styles = StyleSheet.create({
         borderRadius: 12,
     },
     tamperTitle: {
-        fontWeight: 'bold',
+        fontFamily: 'Inter_700Bold',
         fontSize: 16,
     },
     tamperText: {
@@ -2911,7 +2931,7 @@ const styles = StyleSheet.create({
         borderRadius: 12,
     },
     spoofTitle: {
-        fontWeight: 'bold',
+        fontFamily: 'Inter_700Bold',
         fontSize: 14,
     },
     spoofText: {
@@ -2941,7 +2961,7 @@ const styles = StyleSheet.create({
     queueText: {
         fontSize: 12,
         marginLeft: 8,
-        fontWeight: '600',
+        fontFamily: 'Inter_600SemiBold',
     },
     incidentLockOverlay: {
         ...StyleSheet.absoluteFillObject,
@@ -2969,13 +2989,13 @@ const styles = StyleSheet.create({
         alignItems: 'center', justifyContent: 'center', marginBottom: 12,
     },
     promoText: { marginBottom: 14 },
-    promoHeadline: { fontSize: 17, fontWeight: '800', marginBottom: 4 },
+    promoHeadline: { fontSize: 17, fontFamily: 'Inter_700Bold', marginBottom: 4 },
     promoSub: { fontSize: 13, lineHeight: 18 },
     promoCta: {
         flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-start',
         gap: 4, paddingHorizontal: 14, paddingVertical: 7, borderRadius: 20,
     },
-    promoCtaText: { fontSize: 12, fontWeight: '700' },
+    promoCtaText: { fontSize: 12, fontFamily: 'Inter_700Bold' },
     dotsRow: {
         flexDirection: 'row', justifyContent: 'center',
         alignItems: 'center', marginTop: 12, gap: 5, marginBottom: 10,

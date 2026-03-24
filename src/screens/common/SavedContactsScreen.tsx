@@ -180,7 +180,7 @@ export default function SavedContactsScreen() {
                         <View style={[styles.emptyIconBox, { backgroundColor: c.accent + '10' }]}>
                             <MaterialCommunityIcons name="account-outline" size={48} color={c.textTer} />
                         </View>
-                        <Text variant="titleMedium" style={{ marginTop: 16, fontWeight: 'bold', color: c.text }}>No Contacts Found</Text>
+                        <Text variant="titleMedium" style={{ marginTop: 16, fontFamily: 'Inter_700Bold', color: c.text }}>No Contacts Found</Text>
                         <Text variant="bodyMedium" style={{ color: c.textSec, marginTop: 8, textAlign: 'center', paddingHorizontal: 40 }}>
                             Save contacts here to quickly fill in sender or recipient details when booking.
                         </Text>
@@ -191,12 +191,12 @@ export default function SavedContactsScreen() {
                             <View style={styles.cardHeader}>
                                 <View style={styles.labelContainer}>
                                     <View style={[styles.avatarCircle, { backgroundColor: c.accent + '14' }]}>
-                                        <Text style={{ fontSize: 18, fontWeight: 'bold', color: c.accent }}>
+                                        <Text style={{ fontSize: 18, fontFamily: 'Inter_700Bold', color: c.accent }}>
                                             {contact.name.charAt(0).toUpperCase()}
                                         </Text>
                                     </View>
                                     <View style={{ marginLeft: 14, flex: 1, justifyContent: 'center' }}>
-                                        <Text variant="titleMedium" style={{ fontWeight: 'bold', color: c.text }}>{contact.name}</Text>
+                                        <Text variant="titleMedium" style={{ fontFamily: 'Inter_700Bold', color: c.text }}>{contact.name}</Text>
                                         <Text variant="bodyMedium" style={{ color: c.textSec, marginTop: 2, letterSpacing: 0.5 }}>{contact.phone}</Text>
                                     </View>
                                 </View>
@@ -216,12 +216,12 @@ export default function SavedContactsScreen() {
                 style={[styles.addButton, { bottom: 24 + insets.bottom, backgroundColor: c.accent }]}
             >
                 <MaterialCommunityIcons name="plus" size={20} color={c.bg} />
-                <Text style={{ color: c.bg, fontWeight: '600', marginLeft: 6 }}>Add New Contact</Text>
+                <Text style={{ color: c.bg, fontFamily: 'Inter_600SemiBold', marginLeft: 6 }}>Add New Contact</Text>
             </TouchableOpacity>
 
             <Portal>
                 <Modal visible={modalVisible} onDismiss={() => setModalVisible(false)} contentContainerStyle={[styles.modalContent, { backgroundColor: c.bg }]}>
-                    <Text variant="headlineSmall" style={{ marginBottom: 16, fontWeight: 'bold', color: c.text }}>
+                    <Text variant="headlineSmall" style={{ marginBottom: 16, fontFamily: 'Inter_700Bold', color: c.text }}>
                         {editingId ? 'Edit Contact' : 'New Contact'}
                     </Text>
 

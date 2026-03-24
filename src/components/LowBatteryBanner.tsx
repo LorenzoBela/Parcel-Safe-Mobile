@@ -162,7 +162,7 @@ const styles = StyleSheet.create({
     },
     message: {
         fontSize: 14,
-        fontWeight: '600',
+        fontFamily: 'Inter_600SemiBold',
         color: '#1F2937',
         flex: 1,
     },

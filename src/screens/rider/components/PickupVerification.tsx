@@ -187,7 +187,7 @@ export default function PickupVerification({
             <Card mode="elevated" style={[styles.statusCard, { backgroundColor: c.card }, isInsideGeoFence ? styles.borderSuccess : styles.borderError]}>
                 <Card.Content>
                     <View style={styles.statusHeader}>
-                        <Text variant="titleMedium" style={{ fontWeight: 'bold', color: c.textTitle }}>
+                        <Text variant="titleMedium" style={{ fontFamily: 'Inter_700Bold', color: c.textTitle }}>
                             Pickup Zone
                         </Text>
                         {distanceMeters !== null && (
@@ -424,7 +424,7 @@ const styles = StyleSheet.create({
     },
     distanceText: {
         fontSize: 12,
-        fontWeight: 'bold',
+        fontFamily: 'Inter_700Bold',
         color: '#4B5563',
     },
     checksContainer: {
@@ -451,7 +451,7 @@ const styles = StyleSheet.create({
     checkIcon: {
         fontSize: 24,
         color: 'white',
-        fontWeight: 'bold',
+        fontFamily: 'Inter_700Bold',
     },
     bgSuccess: { backgroundColor: '#22c55e' },
     bgError: { backgroundColor: '#ef4444' },
@@ -459,7 +459,7 @@ const styles = StyleSheet.create({
     checkLabel: {
         fontSize: 12,
         color: '#555',
-        fontWeight: '600',
+        fontFamily: 'Inter_600SemiBold',
     },
     checkDivider: {
         height: 2,
@@ -479,7 +479,7 @@ const styles = StyleSheet.create({
     statusMessageText: {
         textAlign: 'center',
         fontSize: 13,
-        fontWeight: '600',
+        fontFamily: 'Inter_600SemiBold',
     },
     textSuccess: { color: '#15803d' },
     textError: { color: '#B91C1C' },
@@ -494,7 +494,7 @@ const styles = StyleSheet.create({
     },
     fallbackBannerText: {
         fontSize: 12,
-        fontWeight: '600',
+        fontFamily: 'Inter_600SemiBold',
         textAlign: 'center',
         flex: 1,
     },
@@ -554,7 +554,7 @@ const styles = StyleSheet.create({
     },
     mapDistanceText: {
         fontSize: 12,
-        fontWeight: 'bold',
+        fontFamily: 'Inter_700Bold',
     },
 
     // ──── Text Proximity Fallback (no native map) ────
@@ -567,7 +567,7 @@ const styles = StyleSheet.create({
     },
     proximityText: {
         fontSize: 13,
-        fontWeight: '600',
+        fontFamily: 'Inter_600SemiBold',
         textAlign: 'center',
     },
 
@@ -581,7 +581,7 @@ const styles = StyleSheet.create({
     addressLabel: {
         fontSize: 10,
         color: '#888',
-        fontWeight: 'bold',
+        fontFamily: 'Inter_700Bold',
         marginBottom: 2,
     },
     address: {
@@ -600,7 +600,7 @@ const styles = StyleSheet.create({
     },
     actionTitle: {
         fontSize: 14,
-        fontWeight: 'bold',
+        fontFamily: 'Inter_700Bold',
         color: '#1a1a1a',
         marginBottom: 4,
     },

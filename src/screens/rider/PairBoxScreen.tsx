@@ -266,7 +266,7 @@ export default function PairBoxScreen() {
     return (
         <View style={[styles.container, { backgroundColor: c.bg, paddingTop: Math.max(insets.top, 20), paddingBottom: insets.bottom + 20 }]}>
             <View style={[styles.header, { backgroundColor: c.card, borderWidth: 1, borderColor: c.border }]}>
-                <Text variant="titleLarge" style={{ fontWeight: 'bold', color: c.text }}>Pair a Smart Box</Text>
+                <Text variant="titleLarge" style={{ fontFamily: 'Inter_700Bold', color: c.text }}>Pair a Smart Box</Text>
                 <Text variant="bodySmall" style={{ color: c.textSec }}>
                     Scan the QR on the box to link it to your account.
                 </Text>
@@ -277,7 +277,7 @@ export default function PairBoxScreen() {
                 <View style={[styles.driftBanner, { backgroundColor: c.orangeBg, borderColor: c.orangeText }]}>
                     <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                         <MaterialCommunityIcons name="map-marker-alert-outline" size={20} color={c.orangeText} />
-                        <Text style={{ marginLeft: 8, fontWeight: 'bold', color: c.orangeText, flex: 1 }}>
+                        <Text style={{ marginLeft: 8, fontFamily: 'Inter_700Bold', color: c.orangeText, flex: 1 }}>
                             Far from your box{driftDistanceKm ? ` (${driftDistanceKm} km away)` : ''}
                         </Text>
                     </View>
@@ -293,7 +293,7 @@ export default function PairBoxScreen() {
                     <View style={{ padding: 16 }}>
                         <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
                             <MaterialCommunityIcons name="link-variant" size={24} color={c.greenText} />
-                            <Text variant="titleMedium" style={{ fontWeight: 'bold', marginLeft: 8, color: c.text }}>
+                            <Text variant="titleMedium" style={{ fontFamily: 'Inter_700Bold', marginLeft: 8, color: c.text }}>
                                 Currently Paired
                             </Text>
                         </View>
@@ -370,7 +370,7 @@ export default function PairBoxScreen() {
                     {scannedPayload && (
                         <View style={[styles.payloadCard, { backgroundColor: c.card, borderWidth: 1, borderColor: c.border }]}>
                             <View style={{ padding: 16 }}>
-                                <Text variant="titleMedium" style={{ fontWeight: 'bold', color: c.text }}>Scan Result</Text>
+                                <Text variant="titleMedium" style={{ fontFamily: 'Inter_700Bold', color: c.text }}>Scan Result</Text>
                                 <Text style={{ marginTop: 8, color: c.text }}>Box ID: {scannedPayload.boxId}</Text>
                                 {scannedPayload.token && (
                                     <Text style={{ marginTop: 4, color: c.textSec }}>

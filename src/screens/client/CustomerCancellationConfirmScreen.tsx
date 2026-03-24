@@ -57,7 +57,7 @@ export default function CustomerCancellationConfirmScreen() {
                         <Text variant="bodyMedium" style={{ color: theme.colors.onSurfaceVariant }}>
                             Order ID
                         </Text>
-                        <Text variant="bodyMedium" style={{ fontWeight: 'bold', color: theme.colors.onSurface }}>
+                        <Text variant="bodyMedium" style={{ fontFamily: 'Inter_700Bold', color: theme.colors.onSurface }}>
                             {params.deliveryId}
                         </Text>
                     </View>
@@ -66,7 +66,7 @@ export default function CustomerCancellationConfirmScreen() {
                         <Text variant="bodyMedium" style={{ color: theme.colors.onSurfaceVariant }}>
                             Reason
                         </Text>
-                        <Text variant="bodyMedium" style={{ fontWeight: 'bold', color: theme.colors.onSurface }}>
+                        <Text variant="bodyMedium" style={{ fontFamily: 'Inter_700Bold', color: theme.colors.onSurface }}>
                             {formatCustomerCancellationReason(params.reason)}
                         </Text>
                     </View>
@@ -91,7 +91,7 @@ export default function CustomerCancellationConfirmScreen() {
                 <Card.Content>
                     <View style={styles.refundHeader}>
                         <MaterialCommunityIcons name="cash-refund" size={24} color={theme.colors.primary} />
-                        <Text variant="titleMedium" style={{ marginLeft: 8, fontWeight: 'bold', color: theme.colors.onSurface }}>
+                        <Text variant="titleMedium" style={{ marginLeft: 8, fontFamily: 'Inter_700Bold', color: theme.colors.onSurface }}>
                             Refund Status
                         </Text>
                     </View>
@@ -113,7 +113,7 @@ export default function CustomerCancellationConfirmScreen() {
                             style={{
                                 marginLeft: 8,
                                 color: params.refundStatus === 'APPROVED' ? '#4CAF50' : '#FF9800',
-                                fontWeight: 'bold',
+                                fontFamily: 'Inter_700Bold',
                             }}
                         >
                             {params.refundStatus === 'APPROVED' ? 'Refund Approved' : 'Refund Pending'}
@@ -131,13 +131,13 @@ export default function CustomerCancellationConfirmScreen() {
             {/* Next Steps Card */}
             <Card style={[styles.card, { backgroundColor: theme.colors.surface }]} mode="elevated">
                 <Card.Content>
-                    <Text variant="titleMedium" style={{ fontWeight: 'bold', marginBottom: 12, color: theme.colors.onSurface }}>
+                    <Text variant="titleMedium" style={{ fontFamily: 'Inter_700Bold', marginBottom: 12, color: theme.colors.onSurface }}>
                         What's Next?
                     </Text>
 
                     <View style={styles.stepRow}>
                         <View style={[styles.stepNumber, { backgroundColor: theme.colors.primaryContainer }]}>
-                            <Text variant="labelSmall" style={{ color: theme.colors.primary, fontWeight: 'bold' }}>1</Text>
+                            <Text variant="labelSmall" style={{ color: theme.colors.primary, fontFamily: 'Inter_700Bold' }}>1</Text>
                         </View>
                         <Text variant="bodyMedium" style={{ flex: 1, color: theme.colors.onSurface }}>
                             You'll receive an email confirmation shortly
@@ -146,7 +146,7 @@ export default function CustomerCancellationConfirmScreen() {
 
                     <View style={styles.stepRow}>
                         <View style={[styles.stepNumber, { backgroundColor: theme.colors.primaryContainer }]}>
-                            <Text variant="labelSmall" style={{ color: theme.colors.primary, fontWeight: 'bold' }}>2</Text>
+                            <Text variant="labelSmall" style={{ color: theme.colors.primary, fontFamily: 'Inter_700Bold' }}>2</Text>
                         </View>
                         <Text variant="bodyMedium" style={{ flex: 1, color: theme.colors.onSurface }}>
                             Refund will be credited to your original payment method
@@ -155,7 +155,7 @@ export default function CustomerCancellationConfirmScreen() {
 
                     <View style={styles.stepRow}>
                         <View style={[styles.stepNumber, { backgroundColor: theme.colors.primaryContainer }]}>
-                            <Text variant="labelSmall" style={{ color: theme.colors.primary, fontWeight: 'bold' }}>3</Text>
+                            <Text variant="labelSmall" style={{ color: theme.colors.primary, fontFamily: 'Inter_700Bold' }}>3</Text>
                         </View>
                         <Text variant="bodyMedium" style={{ flex: 1, color: theme.colors.onSurface }}>
                             If a rider was assigned, they've been notified
@@ -208,7 +208,7 @@ const styles = StyleSheet.create({
         marginBottom: 16,
     },
     title: {
-        fontWeight: 'bold',
+        fontFamily: 'Inter_700Bold',
         marginBottom: 8,
     },
     card: {

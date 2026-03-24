@@ -88,7 +88,7 @@ export default function TripPreviewModal({ visible, onDismiss, onStartTrip, trip
                                 color={theme.colors.onPrimaryContainer}
                             />
                             <View style={{ marginLeft: 12 }}>
-                                <Text variant="titleMedium" style={{ fontWeight: 'bold' }}>{tripDetails.customerName}</Text>
+                                <Text variant="titleMedium" style={{ fontFamily: 'Inter_700Bold' }}>{tripDetails.customerName}</Text>
                                 <Text variant="bodySmall" style={{ color: theme.colors.outline }}>Customer</Text>
                             </View>
                         </View>
@@ -121,7 +121,7 @@ export default function TripPreviewModal({ visible, onDismiss, onStartTrip, trip
 
                     <View style={[styles.statsContainer, { backgroundColor: theme.colors.elevation.level1 }]}>
                         <View style={styles.statItem}>
-                            <Text variant="headlineSmall" style={{ color: theme.colors.primary, fontWeight: 'bold' }}>
+                            <Text variant="headlineSmall" style={{ color: theme.colors.primary, fontFamily: 'Inter_700Bold' }}>
                                 ₱{tripDetails.estimatedFare.toFixed(2)}
                             </Text>
                             <Text variant="bodySmall">Est. Fare</Text>
@@ -183,7 +183,7 @@ const styles = StyleSheet.create({
         marginBottom: 10,
     },
     title: {
-        fontWeight: 'bold',
+        fontFamily: 'Inter_700Bold',
     },
     divider: {
         marginBottom: 20,

@@ -402,20 +402,20 @@ const styles = StyleSheet.create({
         elevation: 10,
     },
 
-    name: { fontSize: 24, fontWeight: '800', letterSpacing: -0.3 },
+    name: { fontSize: 24, fontFamily: 'Inter_700Bold', letterSpacing: -0.3 },
     email: { fontSize: 14, marginTop: 3 },
     roleBadge: {
         flexDirection: 'row', alignItems: 'center', gap: 5,
         marginTop: 10, paddingHorizontal: 14, paddingVertical: 5,
         borderRadius: 20, borderWidth: 1,
     },
-    roleBadgeText: { fontSize: 12, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.6 },
+    roleBadgeText: { fontSize: 12, fontFamily: 'Inter_700Bold', textTransform: 'uppercase', letterSpacing: 0.6 },
     memberSince: { fontSize: 12, marginTop: 8 },
     editBtn: {
         flexDirection: 'row', alignItems: 'center', gap: 6,
         paddingHorizontal: 24, paddingVertical: 11, borderRadius: 24, marginTop: 14,
     },
-    editBtnText: { fontSize: 13, fontWeight: '700' },
+    editBtnText: { fontSize: 13, fontFamily: 'Inter_700Bold' },
 
     // Stats
     statsRow: {
@@ -426,12 +426,12 @@ const styles = StyleSheet.create({
         flex: 1, alignItems: 'center', paddingVertical: 14,
         borderRadius: 14, borderWidth: 1, gap: 4,
     },
-    statValue: { fontSize: 17, fontWeight: '800' },
-    statLabel: { fontSize: 10, fontWeight: '600', textTransform: 'uppercase', letterSpacing: 0.5 },
+    statValue: { fontSize: 17, fontFamily: 'Inter_700Bold' },
+    statLabel: { fontSize: 10, fontFamily: 'Inter_600SemiBold', textTransform: 'uppercase', letterSpacing: 0.5 },
 
     // Sections
     sectionTitle: {
-        fontSize: 12, fontWeight: '600', letterSpacing: 0.8,
+        fontSize: 12, fontFamily: 'Inter_600SemiBold', letterSpacing: 0.8,
         marginHorizontal: 20, marginBottom: 6, marginTop: 16,
     },
     section: {
@@ -446,8 +446,8 @@ const styles = StyleSheet.create({
         width: 36, height: 36, borderRadius: 12, alignItems: 'center', justifyContent: 'center',
     },
     rowContent: { flex: 1, marginLeft: 12 },
-    rowLabel: { fontSize: 11, fontWeight: '500', textTransform: 'uppercase', letterSpacing: 0.4 },
-    rowValue: { fontSize: 14, fontWeight: '500', marginTop: 1 },
+    rowLabel: { fontSize: 11, fontFamily: 'Inter_500Medium', textTransform: 'uppercase', letterSpacing: 0.4 },
+    rowValue: { fontSize: 14, fontFamily: 'Inter_500Medium', marginTop: 1 },
 
     // Carousel
     carouselList: { paddingHorizontal: 16 },
@@ -460,13 +460,13 @@ const styles = StyleSheet.create({
         alignItems: 'center', justifyContent: 'center', marginBottom: 12,
     },
     promoText: { marginBottom: 14 },
-    promoHeadline: { fontSize: 17, fontWeight: '800', marginBottom: 4 },
+    promoHeadline: { fontSize: 17, fontFamily: 'Inter_700Bold', marginBottom: 4 },
     promoSub: { fontSize: 13, lineHeight: 18 },
     promoCta: {
         flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-start',
         gap: 4, paddingHorizontal: 14, paddingVertical: 7, borderRadius: 20,
     },
-    promoCtaText: { fontSize: 12, fontWeight: '700' },
+    promoCtaText: { fontSize: 12, fontFamily: 'Inter_700Bold' },
     dotsRow: {
         flexDirection: 'row', justifyContent: 'center',
         alignItems: 'center', marginTop: 12, gap: 5,

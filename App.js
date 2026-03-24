@@ -12,6 +12,10 @@ import GlobalPremiumAlert from './src/components/modals/GlobalPremiumAlert';
 import ResumeScreen from './src/screens/auth/ResumeScreen';
 
 import * as SplashScreen from 'expo-splash-screen';
+import * as Font from 'expo-font';
+import { Inter_400Regular, Inter_500Medium, Inter_600SemiBold, Inter_700Bold } from '@expo-google-fonts/inter';
+import { JetBrainsMono_400Regular, JetBrainsMono_500Medium, JetBrainsMono_700Bold } from '@expo-google-fonts/jetbrains-mono';
+import { SpaceGrotesk_500Medium, SpaceGrotesk_700Bold } from '@expo-google-fonts/space-grotesk';
 
 // Keep splash screen visible while we initialize
 SplashScreen.preventAutoHideAsync();
@@ -270,6 +274,19 @@ export default function App() {
   useEffect(() => {
     async function prepare() {
       try {
+        // 0. Load premium fonts
+        await Font.loadAsync({
+          Inter_400Regular,
+          Inter_500Medium,
+          Inter_600SemiBold,
+          Inter_700Bold,
+          JetBrainsMono_400Regular,
+          JetBrainsMono_500Medium,
+          JetBrainsMono_700Bold,
+          SpaceGrotesk_500Medium,
+          SpaceGrotesk_700Bold,
+        });
+
         // 1. Configure Google Sign-In (absolutely required before anything else renders)
         configureGoogleSignIn();
 

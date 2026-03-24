@@ -340,7 +340,7 @@ const styles = StyleSheet.create({
     },
     liveText: {
         flex: 1,
-        fontWeight: 'bold',
+        fontFamily: 'Inter_700Bold',
         color: '#4CAF50',
         fontSize: 12,
         letterSpacing: 1,
@@ -354,7 +354,7 @@ const styles = StyleSheet.create({
     },
     statusValue: {
         fontSize: 16,
-        fontWeight: 'bold',
+        fontFamily: 'Inter_700Bold',
         color: '#333',
         marginTop: 4,
     },
@@ -432,7 +432,7 @@ const styles = StyleSheet.create({
     },
     stolenText: {
         color: 'white',
-        fontWeight: 'bold',
+        fontFamily: 'Inter_700Bold',
         marginLeft: 8,
         fontSize: 12,
         letterSpacing: 1,

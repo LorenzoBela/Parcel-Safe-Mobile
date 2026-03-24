@@ -115,7 +115,7 @@ export default function CancellationConfirmationScreen() {
                         variant="titleMedium"
                         numberOfLines={1}
                         ellipsizeMode="middle"
-                        style={{ fontWeight: 'bold', marginTop: 4, color: theme.colors.onSurface }}
+                        style={{ fontFamily: 'Inter_700Bold', marginTop: 4, color: theme.colors.onSurface }}
                     >
                         {deliveryId}
                     </Text>
@@ -127,14 +127,14 @@ export default function CancellationConfirmationScreen() {
                     <>
                         {/* Next Steps Card */}
                         <Surface style={[styles.stepsCard, { backgroundColor: theme.colors.surface }]} elevation={1}>
-                            <Text variant="titleMedium" style={{ fontWeight: 'bold', marginBottom: 16, color: theme.colors.onSurface }}>
+                            <Text variant="titleMedium" style={{ fontFamily: 'Inter_700Bold', marginBottom: 16, color: theme.colors.onSurface }}>
                                 Next Steps
                             </Text>
 
                             <View style={styles.stepRow}>
                                 <Avatar.Text size={28} label="1" style={{ backgroundColor: theme.colors.primary }} />
                                 <View style={styles.stepContent}>
-                                    <Text variant="bodyMedium" style={{ fontWeight: '600', color: theme.colors.onSurface }}>
+                                    <Text variant="bodyMedium" style={{ fontFamily: 'Inter_600SemiBold', color: theme.colors.onSurface }}>
                                         Return to Pickup Location
                                     </Text>
                                     <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
@@ -148,7 +148,7 @@ export default function CancellationConfirmationScreen() {
                             <View style={styles.stepRow}>
                                 <Avatar.Text size={28} label="2" style={{ backgroundColor: theme.colors.primary }} />
                                 <View style={styles.stepContent}>
-                                    <Text variant="bodyMedium" style={{ fontWeight: '600', color: theme.colors.onSurface }}>
+                                    <Text variant="bodyMedium" style={{ fontFamily: 'Inter_600SemiBold', color: theme.colors.onSurface }}>
                                         Meet the Sender
                                     </Text>
                                     <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
@@ -162,7 +162,7 @@ export default function CancellationConfirmationScreen() {
                             <View style={styles.stepRow}>
                                 <Avatar.Text size={28} label="3" style={{ backgroundColor: theme.colors.primary }} />
                                 <View style={styles.stepContent}>
-                                    <Text variant="bodyMedium" style={{ fontWeight: '600', color: theme.colors.onSurface }}>
+                                    <Text variant="bodyMedium" style={{ fontFamily: 'Inter_600SemiBold', color: theme.colors.onSurface }}>
                                         Sender Retrieves Package
                                     </Text>
                                     <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
@@ -180,7 +180,7 @@ export default function CancellationConfirmationScreen() {
                                     <Text variant="labelMedium" style={{ color: theme.colors.onSurfaceVariant }}>
                                         RETURN DESTINATION
                                     </Text>
-                                    <Text variant="bodyMedium" style={{ fontWeight: '600', color: theme.colors.onSurface }}>
+                                    <Text variant="bodyMedium" style={{ fontFamily: 'Inter_600SemiBold', color: theme.colors.onSurface }}>
                                         {senderName}
                                     </Text>
                                     <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant, marginTop: 2 }}>
@@ -236,7 +236,7 @@ const styles = StyleSheet.create({
         alignItems: 'center',
     },
     headerTitle: {
-        fontWeight: 'bold',
+        fontFamily: 'Inter_700Bold',
         marginTop: 12,
         marginBottom: 8,
     },

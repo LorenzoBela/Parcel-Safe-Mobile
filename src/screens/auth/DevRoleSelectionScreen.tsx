@@ -99,7 +99,7 @@ const styles = StyleSheet.create({
         marginBottom: 30,
     },
     title: {
-        fontWeight: 'bold',
+        fontFamily: 'Inter_700Bold',
         marginTop: 10,
     },
     subtitle: {

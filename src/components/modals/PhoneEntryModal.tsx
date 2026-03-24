@@ -107,7 +107,7 @@ const styles = StyleSheet.create({
     },
     title: {
         marginBottom: 8,
-        fontWeight: 'bold',
+        fontFamily: 'Inter_700Bold',
     },
     description: {
         marginBottom: 16,

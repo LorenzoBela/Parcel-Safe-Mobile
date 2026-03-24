@@ -134,7 +134,7 @@ export default function DeliveryRecordsScreen() {
             <View style={[styles.header, { backgroundColor: c.card, borderBottomWidth: 1, borderBottomColor: c.border }]}>
                 <View style={styles.headerTop}>
                     <IconButton icon="arrow-left" iconColor={c.text} onPress={() => navigation.goBack()} />
-                    <Text variant="headlineSmall" style={{ fontWeight: 'bold', color: c.text }}>History & Earnings</Text>
+                    <Text variant="headlineSmall" style={{ fontFamily: 'Inter_700Bold', color: c.text }}>History & Earnings</Text>
                     <IconButton
                         icon={viewMode === 'list' ? 'view-grid' : 'view-list'}
                         iconColor={c.text}
@@ -146,11 +146,11 @@ export default function DeliveryRecordsScreen() {
                 <View style={styles.statsContainer}>
                     <View style={[styles.statCard, { backgroundColor: c.search, borderWidth: 1, borderColor: c.border }]}>
                         <Text variant="labelMedium" style={{ color: c.textSec }}>Total Jobs</Text>
-                        <Text variant="headlineMedium" style={{ fontWeight: 'bold', color: c.accent }}>{filteredData.length}</Text>
+                        <Text variant="headlineMedium" style={{ fontFamily: 'Inter_700Bold', color: c.accent }}>{filteredData.length}</Text>
                     </View>
                     <View style={[styles.statCard, { backgroundColor: c.search, borderWidth: 1, borderColor: c.border }]}>
                         <Text variant="labelMedium" style={{ color: c.textSec }}>Total Earnings</Text>
-                        <Text variant="headlineMedium" style={{ fontWeight: 'bold', color: '#4CAF50' }}>₱{totalEarnings.toFixed(2)}</Text>
+                        <Text variant="headlineMedium" style={{ fontFamily: 'Inter_700Bold', color: '#4CAF50' }}>₱{totalEarnings.toFixed(2)}</Text>
                     </View>
                 </View>
             </View>
@@ -199,7 +199,7 @@ export default function DeliveryRecordsScreen() {
                         <MaterialCommunityIcons name="alert-circle-outline" size={60} color="#D32F2F" />
                         <Text style={{ marginTop: 10, color: '#D32F2F' }}>{errorMsg}</Text>
                         <TouchableOpacity onPress={() => fetchDeliveries()} style={{ marginTop: 16 }}>
-                            <Text style={{ color: c.accent, fontWeight: 'bold' }}>Tap to retry</Text>
+                            <Text style={{ color: c.accent, fontFamily: 'Inter_700Bold' }}>Tap to retry</Text>
                         </TouchableOpacity>
                     </View>
                 ) : (

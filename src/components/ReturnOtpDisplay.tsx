@@ -73,7 +73,7 @@ export default function ReturnOtpDisplay({
                         variant="labelLarge"
                         style={{
                             letterSpacing: 2,
-                            fontWeight: 'bold',
+                            fontFamily: 'Inter_700Bold',
                             color: theme.colors.primary,
                             marginLeft: 8,
                             fontFamily: 'monospace',
@@ -96,7 +96,7 @@ export default function ReturnOtpDisplay({
         <Surface style={[styles.container, { backgroundColor: theme.colors.surface }]} elevation={2}>
             <View style={styles.header}>
                 <MaterialCommunityIcons name="key-variant" size={24} color={theme.colors.primary} />
-                <Text variant="titleMedium" style={{ marginLeft: 8, fontWeight: 'bold', color: theme.colors.onSurface }}>
+                <Text variant="titleMedium" style={{ marginLeft: 8, fontFamily: 'Inter_700Bold', color: theme.colors.onSurface }}>
                     Return Authorization OTP
                 </Text>
             </View>
@@ -121,7 +121,7 @@ export default function ReturnOtpDisplay({
                         variant="displaySmall"
                         style={{
                             letterSpacing: 8,
-                            fontWeight: 'bold',
+                            fontFamily: 'Inter_700Bold',
                             color: theme.colors.primary,
                             fontFamily: 'monospace',
                         }}

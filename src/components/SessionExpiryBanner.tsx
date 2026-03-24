@@ -206,7 +206,7 @@ const styles = StyleSheet.create({
     message: {
         color: '#FFFFFF',
         fontSize: 14,
-        fontWeight: '600',
+        fontFamily: 'Inter_600SemiBold',
         flex: 1,
     },
     spinner: {
@@ -233,7 +233,7 @@ const styles = StyleSheet.create({
     buttonText: {
         color: '#1F2937',
         fontSize: 12,
-        fontWeight: '600',
+        fontFamily: 'Inter_600SemiBold',
     },
 });
 

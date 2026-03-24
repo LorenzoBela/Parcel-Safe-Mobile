@@ -127,7 +127,7 @@ export default function AvailableOrdersModal({
                     <MaterialCommunityIcons name="bike-fast" size={24} color={theme.colors.onSurface} />
                     <Text variant="titleMedium" style={styles.cardTitle}>Nearby Order</Text>
                 </View>
-                <Text variant="labelMedium" style={{ color: theme.colors.onSurface, fontWeight: 'bold' }}>
+                <Text variant="labelMedium" style={{ color: theme.colors.onSurface, fontFamily: 'Inter_700Bold' }}>
                     {item.distanceToPickupKm.toFixed(1)} km away
                 </Text>
             </View>
@@ -241,7 +241,7 @@ const styles = StyleSheet.create({
         borderBottomColor: '#F0F0F0',
     },
     title: {
-        fontWeight: 'bold',
+        fontFamily: 'Inter_700Bold',
     },
     listContent: {
         padding: 16,
@@ -257,7 +257,7 @@ const styles = StyleSheet.create({
         marginTop: 16,
         textAlign: 'center',
         color: '#666',
-        fontWeight: 'bold',
+        fontFamily: 'Inter_700Bold',
     },
     emptySubText: {
         marginTop: 8,
@@ -283,7 +283,7 @@ const styles = StyleSheet.create({
         alignItems: 'center',
     },
     cardTitle: {
-        fontWeight: 'bold',
+        fontFamily: 'Inter_700Bold',
         marginLeft: 8,
     },
     divider: {
@@ -308,7 +308,7 @@ const styles = StyleSheet.create({
     locationLabel: {
         color: '#888',
         fontSize: 10,
-        fontWeight: 'bold',
+        fontFamily: 'Inter_700Bold',
     },
     fareRow: {
         flexDirection: 'row',
@@ -324,7 +324,7 @@ const styles = StyleSheet.create({
         color: '#666',
     },
     fareAmount: {
-        fontWeight: 'bold',
+        fontFamily: 'Inter_700Bold',
     },
     acceptButton: {
         borderRadius: 12,

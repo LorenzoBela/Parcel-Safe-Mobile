@@ -379,7 +379,7 @@ const styles = StyleSheet.create({
     headerTitle: {
         color: 'white',
         fontSize: 20,
-        fontWeight: 'bold',
+        fontFamily: 'Inter_700Bold',
     },
     headerSubtitle: {
         color: 'rgba(255,255,255,0.9)',
@@ -388,7 +388,7 @@ const styles = StyleSheet.create({
     },
     sectionTitle: {
         fontSize: 16,
-        fontWeight: 'bold',
+        fontFamily: 'Inter_700Bold',
         color: '#333',
         marginBottom: 12,
         marginTop: 8,
@@ -415,7 +415,7 @@ const styles = StyleSheet.create({
     },
     statusLabel: {
         fontSize: 18,
-        fontWeight: 'bold',
+        fontFamily: 'Inter_700Bold',
     },
     statusTime: {
         fontSize: 12,
@@ -432,7 +432,7 @@ const styles = StyleSheet.create({
     lockdownText: {
         marginLeft: 12,
         color: '#D32F2F',
-        fontWeight: 'bold',
+        fontFamily: 'Inter_700Bold',
     },
     locationRow: {
         flexDirection: 'row',
@@ -467,7 +467,7 @@ const styles = StyleSheet.create({
     },
     actionTitle: {
         fontSize: 16,
-        fontWeight: 'bold',
+        fontFamily: 'Inter_700Bold',
         color: '#333',
     },
     actionDescription: {
@@ -493,7 +493,7 @@ const styles = StyleSheet.create({
     },
     reportTitle: {
         fontSize: 18,
-        fontWeight: 'bold',
+        fontFamily: 'Inter_700Bold',
         color: '#D32F2F',
         marginLeft: 12,
     },
@@ -525,7 +525,7 @@ const styles = StyleSheet.create({
         marginLeft: 12,
     },
     supportTitle: {
-        fontWeight: 'bold',
+        fontFamily: 'Inter_700Bold',
         color: '#333',
     },
     supportText: {

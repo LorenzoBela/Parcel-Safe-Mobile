@@ -830,7 +830,7 @@ export default function DropoffVerification({
             <Card mode="elevated" style={[styles.statusCard, { backgroundColor: c.card }, isInsideGeoFence ? styles.borderSuccess : styles.borderError]}>
                 <Card.Content>
                     <View style={styles.statusHeader}>
-                        <Text variant="titleMedium" style={{ fontWeight: 'bold', color: c.textTitle }}>
+                        <Text variant="titleMedium" style={{ fontFamily: 'Inter_700Bold', color: c.textTitle }}>
                             Drop-Off Zone
                         </Text>
                         {distanceMeters !== null && (
@@ -1030,7 +1030,7 @@ export default function DropoffVerification({
                         <View style={{ marginTop: 8, marginBottom: 8, padding: 12, borderRadius: 10, borderWidth: 1, borderColor: c.borderHard, backgroundColor: c.badgeBg }}>
                             <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
                                 <View style={{ flex: 1, paddingRight: 10 }}>
-                                    <Text style={{ fontSize: 13, fontWeight: '700', color: c.textTitle }}>Manual Box Mode</Text>
+                                    <Text style={{ fontSize: 13, fontFamily: 'Inter_700Bold', color: c.textTitle }}>Manual Box Mode</Text>
                                     <Text style={{ fontSize: 12, color: c.textLabel, marginTop: 2 }}>
                                         Enable to allow manual lock/unlock after OTP + face verification.
                                     </Text>
@@ -1061,7 +1061,7 @@ export default function DropoffVerification({
 
                             {lockAwaitingClose && (
                                 <View style={{ marginTop: 10, padding: 10, borderRadius: 8, backgroundColor: c.warningBg, borderWidth: 1, borderColor: c.warningText }}>
-                                    <Text style={{ fontSize: 12, color: c.warningText, fontWeight: '700' }}>
+                                    <Text style={{ fontSize: 12, color: c.warningText, fontFamily: 'Inter_700Bold' }}>
                                         Lock pending physical close
                                     </Text>
                                     <Text style={{ marginTop: 4, fontSize: 12, color: c.warningText }}>
@@ -1074,7 +1074,7 @@ export default function DropoffVerification({
 
                             {lockCloseConfirmed && (
                                 <View style={{ marginTop: 10, padding: 10, borderRadius: 8, backgroundColor: c.successBg, borderWidth: 1, borderColor: c.successText }}>
-                                    <Text style={{ fontSize: 12, color: c.successText, fontWeight: '700' }}>
+                                    <Text style={{ fontSize: 12, color: c.successText, fontFamily: 'Inter_700Bold' }}>
                                         Lock confirmed
                                     </Text>
                                     <Text style={{ marginTop: 4, fontSize: 12, color: c.successText }}>
@@ -1179,7 +1179,7 @@ const styles = StyleSheet.create({
     borderError: { borderColor: '#ef4444' },
     statusHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
     distanceBadge: { backgroundColor: '#F3F4F6', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12 },
-    distanceText: { fontSize: 12, fontWeight: 'bold', color: '#4B5563' },
+    distanceText: { fontSize: 12, fontFamily: 'Inter_700Bold', color: '#4B5563' },
     checksContainer: { marginBottom: 20 },
     checksRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginBottom: 8 },
     checkItem: { alignItems: 'center', width: 90 },
@@ -1187,24 +1187,24 @@ const styles = StyleSheet.create({
         width: 48, height: 48, borderRadius: 24, alignItems: 'center', justifyContent: 'center',
         marginBottom: 8, borderWidth: 2, borderColor: 'white', elevation: 2,
     },
-    checkIcon: { fontSize: 24, color: 'white', fontWeight: 'bold' },
+    checkIcon: { fontSize: 24, color: 'white', fontFamily: 'Inter_700Bold' },
     bgSuccess: { backgroundColor: '#22c55e' },
     bgError: { backgroundColor: '#ef4444' },
     bgWarning: { backgroundColor: '#F59E0B' },
-    checkLabel: { fontSize: 12, color: '#555', fontWeight: '600' },
+    checkLabel: { fontSize: 12, color: '#555', fontFamily: 'Inter_600SemiBold' },
     checkDivider: { height: 2, width: 20, backgroundColor: '#E5E7EB', marginHorizontal: 6, top: -14 },
     statusMessageContainer: { padding: 12, borderRadius: 8, marginBottom: 16, alignItems: 'center' },
     bgSubtleSuccess: { backgroundColor: '#DCFCE7' },
     bgSubtleError: { backgroundColor: '#FEE2E2' },
-    statusMessageText: { textAlign: 'center', fontSize: 13, fontWeight: '600' },
+    statusMessageText: { textAlign: 'center', fontSize: 13, fontFamily: 'Inter_600SemiBold' },
     textSuccess: { color: '#15803d' },
     textError: { color: '#B91C1C' },
     addressRow: { flexDirection: 'row', alignItems: 'center', borderTopWidth: 1, borderTopColor: '#f0f0f0', paddingTop: 12 },
-    addressLabel: { fontSize: 10, color: '#888', fontWeight: 'bold', marginBottom: 2 },
+    addressLabel: { fontSize: 10, color: '#888', fontFamily: 'Inter_700Bold', marginBottom: 2 },
     address: { fontSize: 14, color: '#333' },
     navActions: { flexDirection: 'row', alignItems: 'center' },
     actionCard: { backgroundColor: 'white', borderRadius: 12, elevation: 1, marginBottom: 20 },
-    actionTitle: { fontSize: 14, fontWeight: 'bold', color: '#1a1a1a', marginBottom: 4 },
+    actionTitle: { fontSize: 14, fontFamily: 'Inter_700Bold', color: '#1a1a1a', marginBottom: 4 },
     proofPanel: {
         marginTop: 12,
         borderWidth: 1,
@@ -1215,7 +1215,7 @@ const styles = StyleSheet.create({
     },
     proofTitle: {
         fontSize: 12,
-        fontWeight: '700',
+        fontFamily: 'Inter_700Bold',
         color: '#334155',
         marginBottom: 8,
     },
@@ -1235,7 +1235,7 @@ const styles = StyleSheet.create({
         color: '#15803d',
         fontSize: 12,
         textAlign: 'center',
-        fontWeight: '600',
+        fontFamily: 'Inter_600SemiBold',
     },
     // ──── Geofence Map Preview ────
     mapContainer: {
@@ -1291,7 +1291,7 @@ const styles = StyleSheet.create({
     },
     mapDistanceText: {
         fontSize: 12,
-        fontWeight: 'bold',
+        fontFamily: 'Inter_700Bold',
     },
     // ──── Text Proximity Fallback ────
     proximityFallback: {
@@ -1303,7 +1303,7 @@ const styles = StyleSheet.create({
     },
     proximityText: {
         fontSize: 13,
-        fontWeight: '600',
+        fontFamily: 'Inter_600SemiBold',
         textAlign: 'center',
     },
 });

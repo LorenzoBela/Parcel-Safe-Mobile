@@ -45,14 +45,14 @@ export default function RiderSupportScreen() {
         <ScrollView style={[styles.container, { backgroundColor: c.bg }]}>
             <View style={styles.header}>
                 <IconButton icon="arrow-left" iconColor={c.text} onPress={() => navigation.goBack()} />
-                <Text variant="headlineSmall" style={{ fontWeight: 'bold', flex: 1, color: c.text }}>Rider Support</Text>
+                <Text variant="headlineSmall" style={{ fontFamily: 'Inter_700Bold', flex: 1, color: c.text }}>Rider Support</Text>
             </View>
 
             {/* Emergency Section */}
             <View style={[styles.card, { backgroundColor: c.redBg, borderWidth: 1, borderColor: c.redText }]}>
                 <View style={{ alignItems: 'center', padding: 20 }}>
                     <MaterialCommunityIcons name="alert-decagram" size={40} color={c.redText} />
-                    <Text variant="titleMedium" style={{ fontWeight: 'bold', color: c.redText, marginTop: 8 }}>Emergency & Safety</Text>
+                    <Text variant="titleMedium" style={{ fontFamily: 'Inter_700Bold', color: c.redText, marginTop: 8 }}>Emergency & Safety</Text>
                     <Text variant="bodyMedium" style={{ textAlign: 'center', marginBottom: 12, color: c.redText, opacity: 0.85 }}>
                         In case of accidents or immediate threats, contact emergency services or dispatch immediately.
                     </Text>
@@ -63,7 +63,7 @@ export default function RiderSupportScreen() {
             </View>
 
             {/* Direct Contact */}
-            <Text variant="titleSmall" style={{ color: c.accent, fontWeight: 'bold', marginTop: 20, marginBottom: 8, marginLeft: 4 }}>Contact Admin</Text>
+            <Text variant="titleSmall" style={{ color: c.accent, fontFamily: 'Inter_700Bold', marginTop: 20, marginBottom: 8, marginLeft: 4 }}>Contact Admin</Text>
             <View style={[styles.card, { backgroundColor: c.card, borderWidth: 1, borderColor: c.border }]}>
                 <List.Item
                     title="Rider Hotline"
@@ -85,7 +85,7 @@ export default function RiderSupportScreen() {
             </View>
 
             {/* Ticket Form */}
-            <Text variant="titleSmall" style={{ color: c.accent, fontWeight: 'bold', marginTop: 20, marginBottom: 8, marginLeft: 4 }}>Submit a Ticket</Text>
+            <Text variant="titleSmall" style={{ color: c.accent, fontFamily: 'Inter_700Bold', marginTop: 20, marginBottom: 8, marginLeft: 4 }}>Submit a Ticket</Text>
             <View style={[styles.card, { backgroundColor: c.card, borderWidth: 1, borderColor: c.border, padding: 16 }]}>
                 <TextInput
                     label="Describe your issue"
@@ -113,7 +113,7 @@ export default function RiderSupportScreen() {
             </View>
 
             {/* Quick Helper Links */}
-            <Text variant="titleSmall" style={{ color: c.accent, fontWeight: 'bold', marginTop: 20, marginBottom: 8, marginLeft: 4 }}>Common Topics</Text>
+            <Text variant="titleSmall" style={{ color: c.accent, fontFamily: 'Inter_700Bold', marginTop: 20, marginBottom: 8, marginLeft: 4 }}>Common Topics</Text>
             <View style={[styles.card, { backgroundColor: c.card, borderWidth: 1, borderColor: c.border }]}>
                 <List.Item
                     title="Hardware / Box Issues"

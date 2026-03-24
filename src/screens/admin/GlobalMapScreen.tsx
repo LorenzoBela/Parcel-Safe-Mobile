@@ -266,7 +266,7 @@ const diagStyles = StyleSheet.create({
         alignItems: 'center', justifyContent: 'center', marginBottom: 3,
     },
     tileLabel: { fontSize: 9, textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 2 },
-    tileValue: { fontSize: 12, fontWeight: '700' },
+    tileValue: { fontSize: 12, fontFamily: 'Inter_700Bold' },
 });
 
 // ==================== Component ====================
@@ -744,9 +744,9 @@ export default function GlobalMapScreen() {
             <Card style={[styles.infoCard, { backgroundColor: uiBg }]}>
                 <Card.Content style={{ padding: 12 }}>
                     <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-                        <Text style={{ fontSize: 14, fontWeight: 'bold', color: uiText }}>{selectedBox.id}</Text>
+                        <Text style={{ fontSize: 14, fontFamily: 'Inter_700Bold', color: uiText }}>{selectedBox.id}</Text>
                         <View style={{ paddingHorizontal: 8, paddingVertical: 2, borderRadius: 12, borderWidth: 1, borderColor: isOnline ? uiText : uiTextSec }}>
-                            <Text style={{ fontSize: 10, fontWeight: '700', color: isOnline ? uiText : uiTextSec }}>{sourceText}</Text>
+                            <Text style={{ fontSize: 10, fontFamily: 'Inter_700Bold', color: isOnline ? uiText : uiTextSec }}>{sourceText}</Text>
                         </View>
                     </View>
                     
@@ -857,7 +857,7 @@ export default function GlobalMapScreen() {
                     <Card.Content style={styles.topHudContent}>
                         <LivePulseDot color="#22C55E" />
                         <View style={{ flex: 1 }}>
-                            <Text variant="titleSmall" style={{ fontWeight: '800', color: uiText }}>Live Fleet</Text>
+                            <Text variant="titleSmall" style={{ fontFamily: 'Inter_700Bold', color: uiText }}>Live Fleet</Text>
                             <Text variant="labelSmall" style={{ color: uiTextSec }}>
                                 {filteredBoxes.length}/{activeBoxes.length} boxes visible
                             </Text>
@@ -1098,7 +1098,7 @@ const styles = StyleSheet.create({
     incidentPinText: {
         color: '#FFFFFF',
         fontSize: 10,
-        fontWeight: '900',
+        fontFamily: 'Inter_700Bold',
         lineHeight: 10,
     },
     overlayTop: {
@@ -1127,12 +1127,12 @@ const styles = StyleSheet.create({
     },
     topHudStat: {
         fontSize: 12,
-        fontWeight: '700',
+        fontFamily: 'Inter_700Bold',
         color: '#334155',
     },
     topHudStatDanger: {
         fontSize: 12,
-        fontWeight: '800',
+        fontFamily: 'Inter_700Bold',
         color: '#DC2626',
     },
     liveHeaderRow: {
@@ -1175,7 +1175,7 @@ const styles = StyleSheet.create({
     },
     filterChipTextSelected: {
         color: '#FFFFFF',
-        fontWeight: '700',
+        fontFamily: 'Inter_700Bold',
     },
     filterActions: {
         flexDirection: 'row',
@@ -1237,7 +1237,7 @@ const styles = StyleSheet.create({
     diagPillText: {
         fontSize: 11,
         color: '#334155',
-        fontWeight: '600',
+        fontFamily: 'Inter_600SemiBold',
     },
     // Diagnostics panel
     diagHeader: {
@@ -1265,7 +1265,7 @@ const styles = StyleSheet.create({
     },
     diagValue: {
         fontSize: 12,
-        fontWeight: '600',
+        fontFamily: 'Inter_600SemiBold',
         color: '#333',
         marginTop: 1,
     },
@@ -1352,7 +1352,7 @@ const styles = StyleSheet.create({
         letterSpacing: 0.4,
     },
     webPopupVal: {
-        fontWeight: '600',
+        fontFamily: 'Inter_600SemiBold',
         fontSize: 12,
     },
 });

@@ -307,7 +307,7 @@ const styles = StyleSheet.create({
         borderBottomWidth: StyleSheet.hairlineWidth,
     },
     backBtn: { marginRight: 12 },
-    topBarTitle: { fontSize: 18, fontWeight: '700', flex: 1 },
+    topBarTitle: { fontSize: 18, fontFamily: 'Inter_700Bold', flex: 1 },
     topBarActions: { flexDirection: 'row', gap: 8 },
     actionBtn: { padding: 6 },
 
@@ -335,7 +335,7 @@ const styles = StyleSheet.create({
     },
     itemContent: { flex: 1 },
     itemHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 2 },
-    itemTitle: { fontSize: 14, fontWeight: '600', flex: 1 },
+    itemTitle: { fontSize: 14, fontFamily: 'Inter_600SemiBold', flex: 1 },
     unreadDot: { width: 8, height: 8, borderRadius: 4, marginLeft: 6 },
     itemMessage: { fontSize: 13, lineHeight: 18 },
     itemTime: { fontSize: 11, marginTop: 4 },
@@ -344,6 +344,6 @@ const styles = StyleSheet.create({
     // ── Empty ──
     emptyList: { flex: 1 },
     emptyContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', paddingBottom: 80 },
-    emptyTitle: { fontSize: 18, fontWeight: '600', marginTop: 16 },
+    emptyTitle: { fontSize: 18, fontFamily: 'Inter_600SemiBold', marginTop: 16 },
     emptySubtitle: { fontSize: 14, marginTop: 6 },
 });

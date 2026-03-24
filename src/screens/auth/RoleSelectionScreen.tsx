@@ -268,13 +268,13 @@ const styles = StyleSheet.create({
     },
     greeting: {
         fontSize: 16,
-        fontWeight: '400',
+        fontFamily: 'Inter_400Regular',
         letterSpacing: 0.2,
     },
     name: {
-        fontSize: 32,
-        fontWeight: '700',
-        letterSpacing: -0.5,
+        fontSize: 34,
+        fontFamily: 'Inter_700Bold',
+        letterSpacing: -1,
         marginTop: 4,
     },
     content: {
@@ -282,9 +282,9 @@ const styles = StyleSheet.create({
         paddingHorizontal: 24,
     },
     sectionTitle: {
-        fontSize: 13,
-        fontWeight: '600',
-        letterSpacing: 0.8,
+        fontSize: 12,
+        fontFamily: 'JetBrainsMono_700Bold',
+        letterSpacing: 1.2,
         textTransform: 'uppercase',
         marginBottom: 16,
     },
@@ -317,12 +317,12 @@ const styles = StyleSheet.create({
     },
     cardTitle: {
         fontSize: 18,
-        fontWeight: '600',
+        fontFamily: 'Inter_600SemiBold',
         letterSpacing: -0.2,
     },
     cardSubtitle: {
         fontSize: 14,
-        fontWeight: '400',
+        fontFamily: 'Inter_400Regular',
         marginTop: 2,
     },
     footer: {
@@ -331,8 +331,8 @@ const styles = StyleSheet.create({
     },
     footerText: {
         fontSize: 12,
-        fontWeight: '500',
-        letterSpacing: 1,
+        fontFamily: 'JetBrainsMono_500Medium',
+        letterSpacing: 1.5,
         textTransform: 'uppercase',
     },
 });

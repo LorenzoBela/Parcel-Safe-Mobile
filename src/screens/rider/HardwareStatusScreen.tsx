@@ -609,12 +609,12 @@ const styles = StyleSheet.create({
     },
     safeText: {
         color: '#166534',
-        fontWeight: '600',
+        fontFamily: 'Inter_600SemiBold',
         fontSize: 14,
     },
     unsafeText: {
         color: '#991b1b',
-        fontWeight: '600',
+        fontFamily: 'Inter_600SemiBold',
         fontSize: 14,
         textAlign: 'center',
     },
@@ -624,7 +624,7 @@ const styles = StyleSheet.create({
     },
     sectionTitle: {
         fontSize: 16,
-        fontWeight: '700',
+        fontFamily: 'Inter_700Bold',
         color: '#333',
         marginBottom: 12,
     },
@@ -668,7 +668,7 @@ const styles = StyleSheet.create({
     componentTitle: {
         flex: 1,
         fontSize: 15,
-        fontWeight: '600',
+        fontFamily: 'Inter_600SemiBold',
         color: '#333',
     },
     componentDetails: {
@@ -687,7 +687,7 @@ const styles = StyleSheet.create({
     },
     detailValue: {
         fontSize: 13,
-        fontWeight: '500',
+        fontFamily: 'Inter_500Medium',
         color: '#333',
     },
     acknowledgeButton: {
@@ -700,7 +700,7 @@ const styles = StyleSheet.create({
     },
     acknowledgeText: {
         color: '#fff',
-        fontWeight: '600',
+        fontFamily: 'Inter_600SemiBold',
         fontSize: 13,
     },
     actionsSection: {
@@ -715,7 +715,7 @@ const styles = StyleSheet.create({
     },
     supportButtonText: {
         color: '#fff',
-        fontWeight: '700',
+        fontFamily: 'Inter_700Bold',
         fontSize: 15,
     },
     backButton: {
@@ -728,7 +728,7 @@ const styles = StyleSheet.create({
     },
     backButtonText: {
         color: '#666',
-        fontWeight: '600',
+        fontFamily: 'Inter_600SemiBold',
         fontSize: 15,
     },
     errorContainer: {
@@ -743,7 +743,7 @@ const styles = StyleSheet.create({
     },
     errorText: {
         fontSize: 18,
-        fontWeight: '600',
+        fontFamily: 'Inter_600SemiBold',
         color: '#333',
         marginBottom: 8,
     },
@@ -761,6 +761,6 @@ const styles = StyleSheet.create({
     },
     retryText: {
         color: '#fff',
-        fontWeight: '600',
+        fontFamily: 'Inter_600SemiBold',
     },
 });

@@ -246,13 +246,13 @@ const styles = StyleSheet.create({
     },
     appName: {
         fontSize: 22,
-        fontWeight: '700',
+        fontFamily: 'Inter_700Bold',
         letterSpacing: -0.3,
         marginBottom: 4,
     },
     tagline: {
         fontSize: 13,
-        fontWeight: '400',
+        fontFamily: 'Inter_400Regular',
     },
     progressSection: {
         width: SCREEN_WIDTH - 64,
@@ -276,6 +276,6 @@ const styles = StyleSheet.create({
     },
     statusText: {
         fontSize: 13,
-        fontWeight: '400',
+        fontFamily: 'Inter_400Regular',
     },
 });

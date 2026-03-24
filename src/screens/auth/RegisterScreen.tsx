@@ -118,7 +118,7 @@ export default function RegisterScreen() {
                 <View style={styles.loginContainer}>
                     <Text variant="bodyMedium">Already have an account? </Text>
                     <TouchableOpacity onPress={() => navigation.navigate('Login')}>
-                        <Text variant="bodyMedium" style={{ color: theme.colors.primary, fontWeight: 'bold' }}>
+                        <Text variant="bodyMedium" style={{ color: theme.colors.primary, fontFamily: 'Inter_700Bold' }}>
                             Login
                         </Text>
                     </TouchableOpacity>
@@ -143,7 +143,7 @@ const styles = StyleSheet.create({
         marginBottom: 30,
     },
     title: {
-        fontWeight: 'bold',
+        fontFamily: 'Inter_700Bold',
         marginTop: 10,
     },
     subtitle: {

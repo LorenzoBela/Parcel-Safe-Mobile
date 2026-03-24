@@ -230,7 +230,7 @@ export default function JobDetailScreen() {
                     onPress={() => navigation.goBack()}
                 />
                 <View style={{ flex: 1 }}>
-                    <Text variant="titleLarge" style={{ fontWeight: 'bold' }}>Job Details</Text>
+                    <Text variant="titleLarge" style={{ fontFamily: 'Inter_700Bold' }}>Job Details</Text>
                     <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>{jobData.id}</Text>
                 </View>
             </Surface>
@@ -400,13 +400,13 @@ export default function JobDetailScreen() {
                 <View style={{ padding: 16 }}>
                     <Card style={{ marginBottom: 16 }} mode="elevated">
                         <Card.Content>
-                            <Text variant="titleMedium" style={{ fontWeight: 'bold', marginBottom: 16 }}>Trip Summary</Text>
+                            <Text variant="titleMedium" style={{ fontFamily: 'Inter_700Bold', marginBottom: 16 }}>Trip Summary</Text>
 
                             <View style={styles.summaryRow}>
                                 <MaterialCommunityIcons name="map-marker-distance" size={20} color={theme.colors.primary} />
                                 <View style={{ flex: 1, marginLeft: 12 }}>
                                     <Text variant="labelMedium" style={{ color: theme.colors.onSurfaceVariant }}>Distance</Text>
-                                    <Text variant="bodyLarge" style={{ fontWeight: 'bold' }}>
+                                    <Text variant="bodyLarge" style={{ fontFamily: 'Inter_700Bold' }}>
                                         {routeDistanceKm
                                             || (jobData.distance && jobData.distance !== '--' ? jobData.distance : null)
                                             || (jobData.pickupLat && jobData.dropoffLat
@@ -420,7 +420,7 @@ export default function JobDetailScreen() {
                                 <MaterialCommunityIcons name="timer-outline" size={20} color={theme.colors.primary} />
                                 <View style={{ flex: 1, marginLeft: 12 }}>
                                     <Text variant="labelMedium" style={{ color: theme.colors.onSurfaceVariant }}>Total Time</Text>
-                                    <Text variant="bodyLarge" style={{ fontWeight: 'bold' }}>
+                                    <Text variant="bodyLarge" style={{ fontFamily: 'Inter_700Bold' }}>
                                         {getTotalDeliveryTime()}
                                     </Text>
                                 </View>
@@ -430,7 +430,7 @@ export default function JobDetailScreen() {
                                 <MaterialCommunityIcons name="cash" size={20} color="#4CAF50" />
                                 <View style={{ flex: 1, marginLeft: 12 }}>
                                     <Text variant="labelMedium" style={{ color: theme.colors.onSurfaceVariant }}>Fare</Text>
-                                    <Text variant="bodyLarge" style={{ fontWeight: 'bold', color: '#4CAF50' }}>
+                                    <Text variant="bodyLarge" style={{ fontFamily: 'Inter_700Bold', color: '#4CAF50' }}>
                                         {jobData.fare && jobData.fare !== 'N/A' && jobData.fare !== '--' ? (jobData.fare.toString().includes('₱') ? jobData.fare : `₱${Number(jobData.fare).toFixed(2)}`) : 'N/A'}
                                     </Text>
                                 </View>
@@ -445,7 +445,7 @@ export default function JobDetailScreen() {
                                 <View style={[styles.badge, { backgroundColor: isDarkMode ? 'rgba(33, 150, 243, 0.2)' : '#E3F2FD' }]}>
                                     <MaterialCommunityIcons name="package-variant" size={20} color="#2196F3" />
                                 </View>
-                                <Text variant="titleMedium" style={{ fontWeight: 'bold', marginLeft: 8 }}>Pickup</Text>
+                                <Text variant="titleMedium" style={{ fontFamily: 'Inter_700Bold', marginLeft: 8 }}>Pickup</Text>
                             </View>
 
                             <View style={styles.detailRow}>
@@ -481,7 +481,7 @@ export default function JobDetailScreen() {
                                 <View style={[styles.badge, { backgroundColor: isDarkMode ? 'rgba(244, 67, 54, 0.2)' : '#FFEBEE' }]}>
                                     <MaterialCommunityIcons name="map-marker" size={20} color="#F44336" />
                                 </View>
-                                <Text variant="titleMedium" style={{ fontWeight: 'bold', marginLeft: 8 }}>Dropoff</Text>
+                                <Text variant="titleMedium" style={{ fontFamily: 'Inter_700Bold', marginLeft: 8 }}>Dropoff</Text>
                             </View>
 
                             <View style={styles.detailRow}>

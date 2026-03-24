@@ -295,11 +295,11 @@ const styles = StyleSheet.create({
         marginLeft: 12,
     },
     title: {
-        fontWeight: 'bold',
+        fontFamily: 'Inter_700Bold',
     },
     timer: {
         color: '#F44336',
-        fontWeight: '600',
+        fontFamily: 'Inter_600SemiBold',
     },
     navigation: {
         flexDirection: 'row',
@@ -342,7 +342,7 @@ const styles = StyleSheet.create({
     },
     locationLabel: {
         color: '#888',
-        fontWeight: '600',
+        fontFamily: 'Inter_600SemiBold',
         letterSpacing: 0.5,
     },
     address: {
@@ -382,7 +382,7 @@ const styles = StyleSheet.create({
         fontSize: 10,
     },
     fare: {
-        fontWeight: 'bold',
+        fontFamily: 'Inter_700Bold',
     },
     actions: {
         flexDirection: 'row',

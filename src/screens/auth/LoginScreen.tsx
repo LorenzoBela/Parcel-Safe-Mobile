@@ -8,7 +8,9 @@ import {
     useColorScheme,
     StatusBar,
     ActivityIndicator,
-    Alert
+    Alert,
+    Linking,
+    Platform
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Text } from 'react-native-paper';
@@ -17,6 +19,8 @@ import useAuthStore from '../../store/authStore';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { PremiumAlert } from '../../services/PremiumAlertService';
 import { useEntryAnimation } from '../../hooks/useEntryAnimation';
+import * as Location from 'expo-location';
+import * as Notifications from 'expo-notifications';
 
 // Uber-inspired minimalist colors (matching RoleSelectionScreen)
 const COLORS = {
@@ -56,6 +60,49 @@ export default function LoginScreen() {
     const handleGoogleSignIn = async () => {
         try {
             setLoading(true);
+
+            // --- PERMISSIONS CHECK: Foreground Location ---
+            let { status: fgStatus } = await Location.getForegroundPermissionsAsync();
+            if (fgStatus !== 'granted') {
+                const { status } = await Location.requestForegroundPermissionsAsync();
+                if (status !== 'granted') {
+                    setLoading(false);
+                    PremiumAlert.alert('Location Required', 'Parcel Safe needs your location to match you with nearby orders and track deliveries.', [
+                        { text: 'Cancel', style: 'cancel' },
+                        { text: 'Open Settings', onPress: () => Linking.openSettings() }
+                    ]);
+                    return;
+                }
+            }
+
+            // --- PERMISSIONS CHECK: Background Location ---
+            let { status: bgStatus } = await Location.getBackgroundPermissionsAsync();
+            if (bgStatus !== 'granted') {
+                const { status } = await Location.requestBackgroundPermissionsAsync();
+                if (status !== 'granted') {
+                    setLoading(false);
+                    PremiumAlert.alert('Background Location Required', 'To ensure customer security, Parcel Safe must track your location even when the app is minimized during a delivery. Please select "Allow all the time".', [
+                        { text: 'Cancel', style: 'cancel' },
+                        { text: 'Open Settings', onPress: () => Linking.openSettings() }
+                    ]);
+                    return;
+                }
+            }
+
+            // --- PERMISSIONS CHECK: Notifications ---
+            let { status: notifStatus } = await Notifications.getPermissionsAsync();
+            if (notifStatus !== 'granted') {
+                const { status } = await Notifications.requestPermissionsAsync();
+                if (status !== 'granted') {
+                    setLoading(false);
+                    PremiumAlert.alert('Notifications Required', 'Parcel Safe needs to send you critical alerts for new orders, customer messages, and security incidents.', [
+                        { text: 'Cancel', style: 'cancel' },
+                        { text: 'Open Settings', onPress: () => Linking.openSettings() }
+                    ]);
+                    return;
+                }
+            }
+
             // console.log('Initiating Google Sign-In...');
             const result = await signInWithGoogleAndSyncProfile();
             // console.log('Sign-in successful:', result.email, result.role);
@@ -250,12 +297,12 @@ const styles = StyleSheet.create({
     },
     appName: {
         fontSize: 28,
-        fontWeight: '700',
+        fontFamily: 'Inter_700Bold',
         letterSpacing: -0.5,
     },
     tagline: {
         fontSize: 15,
-        fontWeight: '400',
+        fontFamily: 'Inter_400Regular',
         marginTop: 6,
         letterSpacing: 0.2,
     },
@@ -264,12 +311,12 @@ const styles = StyleSheet.create({
     },
     welcomeTitle: {
         fontSize: 24,
-        fontWeight: '600',
+        fontFamily: 'Inter_600SemiBold',
         letterSpacing: -0.3,
     },
     welcomeSubtitle: {
         fontSize: 15,
-        fontWeight: '400',
+        fontFamily: 'Inter_400Regular',
         textAlign: 'center',
         marginTop: 8,
         lineHeight: 22,
@@ -298,7 +345,7 @@ const styles = StyleSheet.create({
     },
     googleButtonText: {
         fontSize: 16,
-        fontWeight: '600',
+        fontFamily: 'Inter_600SemiBold',
         letterSpacing: -0.2,
     },
     warningText: {

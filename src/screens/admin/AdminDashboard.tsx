@@ -782,13 +782,13 @@ const styles = StyleSheet.create({
     },
     greeting: {
         fontSize: 26,
-        fontWeight: '700',
+        fontFamily: 'Inter_700Bold',
         letterSpacing: -0.4,
     },
     dateLabel: {
         fontSize: 13,
         marginTop: 4,
-        fontWeight: '500',
+        fontFamily: 'Inter_500Medium',
     },
     weatherPill: {
         flexDirection: 'row',
@@ -800,7 +800,7 @@ const styles = StyleSheet.create({
     },
     weatherTemp: {
         fontSize: 13,
-        fontWeight: '600',
+        fontFamily: 'Inter_600SemiBold',
     },
 
     scroll: {
@@ -825,12 +825,12 @@ const styles = StyleSheet.create({
     },
     metricValue: {
         fontSize: 28,
-        fontWeight: '700',
+        fontFamily: 'Inter_700Bold',
         letterSpacing: -0.5,
     },
     metricLabel: {
         fontSize: 11,
-        fontWeight: '600',
+        fontFamily: 'Inter_600SemiBold',
         marginTop: 4,
         textTransform: 'uppercase',
         letterSpacing: 0.5,
@@ -851,7 +851,7 @@ const styles = StyleSheet.create({
     },
     sectionTitle: {
         fontSize: 17,
-        fontWeight: '700',
+        fontFamily: 'Inter_700Bold',
         letterSpacing: -0.2,
         marginBottom: 12,
     },
@@ -862,7 +862,7 @@ const styles = StyleSheet.create({
     },
     sectionActionText: {
         fontSize: 13,
-        fontWeight: '600',
+        fontFamily: 'Inter_600SemiBold',
     },
 
     chipRow: {
@@ -880,7 +880,7 @@ const styles = StyleSheet.create({
     },
     pillText: {
         fontSize: 12,
-        fontWeight: '500',
+        fontFamily: 'Inter_500Medium',
     },
 
     // Pairing Card
@@ -895,11 +895,11 @@ const styles = StyleSheet.create({
     },
     pairingTitle: {
         fontSize: 15,
-        fontWeight: '700',
+        fontFamily: 'Inter_700Bold',
     },
     pairingBoxId: {
         fontSize: 14,
-        fontWeight: '600',
+        fontFamily: 'Inter_600SemiBold',
         marginTop: 2,
     },
     pairingMeta: {
@@ -912,7 +912,7 @@ const styles = StyleSheet.create({
         borderRadius: 10,
     },
     pairingBtnText: {
-        fontWeight: '700',
+        fontFamily: 'Inter_700Bold',
         fontSize: 14,
     },
 
@@ -944,7 +944,7 @@ const styles = StyleSheet.create({
     },
     actionLabel: {
         fontSize: 11,
-        fontWeight: '600',
+        fontFamily: 'Inter_600SemiBold',
         textAlign: 'center',
     },
     badge: {
@@ -962,7 +962,7 @@ const styles = StyleSheet.create({
     badgeText: {
         color: '#FFFFFF',
         fontSize: 10,
-        fontWeight: '700',
+        fontFamily: 'Inter_700Bold',
     },
 
     // Alerts
@@ -976,7 +976,7 @@ const styles = StyleSheet.create({
     },
     alertTitle: {
         fontSize: 14,
-        fontWeight: '700',
+        fontFamily: 'Inter_700Bold',
     },
     alertSub: {
         fontSize: 12,
@@ -993,7 +993,7 @@ const styles = StyleSheet.create({
     },
     modalTitle: {
         fontSize: 20,
-        fontWeight: '700',
+        fontFamily: 'Inter_700Bold',
         marginBottom: 8,
     },
     modalDesc: {
@@ -1003,7 +1003,7 @@ const styles = StyleSheet.create({
     },
     modalLabel: {
         fontSize: 12,
-        fontWeight: '600',
+        fontFamily: 'Inter_600SemiBold',
         marginBottom: 8,
         textTransform: 'uppercase',
         letterSpacing: 0.5,
@@ -1019,13 +1019,13 @@ const styles = StyleSheet.create({
     },
     deliverySectionTitle: {
         fontSize: 12,
-        fontWeight: '700',
+        fontFamily: 'Inter_700Bold',
         textTransform: 'uppercase',
         letterSpacing: 0.5,
     },
     deliveryRefreshText: {
         fontSize: 12,
-        fontWeight: '700',
+        fontFamily: 'Inter_700Bold',
     },
     deliveryList: {
         maxHeight: 180,
@@ -1045,12 +1045,12 @@ const styles = StyleSheet.create({
     },
     deliveryTracking: {
         fontSize: 13,
-        fontWeight: '700',
+        fontFamily: 'Inter_700Bold',
         marginBottom: 2,
     },
     deliveryMeta: {
         fontSize: 12,
-        fontWeight: '500',
+        fontFamily: 'Inter_500Medium',
     },
     deliveryDate: {
         fontSize: 11,
@@ -1077,7 +1077,7 @@ const styles = StyleSheet.create({
         borderWidth: 1,
     },
     modalCancelText: {
-        fontWeight: '600',
+        fontFamily: 'Inter_600SemiBold',
         fontSize: 14,
     },
     modalConfirmBtn: {
@@ -1086,7 +1086,7 @@ const styles = StyleSheet.create({
         borderRadius: 10,
     },
     modalConfirmText: {
-        fontWeight: '700',
+        fontFamily: 'Inter_700Bold',
         fontSize: 14,
     },
 
@@ -1123,7 +1123,7 @@ const styles = StyleSheet.create({
         borderWidth: 1,
     },
     regenBtnText: {
-        fontWeight: '600',
+        fontFamily: 'Inter_600SemiBold',
         fontSize: 13,
     },
     qrWrap: {

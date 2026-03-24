@@ -927,7 +927,7 @@ export default function BoxControlsScreen() {
         <Surface style={[styles.telemetryCard, { backgroundColor: c.card, borderColor: c.border, borderWidth: isDarkMode ? 1 : 0 }]} elevation={isDarkMode ? 0 : 1}>
             <MaterialCommunityIcons name={icon} size={24} color={color} />
             <Text variant="labelSmall" style={{ marginTop: 4, color: c.textSec }}>{label}</Text>
-            <Text variant="titleMedium" style={{ fontWeight: 'bold', color: c.text }}>{value}</Text>
+            <Text variant="titleMedium" style={{ fontFamily: 'Inter_700Bold', color: c.text }}>{value}</Text>
         </Surface>
     );
 
@@ -1142,7 +1142,7 @@ export default function BoxControlsScreen() {
                         color={!isPaired ? c.textTer : (isLocked ? c.greenText : c.redText)}
                         style={{ marginBottom: 10 }}
                     />
-                    <Text variant="headlineSmall" style={{ fontWeight: 'bold', marginTop: 10, color: c.text }}>
+                    <Text variant="headlineSmall" style={{ fontFamily: 'Inter_700Bold', marginTop: 10, color: c.text }}>
                         {!isPaired ? "No Box Connected" : (isLocked ? "System Secure" : "System Unlocked")}
                     </Text>
                     <Text variant="bodyMedium" style={{ color: !isPaired ? c.textTer : (isLocked ? c.greenText : c.redText) }}>
@@ -1206,7 +1206,7 @@ export default function BoxControlsScreen() {
 
                         {lockAwaitingClose && (
                             <View style={{ marginTop: -6, marginBottom: 12, padding: 10, borderRadius: 10, backgroundColor: c.orangeBg, borderWidth: 1, borderColor: c.orangeText }}>
-                                <Text style={{ color: c.orangeText, fontWeight: '700' }}>
+                                <Text style={{ color: c.orangeText, fontFamily: 'Inter_700Bold' }}>
                                     Lock pending physical close
                                 </Text>
                                 <Text style={{ marginTop: 4, color: c.orangeText, fontSize: 12 }}>
@@ -1219,7 +1219,7 @@ export default function BoxControlsScreen() {
 
                         {lockCloseConfirmed && (
                             <View style={{ marginTop: -6, marginBottom: 12, padding: 10, borderRadius: 10, backgroundColor: c.greenBg, borderWidth: 1, borderColor: c.greenText }}>
-                                <Text style={{ color: c.greenText, fontWeight: '700' }}>
+                                <Text style={{ color: c.greenText, fontFamily: 'Inter_700Bold' }}>
                                     Lock confirmed
                                 </Text>
                                 <Text style={{ marginTop: 4, color: c.greenText, fontSize: 12 }}>
@@ -1244,7 +1244,7 @@ export default function BoxControlsScreen() {
                                 />
                             </View>
                             <View style={styles.controlInfo}>
-                                <Text variant="titleMedium" style={{ fontWeight: 'bold', color: !isPaired ? c.textTer : c.text }}>
+                                <Text variant="titleMedium" style={{ fontFamily: 'Inter_700Bold', color: !isPaired ? c.textTer : c.text }}>
                                     {personalPinStatus?.enabled ? 'Personal PIN Enabled' : 'Personal PIN Not Set'}
                                 </Text>
                                 <Text variant="bodySmall" style={{ color: !isPaired ? c.textTer : c.textSec }}>
@@ -1332,7 +1332,7 @@ export default function BoxControlsScreen() {
                                 <MaterialCommunityIcons name="antenna" size={22} color={c.blueText} />
                             </View>
                             <View style={styles.diagInfo}>
-                                <Text variant="titleSmall" style={{ fontWeight: 'bold', color: c.text }}>LTE Module (A7670E)</Text>
+                                <Text variant="titleSmall" style={{ fontFamily: 'Inter_700Bold', color: c.text }}>LTE Module (A7670E)</Text>
                                 <Text variant="bodySmall" style={{ color: c.textSec }}>
                                     {isPaired
                                         ? `${hwDiag?.op || 'Unknown carrier'} • CSQ: ${hwDiag?.csq ?? '--'}/31 (${getCsqPercent(hwDiag?.csq)}%)`
@@ -1365,7 +1365,7 @@ export default function BoxControlsScreen() {
                                 />
                             </View>
                             <View style={styles.diagInfo}>
-                                <Text variant="titleSmall" style={{ fontWeight: 'bold', color: c.text }}>GPS / GNSS</Text>
+                                <Text variant="titleSmall" style={{ fontFamily: 'Inter_700Bold', color: c.text }}>GPS / GNSS</Text>
                                 <Text variant="bodySmall" style={{ color: c.textSec }}>
                                     {isPaired
                                         ? (locationData
@@ -1404,7 +1404,7 @@ export default function BoxControlsScreen() {
                                 />
                             </View>
                             <View style={styles.diagInfo}>
-                                <Text variant="titleSmall" style={{ fontWeight: 'bold', color: c.text }}>ESP32-CAM (OV3660)</Text>
+                                <Text variant="titleSmall" style={{ fontFamily: 'Inter_700Bold', color: c.text }}>ESP32-CAM (OV3660)</Text>
                                 <Text variant="bodySmall" style={{ color: c.textSec }}>
                                     {faceAuthStatus === 'SEARCHING' ? 'Person-detect scan in progress...'
                                         : faceAuthStatus === 'AUTHENTICATED' ? 'Person authenticated — solenoid triggered'
@@ -1449,7 +1449,7 @@ export default function BoxControlsScreen() {
                                 />
                             </View>
                             <View style={styles.diagInfo}>
-                                <Text variant="titleSmall" style={{ fontWeight: 'bold', color: c.text }}>Keypad Tester</Text>
+                                <Text variant="titleSmall" style={{ fontFamily: 'Inter_700Bold', color: c.text }}>Keypad Tester</Text>
                                 <Text variant="bodySmall" style={{ color: c.textSec }}>
                                     {lockoutState?.active
                                         ? `LOCKOUT: ${lockoutState.attempt_count} failed — clears in ${lockoutCountdown}`
@@ -1486,7 +1486,7 @@ export default function BoxControlsScreen() {
                                 <MaterialCommunityIcons name="lock-smart" size={22} color={lockHealth?.overheated ? c.redText : c.greenText} />
                             </View>
                             <View style={styles.diagInfo}>
-                                <Text variant="titleSmall" style={{ fontWeight: 'bold', color: c.text }}>Solenoid Lock Unit</Text>
+                                <Text variant="titleSmall" style={{ fontFamily: 'Inter_700Bold', color: c.text }}>Solenoid Lock Unit</Text>
                                 <Text variant="bodySmall" style={{ color: c.textSec }}>
                                     {lockHealth?.overheated ? 'Thermal cutoff triggered (cool down required)' : 'Operating normally'}
                                 </Text>
@@ -1506,7 +1506,7 @@ export default function BoxControlsScreen() {
                                 <MaterialCommunityIcons name="timer-outline" size={22} color={c.purpleText} />
                             </View>
                             <View style={styles.diagInfo}>
-                                <Text variant="titleSmall" style={{ fontWeight: 'bold', color: c.text }}>Device Health</Text>
+                                <Text variant="titleSmall" style={{ fontFamily: 'Inter_700Bold', color: c.text }}>Device Health</Text>
                                 <Text variant="bodySmall" style={{ color: c.textSec }}>
                                     {hwDiag?.uptime_ms
                                         ? `Up ${Math.floor(hwDiag.uptime_ms / 3600000)}h ${Math.floor((hwDiag.uptime_ms % 3600000) / 60000)}m${hwDiag.time_synced ? ' • NTP ✓' : ' • Clock not synced'}`
@@ -1558,7 +1558,7 @@ export default function BoxControlsScreen() {
                 <View style={styles.modalOverlay}>
                     <Surface style={styles.modalContent} elevation={5}>
                         <View style={styles.modalHeader}>
-                            <Text variant="titleLarge" style={{ fontWeight: 'bold' }}>BLE OTP Transfer</Text>
+                            <Text variant="titleLarge" style={{ fontFamily: 'Inter_700Bold' }}>BLE OTP Transfer</Text>
                             <IconButton
                                 icon="close"
                                 size={24}
@@ -1642,7 +1642,7 @@ export default function BoxControlsScreen() {
                 <View style={styles.modalOverlay}>
                     <Surface style={[styles.modalContent, { width: '92%', maxWidth: 520 }]} elevation={5}>
                         <View style={styles.modalHeader}>
-                            <Text variant="titleLarge" style={{ fontWeight: 'bold' }}>Security Hold Response Required</Text>
+                            <Text variant="titleLarge" style={{ fontFamily: 'Inter_700Bold' }}>Security Hold Response Required</Text>
                         </View>
                         <View style={styles.modalBody}>
                             {!activeTamperIncident?.id && (
@@ -1731,7 +1731,7 @@ export default function BoxControlsScreen() {
                 <View style={styles.modalOverlay}>
                     <Surface style={styles.modalContent} elevation={5}>
                         <View style={styles.modalHeader}>
-                            <Text variant="titleLarge" style={{ fontWeight: 'bold' }}>Set Personal PIN</Text>
+                            <Text variant="titleLarge" style={{ fontFamily: 'Inter_700Bold' }}>Set Personal PIN</Text>
                             <IconButton icon="close" size={24} onPress={() => setShowPersonalPinModal(false)} />
                         </View>
                         <View style={styles.modalBody}>
@@ -1805,7 +1805,7 @@ export default function BoxControlsScreen() {
                 <View style={styles.modalOverlay}>
                     <Surface style={styles.modalContent} elevation={5}>
                         <View style={styles.modalHeader}>
-                            <Text variant="titleLarge" style={{ fontWeight: 'bold' }}>Authorize Unlock</Text>
+                            <Text variant="titleLarge" style={{ fontFamily: 'Inter_700Bold' }}>Authorize Unlock</Text>
                             <IconButton
                                 icon="close"
                                 size={24}
@@ -1882,7 +1882,7 @@ const styles = StyleSheet.create({
         height: 120,
     },
     sectionTitle: {
-        fontWeight: 'bold',
+        fontFamily: 'Inter_700Bold',
         marginBottom: 12,
         color: '#333',
     },
@@ -1984,7 +1984,7 @@ const styles = StyleSheet.create({
     },
     alertTitle: {
         color: 'white',
-        fontWeight: 'bold',
+        fontFamily: 'Inter_700Bold',
         fontSize: 16,
     },
     alertText: {
@@ -2005,7 +2005,7 @@ const styles = StyleSheet.create({
     },
     warningTitle: {
         color: '#7B341E',
-        fontWeight: 'bold',
+        fontFamily: 'Inter_700Bold',
         fontSize: 16,
     },
     warningText: {
@@ -2027,7 +2027,7 @@ const styles = StyleSheet.create({
     },
     lockoutTitle: {
         color: '#D32F2F',
-        fontWeight: 'bold',
+        fontFamily: 'Inter_700Bold',
         fontSize: 16,
     },
     lockoutText: {
@@ -2050,7 +2050,7 @@ const styles = StyleSheet.create({
     },
     expiryTitle: {
         color: '#E65100',
-        fontWeight: 'bold',
+        fontFamily: 'Inter_700Bold',
         fontSize: 16,
     },
     expiryText: {
@@ -2101,7 +2101,7 @@ const styles = StyleSheet.create({
         marginBottom: 16,
     },
     bleStatusText: {
-        fontWeight: 'bold',
+        fontFamily: 'Inter_700Bold',
         marginBottom: 8,
     },
     bleMessage: {
@@ -2139,7 +2139,7 @@ const styles = StyleSheet.create({
     },
     diagBadgeText: {
         fontSize: 11,
-        fontWeight: 'bold',
+        fontFamily: 'Inter_700Bold',
     },
     modalFooter: {
         flexDirection: 'row',

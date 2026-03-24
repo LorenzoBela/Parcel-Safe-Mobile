@@ -1306,13 +1306,13 @@ export default function TrackOrderScreen() {
                     <View style={styles.statusHeader}>
                         <View style={{ flex: 1 }}>
                             {delivery?.status === 'COMPLETED' ? (
-                                <Text variant="titleLarge" style={{ fontWeight: 'bold', color: '#4CAF50' }}>Delivery Complete!</Text>
+                                <Text variant="titleLarge" style={{ fontFamily: 'Inter_700Bold', color: '#4CAF50' }}>Delivery Complete!</Text>
                             ) : delivery?.status === 'TAMPERED' ? (
-                                <Text variant="titleLarge" style={{ fontWeight: 'bold', color: theme.colors.error }}>Security Hold</Text>
+                                <Text variant="titleLarge" style={{ fontFamily: 'Inter_700Bold', color: theme.colors.error }}>Security Hold</Text>
                             ) : cancellation && delivery?.status === 'CANCELLED' ? (
-                                <Text variant="titleLarge" style={{ fontWeight: 'bold', color: theme.colors.error }}>Delivery Cancelled</Text>
+                                <Text variant="titleLarge" style={{ fontFamily: 'Inter_700Bold', color: theme.colors.error }}>Delivery Cancelled</Text>
                             ) : (
-                                <Text variant="titleLarge" style={{ fontWeight: 'bold', color: theme.colors.onSurface }}>
+                                <Text variant="titleLarge" style={{ fontFamily: 'Inter_700Bold', color: theme.colors.onSurface }}>
                                     {delivery?.status === 'ARRIVED' ? 'Rider Arrived' : (isPickedUp ? 'Delivery In Progress' : 'Heading to Pickup')}
                                 </Text>
                             )}
@@ -1366,14 +1366,14 @@ export default function TrackOrderScreen() {
                         </View>
                         {!isTerminalState && !cancellation && (
                             <Surface style={styles.etaBadge} elevation={0}>
-                                <Text style={{ color: 'white', fontWeight: 'bold' }}>
+                                <Text style={{ color: 'white', fontFamily: 'Inter_700Bold' }}>
                                     {eta !== null ? `${eta} min\n(Arrives ~${dayjs().add(eta, 'minute').format('h:mm A')})` : 'Calculating...'}
                                 </Text>
                                 <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 10 }}>
                                     {isPickedUp ? 'to you' : 'to pickup'}
                                 </Text>
                                 {distanceToTarget !== null && (
-                                    <Text style={{ color: 'rgba(255,255,255,0.85)', fontSize: 11, marginTop: 2, fontWeight: '600' }}>
+                                    <Text style={{ color: 'rgba(255,255,255,0.85)', fontSize: 11, marginTop: 2, fontFamily: 'Inter_600SemiBold' }}>
                                         {distanceToTarget < 1
                                             ? `${Math.round(distanceToTarget * 1000)}m away`
                                             : `${distanceToTarget.toFixed(1)}km away`}
@@ -1382,7 +1382,7 @@ export default function TrackOrderScreen() {
                                 {riderLiveLocation?.speed != null && (
                                     <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4 }}>
                                         <MaterialCommunityIcons name="speedometer" size={12} color="rgba(255,255,255,0.85)" />
-                                        <Text style={{ color: 'rgba(255,255,255,0.85)', fontSize: 11, fontWeight: '600', marginLeft: 4 }}>
+                                        <Text style={{ color: 'rgba(255,255,255,0.85)', fontSize: 11, fontFamily: 'Inter_600SemiBold', marginLeft: 4 }}>
                                             {formatSpeed(riderLiveLocation.speed)}
                                         </Text>
                                     </View>
@@ -1405,7 +1405,7 @@ export default function TrackOrderScreen() {
                             <Surface style={[styles.cancellationCard, { backgroundColor: theme.colors.errorContainer }]} elevation={1}>
                                 <View style={styles.cancellationHeader}>
                                     <MaterialCommunityIcons name="alert-circle-outline" size={24} color={theme.colors.error} />
-                                    <Text style={{ marginLeft: 8, color: theme.colors.onSurface, fontWeight: 'bold' }}>Return Authorization</Text>
+                                    <Text style={{ marginLeft: 8, color: theme.colors.onSurface, fontFamily: 'Inter_700Bold' }}>Return Authorization</Text>
                                 </View>
                                 <Text style={{ marginBottom: 12, color: theme.colors.onSurfaceVariant }}>
                                     Please provide this OTP to the rider to retrieve your package.
@@ -1413,7 +1413,7 @@ export default function TrackOrderScreen() {
 
                                 <TouchableOpacity onPress={copyReturnOtp} activeOpacity={0.7}>
                                     <Surface style={styles.otpContainer} elevation={2}>
-                                        <Text variant="displaySmall" style={{ letterSpacing: 4, fontWeight: 'bold', color: theme.colors.primary }}>
+                                        <Text variant="displaySmall" style={{ letterSpacing: 4, fontFamily: 'Inter_700Bold', color: theme.colors.primary }}>
                                             {cancellation.returnOtp}
                                         </Text>
                                         <MaterialCommunityIcons name="content-copy" size={20} color={theme.colors.primary} style={{ position: 'absolute', right: 16 }} />
@@ -1431,7 +1431,7 @@ export default function TrackOrderScreen() {
                         >
                             <Avatar.Image size={50} source={{ uri: riderDetails.avatar }} />
                             <View style={{ flex: 1, marginLeft: 16 }}>
-                                <Text variant="titleMedium" style={{ fontWeight: 'bold', color: theme.colors.onSurface }}>{riderDetails.name}</Text>
+                                <Text variant="titleMedium" style={{ fontFamily: 'Inter_700Bold', color: theme.colors.onSurface }}>{riderDetails.name}</Text>
                                 <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>{riderDetails.vehicle}</Text>
                                 <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4 }}>
                                     <MaterialCommunityIcons name="star" size={16} color="#FFC107" />
@@ -1631,7 +1631,7 @@ export default function TrackOrderScreen() {
 
                         <View style={{ alignItems: 'center', marginVertical: 16 }}>
                             <Avatar.Image size={80} source={{ uri: riderDetails.avatar }} />
-                            <Text variant="titleLarge" style={{ fontWeight: 'bold', color: theme.colors.onSurface, marginTop: 12 }}>
+                            <Text variant="titleLarge" style={{ fontFamily: 'Inter_700Bold', color: theme.colors.onSurface, marginTop: 12 }}>
                                 {riderDetails.name}
                             </Text>
                             <Text variant="bodyMedium" style={{ color: theme.colors.onSurfaceVariant }}>
@@ -1643,7 +1643,7 @@ export default function TrackOrderScreen() {
                             <Surface style={[styles.modalStatCard, { backgroundColor: theme.dark ? '#1A237E' : '#E3F2FD' }]} elevation={0}>
                                 <Text variant="labelMedium" style={{ color: '#2196F3' }}>RATING</Text>
                                 <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 8 }}>
-                                    <Text variant="displaySmall" style={{ fontWeight: 'bold', color: '#2196F3', marginRight: 4 }}>
+                                    <Text variant="displaySmall" style={{ fontFamily: 'Inter_700Bold', color: '#2196F3', marginRight: 4 }}>
                                         {riderDetails.rating}
                                     </Text>
                                     <MaterialCommunityIcons name="star" size={24} color="#FFC107" />
@@ -1653,7 +1653,7 @@ export default function TrackOrderScreen() {
                             <Surface style={[styles.modalStatCard, { backgroundColor: theme.dark ? '#1B5E20' : '#E8F5E9' }]} elevation={0}>
                                 <Text variant="labelMedium" style={{ color: '#4CAF50' }}>DELIVERIES</Text>
                                 <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 8 }}>
-                                    <Text variant="displaySmall" style={{ fontWeight: 'bold', color: '#4CAF50', marginRight: 4 }}>
+                                    <Text variant="displaySmall" style={{ fontFamily: 'Inter_700Bold', color: '#4CAF50', marginRight: 4 }}>
                                         {riderProfile?.totalDeliveries || 0}
                                     </Text>
                                     <MaterialCommunityIcons name="bike" size={24} color="#4CAF50" />
@@ -1686,7 +1686,7 @@ export default function TrackOrderScreen() {
                             }}>
                                 <MaterialCommunityIcons name="check" size={48} color="white" />
                             </View>
-                            <Text variant="headlineSmall" style={{ fontWeight: 'bold', color: theme.colors.onSurface, textAlign: 'center' }}>
+                            <Text variant="headlineSmall" style={{ fontFamily: 'Inter_700Bold', color: theme.colors.onSurface, textAlign: 'center' }}>
                                 Delivery Complete!
                             </Text>
                             <Text variant="bodyMedium" style={{ color: theme.colors.onSurfaceVariant, textAlign: 'center', marginTop: 8 }}>
@@ -1725,7 +1725,7 @@ export default function TrackOrderScreen() {
                             buttonColor={theme.colors.onSurface}
                             textColor={theme.colors.surface}
                         >
-                            <Text style={{ fontSize: 18, fontWeight: 'bold' }}>Submit Rating</Text>
+                            <Text style={{ fontSize: 18, fontFamily: 'Inter_700Bold' }}>Submit Rating</Text>
                         </Button>
 
                         <Button
@@ -1901,7 +1901,7 @@ const styles = StyleSheet.create({
     loadingTitle: {
         color: '#ffffff',
         fontSize: 18,
-        fontWeight: '600',
+        fontFamily: 'Inter_600SemiBold',
         marginTop: 16,
         letterSpacing: 0.5,
     },
@@ -1927,7 +1927,7 @@ const styles = StyleSheet.create({
     },
     modalTitle: {
         fontSize: 20,
-        fontWeight: 'bold',
+        fontFamily: 'Inter_700Bold',
     },
     modalStatCard: {
         flex: 1,

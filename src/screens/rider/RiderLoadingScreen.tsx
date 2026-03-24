@@ -333,13 +333,13 @@ const styles = StyleSheet.create({
     },
     title: {
         fontSize: 26,
-        fontWeight: '700',
+        fontFamily: 'Inter_700Bold',
         letterSpacing: -0.5,
         marginBottom: 4,
     },
     subtitle: {
         fontSize: 13,
-        fontWeight: '400',
+        fontFamily: 'Inter_400Regular',
         letterSpacing: 0.1,
         marginBottom: 40,
     },
@@ -365,7 +365,7 @@ const styles = StyleSheet.create({
     },
     statusText: {
         fontSize: 12,
-        fontWeight: '500',
+        fontFamily: 'Inter_500Medium',
         letterSpacing: 0.1,
     },
 });

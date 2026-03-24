@@ -39,20 +39,20 @@ export default function DeliveryHistoryCard({
                 style={[styles.gridCard, { backgroundColor: colors.card, borderColor: colors.border }]}
             >
                 <View style={{ padding: 12 }}>
-                    <Text variant="labelLarge" style={{ fontWeight: 'bold', fontSize: 12, color: colors.text }} numberOfLines={1}>
+                    <Text variant="labelLarge" style={{ fontFamily: 'Inter_700Bold', fontSize: 12, color: colors.text }} numberOfLines={1}>
                         {item.shortTrk}
                     </Text>
                     <Text variant="bodySmall" style={{ color: colors.textSec, fontSize: 10, marginBottom: 8 }}>
                         {item.date}
                     </Text>
 
-                    <Text variant="titleMedium" style={{ fontWeight: 'bold', color: colors.accent, marginBottom: 4 }}>
+                    <Text variant="titleMedium" style={{ fontFamily: 'Inter_700Bold', color: colors.accent, marginBottom: 4 }}>
                         {item.earnings}
                     </Text>
 
                     <View style={[styles.divider, { backgroundColor: colors.divider }]} />
 
-                    <Text numberOfLines={1} style={{ fontSize: 12, color: colors.text, fontWeight: 'bold' }}>
+                    <Text numberOfLines={1} style={{ fontSize: 12, color: colors.text, fontFamily: 'Inter_700Bold' }}>
                         {item.customerName}
                     </Text>
                     {showRider ? (
@@ -63,7 +63,7 @@ export default function DeliveryHistoryCard({
 
                     <View style={{ marginTop: 8 }}>
                         <View style={{ backgroundColor: `${statusColor}20`, paddingHorizontal: 8, paddingVertical: 2, borderRadius: 6, alignSelf: 'flex-start' }}>
-                            <Text style={{ color: statusColor, fontWeight: 'bold', fontSize: 9 }}>
+                            <Text style={{ color: statusColor, fontFamily: 'Inter_700Bold', fontSize: 9 }}>
                                 {item.status}
                             </Text>
                         </View>
@@ -81,7 +81,7 @@ export default function DeliveryHistoryCard({
         >
             <View style={styles.cardHeader}>
                 <View style={{ flex: 1, marginRight: 8 }}>
-                    <Text variant="titleMedium" style={{ fontWeight: 'bold', color: colors.text }} numberOfLines={1}>
+                    <Text variant="titleMedium" style={{ fontFamily: 'Inter_700Bold', color: colors.text }} numberOfLines={1}>
                         {item.shortTrk}
                     </Text>
                     <Text variant="bodySmall" style={{ color: colors.textSec }}>
@@ -89,11 +89,11 @@ export default function DeliveryHistoryCard({
                     </Text>
                 </View>
                 <View style={{ alignItems: 'flex-end', minWidth: 80 }}>
-                    <Text variant="titleMedium" style={{ fontWeight: 'bold', color: colors.accent }}>
+                    <Text variant="titleMedium" style={{ fontFamily: 'Inter_700Bold', color: colors.accent }}>
                         {item.earnings}
                     </Text>
                     <View style={{ backgroundColor: `${statusColor}20`, paddingHorizontal: 8, paddingVertical: 2, borderRadius: 6, marginTop: 2 }}>
-                        <Text style={{ color: statusColor, fontWeight: 'bold', fontSize: 10 }}>
+                        <Text style={{ color: statusColor, fontFamily: 'Inter_700Bold', fontSize: 10 }}>
                             {item.status}
                         </Text>
                     </View>
@@ -106,7 +106,7 @@ export default function DeliveryHistoryCard({
                 <View style={styles.iconBox}>
                     <MaterialCommunityIcons name="account" size={16} color={colors.textSec} />
                 </View>
-                <Text variant="bodyMedium" style={[styles.rowText, { color: colors.text, fontWeight: '600' }]}>
+                <Text variant="bodyMedium" style={[styles.rowText, { color: colors.text, fontFamily: 'Inter_600SemiBold' }]}>
                     {item.customerName}
                 </Text>
             </View>
