@@ -1,4 +1,7 @@
-import React, { useRef } from 'react';
+import React, { useRef, useState, useEffect } from 'react';
+import dayjs from 'dayjs';
+import * as Location from 'expo-location';
+import { fetchWeather, WeatherData } from '../../services/weatherService';
 import {
     View,
     StyleSheet,
@@ -63,6 +66,41 @@ export default function RoleSelectionScreen() {
     const { isDarkMode: isDark } = useAppTheme();
     const { role, user } = useAuthStore((state: any) => state);
 
+    const [currentTime, setCurrentTime] = useState(dayjs());
+    const [weather, setWeather] = useState<WeatherData | null>(null);
+    const [locationName, setLocationName] = useState<string | null>(null);
+
+    // Live clock
+    useEffect(() => {
+        const timer = setInterval(() => setCurrentTime(dayjs()), 1000);
+        return () => clearInterval(timer);
+    }, []);
+
+    // Weather & Location
+    useEffect(() => {
+        (async () => {
+            let { status } = await Location.requestForegroundPermissionsAsync();
+            if (status !== 'granted') return;
+            try {
+                let location = await Location.getCurrentPositionAsync({});
+                
+                let address = await Location.reverseGeocodeAsync({
+                    latitude: location.coords.latitude,
+                    longitude: location.coords.longitude
+                });
+                if (address && address.length > 0) {
+                    const { city, region, name } = address[0];
+                    setLocationName(city ? `${city}, ${region}` : name || 'Unknown Location');
+                }
+
+                const data = await fetchWeather(location.coords.latitude, location.coords.longitude);
+                if (data) setWeather(data);
+            } catch (err) {
+                // Ignore gracefully
+            }
+        })();
+    }, []);
+
     const colors = isDark ? COLORS.dark : COLORS.light;
 
     const handleNavigation = (targetApp: 'RiderApp' | 'CustomerApp' | 'AdminApp') => {
@@ -92,21 +130,43 @@ export default function RoleSelectionScreen() {
 
             {/* Header Section */}
             <Animated.View style={[styles.header, headerAnim.style]}>
-                <View style={styles.avatarContainer}>
-                    {user?.photo ? (
-                        <Image
-                            source={{ uri: user.photo }}
-                            style={styles.avatar}
-                        />
-                    ) : (
-                        <View style={[styles.avatarPlaceholder, { backgroundColor: colors.surface }]}>
-                            <MaterialCommunityIcons
-                                name="account"
-                                size={32}
-                                color={colors.textSecondary}
+                <View style={styles.headerTopRow}>
+                    <View style={styles.avatarContainer}>
+                        {user?.photo ? (
+                            <Image
+                                source={{ uri: user.photo }}
+                                style={styles.avatar}
                             />
-                        </View>
-                    )}
+                        ) : (
+                            <View style={[styles.avatarPlaceholder, { backgroundColor: colors.surface }]}>
+                                <MaterialCommunityIcons
+                                    name="account"
+                                    size={32}
+                                    color={colors.textSecondary}
+                                />
+                            </View>
+                        )}
+                    </View>
+
+                    {/* Right-Aligned Minimalist Info Widget */}
+                    <View style={styles.rightWidget}>
+                        <Text style={[styles.timeText, { color: colors.text }]}>{currentTime.format('h:mm A')}</Text>
+                        <Text style={[styles.dateText, { color: colors.textSecondary }]}>{currentTime.format('dddd, MMM D')}</Text>
+                        
+                        {locationName && (
+                            <View style={styles.locationRow}>
+                                <MaterialCommunityIcons name="map-marker-outline" size={12} color={colors.textSecondary} />
+                                <Text style={[styles.locationText, { color: colors.textSecondary }]}>{locationName}</Text>
+                            </View>
+                        )}
+
+                        {weather && (
+                            <View style={styles.weatherRow}>
+                                <MaterialCommunityIcons name={weather.icon as any} size={14} color={colors.textSecondary} />
+                                <Text style={[styles.weatherText, { color: colors.textSecondary }]}>{weather.temp} • {weather.condition}</Text>
+                            </View>
+                        )}
+                    </View>
                 </View>
 
                 <Text style={[styles.greeting, { color: colors.textSecondary }]}>
@@ -250,6 +310,46 @@ const styles = StyleSheet.create({
         paddingHorizontal: 24,
         paddingTop: 40,
         paddingBottom: 32,
+    },
+    headerTopRow: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'flex-start',
+    },
+    rightWidget: {
+        alignItems: 'flex-end',
+        justifyContent: 'flex-start',
+        paddingTop: 4,
+    },
+    timeText: {
+        fontSize: 18,
+        fontFamily: 'Inter_700Bold',
+        letterSpacing: -0.5,
+    },
+    dateText: {
+        fontSize: 12,
+        fontFamily: 'Inter_500Medium',
+        marginTop: 2,
+    },
+    locationRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        marginTop: 6,
+        gap: 2,
+    },
+    locationText: {
+        fontSize: 10,
+        fontFamily: 'Inter_500Medium',
+    },
+    weatherRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        marginTop: 4,
+        gap: 4,
+    },
+    weatherText: {
+        fontSize: 11,
+        fontFamily: 'Inter_500Medium',
     },
     avatarContainer: {
         marginBottom: 24,

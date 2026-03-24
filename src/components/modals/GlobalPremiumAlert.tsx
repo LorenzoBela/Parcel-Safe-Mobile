@@ -1,5 +1,5 @@
-import React, { useEffect, useState } from 'react';
-import { StyleSheet, View, TouchableOpacity, Dimensions, DeviceEventEmitter } from 'react-native';
+import React, { useEffect, useState, useRef } from 'react';
+import { StyleSheet, View, TouchableOpacity, Dimensions, DeviceEventEmitter, PanResponder, Animated } from 'react-native';
 import { Modal, Portal, Text } from 'react-native-paper';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAppTheme } from '../../context/ThemeContext';
@@ -36,18 +36,54 @@ export default function GlobalPremiumAlert() {
     const c = isDarkMode ? darkC : lightC;
     const insets = useSafeAreaInsets();
 
+    const panY = useRef(new Animated.Value(0)).current;
+
+    const resetPositionAnim = Animated.spring(panY, {
+        toValue: 0,
+        useNativeDriver: true,
+        bounciness: 0
+    });
+
+    const panResponder = useRef(
+        PanResponder.create({
+            onStartShouldSetPanResponder: () => false,
+            onStartShouldSetPanResponderCapture: () => false,
+            onMoveShouldSetPanResponder: (_, gestureState) => {
+                // Lower threshold and use capture to ensure we get the event over touchables
+                return gestureState.dy > 5 && Math.abs(gestureState.dx) < 30;
+            },
+            onMoveShouldSetPanResponderCapture: (_, gestureState) => {
+                return gestureState.dy > 5 && Math.abs(gestureState.dx) < 30;
+            },
+            onPanResponderMove: (_, gestureState) => {
+                if (gestureState.dy > 0) {
+                    panY.setValue(gestureState.dy);
+                }
+            },
+            onPanResponderRelease: (_, gestureState) => {
+                if (gestureState.dy > 60 || gestureState.vy > 0.5) {
+                    handleDismiss(true);
+                } else {
+                    resetPositionAnim.start();
+                }
+            },
+        })
+    ).current;
+
     useEffect(() => {
         const subscription = DeviceEventEmitter.addListener(PremiumAlert.SHOW_EVENT, (config: PremiumAlertOptions) => {
             setAlertConfig(config);
+            panY.setValue(0); // Reset position before showing
             setVisible(true);
         });
 
         return () => subscription.remove();
-    }, []);
+    }, [panY]);
 
-    const handleDismiss = () => {
+    const handleDismiss = (fromSwipe = false) => {
         if (!alertConfig?.options?.cancelable && alertConfig?.buttons?.length) {
             // If not cancelable and has buttons, don't allow backdrop dismiss
+            if (fromSwipe) resetPositionAnim.start();
             return;
         }
 
@@ -57,6 +93,8 @@ export default function GlobalPremiumAlert() {
         }
 
         setVisible(false);
+        // Ensure pan is reset for next time after modal close animation
+        setTimeout(() => panY.setValue(0), 300);
     };
 
     const handleButtonPress = (onPress?: () => void) => {
@@ -89,17 +127,21 @@ export default function GlobalPremiumAlert() {
                 ]}
                 style={styles.modalOverlay}
             >
-                <View style={styles.dragIndicator} />
+                <Animated.View 
+                    style={{ transform: [{ translateY: panY }] }}
+                    {...panResponder.panHandlers}
+                >
+                    <View style={styles.dragIndicator} />
 
-                <View style={styles.content}>
-                    {alertConfig.icon && (
-                        <View style={[styles.iconContainer, { backgroundColor: (alertConfig.iconColor || c.accent) + '15' }]}>
-                            <MaterialCommunityIcons name={alertConfig.icon as any} size={32} color={alertConfig.iconColor || c.accent} />
-                        </View>
-                    )}
-                    <Text style={[styles.title, { color: c.textPrimary }]}>
-                        {alertConfig.title}
-                    </Text>
+                    <View style={styles.content}>
+                        {alertConfig.icon && (
+                            <View style={[styles.iconContainer, { backgroundColor: (alertConfig.iconColor || c.accent) + '15' }]}>
+                                <MaterialCommunityIcons name={alertConfig.icon as any} size={32} color={alertConfig.iconColor || c.accent} />
+                            </View>
+                        )}
+                        <Text style={[styles.title, { color: c.textPrimary }]}>
+                            {alertConfig.title}
+                        </Text>
 
                     {alertConfig.message && (
                         <Text style={[styles.description, { color: c.textSecondary }]}>
@@ -146,6 +188,7 @@ export default function GlobalPremiumAlert() {
                         })}
                     </View>
                 </View>
+                </Animated.View>
             </Modal>
         </Portal>
     );
