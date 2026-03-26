@@ -18,23 +18,32 @@ dayjs.extend(utc);
 dayjs.extend(timezone);
 const PH_TIMEZONE = 'Asia/Manila';
 
-// Copied from RiderDashboard — fixes double-shifted timestamps from Supabase
-const formatTimeWithHeuristic = (timeStr: string) => {
+/** Haversine distance in km between two lat/lng points */
+const haversineKm = (lat1: number, lng1: number, lat2: number, lng2: number): number => {
+    const R = 6371;
+    const toRad = (deg: number) => (deg * Math.PI) / 180;
+    const dLat = toRad(lat2 - lat1);
+    const dLng = toRad(lng2 - lng1);
+    const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
+    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+};
+
+// Format timestamp to Philippine Time — parse as UTC, convert to PH (matching JobDetailScreen)
+const formatTimeAsPH = (timeStr: string) => {
     if (!timeStr || timeStr === '--:--') return '--:--';
+    // Handle bare time strings like "T04:18:38.479"
     if (timeStr.startsWith('T') && timeStr.includes(':')) {
         const cleanTime = timeStr.substring(1).split('.')[0];
-        const dummyDate = dayjs(`2000-01-01T${cleanTime}`);
-        if (dummyDate.isValid()) return dummyDate.format('h:mm A');
+        const dummyDate = dayjs.utc(`2000-01-01T${cleanTime}`);
+        if (dummyDate.isValid()) return dummyDate.add(8, 'hour').format('h:mm A');
         return cleanTime;
     }
-    const d = dayjs(timeStr);
+    // If already formatted as "h:mm A", return as-is
+    if (timeStr.match(/^\d{1,2}:\d{2} [AP]M$/)) return timeStr;
+    // Standard ISO timestamp — parse as UTC, convert to PH (+8)
+    const d = dayjs.utc(timeStr);
     if (!d.isValid()) return timeStr;
-    let phTime = d.tz(PH_TIMEZONE);
-    const now = dayjs().tz(PH_TIMEZONE);
-    if (phTime.diff(now, 'hour') > 2) {
-        phTime = phTime.subtract(8, 'hour');
-    }
-    return phTime.format('h:mm A');
+    return d.add(8, 'hour').format('h:mm A');
 };
 
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -92,10 +101,35 @@ export default function AssignedDeliveriesScreen() {
     // Data State
     const [deliveries, setDeliveries] = useState<any[]>([]);
 
+    // Mapbox token for accurate road distance
+    const MAPBOX_TOKEN = process.env.EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN;
+
     // Auth
     const authedUserId = useAuthStore((state: any) => state.user?.userId) as string | undefined;
 
     const onChangeSearch = query => setSearchQuery(query);
+
+    /** Fetch road distance from Mapbox Directions API (same as JobDetailScreen) */
+    const fetchMapboxDistance = async (
+        pickupLat: number, pickupLng: number,
+        dropoffLat: number, dropoffLng: number,
+    ): Promise<{ distanceKm: string; durationMin: number } | null> => {
+        if (!MAPBOX_TOKEN) return null;
+        try {
+            const url = `https://api.mapbox.com/directions/v5/mapbox/driving/${pickupLng},${pickupLat};${dropoffLng},${dropoffLat}?geometries=geojson&access_token=${MAPBOX_TOKEN}`;
+            const response = await fetch(url);
+            const data = await response.json();
+            if (data.routes?.length > 0) {
+                const route = data.routes[0];
+                const km = (route.distance / 1000).toFixed(1);
+                const mins = Math.ceil(route.duration / 60);
+                return { distanceKm: `${km} km`, durationMin: mins };
+            }
+        } catch (err) {
+            console.error('[AssignedDeliveries] Mapbox distance error:', err);
+        }
+        return null;
+    };
 
     const fetchDeliveries = async () => {
         if (!authedUserId) return;
@@ -131,9 +165,10 @@ export default function AssignedDeliveriesScreen() {
                     snappedDropoffLng: d.snapped_dropoff_lng,
                     date: d.created_at,
                     time: d.accepted_at
-                        ? formatTimeWithHeuristic(d.accepted_at)
-                        : (d.created_at ? formatTimeWithHeuristic(d.created_at) : '--:--'),
-                    distance: d.distance ? `${d.distance.toFixed(1)} km` : '--',
+                        ? formatTimeAsPH(d.accepted_at)
+                        : (d.created_at ? formatTimeAsPH(d.created_at) : '--:--'),
+                    distance: d.distance ? `${d.distance.toFixed(1)} km` : null,
+                    _rawDistance: d.distance,
                     fare: d.estimated_fare ? `₱${d.estimated_fare}` : '--',
                     earnings: d.estimated_fare ? `₱${d.estimated_fare}` : '--',
                     estimatedTime: (() => {
@@ -172,6 +207,35 @@ export default function AssignedDeliveriesScreen() {
                     deliveryNotes: d.delivery_notes,
                 }));
                 setDeliveries(mapped);
+
+                // Fire Mapbox distance requests for deliveries missing distance
+                const needsDistance = mapped.filter(
+                    (m: any) => !m._rawDistance && m.pickupLat && m.pickupLng && m.dropoffLat && m.dropoffLng
+                );
+                if (needsDistance.length > 0) {
+                    const distanceResults = await Promise.allSettled(
+                        needsDistance.map((m: any) => fetchMapboxDistance(m.pickupLat, m.pickupLng, m.dropoffLat, m.dropoffLng).then(r => ({ id: m.id, result: r })))
+                    );
+                    setDeliveries(prev => prev.map(d => {
+                        const match = distanceResults.find(
+                            r => r.status === 'fulfilled' && r.value?.id === d.id && r.value?.result
+                        );
+                        if (match && match.status === 'fulfilled' && match.value.result) {
+                            const { distanceKm, durationMin } = match.value.result;
+                            const display = durationMin >= 60
+                                ? `${Math.floor(durationMin / 60)}h ${durationMin % 60}m`
+                                : `${durationMin} min`;
+                            const arrival = new Date(Date.now() + durationMin * 60 * 1000);
+                            const arrivalStr = arrival.toLocaleTimeString('en-US', { timeZone: 'Asia/Manila', hour: 'numeric', minute: '2-digit', hour12: true });
+                            return {
+                                ...d,
+                                distance: distanceKm,
+                                estimatedTime: `~${display} (Arrives ~${arrivalStr})`,
+                            };
+                        }
+                        return { ...d, distance: d.distance || '--' };
+                    }));
+                }
             }
         } catch (err) {
             console.error('Unexpected error fetching deliveries:', err);
@@ -504,30 +568,61 @@ export default function AssignedDeliveriesScreen() {
 
         return (
             <Animated.View style={rowAnim.style}>
-                <TouchableOpacity activeOpacity={0.8} style={[styles.gridCard, { backgroundColor: c.card, borderColor: c.border }]} onPress={() => navigation.navigate('JobDetail', { job: { ...item, id: item.id } })}>
-                    <View style={{ padding: 12 }}>
-                        <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 10 }}>
-                            <View style={[styles.statusPill, { backgroundColor: sc.bg, alignSelf: 'flex-start' }]}>
-                                <Text style={{ fontSize: 10, fontFamily: 'Inter_700Bold', color: sc.text }}>{item.status.replace(/_/g, ' ')}</Text>
+                <TouchableOpacity
+                    activeOpacity={0.8}
+                    style={[styles.compactCard, { backgroundColor: c.card, borderColor: c.border }]}
+                    onPress={() => navigation.navigate('JobDetail', { job: { ...item, id: item.id } })}
+                >
+                    {/* Left accent strip */}
+                    <View style={[styles.compactAccent, { backgroundColor: sc.text }]} />
+
+                    <View style={styles.compactBody}>
+                        {/* Top row: Status + Date */}
+                        <View style={styles.compactTopRow}>
+                            <View style={[styles.compactStatusPill, { backgroundColor: sc.bg }]}>
+                                <Text style={{ fontSize: 10, fontFamily: 'Inter_700Bold', color: sc.text, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                                    {item.status.replace(/_/g, ' ')}
+                                </Text>
+                            </View>
+                            <Text style={{ fontSize: 11, color: c.textTer, fontFamily: 'Inter_500Medium' }}>
+                                {dayjs(item.date).tz(PH_TIMEZONE).format('MMM D')} • {item.time}
+                            </Text>
+                        </View>
+
+                        {/* Middle row: Customer + Tracking */}
+                        <View style={{ marginTop: 8 }}>
+                            <Text style={{ fontSize: 15, fontFamily: 'Inter_700Bold', color: c.text }} numberOfLines={1}>
+                                {item.customer}
+                            </Text>
+                            <Text style={{ fontSize: 12, color: c.textSec, marginTop: 2, fontFamily: 'JetBrainsMono_400Regular' }} numberOfLines={1}>
+                                {item.trk}
+                            </Text>
+                        </View>
+
+                        {/* Bottom row: Address + Distance */}
+                        <View style={styles.compactBottomRow}>
+                            <View style={styles.compactAddressRow}>
+                                <MaterialCommunityIcons name="map-marker" size={13} color={c.textSec} />
+                                <Text style={{ fontSize: 12, marginLeft: 4, flex: 1, color: c.textSec }} numberOfLines={1}>
+                                    {item.address}
+                                </Text>
+                            </View>
+                            <View style={styles.compactMetaRow}>
+                                <View style={[styles.compactMetaPill, { backgroundColor: c.search }]}>
+                                    <MaterialCommunityIcons name="map-marker-distance" size={12} color={c.textSec} />
+                                    <Text style={{ fontSize: 11, color: c.textSec, marginLeft: 4, fontFamily: 'Inter_600SemiBold' }}>{item.distance}</Text>
+                                </View>
+                                <View style={[styles.compactMetaPill, { backgroundColor: c.search }]}>
+                                    <MaterialCommunityIcons name="cash" size={12} color={c.textSec} />
+                                    <Text style={{ fontSize: 11, color: c.textSec, marginLeft: 4, fontFamily: 'Inter_600SemiBold' }}>{item.earnings}</Text>
+                                </View>
                             </View>
                         </View>
+                    </View>
 
-                        <Text style={{ fontSize: 14, fontFamily: 'Inter_700Bold', color: c.text }} numberOfLines={1}>{item.customer}</Text>
-                        <Text style={{ fontSize: 11, color: c.textSec, marginBottom: 8 }} numberOfLines={1}>{item.trk}</Text>
-
-                        <View style={[styles.divider, { backgroundColor: c.divider }]} />
-
-                        <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
-                            <MaterialCommunityIcons name="map-marker" size={12} color={c.textSec} />
-                            <Text style={{ fontSize: 11, marginLeft: 4, flex: 1, color: c.textSec }} numberOfLines={1}>{item.address}</Text>
-                        </View>
-
-                        <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 4 }}>
-                            <Text style={{ fontSize: 11, color: c.textSec, fontFamily: 'Inter_500Medium' }}>
-                                {dayjs(item.date).tz(PH_TIMEZONE).format('M/D')} • {item.time}
-                            </Text>
-                            <Text style={{ fontSize: 11, color: c.textSec, fontFamily: 'Inter_600SemiBold' }}>{item.distance}</Text>
-                        </View>
+                    {/* Right chevron */}
+                    <View style={styles.compactChevron}>
+                        <MaterialCommunityIcons name="chevron-right" size={20} color={c.textTer} />
                     </View>
                 </TouchableOpacity>
             </Animated.View>
@@ -546,7 +641,7 @@ export default function AssignedDeliveriesScreen() {
                     </View>
                     <View style={{ flexDirection: 'row', marginRight: 4 }}>
                         <TouchableOpacity style={[styles.iconBtn, { backgroundColor: c.pillBg }]} onPress={() => setViewMode(viewMode === 'list' ? 'grid' : 'list')}>
-                            <MaterialCommunityIcons name={viewMode === 'list' ? 'view-grid' : 'view-list'} size={24} color={c.text} />
+                            <MaterialCommunityIcons name={viewMode === 'list' ? 'view-agenda-outline' : 'view-list'} size={24} color={c.text} />
                         </TouchableOpacity>
                         <TouchableOpacity style={[styles.iconBtn, { backgroundColor: showFilters ? c.text : c.pillBg, marginLeft: 8 }]} onPress={() => setShowFilters(!showFilters)}>
                             <MaterialCommunityIcons name={showFilters ? 'filter-off' : 'filter'} size={24} color={showFilters ? c.bg : c.text} />
@@ -672,14 +767,11 @@ export default function AssignedDeliveriesScreen() {
 
             {/* Validated List Content */}
             <FlatList
-                key={viewMode}
                 data={filteredDeliveries}
                 renderItem={(info) => viewMode === 'list' ? renderItem(info) : renderGridItem(info)}
                 keyExtractor={item => item.id}
                 contentContainerStyle={styles.listContent}
                 refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
-                numColumns={viewMode === 'list' ? 1 : 2}
-                columnWrapperStyle={viewMode === 'grid' ? { justifyContent: 'space-between' } : undefined}
                 ListEmptyComponent={
                     <View style={[styles.emptyCard, { backgroundColor: c.card, borderColor: c.border }]}>
                         <MaterialCommunityIcons name="package-variant-closed" size={40} color={c.textTer} />
@@ -713,7 +805,38 @@ const styles = StyleSheet.create({
     dateInput: { flex: 1, borderWidth: 1, borderRadius: 8, padding: 12 },
     listContent: { padding: 16, paddingBottom: 100 },
     card: { borderRadius: 16, borderWidth: 1, marginBottom: 16, overflow: 'hidden' },
-    gridCard: { width: '48%', borderRadius: 16, borderWidth: 1, marginBottom: 16, overflow: 'hidden' },
+    compactCard: {
+        flexDirection: 'row', alignItems: 'stretch',
+        borderRadius: 14, borderWidth: 1, marginBottom: 10, overflow: 'hidden',
+    },
+    compactAccent: {
+        width: 4, borderTopLeftRadius: 14, borderBottomLeftRadius: 14,
+    },
+    compactBody: {
+        flex: 1, paddingVertical: 12, paddingLeft: 14, paddingRight: 8,
+    },
+    compactTopRow: {
+        flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
+    },
+    compactStatusPill: {
+        paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6,
+    },
+    compactBottomRow: {
+        marginTop: 10,
+    },
+    compactAddressRow: {
+        flexDirection: 'row', alignItems: 'center',
+    },
+    compactMetaRow: {
+        flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 8,
+    },
+    compactMetaPill: {
+        flexDirection: 'row', alignItems: 'center',
+        paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8,
+    },
+    compactChevron: {
+        justifyContent: 'center', alignItems: 'center', paddingRight: 10,
+    },
     statusPill: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12 },
     divider: { height: StyleSheet.hairlineWidth, marginVertical: 14 },
     locationDotContainer: { width: 24, height: 24, borderRadius: 12, backgroundColor: 'rgba(0,0,0,0.05)', justifyContent: 'center', alignItems: 'center' },

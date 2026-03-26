@@ -880,44 +880,47 @@ if ($depState.NeedsInstall) {
 }
 
 # ============================================
-# STEP 4: INTELLIGENT CACHE MANAGEMENT
+# STEP 4: CACHE MANAGEMENT (Always Clear)
 # ============================================
 
-$shouldClearCache = $ClearCache -or $depState.NeedsCacheClear
+# Always clear Metro resolution caches to prevent stale "Unable to resolve" errors.
+# The -ClearCache flag triggers a deeper clean (e.g. .expo state), but resolution
+# caches (.metro, node_modules\.cache, temp files) are wiped on every launch.
 
-if ($shouldClearCache) {
-    Write-Host "[CLEAN] Clearing caches..." -ForegroundColor Yellow
-    $cleaned = @()
-    
+Write-Host "[CLEAN] Clearing Metro resolution caches..." -ForegroundColor Yellow
+$cleaned = @()
+
+if (Test-Path ".metro") { 
+    Remove-Item -Recurse -Force ".metro" -ErrorAction SilentlyContinue
+    $cleaned += ".metro"
+}
+if (Test-Path "node_modules\.cache") { 
+    Remove-Item -Recurse -Force "node_modules\.cache" -ErrorAction SilentlyContinue
+    $cleaned += "node_modules\.cache"
+}
+
+# Clean Metro/React temp files
+Get-ChildItem "$env:TEMP\metro-*" -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+Get-ChildItem "$env:TEMP\react-*" -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+Get-ChildItem "$env:TEMP\haste-map-*" -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+$cleaned += "temp files"
+
+# Deep clean when -ClearCache is passed or dependencies changed
+if ($ClearCache -or $depState.NeedsCacheClear) {
     if (Test-Path ".expo") { 
         Remove-Item -Recurse -Force ".expo" -ErrorAction SilentlyContinue
         $cleaned += ".expo"
     }
-    if (Test-Path "node_modules\.cache") { 
-        Remove-Item -Recurse -Force "node_modules\.cache" -ErrorAction SilentlyContinue
-        $cleaned += "node_modules\.cache"
-    }
-    if (Test-Path ".metro") { 
-        Remove-Item -Recurse -Force ".metro" -ErrorAction SilentlyContinue
-        $cleaned += ".metro"
-    }
-    
-    # Clean temp files
-    Get-ChildItem "$env:TEMP\metro-*" -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
-    Get-ChildItem "$env:TEMP\react-*" -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
-    
-    if ($cleaned.Count -gt 0) {
-        Write-Host "[OK] Cleared: $($cleaned -join ', ')" -ForegroundColor Green
-    } else {
-        Write-Host "[OK] No cache to clear" -ForegroundColor Green
-    }
-    Write-Host ""
-    $metroArgs = "--clear"
-} else {
-    Write-Host "[OK] Cache intact - starting with --clear for fresh Metro bundler" -ForegroundColor Green
-    Write-Host ""
-    $metroArgs = "--clear"
+    Write-Host "[CLEAN] Deep cache clear (includes .expo state)" -ForegroundColor Yellow
 }
+
+if ($cleaned.Count -gt 0) {
+    Write-Host "[OK] Cleared: $($cleaned -join ', ')" -ForegroundColor Green
+} else {
+    Write-Host "[OK] No cache to clear" -ForegroundColor Green
+}
+Write-Host ""
+$metroArgs = "--clear"
 
 # ============================================
 # STEP 5: HEALTH CHECK & SECURITY

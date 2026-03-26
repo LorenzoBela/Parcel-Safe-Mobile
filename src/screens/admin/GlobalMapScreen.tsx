@@ -27,6 +27,10 @@ import { supabase } from '../../services/supabaseClient';
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const DEFAULT_CENTER: [number, number] = [121.0244, 14.5547];
 const ANIMATION_DURATION = 800;
+const NAV_PITCH_DEG = 60;
+const ZOOM_MIN_LEVEL = 8;
+const ZOOM_MAX_LEVEL = 20;
+const ZOOM_STEP = 1;
 
 const STATUS_PRIORITY: Record<string, number> = {
     TAMPER: 0,
@@ -287,8 +291,11 @@ export default function GlobalMapScreen() {
     const [tamperIncidentPoints, setTamperIncidentPoints] = useState<TamperIncidentPoint[]>([]);
 
     const [selectedBoxId, setSelectedBoxId] = useState<string | null>(null);
+    const [lockedBoxId, setLockedBoxId] = useState<string | null>(null);
+    const [navMode, setNavMode] = useState<boolean>(false);
     const [listVisible, setListVisible] = useState(false);
     const [fleetFilter, setFleetFilter] = useState<FleetFilter>('ALL');
+    const [expandedFeedIds, setExpandedFeedIds] = useState<Set<string>>(new Set());
 
     const [sidebarAddresses, setSidebarAddresses] = useState<Map<string, string>>(new Map());
 
@@ -297,47 +304,42 @@ export default function GlobalMapScreen() {
     const [cameraBearing, setCameraBearing] = useState<number>(0);
 
     // Swipe-down-to-close gesture for the diagnostics card
+    const isDiagGestureRef = useRef(false);
+    // -------------- Swipe-to-close gesture (Diagnostics) --------------
     const diagSwipeY = useRef(new Animated.Value(0)).current;
-    const SWIPE_DISMISS_THRESHOLD = 50;
-
     const diagPanResponder = useRef(
         PanResponder.create({
-            onStartShouldSetPanResponder: () => false,
+            onStartShouldSetPanResponder: () => true,
             onMoveShouldSetPanResponder: (_, gestureState) => {
-                // Only capture vertical downward drags
-                return gestureState.dy > 8 && Math.abs(gestureState.dy) > Math.abs(gestureState.dx) * 1.5;
-            },
-            onPanResponderGrant: () => {
-                diagSwipeY.setOffset(0);
+                // Only capture downward swipes
+                return gestureState.dy > 10;
             },
             onPanResponderMove: (_, gestureState) => {
-                // Only allow dragging downwards (positive dy), clamp upward to 0
                 if (gestureState.dy > 0) {
                     diagSwipeY.setValue(gestureState.dy);
                 }
             },
             onPanResponderRelease: (_, gestureState) => {
-                diagSwipeY.flattenOffset();
-                if (gestureState.dy > SWIPE_DISMISS_THRESHOLD) {
-                    // Animate out then close
+                if (gestureState.dy > 100 || gestureState.vy > 1.5) {
+                    // Swipe down detected -> close
                     Animated.timing(diagSwipeY, {
-                        toValue: 400,
+                        toValue: 500,
                         duration: 200,
-                        easing: Easing.out(Easing.quad),
                         useNativeDriver: true,
                     }).start(() => {
                         setSelectedBoxId(null);
                         diagSwipeY.setValue(0);
                     });
-                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => undefined);
                 } else {
-                    // Snap back
+                    // Spring back
                     Animated.spring(diagSwipeY, {
                         toValue: 0,
                         useNativeDriver: true,
                         tension: 200,
                         friction: 20,
-                    }).start();
+                    }).start(() => {
+                        isDiagGestureRef.current = false;
+                    });
                 }
             },
         })
@@ -352,6 +354,18 @@ export default function GlobalMapScreen() {
     const lastCameraBearingRef = useRef<number>(0);
 
     const updateCameraBearing = useCallback((event: any) => {
+        const isUserInteraction =
+            Boolean(
+                event?.properties?.isUserInteraction ??
+                    event?.nativeEvent?.properties?.isUserInteraction
+            );
+
+        // If the user manually moves the map, stop auto-follow/auto-nav so we don't fight their gestures.
+        if (isUserInteraction && !isDiagGestureRef.current) {
+            setLockedBoxId(null);
+            setNavMode(false);
+        }
+
         const nextBearingRaw =
             event?.properties?.heading ??
             event?.properties?.bearing ??
@@ -367,11 +381,17 @@ export default function GlobalMapScreen() {
         const diff = Math.abs(normalized - prev);
         const circularDiff = Math.min(diff, 360 - diff);
 
+        // While Nav Mode is enabled, rider-heading should be the source of truth.
+        if (navMode && !isUserInteraction) {
+            lastCameraBearingRef.current = normalized;
+            return;
+        }
+
         if (circularDiff >= 0.5) {
             lastCameraBearingRef.current = normalized;
             setCameraBearing(normalized);
         }
-    }, []);
+    }, [navMode]);
 
     useEffect(() => {
         if (MAPBOX_TOKEN) {
@@ -533,11 +553,12 @@ export default function GlobalMapScreen() {
     // Initial center
     useEffect(() => {
         if (filteredBoxes.length === 0) return;
+        if (lockedBoxId) return;
         if (cameraCenter[0] === DEFAULT_CENTER[0] && cameraCenter[1] === DEFAULT_CENTER[1]) {
             setCameraCenter([filteredBoxes[0].lng, filteredBoxes[0].lat]);
             setCameraZoom(13);
         }
-    }, [filteredBoxes, cameraCenter]);
+    }, [filteredBoxes, cameraCenter, lockedBoxId]);
 
     // EMA smoothing per-box for GPS jitter reduction
     const emaSmoothStates = useRef<Map<string, [number, number]>>(new Map());
@@ -698,6 +719,29 @@ export default function GlobalMapScreen() {
         };
     }, [filteredBoxes, selectedBoxId]); // Re-run when list changes or selection changes (to update styling props)
 
+    // Auto-recenter while locked-follow is active.
+    useEffect(() => {
+        if (!lockedBoxId) return;
+        const box = filteredBoxes.find(b => b.id === lockedBoxId);
+        if (!box) return;
+
+        const smoothed = emaSmoothStates.current.get(lockedBoxId);
+        const coordToPass = smoothed ?? [box.lng, box.lat];
+        setCameraCenter(coordToPass);
+    }, [lockedBoxId, filteredBoxes]);
+
+    // Auto-rotate camera bearing while nav mode is enabled.
+    useEffect(() => {
+        const activeNavBoxId = selectedBoxId ?? lockedBoxId;
+        if (!navMode || !activeNavBoxId) return;
+        const heading = boxBearings.current.get(activeNavBoxId);
+        if (typeof heading !== 'number' || Number.isNaN(heading)) return;
+
+        const normalized = ((heading % 360) + 360) % 360;
+        lastCameraBearingRef.current = normalized;
+        setCameraBearing(normalized);
+    }, [navMode, selectedBoxId, lockedBoxId, filteredBoxes]);
+
     const selectedBox = useMemo(() => {
         if (!selectedBoxId) return null;
         return activeBoxes.find((b) => b.id === selectedBoxId) ?? null;
@@ -706,9 +750,20 @@ export default function GlobalMapScreen() {
     const recenterToFleet = useCallback(() => {
         const target = filteredBoxes[0] ?? activeBoxes[0];
         if (!target) return;
+        setLockedBoxId(null);
+        setNavMode(false);
+        setCameraBearing(0);
+        lastCameraBearingRef.current = 0;
         setCameraCenter([target.lng, target.lat]);
         setCameraZoom(13);
     }, [filteredBoxes, activeBoxes]);
+
+    const zoomBy = useCallback((delta: number) => {
+        setCameraZoom(prev => {
+            const next = prev + delta;
+            return Math.max(ZOOM_MIN_LEVEL, Math.min(ZOOM_MAX_LEVEL, next));
+        });
+    }, []);
 
     const getStatusColor = (status: string, alert: boolean) => {
         if (alert) return '#F44336';
@@ -729,6 +784,7 @@ export default function GlobalMapScreen() {
     const selectBox = (boxId: string) => {
         diagSwipeY.setValue(0);
         setSelectedBoxId(boxId);
+        if (lockedBoxId) setLockedBoxId(boxId);
         const box = activeBoxes.find((b) => b.id === boxId);
         if (box) {
             setCameraCenter([box.lng, box.lat]);
@@ -958,7 +1014,12 @@ export default function GlobalMapScreen() {
                     onCameraChanged={updateCameraBearing}
                     onRegionDidChange={updateCameraBearing}
                 >
-                    <MapboxGL.Camera zoomLevel={cameraZoom} centerCoordinate={cameraCenter} />
+                    <MapboxGL.Camera
+                        zoomLevel={cameraZoom}
+                        centerCoordinate={cameraCenter}
+                        heading={cameraBearing}
+                        pitch={navMode ? NAV_PITCH_DEG : 0}
+                    />
 
                     {/* Per-box rider markers — PointAnnotation for reliable Android touch */}
                     {filteredBoxes.map((box) => {
@@ -1046,8 +1107,14 @@ export default function GlobalMapScreen() {
                 </Card>
 
                 <View style={[styles.filterCard, { backgroundColor: uiBg }]}>
+                    {/* Row 1: filters only */}
                     <View style={styles.filterRow}>
-                        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterScrollContent}>
+                        <ScrollView
+                            horizontal
+                            showsHorizontalScrollIndicator={false}
+                            style={styles.filterScroll}
+                            contentContainerStyle={styles.filterScrollContent}
+                        >
                             {([
                                 { key: 'ALL' as FleetFilter, label: 'All', count: activeBoxes.length, color: uiText },
                                 { key: 'TAMPER' as FleetFilter, label: 'Tamper', count: tamperAlertCount, color: '#DC2626' },
@@ -1068,32 +1135,96 @@ export default function GlobalMapScreen() {
                                             { backgroundColor: isActive ? uiAccent : uiPill },
                                         ]}
                                     >
-                                        {isActive && <View style={[styles.filterPillDot, { backgroundColor: f.key === 'ALL' ? (isDarkMode ? '#000' : '#fff') : f.color }]} />}
-                                        <Text style={[
-                                            styles.filterPillText,
-                                            { color: isActive ? (isDarkMode ? '#000' : '#fff') : uiText },
-                                        ]}>
+                                        {isActive && (
+                                            <View
+                                                style={[
+                                                    styles.filterPillDot,
+                                                    { backgroundColor: f.key === 'ALL' ? (isDarkMode ? '#000' : '#fff') : f.color },
+                                                ]}
+                                            />
+                                        )}
+                                        <Text
+                                            style={[
+                                                styles.filterPillText,
+                                                { color: isActive ? (isDarkMode ? '#000' : '#fff') : uiText },
+                                            ]}
+                                        >
                                             {f.label}
                                         </Text>
-                                        <Text style={[
-                                            styles.filterPillCount,
-                                            { color: isActive ? (isDarkMode ? '#000' : '#fff') : uiTextSec },
-                                        ]}>
+                                        <Text
+                                            style={[
+                                                styles.filterPillCount,
+                                                { color: isActive ? (isDarkMode ? '#000' : '#fff') : uiTextSec },
+                                            ]}
+                                        >
                                             {f.count}
                                         </Text>
                                     </TouchableOpacity>
                                 );
                             })}
                         </ScrollView>
+                    </View>
 
-                        <View style={styles.filterActions}>
+                    {/* Row 2: controls (stacked) */}
+                    <View style={styles.controlsColumn}>
+                        <View style={styles.filterActionsTop}>
                             <IconButton icon="crosshairs-gps" size={20} iconColor={uiText} onPress={recenterToFleet} />
                             <IconButton
-                                icon={listVisible ? 'chevron-down' : 'format-list-bulleted'}
+                                icon={lockedBoxId ? 'lock' : 'lock-open-variant-outline'}
                                 size={20}
-                                iconColor={uiText}
-                                onPress={() => setListVisible((v) => !v)}
+                                iconColor={lockedBoxId ? uiText : uiTextSec}
+                                disabled={!selectedBoxId && !lockedBoxId}
+                                onPress={() => {
+                                    if (!selectedBoxId) {
+                                        setLockedBoxId(null);
+                                        return;
+                                    }
+                                    setLockedBoxId(prev => (prev === selectedBoxId ? null : selectedBoxId));
+                                }}
                             />
+                            <IconButton
+                                icon={navMode ? 'navigation' : 'compass-outline'}
+                                size={20}
+                                iconColor={selectedBoxId || lockedBoxId ? uiText : uiTextSec}
+                                disabled={!selectedBoxId && !lockedBoxId}
+                                onPress={() => {
+                                    const targetId = selectedBoxId ?? lockedBoxId;
+                                    if (!targetId) return;
+                                    if (navMode) {
+                                        setNavMode(false);
+                                        setCameraBearing(0);
+                                        lastCameraBearingRef.current = 0;
+                                    } else {
+                                        setNavMode(true);
+                                        const heading = boxBearings.current.get(targetId);
+                                        if (typeof heading === 'number' && !Number.isNaN(heading)) {
+                                            const normalized = ((heading % 360) + 360) % 360;
+                                            lastCameraBearingRef.current = normalized;
+                                            setCameraBearing(normalized);
+                                        }
+                                    }
+                                }}
+                            />
+                                <IconButton
+                                    icon="magnify-plus-outline"
+                                    size={20}
+                                    iconColor={lockedBoxId || navMode ? uiText : uiTextSec}
+                                    disabled={!lockedBoxId && !navMode}
+                                    onPress={() => zoomBy(ZOOM_STEP)}
+                                />
+                                <IconButton
+                                    icon="magnify-minus-outline"
+                                    size={20}
+                                    iconColor={lockedBoxId || navMode ? uiText : uiTextSec}
+                                    disabled={!lockedBoxId && !navMode}
+                                    onPress={() => zoomBy(-ZOOM_STEP)}
+                                />
+                                <IconButton
+                                    icon={listVisible ? 'chevron-down' : 'format-list-bulleted'}
+                                    size={20}
+                                    iconColor={uiText}
+                                    onPress={() => setListVisible((v) => !v)}
+                                />
                         </View>
                     </View>
                 </View>
@@ -1115,124 +1246,229 @@ export default function GlobalMapScreen() {
             {listVisible ? (
                 <View style={[styles.listPanel, { backgroundColor: uiBg }]}>
                     <View style={[styles.listHeader, { borderBottomColor: uiBorder }]}>
-                        <Text variant="titleMedium" style={{ flex: 1, color: uiText }}>
-                            Box Feed • {fleetFilter} ({filteredBoxes.length})
-                        </Text>
-                        <IconButton icon="close" size={20} iconColor={uiText} onPress={() => setListVisible(false)} />
+                        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', flex: 1 }}>
+                            <Text variant="titleMedium" style={{ flex: 1, color: uiText }}>
+                                Box Feed • {fleetFilter} ({filteredBoxes.length})
+                            </Text>
+                            <IconButton 
+                                icon="close" 
+                                size={20} 
+                                iconColor={uiText} 
+                                onPress={() => setListVisible(false)} 
+                                style={{ margin: 0 }} 
+                            />
+                        </View>
                     </View>
-                    <ScrollView style={styles.listScroll}>
+
+                    <ScrollView style={styles.listScroll} showsVerticalScrollIndicator={false}>
                         {filteredBoxes.map((box) => {
                             const isSelected = selectedBoxId === box.id;
+                            const isExpanded = expandedFeedIds.has(box.id);
+                            
                             const color = getStatusColor(box.status, box.alert);
                             const bars = getSignalBars(box.csq);
                             const sigColor = getSignalColor(bars);
 
-                            return (
-                                <TouchableOpacity
-                                    key={box.id}
-                                    onPress={() => {
-                                        selectBox(box.id);
-                                        setListVisible(false);
-                                    }}
-                                    style={[styles.listItem, { borderBottomColor: uiBorder }, isSelected ? { backgroundColor: uiAccent + '15' } : null]}
-                                >
-                                    <View style={styles.listItemLeft}>
-                                        <View style={[styles.listItemDot, { backgroundColor: color }]} />
-                                        <View style={{ flex: 1 }}>
-                                            <View style={styles.listItemTitleRow}>
-                                                <Text variant="titleSmall" style={{ flex: 1, color: uiText }}>
-                                                    {box.id}
-                                                </Text>
-                                                <Text variant="bodySmall" style={{ color: uiTextSec }}>
-                                                    {box.alert ? 'TAMPER' : box.status}
-                                                </Text>
-                                            </View>
-                                            <View style={styles.listItemMetaRow}>
-                                                <View style={styles.listItemMeta}>
-                                                    <MaterialCommunityIcons
-                                                        name={getSignalIcon(bars) as any}
-                                                        size={12}
-                                                        color={sigColor}
-                                                    />
-                                                    <Text style={[styles.listItemMetaText, { color: sigColor }]}>
-                                                        {box.rssi != null ? `${box.rssi}dBm` : '—'}
-                                                    </Text>
-                                                </View>
-                                                <View style={styles.listItemMeta}>
-                                                    <MaterialCommunityIcons
-                                                        name={box.connection === 'WiFi' ? 'wifi' : 'antenna'}
-                                                        size={12}
-                                                        color={uiTextSec}
-                                                    />
-                                                    <Text style={[styles.listItemMetaText, { color: uiTextSec }]}>
-                                                        {box.connection ?? '—'}
-                                                    </Text>
-                                                </View>
-                                                <View style={styles.listItemMeta}>
-                                                    <MaterialCommunityIcons
-                                                        name="speedometer"
-                                                        size={12}
-                                                        color={uiTextSec}
-                                                    />
-                                                    <Text style={[styles.listItemMetaText, { color: uiTextSec }]}>
-                                                        {formatSpeed(box.speed)}
-                                                    </Text>
-                                                </View>
-                                                <View style={styles.listItemMeta}>
-                                                    <MaterialCommunityIcons
-                                                        name={box.gpsFix ? 'crosshairs-gps' : 'crosshairs-off'}
-                                                        size={12}
-                                                        color={box.gpsFix ? '#4CAF50' : uiTextSec}
-                                                    />
-                                                    <Text style={[styles.listItemMetaText, { color: uiTextSec }]}>
-                                                        {box.gpsFix ? 'Fix' : 'No Fix'}
-                                                    </Text>
-                                                </View>
-                                                <View style={styles.listItemMeta}>
-                                                    <MaterialCommunityIcons 
-                                                        name={box.batteryPct != null && box.batteryPct <= 20 ? 'battery-alert' : 'battery'} 
-                                                        size={12} 
-                                                        color={box.batteryPct != null && box.batteryPct <= 20 ? '#DC2626' : '#16A34A'} 
-                                                    />
-                                                    <Text style={[styles.listItemMetaText, { color: uiTextSec }]}>
-                                                        {box.batteryPct != null ? `${box.batteryPct}%` : '—'}
-                                                    </Text>
-                                                </View>
-                                                <View style={styles.listItemMeta}>
-                                                    <MaterialCommunityIcons name="map-marker-distance" size={12} color={uiTextSec} />
-                                                    <Text style={[styles.listItemMetaText, { color: uiTextSec }]}>
-                                                        {box.distanceTrav != null 
-                                                            ? (box.distanceTrav >= 1000 ? `${(box.distanceTrav / 1000).toFixed(1)}km` : `${Math.round(box.distanceTrav)}m`) 
-                                                            : '—'}
-                                                    </Text>
-                                                </View>
-                                                <View style={styles.listItemMeta}>
-                                                    <MaterialCommunityIcons
-                                                        name="cloud-upload-outline"
-                                                        size={12}
-                                                        color={uiTextSec}
-                                                    />
-                                                    <Text style={[styles.listItemMetaText, { color: uiTextSec }]}>
-                                                        {formatDataBytes(box.dataBytes)}
-                                                    </Text>
-                                                </View>
-                                                <View style={styles.listItemMeta}>
-                                                    <MaterialCommunityIcons 
-                                                        name={box.gpsSource === 'phone' ? 'cellphone' : 'box'} 
-                                                        size={12} 
-                                                        color={uiTextSec} 
-                                                    />
-                                                    <Text style={[styles.listItemMetaText, { color: uiTextSec }]}>
-                                                        {box.gpsSource === 'phone' ? 'Phone' : 'Box'}
-                                                    </Text>
-                                                </View>
-                                                <Text style={[styles.listItemMetaText, { color: uiTextSec }]}>
-                                                    {formatTimeAgo(box.lastUpdated || box.timestamp)}
-                                                </Text>
-                                            </View>
-                                        </View>
+                            // Derive online status (same logic as diagnostics card)
+                            const now = Date.now();
+                            const isAppOnline = (box.phoneConnected === true && (now - (box.phoneLastUpdated || 0) < 120000)) ||
+                                (box.gpsSource === 'phone' && (now - (box.timestamp || 0) < 60000));
+                            const boxStateMs = box.hwLastUpdated
+                                ? (box.hwLastUpdated > 1e12 ? box.hwLastUpdated : box.hwLastUpdated * 1000)
+                                : 0;
+                            const isBoxOnline = boxStateMs > 0 && (now - boxStateMs < 30000);
+                            const isOnline = isAppOnline || isBoxOnline;
+
+                            const hwStatus = box.rawStatus || '—';
+                            const isLocked = hwStatus === 'LOCKED' || hwStatus === 'IDLE';
+                            const lockLabel = isLocked ? 'LOCKED' : (hwStatus === 'UNLOCKING' ? 'UNLOCKING' : 'UNLOCKED');
+
+                            const boxBattPct = box.batteryPct != null ? Math.round(box.batteryPct) : null;
+                            const phoneBattPct = box.phoneBatteryPct != null ? Math.round(box.phoneBatteryPct) : null;
+                            const boxVolt = box.batteryVolt != null ? `${Number(box.batteryVolt).toFixed(1)}V` : null;
+
+                            const getBattColor = (pct: number | null) => {
+                                if (pct == null) return uiTextSec;
+                                if (pct > 50) return '#22C55E';
+                                if (pct > 20) return '#F59E0B';
+                                return '#EF4444';
+                            };
+
+                            const connType = box.connection || '—';
+                            const rssiVal = box.rssi != null ? `${box.rssi} dBm` : '—';
+                            const csqVal = box.csq != null ? `CSQ ${box.csq}` : null;
+                            const opName = box.op || null;
+
+                            const dataLabel = box.dataBytes != null
+                                ? box.dataBytes > 1048576 ? `${(box.dataBytes / 1048576).toFixed(1)} MB` : `${(box.dataBytes / 1024).toFixed(0)} KB`
+                                : '—';
+
+                            const FeedRow = ({ icon, label, value, valueColor }: { icon: string; label: string; value: string; valueColor?: string }) => (
+                                <View style={styles.feedRow}>
+                                    <View style={styles.feedRowLeft}>
+                                        <MaterialCommunityIcons name={icon as any} size={12} color={uiTextSec} />
+                                        <Text style={[styles.feedRowLabel, { color: uiTextSec }]}>{label}</Text>
                                     </View>
-                                </TouchableOpacity>
+                                    <Text style={[styles.feedRowValue, { color: valueColor || uiText }]}>{value}</Text>
+                                </View>
+                            );
+
+                            return (
+                                <View
+                                    key={box.id}
+                                    style={[styles.feedCard, { borderBottomColor: uiBorder }, isSelected ? { backgroundColor: uiAccent + '12' } : null]}
+                                >
+                                    {/* Header: Touchable to toggle expansion */}
+                                    <TouchableOpacity 
+                                        activeOpacity={0.7} 
+                                        onPress={() => {
+                                            setExpandedFeedIds(prev => {
+                                                const next = new Set(prev);
+                                                if (next.has(box.id)) next.delete(box.id);
+                                                else next.add(box.id);
+                                                return next;
+                                            });
+                                        }}
+                                        style={styles.feedHeader}
+                                    >
+                                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 }}>
+                                            <LivePulseDot color={color} />
+                                            <Text style={[styles.feedTitle, { color: uiText }]}>{box.id}</Text>
+                                        </View>
+                                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                                            <View style={{
+                                                paddingHorizontal: 7, paddingVertical: 2, borderRadius: 10,
+                                                backgroundColor: isOnline ? 'rgba(34,197,94,0.12)' : 'rgba(239,68,68,0.1)',
+                                            }}>
+                                                <Text style={{ fontSize: 9, fontFamily: 'Inter_700Bold', color: isOnline ? '#22C55E' : '#EF4444' }}>
+                                                    {isOnline ? 'ONLINE' : 'OFFLINE'}
+                                                </Text>
+                                            </View>
+                                            <View style={{
+                                                paddingHorizontal: 7, paddingVertical: 2, borderRadius: 10,
+                                                backgroundColor: color + '20',
+                                            }}>
+                                                <Text style={{ fontSize: 9, fontFamily: 'Inter_700Bold', color }}>
+                                                    {box.alert ? 'TAMPER' : hwStatus.replace(/_/g, ' ')}
+                                                </Text>
+                                            </View>
+                                            <MaterialCommunityIcons 
+                                                name={isExpanded ? "chevron-up" : "chevron-down"} 
+                                                size={20} 
+                                                color={uiTextSec} 
+                                            />
+                                        </View>
+                                    </TouchableOpacity>
+
+                                    {/* Expanded Details */}
+                                    {isExpanded && (
+                                        <>
+                                            {/* Section: Lock, Speed */}
+                                            <View style={styles.feedSection}>
+                                                <FeedRow icon="lock" label="Lock" value={lockLabel} valueColor={isLocked ? '#22C55E' : '#F59E0B'} />
+                                                <FeedRow icon="speedometer" label="Speed" value={formatSpeed(box.speed)} />
+                                            </View>
+
+                                            <View style={[styles.feedDivider, { backgroundColor: uiBorder }]} />
+
+                                            {/* Section: Battery */}
+                                            <View style={styles.feedSection}>
+                                                <View style={styles.feedRow}>
+                                                    <View style={styles.feedRowLeft}>
+                                                        <MaterialCommunityIcons name="battery" size={12} color={uiTextSec} />
+                                                        <Text style={[styles.feedRowLabel, { color: uiTextSec }]}>Box Batt</Text>
+                                                    </View>
+                                                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                                                        <Text style={[styles.feedRowValue, { color: getBattColor(boxBattPct) }]}>
+                                                            {boxBattPct != null ? `${boxBattPct}%` : '—'}
+                                                        </Text>
+                                                        {boxVolt && <Text style={{ fontSize: 9, fontFamily: 'JetBrainsMono_400Regular', color: uiTextSec }}>{boxVolt}</Text>}
+                                                    </View>
+                                                </View>
+                                                <View style={styles.feedRow}>
+                                                    <View style={styles.feedRowLeft}>
+                                                        <MaterialCommunityIcons name="cellphone" size={12} color={uiTextSec} />
+                                                        <Text style={[styles.feedRowLabel, { color: uiTextSec }]}>Phone Batt</Text>
+                                                    </View>
+                                                    <Text style={[styles.feedRowValue, { color: getBattColor(phoneBattPct) }]}>
+                                                        {phoneBattPct != null ? `${phoneBattPct}%` : '—'}
+                                                    </Text>
+                                                </View>
+                                            </View>
+
+                                            <View style={[styles.feedDivider, { backgroundColor: uiBorder }]} />
+
+                                            {/* Section: Connectivity */}
+                                            <View style={styles.feedSection}>
+                                                <View style={styles.feedRow}>
+                                                    <View style={styles.feedRowLeft}>
+                                                        <SignalBars bars={bars} color={sigColor} />
+                                                        <Text style={[styles.feedRowLabel, { color: uiTextSec }]}>Signal</Text>
+                                                    </View>
+                                                    <Text style={[styles.feedRowValue, { color: sigColor }]}>{rssiVal}</Text>
+                                                </View>
+                                                <View style={styles.feedRow}>
+                                                    <View style={styles.feedRowLeft}>
+                                                        <MaterialCommunityIcons name="antenna" size={12} color={uiTextSec} />
+                                                        <Text style={[styles.feedRowLabel, { color: uiTextSec }]}>Network</Text>
+                                                    </View>
+                                                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                                                        <Text style={[styles.feedRowValue, { color: uiText }]}>{connType}</Text>
+                                                        {csqVal && <Text style={{ fontSize: 9, color: uiTextSec }}>{csqVal}</Text>}
+                                                        {opName && <Text style={{ fontSize: 9, color: uiTextSec }}>· {opName}</Text>}
+                                                    </View>
+                                                </View>
+                                                <FeedRow icon="crosshairs-gps" label="GPS" value={box.gpsFix ? 'Fix ✓' : 'No Fix'} valueColor={box.gpsFix ? '#22C55E' : '#EF4444'} />
+                                            </View>
+
+                                            <View style={[styles.feedDivider, { backgroundColor: uiBorder }]} />
+
+                                            {/* Section: Data & Distance */}
+                                            <View style={styles.feedSection}>
+                                                <FeedRow icon="cloud-upload-outline" label="Data Used" value={dataLabel} />
+                                                <FeedRow
+                                                    icon="map-marker-distance"
+                                                    label="Distance"
+                                                    value={box.distanceTrav != null
+                                                        ? (box.distanceTrav >= 1000 ? `${(box.distanceTrav / 1000).toFixed(1)} km` : `${Math.round(box.distanceTrav)} m`)
+                                                        : '—'}
+                                                />
+                                                <FeedRow
+                                                    icon={box.gpsSource === 'phone' ? 'cellphone' : 'cube-outline'}
+                                                    label="GPS Source"
+                                                    value={box.gpsSource === 'phone' ? 'Phone' : 'Box'}
+                                                />
+                                            </View>
+
+                                            {/* Footer: Delivery + Timestamp + Locate Button */}
+                                            <View style={[styles.feedDivider, { backgroundColor: uiBorder }]} />
+                                            <View style={styles.feedFooter}>
+                                                <View style={{ flex: 1 }}>
+                                                    {box.hasActiveDelivery && (
+                                                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 2 }}>
+                                                            <MaterialCommunityIcons name="package-variant" size={10} color="#3B82F6" />
+                                                            <Text style={{ fontSize: 9, fontFamily: 'Inter_600SemiBold', color: '#3B82F6' }}>DELIVERY</Text>
+                                                        </View>
+                                                    )}
+                                                    <Text style={[styles.feedTimestamp, { color: uiTextSec }]}>
+                                                        {formatTimeAgo(box.lastUpdated || box.timestamp)}
+                                                    </Text>
+                                                </View>
+                                                <TouchableOpacity
+                                                    activeOpacity={0.7}
+                                                    onPress={() => {
+                                                        selectBox(box.id);
+                                                        setListVisible(false);
+                                                    }}
+                                                    style={{ flexDirection: 'row', alignItems: 'center', gap: 4, paddingVertical: 4, paddingHorizontal: 12, borderRadius: 14, backgroundColor: uiAccent + '15' }}
+                                                >
+                                                    <MaterialCommunityIcons name="crosshairs-gps" size={12} color={uiAccent} />
+                                                    <Text style={{ fontSize: 11, fontFamily: 'Inter_600SemiBold', color: uiAccent }}>Locate</Text>
+                                                </TouchableOpacity>
+                                            </View>
+                                        </>
+                                    )}
+                                </View>
                             );
                         })}
 
@@ -1364,11 +1600,16 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         paddingVertical: 8,
         paddingHorizontal: 10,
+        justifyContent: 'center',
     },
     filterScrollContent: {
         paddingRight: 8,
         gap: 6,
         alignItems: 'center',
+        justifyContent: 'center',
+    },
+    filterScroll: {
+        flex: 1,
     },
     filterPill: {
         flexDirection: 'row',
@@ -1392,9 +1633,42 @@ const styles = StyleSheet.create({
         fontFamily: 'Inter_700Bold',
     },
     filterActions: {
+        flexDirection: 'column',
+        alignItems: 'flex-end',
+        marginLeft: 'auto',
+    },
+    filterActionsTop: {
         flexDirection: 'row',
         alignItems: 'center',
-        marginLeft: 'auto',
+        gap: 4,
+        justifyContent: 'center',
+        flexWrap: 'nowrap',
+    },
+    filterRowBottom: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingVertical: 4,
+        paddingHorizontal: 10,
+    },
+    filterActionsBottom: {
+        flex: 1,
+        flexDirection: 'row',
+        justifyContent: 'flex-end',
+        alignItems: 'center',
+        gap: 6,
+    },
+    controlsColumn: {
+        flexDirection: 'row',
+        justifyContent: 'center',
+        alignItems: 'center',
+        paddingBottom: 2,
+        width: '100%',
+    },
+    filterActionsRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+        marginTop: 4,
     },
     overlayInfo: {
         position: 'absolute',
@@ -1489,7 +1763,7 @@ const styles = StyleSheet.create({
         bottom: 0,
         left: 0,
         right: 0,
-        maxHeight: 280,
+        maxHeight: 480,
         backgroundColor: 'white',
         borderTopLeftRadius: 20,
         borderTopRightRadius: 20,
@@ -1510,7 +1784,8 @@ const styles = StyleSheet.create({
         borderBottomColor: '#E0E0E0',
     },
     listScroll: {
-        flex: 1,
+        flexGrow: 0,
+        flexShrink: 1,
     },
     listItem: {
         paddingHorizontal: 16,
@@ -1605,5 +1880,59 @@ const styles = StyleSheet.create({
     diagTimestampValue: {
         fontSize: 11,
         fontFamily: 'JetBrainsMono_400Regular',
+    },
+    // Feed card styles
+    feedCard: {
+        paddingHorizontal: 14,
+        paddingVertical: 12,
+        borderBottomWidth: 1,
+        borderBottomColor: '#F5F5F5',
+    },
+    feedHeader: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginBottom: 8,
+    },
+    feedTitle: {
+        fontSize: 14,
+        fontFamily: 'Inter_700Bold',
+    },
+    feedSection: {
+        paddingVertical: 2,
+    },
+    feedRow: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        paddingVertical: 2,
+    },
+    feedRowLeft: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+    },
+    feedRowLabel: {
+        fontSize: 11,
+        fontFamily: 'Inter_500Medium',
+    },
+    feedRowValue: {
+        fontSize: 11,
+        fontFamily: 'Inter_600SemiBold',
+    },
+    feedDivider: {
+        height: 1,
+        marginVertical: 6,
+    },
+    feedFooter: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        paddingTop: 4,
+    },
+    feedTimestamp: {
+        fontSize: 10,
+        fontFamily: 'JetBrainsMono_400Regular',
+        marginLeft: 'auto',
     },
 });

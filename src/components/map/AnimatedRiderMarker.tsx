@@ -1,11 +1,10 @@
 import React, { useRef, useEffect, useState } from 'react';
-import { View, Image, Animated, Easing, StyleSheet, Text, TouchableOpacity, Platform } from 'react-native';
+import { View, Image, StyleSheet, Text } from 'react-native';
 import MapboxGL from './MapboxWrapper';
 import length from '@turf/length';
 import along from '@turf/along';
 import { lineString, point } from '@turf/helpers';
 import lineSlice from '@turf/line-slice';
-import bearing from '@turf/bearing';
 
 // --- Configuration ---
 const ANIMATION_DURATION = 800; // ms to interpolate between updates (web parity)
@@ -24,15 +23,11 @@ interface AnimatedRiderMarkerProps {
 }
 
 /**
- * Animated rider marker using PointAnnotation for reliable touch on Android.
+ * Animated rider marker.
  *
- * PointAnnotation renders children as a bitmap snapshot. To keep the bitmap
- * current without causing per-frame blank flashes, we use a throttled refresh
- * strategy: refresh once on mount, on selection state changes, and on a
- * 2-second interval timer.
- *
- * MarkerView was tested but it intercepts ALL touch events on Android without
- * forwarding them, making it impossible to detect marker taps.
+ * We use MarkerView so the marker content is rendered as normal React Native views
+ * (instead of PointAnnotation's bitmap snapshot), which is much more reliable
+ * while animating/moving the marker on Android.
  */
 
 const RiderImage = require('../../../assets/Rider.jpg');
@@ -54,10 +49,9 @@ const AnimatedRiderMarker: React.FC<AnimatedRiderMarkerProps> = ({
     onSelected,
 }) => {
     // 1. Maintain the "current" animated coordinate in a Ref to avoid React render loop lag,
-    //    but we need a State to force Mapbox to re-render the PointAnnotation.
-    //    Actually, Mapbox PointAnnotation expects a raw coordinate prop. 
+    //    but we still need state so the marker view re-renders with the latest coordinate.
     //    To animate smoothly 60fps, we can use an Animated.ValueXY approach if Mapbox supports it,
-    //    BUT MapboxGL.PointAnnotation 'coordinate' prop is not an Animated.Value.
+    //    but the marker coordinate prop isn't an Animated.Value.
     //    
     //    Standard Workaround: We must use a primitive RequestAnimationFrame loop that updates
     //    a React State `currentCoord` specific to this component. This isolates re-renders 
@@ -65,6 +59,8 @@ const AnimatedRiderMarker: React.FC<AnimatedRiderMarkerProps> = ({
 
     const [renderCoord, setRenderCoord] = useState([longitude, latitude]);
     const [renderRotation, setRenderRotation] = useState(rotation);
+    const renderCoordRef = useRef<[number, number]>([longitude, latitude]);
+    const renderRotationRef = useRef<number>(rotation);
 
     // Refs for animation state
     const startCoord = useRef([longitude, latitude]);
@@ -99,21 +95,23 @@ const AnimatedRiderMarker: React.FC<AnimatedRiderMarkerProps> = ({
             if (animFrameId.current) cancelAnimationFrame(animFrameId.current);
             startCoord.current = newDest;
             targetCoord.current = newDest;
+            renderCoordRef.current = newDest as [number, number];
             setRenderCoord(newDest);
 
             // Also snap rotation
             startRotation.current = rotation;
             targetRotation.current = rotation;
+            renderRotationRef.current = rotation;
             setRenderRotation(rotation);
             cachedPathRef.current = null;
             return;
         }
 
         // 3. Smooth Animation Setup
-        startCoord.current = renderCoord;
+        startCoord.current = renderCoordRef.current;
         targetCoord.current = newDest;
 
-        startRotation.current = renderRotation;
+        startRotation.current = renderRotationRef.current;
         
         // Keep rotation source external (screen-level heading pipeline), matching web logic.
         targetRotation.current = rotation;
@@ -184,6 +182,8 @@ const AnimatedRiderMarker: React.FC<AnimatedRiderMarkerProps> = ({
 
             setRenderCoord([lng, lat]);
             setRenderRotation(rot);
+            renderCoordRef.current = [lng, lat] as [number, number];
+            renderRotationRef.current = rot;
 
             if (progress < 1) {
                 animFrameId.current = requestAnimationFrame(animate);
@@ -193,6 +193,8 @@ const AnimatedRiderMarker: React.FC<AnimatedRiderMarkerProps> = ({
                 // Sync exact end state to avoid float drift
                 setRenderCoord(targetCoord.current);
                 setRenderRotation(targetRotation.current);
+                renderCoordRef.current = targetCoord.current as [number, number];
+                renderRotationRef.current = targetRotation.current;
             }
         };
 
@@ -204,87 +206,66 @@ const AnimatedRiderMarker: React.FC<AnimatedRiderMarkerProps> = ({
         };
     }, [latitude, longitude, rotation, pathGeometry]);
 
-    const annotationRef = useRef<any>(null);
     const visualRotation = normalizeAngle(renderRotation - mapBearing);
-
-    // --- Android PointAnnotation Refresh Strategy ---
-    // PointAnnotation renders children as a bitmap. We need refresh() to keep
-    // the bitmap current, but calling it every animation frame causes blanks.
-    // Strategy: refresh once on mount, on selection change, and on a throttled
-    // 2-second interval to keep the bitmap alive during coordinate animations.
-    const mountedRef = useRef(false);
-
-    // Mount refresh — wait for RN view to fully layout before initial snapshot
-    useEffect(() => {
-        if (Platform.OS === 'android') {
-            const timer = setTimeout(() => {
-                annotationRef.current?.refresh?.();
-                mountedRef.current = true;
-            }, 300);
-            return () => clearTimeout(timer);
-        } else {
-            mountedRef.current = true;
-        }
-    }, []);
-
-    // Selection change refresh — visual state changed (border size)
-    useEffect(() => {
-        if (Platform.OS === 'android' && mountedRef.current) {
-            const timer = setTimeout(() => {
-                annotationRef.current?.refresh?.();
-            }, 50);
-            return () => clearTimeout(timer);
-        }
-    }, [isSelected]);
-
-    // Throttled periodic refresh — keeps bitmap alive during coordinate animation
-    // without the per-frame flicker that killed rendering before
-    useEffect(() => {
-        if (Platform.OS !== 'android') return;
-        const interval = setInterval(() => {
-            if (mountedRef.current) {
-                annotationRef.current?.refresh?.();
-            }
-        }, 2000);
-        return () => clearInterval(interval);
-    }, []);
+    const lastPressMsRef = useRef<number>(0);
+    const triggerPress = () => {
+        const now = Date.now();
+        if (now - lastPressMsRef.current < 250) return; // de-dupe touch events
+        lastPressMsRef.current = now;
+        onSelected?.();
+    };
 
     return (
-        <MapboxGL.PointAnnotation
-            id={id}
-            ref={annotationRef}
+        <MapboxGL.MarkerView
             coordinate={renderCoord}
             anchor={{ x: 0.5, y: 0.7 }}
-            onSelected={onSelected}
+            isSelected={isSelected}
         >
-            <View style={{ alignItems: 'center', width: 84, height: 110 }}>
-                {/* Speed Badge — always upright since parent does not rotate */}
-                <View style={[
-                    styles.speedBadge,
-                    { opacity: speed != null && speed >= 0 ? 1 : 0 }
-                ]}>
+            <View
+                // MarkerView handles "views as children" for interaction.
+                // Using responder/touch handlers here is more reliable than Touchable* wrappers inside view annotations.
+                style={{ alignItems: 'center', width: 84, height: 110 }}
+                pointerEvents="auto"
+                onStartShouldSetResponder={() => true}
+                onResponderRelease={triggerPress}
+                onTouchEnd={(e) => {
+                    e.stopPropagation?.();
+                    triggerPress();
+                }}
+            >
+                {/* Speed Badge — always upright since only the marker body is rotated */}
+                <View
+                    style={[
+                        styles.speedBadge,
+                        { opacity: speed != null && speed >= 0 ? 1 : 0 },
+                    ]}
+                >
                     <Text style={styles.speedBadgeText}>
                         {speed != null && speed >= 0 ? Math.round(speed * 3.6) : 0} km/h
                     </Text>
                 </View>
 
-                <View style={[
-                    styles.riderMarkerOuter, 
-                    { 
-                        width: 84,
-                        height: 84,
-                        transform: [{ rotate: `${visualRotation}deg` }] 
-                    }
-                ]}>
-                    {/* Image Container */}
-                    <View style={[
-                        styles.riderMarkerCircle,
+                <View
+                    style={[
+                        styles.riderMarkerOuter,
                         {
-                            width: isSelected ? 60 : 56,
-                            height: isSelected ? 60 : 56,
-                            borderRadius: isSelected ? 30 : 28,
-                        }
-                    ]}>
+                            width: 84,
+                            height: 84,
+                            transform: [{ rotate: `${visualRotation}deg` }],
+                        },
+                    ]}
+                >
+                    {/* Image Container */}
+                    <View
+                        style={[
+                            styles.riderMarkerCircle,
+                            {
+                                width: isSelected ? 60 : 56,
+                                height: isSelected ? 60 : 56,
+                                borderRadius: isSelected ? 30 : 28,
+                            },
+                        ]}
+                    >
                         <Image
                             source={RiderImage}
                             style={[
@@ -293,7 +274,7 @@ const AnimatedRiderMarker: React.FC<AnimatedRiderMarkerProps> = ({
                                     width: isSelected ? 56 : 52,
                                     height: isSelected ? 56 : 52,
                                     borderRadius: isSelected ? 28 : 26,
-                                }
+                                },
                             ]}
                             resizeMode="cover"
                             fadeDuration={0}
@@ -301,16 +282,18 @@ const AnimatedRiderMarker: React.FC<AnimatedRiderMarkerProps> = ({
                     </View>
 
                     {/* Direction Cone - Fixed at top, orbits map by rotating container */}
-                    <View style={[
-                        styles.riderDirectionCone,
-                        { 
-                            top: isSelected ? 0 : 2, 
-                            left: 36 // 84/2 = 42. 42 - 6 (half base) = 36
-                        }
-                    ]} />
+                    <View
+                        style={[
+                            styles.riderDirectionCone,
+                            {
+                                top: isSelected ? 0 : 2,
+                                left: 36, // 84/2 = 42. 42 - 6 (half base) = 36
+                            },
+                        ]}
+                    />
                 </View>
             </View>
-        </MapboxGL.PointAnnotation>
+        </MapboxGL.MarkerView>
     );
 };
 
