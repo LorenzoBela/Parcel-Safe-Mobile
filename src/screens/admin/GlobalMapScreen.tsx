@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState, useRef, useCallback } from 'react'
 import {
     View, StyleSheet, Dimensions, ScrollView, TouchableOpacity,
     Animated, TextInput as RNTextInput, Platform, Easing,
-    Image,
+    Image, PanResponder,
 } from 'react-native';
 import { Text, Surface, Card, Chip, IconButton } from 'react-native-paper';
 import { useAppTheme } from '../../context/ThemeContext';
@@ -296,6 +296,53 @@ export default function GlobalMapScreen() {
     const [cameraZoom, setCameraZoom] = useState<number>(12);
     const [cameraBearing, setCameraBearing] = useState<number>(0);
 
+    // Swipe-down-to-close gesture for the diagnostics card
+    const diagSwipeY = useRef(new Animated.Value(0)).current;
+    const SWIPE_DISMISS_THRESHOLD = 50;
+
+    const diagPanResponder = useRef(
+        PanResponder.create({
+            onStartShouldSetPanResponder: () => false,
+            onMoveShouldSetPanResponder: (_, gestureState) => {
+                // Only capture vertical downward drags
+                return gestureState.dy > 8 && Math.abs(gestureState.dy) > Math.abs(gestureState.dx) * 1.5;
+            },
+            onPanResponderGrant: () => {
+                diagSwipeY.setOffset(0);
+            },
+            onPanResponderMove: (_, gestureState) => {
+                // Only allow dragging downwards (positive dy), clamp upward to 0
+                if (gestureState.dy > 0) {
+                    diagSwipeY.setValue(gestureState.dy);
+                }
+            },
+            onPanResponderRelease: (_, gestureState) => {
+                diagSwipeY.flattenOffset();
+                if (gestureState.dy > SWIPE_DISMISS_THRESHOLD) {
+                    // Animate out then close
+                    Animated.timing(diagSwipeY, {
+                        toValue: 400,
+                        duration: 200,
+                        easing: Easing.out(Easing.quad),
+                        useNativeDriver: true,
+                    }).start(() => {
+                        setSelectedBoxId(null);
+                        diagSwipeY.setValue(0);
+                    });
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => undefined);
+                } else {
+                    // Snap back
+                    Animated.spring(diagSwipeY, {
+                        toValue: 0,
+                        useNativeDriver: true,
+                        tension: 200,
+                        friction: 20,
+                    }).start();
+                }
+            },
+        })
+    ).current;
+
     // Optimizations
     const shapeSourceRef = useRef<any>(null);
     const animationStates = useRef<Map<string, AnimationState>>(new Map());
@@ -461,7 +508,7 @@ export default function GlobalMapScreen() {
 
     const tamperAlertCount = useMemo(() => activeBoxes.filter((b) => b.alert).length, [activeBoxes]);
     const activeMoveCount = useMemo(
-        () => activeBoxes.filter((b) => b.status === 'ACTIVE' || b.status === 'IN_TRANSIT').length,
+        () => activeBoxes.filter((b) => !b.alert && b.status !== 'OFFLINE').length,
         [activeBoxes],
     );
     const offlineCount = useMemo(
@@ -474,7 +521,8 @@ export default function GlobalMapScreen() {
             case 'TAMPER':
                 return activeBoxes.filter((b) => b.alert);
             case 'ACTIVE':
-                return activeBoxes.filter((b) => b.status === 'ACTIVE' || b.status === 'IN_TRANSIT');
+                // Match any box that is connected / not offline and not a tamper alert
+                return activeBoxes.filter((b) => !b.alert && b.status !== 'OFFLINE');
             case 'OFFLINE':
                 return activeBoxes.filter((b) => b.status === 'OFFLINE');
             default:
@@ -679,6 +727,7 @@ export default function GlobalMapScreen() {
     };
 
     const selectBox = (boxId: string) => {
+        diagSwipeY.setValue(0);
         setSelectedBoxId(boxId);
         const box = activeBoxes.find((b) => b.id === boxId);
         if (box) {
@@ -715,64 +764,181 @@ export default function GlobalMapScreen() {
         const isOnline = isAppOnline || isBoxOnline;
         let sourceText = 'OFFLINE';
         if (isOnline) {
-            if (isAppOnline && isBoxOnline) sourceText = 'ONLINE (BOTH)';
-            else if (isAppOnline) sourceText = 'ONLINE (APP)';
-            else if (isBoxOnline) sourceText = 'ONLINE (BOX)';
+            if (isAppOnline && isBoxOnline) sourceText = 'BOTH ONLINE';
+            else if (isAppOnline) sourceText = 'APP ONLINE';
+            else if (isBoxOnline) sourceText = 'BOX ONLINE';
         }
-
-        const ts = selectedBox.timestamp || Date.now();
-        const updatedStr = new Date(ts > 1e12 ? ts : ts * 1000).toLocaleTimeString('en-US', {
-            timeZone: 'Asia/Manila', hour: '2-digit', minute: '2-digit', hour12: true
-        });
 
         const hwStatus = selectedBox.rawStatus || '—';
         const isLocked = hwStatus === 'LOCKED' || hwStatus === 'IDLE';
         const lockLabel = isLocked ? 'LOCKED' : (hwStatus === 'UNLOCKING' ? 'UNLOCKING' : 'UNLOCKED');
-        const stateLabel = hwStatus.replace(/_/g, ' ');
 
-        const boxBatt = selectedBox.batteryPct != null ? `${Math.round(selectedBox.batteryPct)}%` : '—';
-        const phoneBatt = selectedBox.phoneBatteryPct != null ? `${Math.round(selectedBox.phoneBatteryPct)}%` : '—';
-        const signal = selectedBox.rssi != null ? `${selectedBox.rssi} dBm [${selectedBox.connection || '—'}]` : '—';
+        const boxBattPct = selectedBox.batteryPct != null ? Math.round(selectedBox.batteryPct) : null;
+        const phoneBattPct = selectedBox.phoneBatteryPct != null ? Math.round(selectedBox.phoneBatteryPct) : null;
+        const boxVolt = selectedBox.batteryVolt != null ? `${Number(selectedBox.batteryVolt).toFixed(1)}V` : null;
+
+        const connType = selectedBox.connection || '—';
+        const rssiVal = selectedBox.rssi != null ? `${selectedBox.rssi} dBm` : '—';
+        const csqVal = selectedBox.csq != null ? `CSQ ${selectedBox.csq}` : null;
+        const opName = selectedBox.op || null;
+        const gpsFix = selectedBox.gpsFix;
         const speed = formatSpeed(selectedBox.speed);
-        
-        const deliveryId = selectedBox.deliveryId ? selectedBox.deliveryId.substring(0, 6) + '…' : '—';
-        const deliveryState = selectedBox.hasActiveDelivery ? stateLabel : 'None';
+
+        const dataBytes = selectedBox.dataBytes;
+        const dataLabel = dataBytes != null
+            ? dataBytes > 1048576 ? `${(dataBytes / 1048576).toFixed(1)} MB` : `${(dataBytes / 1024).toFixed(0)} KB`
+            : '—';
+
+        const deliveryId = selectedBox.deliveryId ? selectedBox.deliveryId.substring(0, 8) + '…' : '—';
+        const deliveryState = selectedBox.hasActiveDelivery ? hwStatus.replace(/_/g, ' ') : 'None';
 
         const address = sidebarAddresses.get(selectedBox.id);
+
+        // Format timestamps
+        const fmtTime = (ts?: number) => {
+            if (!ts || !Number.isFinite(ts)) return '—';
+            const ms = ts > 1e12 ? ts : ts * 1000;
+            return new Date(ms).toLocaleTimeString('en-US', { timeZone: 'Asia/Manila', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true });
+        };
+        const boxUpdatedStr = fmtTime(selectedBox.hwLastUpdated);
+        const phoneUpdatedStr = fmtTime(selectedBox.phoneLastUpdated);
+
+        const getBattColor = (pct: number | null) => {
+            if (pct == null) return uiTextSec;
+            if (pct > 50) return '#22C55E';
+            if (pct > 20) return '#F59E0B';
+            return '#EF4444';
+        };
+
+        const Row = ({ icon, label, value, valueColor }: { icon: string; label: string; value: string; valueColor?: string }) => (
+            <View style={styles.diagRow}>
+                <View style={styles.diagRowLeft}>
+                    <MaterialCommunityIcons name={icon as any} size={13} color={uiTextSec} />
+                    <Text style={[styles.diagLbl, { color: uiTextSec }]}>{label}</Text>
+                </View>
+                <Text style={[styles.diagVal, { color: valueColor || uiText }]}>{value}</Text>
+            </View>
+        );
+
+        const SectionDivider = () => <View style={{ height: 1, backgroundColor: uiBorder, marginVertical: 8 }} />;
 
         return (
             <Card style={[styles.infoCard, { backgroundColor: uiBg }]}>
                 <Card.Content style={{ padding: 12 }}>
+                    {/* Swipe handle pill */}
+                    <View style={{ alignItems: 'center', paddingBottom: 8 }}>
+                        <View style={{ width: 32, height: 4, borderRadius: 2, backgroundColor: uiBorder }} />
+                    </View>
+
+                    {/* Header: ID + Online Status */}
                     <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-                        <Text style={{ fontSize: 14, fontFamily: 'Inter_700Bold', color: uiText }}>{selectedBox.id}</Text>
-                        <View style={{ paddingHorizontal: 8, paddingVertical: 2, borderRadius: 12, borderWidth: 1, borderColor: isOnline ? uiText : uiTextSec }}>
-                            <Text style={{ fontSize: 10, fontFamily: 'Inter_700Bold', color: isOnline ? uiText : uiTextSec }}>{sourceText}</Text>
+                        <Text style={{ fontSize: 15, fontFamily: 'Inter_700Bold', color: uiText }}>{selectedBox.id}</Text>
+                        <View style={{
+                            paddingHorizontal: 8, paddingVertical: 3, borderRadius: 12,
+                            backgroundColor: isOnline ? 'rgba(34,197,94,0.15)' : 'rgba(239,68,68,0.1)',
+                        }}>
+                            <Text style={{
+                                fontSize: 10, fontFamily: 'Inter_700Bold',
+                                color: isOnline ? '#22C55E' : '#EF4444',
+                            }}>{sourceText}</Text>
                         </View>
                     </View>
-                    
-                    <View style={{ height: 1, backgroundColor: uiBorder, marginBottom: 6 }} />
-                    
-                    <View style={styles.webPopupRow}><Text style={styles.webPopupLbl}>Lock</Text><Text style={[styles.webPopupVal, { color: uiText }]}>{lockLabel}</Text></View>
-                    <View style={styles.webPopupRow}><Text style={styles.webPopupLbl}>State</Text><Text style={[styles.webPopupVal, { color: uiText }]}>{stateLabel}</Text></View>
-                    <View style={styles.webPopupRow}><Text style={styles.webPopupLbl}>Box Battery</Text><Text style={[styles.webPopupVal, { color: uiText }]}>{boxBatt}</Text></View>
-                    <View style={styles.webPopupRow}><Text style={styles.webPopupLbl}>Phone Battery</Text><Text style={[styles.webPopupVal, { color: uiText }]}>{phoneBatt}</Text></View>
-                    <View style={styles.webPopupRow}><Text style={styles.webPopupLbl}>Signal</Text><Text style={[styles.webPopupVal, { color: uiText }]}>{signal}</Text></View>
-                    <View style={styles.webPopupRow}><Text style={styles.webPopupLbl}>Speed</Text><Text style={[styles.webPopupVal, { color: uiText }]}>{speed}</Text></View>
-                    
-                    <View style={{ height: 1, backgroundColor: uiBorder, marginVertical: 6 }} />
-                    
-                    <View style={styles.webPopupRow}><Text style={styles.webPopupLbl}>Delivery</Text><Text style={[styles.webPopupVal, { color: uiText }]}>{deliveryState}</Text></View>
-                    <View style={styles.webPopupRow}><Text style={styles.webPopupLbl}>ID</Text><Text style={{ fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace', fontSize: 11, color: uiTextSec }}>{deliveryId}</Text></View>
-                    
+
+                    {/* Section: Lock & State */}
+                    <Row icon="lock" label="Lock" value={lockLabel} valueColor={isLocked ? '#22C55E' : '#F59E0B'} />
+                    <Row icon="state-machine" label="State" value={hwStatus.replace(/_/g, ' ')} />
+                    <Row icon="speedometer" label="Speed" value={speed} />
+
+                    <SectionDivider />
+
+                    {/* Section: Battery (Box + Phone) */}
+                    <View style={styles.diagRow}>
+                        <View style={styles.diagRowLeft}>
+                            <MaterialCommunityIcons name="battery" size={13} color={uiTextSec} />
+                            <Text style={[styles.diagLbl, { color: uiTextSec }]}>Box Battery</Text>
+                        </View>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                            <Text style={[styles.diagVal, { color: getBattColor(boxBattPct) }]}>
+                                {boxBattPct != null ? `${boxBattPct}%` : '—'}
+                            </Text>
+                            {boxVolt && <Text style={{ fontSize: 10, fontFamily: 'JetBrainsMono_400Regular', color: uiTextSec }}>{boxVolt}</Text>}
+                        </View>
+                    </View>
+
+                    <View style={styles.diagRow}>
+                        <View style={styles.diagRowLeft}>
+                            <MaterialCommunityIcons name="cellphone" size={13} color={uiTextSec} />
+                            <Text style={[styles.diagLbl, { color: uiTextSec }]}>Phone Battery</Text>
+                        </View>
+                        <Text style={[styles.diagVal, { color: getBattColor(phoneBattPct) }]}>
+                            {phoneBattPct != null ? `${phoneBattPct}%` : '—'}
+                        </Text>
+                    </View>
+
+                    <SectionDivider />
+
+                    {/* Section: Connectivity */}
+                    <Row icon="signal" label="Signal" value={rssiVal} />
+                    <View style={styles.diagRow}>
+                        <View style={styles.diagRowLeft}>
+                            <MaterialCommunityIcons name="antenna" size={13} color={uiTextSec} />
+                            <Text style={[styles.diagLbl, { color: uiTextSec }]}>Network</Text>
+                        </View>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                            <Text style={[styles.diagVal, { color: uiText }]}>{connType}</Text>
+                            {csqVal && <Text style={{ fontSize: 10, color: uiTextSec }}>{csqVal}</Text>}
+                            {opName && <Text style={{ fontSize: 10, color: uiTextSec }}>· {opName}</Text>}
+                        </View>
+                    </View>
+                    <Row icon="crosshairs-gps" label="GPS Fix" value={gpsFix ? 'Yes' : 'No'} valueColor={gpsFix ? '#22C55E' : '#EF4444'} />
+                    <Row icon="database" label="Data Used" value={dataLabel} />
+
+                    <SectionDivider />
+
+                    {/* Section: Delivery */}
+                    <Row icon="package-variant" label="Delivery" value={deliveryState} />
+                    <View style={styles.diagRow}>
+                        <View style={styles.diagRowLeft}>
+                            <MaterialCommunityIcons name="identifier" size={13} color={uiTextSec} />
+                            <Text style={[styles.diagLbl, { color: uiTextSec }]}>ID</Text>
+                        </View>
+                        <Text style={{ fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace', fontSize: 11, color: uiTextSec }}>{deliveryId}</Text>
+                    </View>
+
                     {address ? (
                         <>
-                            <View style={{ height: 1, backgroundColor: uiBorder, marginVertical: 6 }} />
-                            <Text style={{ fontSize: 11, color: uiTextSec, lineHeight: 16 }}>{address}</Text>
+                            <SectionDivider />
+                            <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 6 }}>
+                                <MaterialCommunityIcons name="map-marker" size={13} color={uiTextSec} style={{ marginTop: 2 }} />
+                                <Text style={{ flex: 1, fontSize: 11, color: uiTextSec, lineHeight: 16 }}>{address}</Text>
+                            </View>
                         </>
                     ) : null}
-                    
-                    <Text style={{ marginTop: 4, fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace', fontSize: 9, color: uiTextSec }}>
-                        {selectedBox.lat.toFixed(4)}, {selectedBox.lng.toFixed(4)} · {updatedStr}
+
+                    <SectionDivider />
+
+                    {/* Section: Timestamps (Box vs Phone) */}
+                    <View style={styles.diagTimestampRow}>
+                        <View style={styles.diagTimestampCol}>
+                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 2 }}>
+                                <MaterialCommunityIcons name="chip" size={11} color={uiTextSec} />
+                                <Text style={[styles.diagTimestampLabel, { color: uiTextSec }]}>Box Updated</Text>
+                            </View>
+                            <Text style={[styles.diagTimestampValue, { color: isBoxOnline ? uiText : uiTextSec }]}>{boxUpdatedStr}</Text>
+                        </View>
+                        <View style={{ width: 1, backgroundColor: uiBorder, marginHorizontal: 8 }} />
+                        <View style={styles.diagTimestampCol}>
+                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 2 }}>
+                                <MaterialCommunityIcons name="cellphone" size={11} color={uiTextSec} />
+                                <Text style={[styles.diagTimestampLabel, { color: uiTextSec }]}>Phone Updated</Text>
+                            </View>
+                            <Text style={[styles.diagTimestampValue, { color: isAppOnline ? uiText : uiTextSec }]}>{phoneUpdatedStr}</Text>
+                        </View>
+                    </View>
+
+                    {/* Footer: Coordinates */}
+                    <Text style={{ marginTop: 6, fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace', fontSize: 9, color: uiTextSec, textAlign: 'center' }}>
+                        {selectedBox.lat.toFixed(5)}, {selectedBox.lng.toFixed(5)}
                     </Text>
                 </Card.Content>
             </Card>
@@ -794,7 +960,7 @@ export default function GlobalMapScreen() {
                 >
                     <MapboxGL.Camera zoomLevel={cameraZoom} centerCoordinate={cameraCenter} />
 
-                    {/* Per-box rider markers — same style as tracking pages */}
+                    {/* Per-box rider markers — PointAnnotation for reliable Android touch */}
                     {filteredBoxes.map((box) => {
                         const anim = animationStates.current.get(box.id);
                         
@@ -863,31 +1029,61 @@ export default function GlobalMapScreen() {
                             </Text>
                         </View>
                         <View style={styles.topHudStats}>
-                            <Text style={styles.topHudStatDanger}>T {tamperAlertCount}</Text>
-                            <Text style={[styles.topHudStat, { color: uiText }]}>A {activeMoveCount}</Text>
-                            <Text style={[styles.topHudStat, { color: uiText }]}>O {offlineCount}</Text>
+                            <View style={styles.topHudStatChip}>
+                                <MaterialCommunityIcons name="shield-alert" size={12} color="#DC2626" />
+                                <Text style={[styles.topHudStatValue, { color: tamperAlertCount > 0 ? '#DC2626' : uiTextSec }]}>{tamperAlertCount}</Text>
+                            </View>
+                            <View style={styles.topHudStatChip}>
+                                <MaterialCommunityIcons name="truck-fast" size={12} color="#2196F3" />
+                                <Text style={[styles.topHudStatValue, { color: uiText }]}>{activeMoveCount}</Text>
+                            </View>
+                            <View style={styles.topHudStatChip}>
+                                <MaterialCommunityIcons name="wifi-off" size={12} color="#607D8B" />
+                                <Text style={[styles.topHudStatValue, { color: uiTextSec }]}>{offlineCount}</Text>
+                            </View>
                         </View>
                     </Card.Content>
                 </Card>
 
-                <Card style={[styles.filterCard, { backgroundColor: uiBg }]}>
-                    <Card.Content style={styles.filterRow}>
+                <View style={[styles.filterCard, { backgroundColor: uiBg }]}>
+                    <View style={styles.filterRow}>
                         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterScrollContent}>
-                            {(['ALL', 'TAMPER', 'ACTIVE', 'OFFLINE'] as FleetFilter[]).map((filterKey) => (
-                                <Chip
-                                    key={filterKey}
-                                    compact
-                                    selected={fleetFilter === filterKey}
-                                    onPress={() => {
-                                        setFleetFilter(filterKey);
-                                        Haptics.selectionAsync().catch(() => undefined);
-                                    }}
-                                    style={[styles.filterChip, { backgroundColor: uiPill }, fleetFilter === filterKey ? styles.filterChipSelected : null]}
-                                    textStyle={fleetFilter === filterKey ? styles.filterChipTextSelected : { color: uiText }}
-                                >
-                                    {filterKey}
-                                </Chip>
-                            ))}
+                            {([
+                                { key: 'ALL' as FleetFilter, label: 'All', count: activeBoxes.length, color: uiText },
+                                { key: 'TAMPER' as FleetFilter, label: 'Tamper', count: tamperAlertCount, color: '#DC2626' },
+                                { key: 'ACTIVE' as FleetFilter, label: 'Active', count: activeMoveCount, color: '#2196F3' },
+                                { key: 'OFFLINE' as FleetFilter, label: 'Offline', count: offlineCount, color: '#607D8B' },
+                            ]).map((f) => {
+                                const isActive = fleetFilter === f.key;
+                                return (
+                                    <TouchableOpacity
+                                        key={f.key}
+                                        activeOpacity={0.7}
+                                        onPress={() => {
+                                            setFleetFilter(f.key);
+                                            Haptics.selectionAsync().catch(() => undefined);
+                                        }}
+                                        style={[
+                                            styles.filterPill,
+                                            { backgroundColor: isActive ? uiAccent : uiPill },
+                                        ]}
+                                    >
+                                        {isActive && <View style={[styles.filterPillDot, { backgroundColor: f.key === 'ALL' ? (isDarkMode ? '#000' : '#fff') : f.color }]} />}
+                                        <Text style={[
+                                            styles.filterPillText,
+                                            { color: isActive ? (isDarkMode ? '#000' : '#fff') : uiText },
+                                        ]}>
+                                            {f.label}
+                                        </Text>
+                                        <Text style={[
+                                            styles.filterPillCount,
+                                            { color: isActive ? (isDarkMode ? '#000' : '#fff') : uiTextSec },
+                                        ]}>
+                                            {f.count}
+                                        </Text>
+                                    </TouchableOpacity>
+                                );
+                            })}
                         </ScrollView>
 
                         <View style={styles.filterActions}>
@@ -899,14 +1095,21 @@ export default function GlobalMapScreen() {
                                 onPress={() => setListVisible((v) => !v)}
                             />
                         </View>
-                    </Card.Content>
-                </Card>
+                    </View>
+                </View>
             </View>
 
-            {/* Diagnostics info panel */}
-            <View style={[styles.overlayInfo, listVisible ? styles.overlayInfoRaised : null]}>
+            {/* Diagnostics info panel — swipe down to close */}
+            <Animated.View
+                style={[
+                    styles.overlayInfo,
+                    listVisible ? styles.overlayInfoRaised : null,
+                    selectedBox ? { transform: [{ translateY: diagSwipeY }], opacity: diagSwipeY.interpolate({ inputRange: [0, 300], outputRange: [1, 0], extrapolate: 'clamp' }) } : null,
+                ]}
+                {...(selectedBox ? diagPanResponder.panHandlers : {})}
+            >
                 {renderDiagnosticsCard()}
-            </View>
+            </Animated.View>
 
             {/* Box list panel */}
             {listVisible ? (
@@ -1125,15 +1328,14 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         gap: 8,
     },
-    topHudStat: {
-        fontSize: 12,
-        fontFamily: 'Inter_700Bold',
-        color: '#334155',
+    topHudStatChip: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 3,
     },
-    topHudStatDanger: {
+    topHudStatValue: {
         fontSize: 12,
         fontFamily: 'Inter_700Bold',
-        color: '#DC2626',
     },
     liveHeaderRow: {
         flexDirection: 'row',
@@ -1154,27 +1356,39 @@ const styles = StyleSheet.create({
     },
     filterCard: {
         borderRadius: 12,
-        backgroundColor: 'white',
         elevation: 2,
+        overflow: 'hidden',
     },
     filterRow: {
         flexDirection: 'row',
         alignItems: 'center',
-        paddingVertical: 2,
-        paddingHorizontal: 6,
+        paddingVertical: 8,
+        paddingHorizontal: 10,
     },
     filterScrollContent: {
         paddingRight: 8,
         gap: 6,
+        alignItems: 'center',
     },
-    filterChip: {
-        backgroundColor: '#F8FAFC',
+    filterPill: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 5,
+        paddingHorizontal: 12,
+        paddingVertical: 6,
+        borderRadius: 999,
     },
-    filterChipSelected: {
-        backgroundColor: '#000000',
+    filterPillDot: {
+        width: 6,
+        height: 6,
+        borderRadius: 3,
     },
-    filterChipTextSelected: {
-        color: '#FFFFFF',
+    filterPillText: {
+        fontSize: 12,
+        fontFamily: 'Inter_600SemiBold',
+    },
+    filterPillCount: {
+        fontSize: 11,
         fontFamily: 'Inter_700Bold',
     },
     filterActions: {
@@ -1354,5 +1568,42 @@ const styles = StyleSheet.create({
     webPopupVal: {
         fontFamily: 'Inter_600SemiBold',
         fontSize: 12,
+    },
+    // Diagnostics card rows
+    diagRow: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        paddingVertical: 3,
+    },
+    diagRowLeft: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+    },
+    diagLbl: {
+        fontSize: 11,
+        fontFamily: 'Inter_500Medium',
+    },
+    diagVal: {
+        fontSize: 12,
+        fontFamily: 'Inter_600SemiBold',
+    },
+    diagTimestampRow: {
+        flexDirection: 'row',
+        alignItems: 'stretch',
+    },
+    diagTimestampCol: {
+        flex: 1,
+    },
+    diagTimestampLabel: {
+        fontSize: 9,
+        fontFamily: 'Inter_500Medium',
+        textTransform: 'uppercase',
+        letterSpacing: 0.3,
+    },
+    diagTimestampValue: {
+        fontSize: 11,
+        fontFamily: 'JetBrainsMono_400Regular',
     },
 });

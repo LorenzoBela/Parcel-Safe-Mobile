@@ -144,6 +144,7 @@ const SafeMarkerView = createMockComponent('MarkerView');
 const SafeUserLocation = createMockComponent('UserLocation');
 const SafeSymbolLayer = createMockComponent('SymbolLayer');
 const SafeImages = createMockComponent('Images');
+const SafeCallout = createMockComponent('Callout');
 
 /**
  * Safe wrapper for setAccessToken
@@ -220,6 +221,7 @@ const MapboxGL = {
     FillLayer: SafeFillLayer,
     SymbolLayer: SafeSymbolLayer,
     Images: SafeImages,
+    Callout: SafeCallout,
     setAccessToken,
     setTelemetryEnabled,
     StyleURL,

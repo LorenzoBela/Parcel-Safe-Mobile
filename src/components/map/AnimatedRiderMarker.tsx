@@ -1,5 +1,5 @@
 import React, { useRef, useEffect, useState } from 'react';
-import { View, Image, Animated, Easing, StyleSheet, Text, TouchableOpacity } from 'react-native';
+import { View, Image, Animated, Easing, StyleSheet, Text, TouchableOpacity, Platform } from 'react-native';
 import MapboxGL from './MapboxWrapper';
 import length from '@turf/length';
 import along from '@turf/along';
@@ -22,6 +22,18 @@ interface AnimatedRiderMarkerProps {
     isSelected?: boolean;
     onSelected?: () => void;
 }
+
+/**
+ * Animated rider marker using PointAnnotation for reliable touch on Android.
+ *
+ * PointAnnotation renders children as a bitmap snapshot. To keep the bitmap
+ * current without causing per-frame blank flashes, we use a throttled refresh
+ * strategy: refresh once on mount, on selection state changes, and on a
+ * 2-second interval timer.
+ *
+ * MarkerView was tested but it intercepts ALL touch events on Android without
+ * forwarding them, making it impossible to detect marker taps.
+ */
 
 const RiderImage = require('../../../assets/Rider.jpg');
 
@@ -192,18 +204,60 @@ const AnimatedRiderMarker: React.FC<AnimatedRiderMarkerProps> = ({
         };
     }, [latitude, longitude, rotation, pathGeometry]);
 
-
     const annotationRef = useRef<any>(null);
-
     const visualRotation = normalizeAngle(renderRotation - mapBearing);
 
+    // --- Android PointAnnotation Refresh Strategy ---
+    // PointAnnotation renders children as a bitmap. We need refresh() to keep
+    // the bitmap current, but calling it every animation frame causes blanks.
+    // Strategy: refresh once on mount, on selection change, and on a throttled
+    // 2-second interval to keep the bitmap alive during coordinate animations.
+    const mountedRef = useRef(false);
+
+    // Mount refresh — wait for RN view to fully layout before initial snapshot
+    useEffect(() => {
+        if (Platform.OS === 'android') {
+            const timer = setTimeout(() => {
+                annotationRef.current?.refresh?.();
+                mountedRef.current = true;
+            }, 300);
+            return () => clearTimeout(timer);
+        } else {
+            mountedRef.current = true;
+        }
+    }, []);
+
+    // Selection change refresh — visual state changed (border size)
+    useEffect(() => {
+        if (Platform.OS === 'android' && mountedRef.current) {
+            const timer = setTimeout(() => {
+                annotationRef.current?.refresh?.();
+            }, 50);
+            return () => clearTimeout(timer);
+        }
+    }, [isSelected]);
+
+    // Throttled periodic refresh — keeps bitmap alive during coordinate animation
+    // without the per-frame flicker that killed rendering before
+    useEffect(() => {
+        if (Platform.OS !== 'android') return;
+        const interval = setInterval(() => {
+            if (mountedRef.current) {
+                annotationRef.current?.refresh?.();
+            }
+        }, 2000);
+        return () => clearInterval(interval);
+    }, []);
+
     return (
-        <MapboxGL.MarkerView
+        <MapboxGL.PointAnnotation
             id={id}
+            ref={annotationRef}
             coordinate={renderCoord}
             anchor={{ x: 0.5, y: 0.7 }}
+            onSelected={onSelected}
         >
-            <TouchableOpacity activeOpacity={0.9} onPress={onSelected} style={{ alignItems: 'center' }}>
+            <View style={{ alignItems: 'center', width: 84, height: 110 }}>
                 {/* Speed Badge — always upright since parent does not rotate */}
                 <View style={[
                     styles.speedBadge,
@@ -255,8 +309,8 @@ const AnimatedRiderMarker: React.FC<AnimatedRiderMarkerProps> = ({
                         }
                     ]} />
                 </View>
-            </TouchableOpacity>
-        </MapboxGL.MarkerView>
+            </View>
+        </MapboxGL.PointAnnotation>
     );
 };
 
