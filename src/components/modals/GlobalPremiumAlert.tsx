@@ -177,7 +177,10 @@ export default function GlobalPremiumAlert() {
                                     onPress={() => handleButtonPress(btn.onPress)}
                                     activeOpacity={0.7}
                                 >
-                                    <Text style={[
+                                    <Text 
+                                        numberOfLines={1}
+                                        adjustsFontSizeToFit
+                                        style={[
                                         styles.buttonText,
                                         { color: textColor }
                                     ]}>

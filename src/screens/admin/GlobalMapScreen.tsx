@@ -64,6 +64,7 @@ type BoxMarker = {
     batteryVolt?: number;
     distanceTrav?: number;
     phoneBatteryPct?: number;
+    phoneDataBytes?: number;
     hasActiveDelivery?: boolean;
     deliveryId?: string;
     hwLastUpdated?: number;
@@ -200,6 +201,32 @@ function formatCoord(val: number, isLat: boolean): string {
 function formatSpeed(speedMs: number | undefined | null): string {
     if (speedMs == null || speedMs < 0) return '0 km/h';
     return `${Math.round(speedMs * 3.6)} km/h`;
+}
+
+/** Determine if the GPS source involves the phone */
+function isPhoneGpsSource(source?: string): boolean {
+    if (!source) return false;
+    return source === 'phone' || source.startsWith('phone_') || source === 'consolidated';
+}
+
+function gpsSourceLabel(source?: string): string {
+    if (!source) return 'Unknown';
+    if (source === 'consolidated') return 'Both';
+    if (source === 'phone' || source.startsWith('phone_')) return 'Phone';
+    return 'Box';
+}
+
+function gpsSourceIcon(source?: string): string {
+    if (source === 'consolidated') return 'swap-horizontal';
+    if (isPhoneGpsSource(source)) return 'cellphone';
+    return 'cube-outline';
+}
+
+/** Format a timestamp to exact time (HH:MM:SS AM/PM) */
+function fmtExactTime(ts?: number): string {
+    if (!ts || !Number.isFinite(ts)) return '—';
+    const ms = ts > 1e12 ? ts : ts * 1000;
+    return new Date(ms).toLocaleTimeString('en-US', { timeZone: 'Asia/Manila', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true });
 }
 
 // ==================== Sub-components ====================
@@ -506,6 +533,7 @@ export default function GlobalMapScreen() {
                     batteryVolt: hw?.batt_v,
                     distanceTrav: hw?.geo_dist_m,
                     phoneBatteryPct: (hw as any)?.phone_status?.battery_level,
+                    phoneDataBytes: (hw as any)?.phone_status?.data_bytes,
                     hasActiveDelivery: !!(hw as any)?.delivery_id,
                     deliveryId: (hw as any)?.delivery_id,
                     hwLastUpdated: hw?.last_updated,
@@ -742,6 +770,13 @@ export default function GlobalMapScreen() {
         setCameraBearing(normalized);
     }, [navMode, selectedBoxId, lockedBoxId, filteredBoxes]);
 
+    // Force UI to re-evaluate timestamps every minute if no state changes natively
+    const [currentTime, setCurrentTime] = useState(Date.now());
+    useEffect(() => {
+        const timer = setInterval(() => setCurrentTime(Date.now()), 60000);
+        return () => clearInterval(timer);
+    }, []);
+
     const selectedBox = useMemo(() => {
         if (!selectedBoxId) return null;
         return activeBoxes.find((b) => b.id === selectedBoxId) ?? null;
@@ -808,9 +843,9 @@ export default function GlobalMapScreen() {
             );
         }
 
-        const now = Date.now();
+        const now = currentTime;
         const isAppOnline = (selectedBox.phoneConnected === true && (now - (selectedBox.phoneLastUpdated || 0) < 120000)) ||
-            (selectedBox.gpsSource === 'phone' && (now - (selectedBox.timestamp || 0) < 60000));
+            (isPhoneGpsSource(selectedBox.gpsSource) && (now - (selectedBox.timestamp || 0) < 60000));
         
         const boxStateMs = selectedBox.hwLastUpdated 
             ? (selectedBox.hwLastUpdated > 1e12 ? selectedBox.hwLastUpdated : selectedBox.hwLastUpdated * 1000) 
@@ -843,6 +878,11 @@ export default function GlobalMapScreen() {
         const dataBytes = selectedBox.dataBytes;
         const dataLabel = dataBytes != null
             ? dataBytes > 1048576 ? `${(dataBytes / 1048576).toFixed(1)} MB` : `${(dataBytes / 1024).toFixed(0)} KB`
+            : '—';
+            
+        const phoneDataBytes = (selectedBox as any).phoneDataBytes;
+        const phoneDataLabel = phoneDataBytes != null
+            ? phoneDataBytes > 1048576 ? `${(phoneDataBytes / 1048576).toFixed(1)} MB` : phoneDataBytes > 1024 ? `${(phoneDataBytes / 1024).toFixed(0)} KB` : `${phoneDataBytes} B`
             : '—';
 
         const deliveryId = selectedBox.deliveryId ? selectedBox.deliveryId.substring(0, 8) + '…' : '—';
@@ -947,7 +987,22 @@ export default function GlobalMapScreen() {
                         </View>
                     </View>
                     <Row icon="crosshairs-gps" label="GPS Fix" value={gpsFix ? 'Yes' : 'No'} valueColor={gpsFix ? '#22C55E' : '#EF4444'} />
-                    <Row icon="database" label="Data Used" value={dataLabel} />
+                    
+                    <View style={styles.diagRow}>
+                        <View style={styles.diagRowLeft}>
+                            <MaterialCommunityIcons name="cube-outline" size={13} color={uiTextSec} />
+                            <Text style={[styles.diagLbl, { color: uiTextSec }]}>Box Data</Text>
+                        </View>
+                        <Text style={[styles.diagVal, { color: uiText }]}>{dataLabel}</Text>
+                    </View>
+                    
+                    <View style={styles.diagRow}>
+                        <View style={styles.diagRowLeft}>
+                            <MaterialCommunityIcons name="cellphone" size={13} color={uiTextSec} />
+                            <Text style={[styles.diagLbl, { color: uiTextSec }]}>Phone Data</Text>
+                        </View>
+                        <Text style={[styles.diagVal, { color: uiText }]}>{phoneDataLabel}</Text>
+                    </View>
 
                     <SectionDivider />
 
@@ -1008,6 +1063,7 @@ export default function GlobalMapScreen() {
             {MAPBOX_TOKEN ? (
                 <MapboxGL.MapView
                     style={styles.map}
+                    styleURL={isDarkMode ? MapboxGL.StyleURL.Dark : MapboxGL.StyleURL.Street}
                     logoEnabled={false}
                     attributionEnabled={false}
                     onPress={() => setSelectedBoxId(null)}
@@ -1270,9 +1326,9 @@ export default function GlobalMapScreen() {
                             const sigColor = getSignalColor(bars);
 
                             // Derive online status (same logic as diagnostics card)
-                            const now = Date.now();
+                            const now = currentTime;
                             const isAppOnline = (box.phoneConnected === true && (now - (box.phoneLastUpdated || 0) < 120000)) ||
-                                (box.gpsSource === 'phone' && (now - (box.timestamp || 0) < 60000));
+                                (isPhoneGpsSource(box.gpsSource) && (now - (box.timestamp || 0) < 60000));
                             const boxStateMs = box.hwLastUpdated
                                 ? (box.hwLastUpdated > 1e12 ? box.hwLastUpdated : box.hwLastUpdated * 1000)
                                 : 0;
@@ -1301,6 +1357,9 @@ export default function GlobalMapScreen() {
 
                             const dataLabel = box.dataBytes != null
                                 ? box.dataBytes > 1048576 ? `${(box.dataBytes / 1048576).toFixed(1)} MB` : `${(box.dataBytes / 1024).toFixed(0)} KB`
+                                : '—';
+                            const phoneDataLabel = box.phoneDataBytes != null
+                                ? box.phoneDataBytes > 1048576 ? `${(box.phoneDataBytes / 1048576).toFixed(1)} MB` : box.phoneDataBytes > 1024 ? `${(box.phoneDataBytes / 1024).toFixed(0)} KB` : `${box.phoneDataBytes} B`
                                 : '—';
 
                             const FeedRow = ({ icon, label, value, valueColor }: { icon: string; label: string; value: string; valueColor?: string }) => (
@@ -1423,25 +1482,43 @@ export default function GlobalMapScreen() {
 
                                             <View style={[styles.feedDivider, { backgroundColor: uiBorder }]} />
 
-                                            {/* Section: Data & Distance */}
+                                            {/* Section: Data */}
                                             <View style={styles.feedSection}>
-                                                <FeedRow icon="cloud-upload-outline" label="Data Used" value={dataLabel} />
+                                                <FeedRow icon="cube-outline" label="Box Data" value={dataLabel} />
+                                                <FeedRow icon="cellphone" label="Phone Data" value={phoneDataLabel} />
                                                 <FeedRow
-                                                    icon="map-marker-distance"
-                                                    label="Distance"
-                                                    value={box.distanceTrav != null
-                                                        ? (box.distanceTrav >= 1000 ? `${(box.distanceTrav / 1000).toFixed(1)} km` : `${Math.round(box.distanceTrav)} m`)
-                                                        : '—'}
-                                                />
-                                                <FeedRow
-                                                    icon={box.gpsSource === 'phone' ? 'cellphone' : 'cube-outline'}
+                                                    icon={gpsSourceIcon(box.gpsSource)}
                                                     label="GPS Source"
-                                                    value={box.gpsSource === 'phone' ? 'Phone' : 'Box'}
+                                                    value={gpsSourceLabel(box.gpsSource)}
                                                 />
                                             </View>
 
-                                            {/* Footer: Delivery + Timestamp + Locate Button */}
+                                            {/* Footer: Delivery + Timestamps + Locate Button */}
                                             <View style={[styles.feedDivider, { backgroundColor: uiBorder }]} />
+                                            
+                                            {/* Timestamps: Box vs Phone */}
+                                            <View style={{ flexDirection: 'row', marginBottom: 6, gap: 8 }}>
+                                                <View style={{ flex: 1 }}>
+                                                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3, marginBottom: 1 }}>
+                                                        <MaterialCommunityIcons name="chip" size={9} color={uiTextSec} />
+                                                        <Text style={{ fontSize: 8, fontFamily: 'Inter_600SemiBold', color: uiTextSec }}>Box Updated</Text>
+                                                    </View>
+                                                    <Text style={{ fontSize: 10, fontFamily: 'JetBrainsMono_400Regular', color: isBoxOnline ? uiText : uiTextSec }}>
+                                                        {fmtExactTime(box.hwLastUpdated)}
+                                                    </Text>
+                                                </View>
+                                                <View style={{ width: 1, backgroundColor: uiBorder }} />
+                                                <View style={{ flex: 1 }}>
+                                                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3, marginBottom: 1 }}>
+                                                        <MaterialCommunityIcons name="cellphone" size={9} color={uiTextSec} />
+                                                        <Text style={{ fontSize: 8, fontFamily: 'Inter_600SemiBold', color: uiTextSec }}>Phone Updated</Text>
+                                                    </View>
+                                                    <Text style={{ fontSize: 10, fontFamily: 'JetBrainsMono_400Regular', color: isAppOnline ? uiText : uiTextSec }}>
+                                                        {fmtExactTime(box.phoneLastUpdated)}
+                                                    </Text>
+                                                </View>
+                                            </View>
+
                                             <View style={styles.feedFooter}>
                                                 <View style={{ flex: 1 }}>
                                                     {box.hasActiveDelivery && (
@@ -1450,9 +1527,6 @@ export default function GlobalMapScreen() {
                                                             <Text style={{ fontSize: 9, fontFamily: 'Inter_600SemiBold', color: '#3B82F6' }}>DELIVERY</Text>
                                                         </View>
                                                     )}
-                                                    <Text style={[styles.feedTimestamp, { color: uiTextSec }]}>
-                                                        {formatTimeAgo(box.lastUpdated || box.timestamp)}
-                                                    </Text>
                                                 </View>
                                                 <TouchableOpacity
                                                     activeOpacity={0.7}

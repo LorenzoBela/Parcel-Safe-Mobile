@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { View, StyleSheet, ScrollView, Switch, ImageBackground, Alert, RefreshControl, TouchableOpacity, Dimensions, Linking, Platform, AppState, Animated, TouchableWithoutFeedback, FlatList } from 'react-native';
+import { View, StyleSheet, ScrollView, Switch, ImageBackground, Alert, RefreshControl, TouchableOpacity, Dimensions, Linking, Platform, AppState, Animated, TouchableWithoutFeedback, FlatList, Modal, TextInput } from 'react-native';
 import { useEntryAnimation, useStaggerAnimation, usePressScale } from '../../hooks/useEntryAnimation';
-import { Text, Card, Button, Avatar, ProgressBar, MD3Colors, Chip, useTheme, IconButton } from 'react-native-paper';
+import { Text, Card, Button, Avatar, ProgressBar, MD3Colors, Chip, useTheme, IconButton, ActivityIndicator } from 'react-native-paper';
 import { useNavigation } from '@react-navigation/native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import dayjs from 'dayjs';
@@ -19,6 +19,10 @@ import LottieView from 'lottie-react-native';
 import { useLocationRedundancy, getStatusMessage, getStatusColor } from '../../hooks/useLocationRedundancy';
 import { useSecurityAlerts } from '../../hooks/useSecurityAlerts';
 import { subscribeToBattery, BatteryState, subscribeToTamper, TamperState, subscribeToLocation, LocationData, subscribeToKeypad, KeypadState, subscribeToHinge, HingeState, subscribeToBoxState, BoxState, updateBoxState, writePhoneLocation } from '../../services/firebaseClient';
+import {
+    verifyRiderPersonalPinForUnlock,
+    sendRiderUnlockCommand,
+} from '../../services/personalPinService';
 import { offlineCache, PendingSync } from '../../services/offlineCache';
 import { NetworkStatusBanner } from '../../components';
 import { isSpeedAnomaly, isClockSyncRequired, canAddToPhotoQueue, isGpsStale, SAFETY_CONSTANTS } from '../../services/SafetyLogic';
@@ -251,6 +255,53 @@ export default function RiderDashboard() {
 
     const startTripPress = usePressScale();
     const detailsPress = usePressScale();
+    const quickUnlockPress = usePressScale();
+
+    // Quick Unlock state
+    const [showQuickUnlockModal, setShowQuickUnlockModal] = useState(false);
+    const [quickUnlockPin, setQuickUnlockPin] = useState('');
+    const [quickUnlockSubmitting, setQuickUnlockSubmitting] = useState(false);
+    const [showQuickUnlockPinText, setShowQuickUnlockPinText] = useState(false);
+
+    const sanitizeQuickPinInput = (value: string) => value.replace(/\D/g, '').slice(0, 6);
+
+    const handleQuickUnlock = () => {
+        if (!isPaired || !pairedBoxId) {
+            PremiumAlert.alert('No Box Paired', 'Scan your box QR to access controls.', [
+                { text: 'Pair Box', onPress: () => navigation.navigate('PairBox') },
+            ]);
+            return;
+        }
+        if (!isLocked) {
+            PremiumAlert.alert('Already Unlocked', 'The box is already in an unlocked state.');
+            return;
+        }
+        // Open PIN modal
+        setQuickUnlockPin('');
+        setShowQuickUnlockPinText(false);
+        setShowQuickUnlockModal(true);
+    };
+
+    const handleSubmitQuickUnlockPin = async () => {
+        const sanitized = sanitizeQuickPinInput(quickUnlockPin);
+        if (!/^\d{6}$/.test(sanitized)) {
+            PremiumAlert.alert('Invalid PIN', 'Enter your 6-digit Personal PIN to unlock.');
+            return;
+        }
+        try {
+            setQuickUnlockSubmitting(true);
+            const { unlockToken } = await verifyRiderPersonalPinForUnlock(pairedBoxId!, sanitized);
+            await sendRiderUnlockCommand(pairedBoxId!, unlockToken);
+            setShowQuickUnlockModal(false);
+            setQuickUnlockPin('');
+            PremiumAlert.alert('Unlock Command Sent', `Unlock queued for ${pairedBoxId}. Waiting for hardware acknowledgment.`);
+        } catch (error: any) {
+            console.error('[QuickUnlock] Failed:', error);
+            PremiumAlert.alert('Unlock Failed', error?.message || 'Could not authorize unlock. Check your PIN.');
+        } finally {
+            setQuickUnlockSubmitting(false);
+        }
+    };
     const unlockPress = usePressScale();
 
     const MAPBOX_TOKEN = process.env.EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN;
@@ -858,18 +909,20 @@ export default function RiderDashboard() {
     ]);
 
     // Auto-start monitoring for hardware state (read-only subscriptions)
+    // Use trackedBoxId so battery/box subscriptions are active even without explicit pairing
+    const monitorBoxId = boxIdForMonitoring || trackedBoxId;
     useEffect(() => {
-        if (boxIdForMonitoring && isPaired) {
-            startMonitoring(boxIdForMonitoring);
+        if (monitorBoxId && isPaired) {
+            startMonitoring(monitorBoxId);
         }
 
         // EC-Update: Subscribe to box state for lock status
-        const unsubscribeBox = boxIdForMonitoring ? subscribeToBoxState(boxIdForMonitoring, (state) => {
+        const unsubscribeBox = monitorBoxId ? subscribeToBoxState(monitorBoxId, (state) => {
             setBoxState(state);
         }) : () => { };
 
-        // EC-03: Subscribe to battery state
-        const unsubscribeBattery = boxIdForMonitoring ? subscribeToBattery(boxIdForMonitoring, (state) => {
+        // EC-03: Subscribe to battery state (real-time)
+        const unsubscribeBattery = monitorBoxId ? subscribeToBattery(monitorBoxId, (state) => {
             setBatteryState(state);
 
             // Show alert on low battery
@@ -979,7 +1032,7 @@ export default function RiderDashboard() {
             unsubscribeKeypad();
             unsubscribeHinge();
         };
-    }, [boxIdForMonitoring, isPaired]);
+    }, [boxIdForMonitoring, monitorBoxId, isPaired]);
 
     // EC-01/EC-06: Check for pending syncs periodically
     useEffect(() => {
@@ -1644,30 +1697,29 @@ export default function RiderDashboard() {
         }
     };
 
-    const toggleLock = () => {
+    const handleLockOnly = () => {
         if (!boxIdForMonitoring) {
             PremiumAlert.alert('No Box Connected', 'Pair and select a box first to send lock controls.');
             return;
         }
 
+        if (isLocked) {
+            // Locked — do nothing; unlock is via Quick Unlock button
+            return;
+        }
+
         PremiumAlert.alert(
-            isLocked ? "Unlock Box?" : "Lock Box?",
-            isLocked ? "Are you sure you want to unlock the box?" : "Ensure the box is closed before locking.",
+            "Lock Box?",
+            "Ensure the box is closed before locking.",
             [
                 { text: "Cancel", style: "cancel" },
                 {
-                    text: isLocked ? "Unlock" : "Lock", onPress: async () => {
-                        const action = isLocked ? "UNLOCKING" : "LOCKED";
+                    text: "Lock", onPress: async () => {
                         try {
-                            await updateBoxState(boxIdForMonitoring, { command: action });
-                            PremiumAlert.alert(
-                                'Command Sent',
-                                action === 'UNLOCKING'
-                                    ? 'Unlock command sent. Box should actuate shortly.'
-                                    : 'Lock command sent. Box should relock shortly.'
-                            );
+                            await updateBoxState(boxIdForMonitoring, { command: 'LOCKED' });
+                            PremiumAlert.alert('Command Sent', 'Lock command sent. Box should relock shortly.');
                         } catch (error) {
-                            console.error('[toggleLock] Failed to send lock command:', error);
+                            console.error('[handleLockOnly] Failed to send lock command:', error);
                             PremiumAlert.alert('Command Failed', 'Unable to send lock command. Check connection and try again.');
                         }
                     }
@@ -1733,6 +1785,7 @@ export default function RiderDashboard() {
     const gpsCardAnim = useEntryAnimation(55);
     const pairingAnim = useEntryAnimation(100);
     const actionsAnim = useStaggerAnimation(4, 45, 145);
+    const mapPreviewAnim = useEntryAnimation(170);
     const jobAnim = useEntryAnimation(215);
 
     return (
@@ -2003,6 +2056,78 @@ export default function RiderDashboard() {
                     </View>
                 </Animated.View>
 
+                {/* Map Preview — Rider's Current Location */}
+                <Animated.View style={mapPreviewAnim.style}>
+                    <View style={[styles.mapPreviewCard, { backgroundColor: c.card, borderColor: c.border, borderWidth: 1 }]}>
+                        <View style={styles.mapPreviewHeader}>
+                            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                                <View style={[styles.mapPreviewIconWrap, { backgroundColor: c.greenBg }]}>
+                                    <MaterialCommunityIcons name="map-marker-radius" size={20} color={c.greenText} />
+                                </View>
+                                <Text variant="titleSmall" style={{ fontFamily: 'Inter_700Bold', color: c.text, marginLeft: 10 }}>Your Location</Text>
+                            </View>
+                            {gpsSource !== 'none' && (
+                                <Chip
+                                    compact
+                                    icon={gpsSource === 'box' ? 'access-point' : 'cellphone'}
+                                    style={{ backgroundColor: c.greenBg }}
+                                    textStyle={{ fontSize: 10, color: c.greenText }}
+                                >
+                                    {gpsSource === 'box' ? 'Box GPS' : 'Phone GPS'}
+                                </Chip>
+                            )}
+                        </View>
+                        <View style={styles.mapPreviewContainer}>
+                            {(lastLocation || riderLocation) && MAPBOX_TOKEN ? (
+                                <>
+                                    <MapboxGL.MapView
+                                        style={styles.map}
+                                        logoEnabled={false}
+                                        attributionEnabled={false}
+                                        styleURL={isDarkMode ? MapboxGL.StyleURL.Dark : MapboxGL.StyleURL.Street}
+                                        scrollEnabled={false}
+                                        pitchEnabled={false}
+                                        rotateEnabled={false}
+                                        zoomEnabled={false}
+                                    >
+                                        <MapboxGL.Camera
+                                            centerCoordinate={[
+                                                lastLocation ? lastLocation.longitude : riderLocation!.coords.longitude,
+                                                lastLocation ? lastLocation.latitude : riderLocation!.coords.latitude,
+                                            ]}
+                                            zoomLevel={15}
+                                            animationMode="easeTo"
+                                            animationDuration={800}
+                                        />
+                                        <AnimatedRiderMarker
+                                            latitude={lastLocation ? lastLocation.latitude : riderLocation!.coords.latitude}
+                                            longitude={lastLocation ? lastLocation.longitude : riderLocation!.coords.longitude}
+                                            rotation={riderLocation?.coords.heading || 0}
+                                            speed={lastLocation?.speed ?? riderLocation?.coords.speed ?? undefined}
+                                        />
+                                    </MapboxGL.MapView>
+                                    {/* Address Overlay */}
+                                    <View style={styles.mapPreviewOverlay}>
+                                        <View style={styles.mapPreviewAddressPill}>
+                                            <MaterialCommunityIcons name="map-marker" size={14} color="#FFFFFF" />
+                                            <Text style={styles.mapPreviewAddressText} numberOfLines={1}>
+                                                {locationName || 'Locating...'}
+                                            </Text>
+                                        </View>
+                                    </View>
+                                </>
+                            ) : (
+                                <View style={[styles.mapPreviewPlaceholder, { backgroundColor: c.search }]}>
+                                    <ActivityIndicator size="small" color={c.textSec} />
+                                    <Text style={{ color: c.textSec, marginTop: 8, fontSize: 12 }}>
+                                        {MAPBOX_TOKEN ? 'Acquiring GPS...' : 'Map unavailable'}
+                                    </Text>
+                                </View>
+                            )}
+                        </View>
+                    </View>
+                </Animated.View>
+
                 {/* Earnings & Goal Tracker Widget */}
                 {riderId && <EarningsWidget riderId={riderId} dailyGoal={1500} />}
 
@@ -2119,7 +2244,7 @@ export default function RiderDashboard() {
                                         style={styles.map}
                                         logoEnabled={false}
                                         attributionEnabled={false}
-                                        styleURL={MapboxGL.StyleURL.Street}
+                                        styleURL={isDarkMode ? MapboxGL.StyleURL.Dark : MapboxGL.StyleURL.Street}
                                         scrollEnabled={true}
                                         pitchEnabled={true}
                                         rotateEnabled={true}
@@ -2392,7 +2517,7 @@ export default function RiderDashboard() {
                 <Text variant="titleMedium" style={[styles.sectionTitle, { color: c.text }]}>Box Status</Text>
                 <View style={[styles.statusCard, { backgroundColor: c.card, borderColor: c.border, borderWidth: 1 }]}>
 
-                    {/* Enhanced Unlock Button with Lottie */}
+                    {/* Lock Status & Lock-Only Button */}
                     <View style={styles.unlockContainer}>
                         <View style={styles.unlockInfo}>
                             <Text variant="titleMedium" style={{ fontFamily: 'Inter_700Bold', color: c.text }}>Lock Mechanism</Text>
@@ -2400,13 +2525,19 @@ export default function RiderDashboard() {
                                 {!isPaired ? 'No Box Connected' : (isLocked ? 'Securely Locked' : 'Unlocked')}
                             </Text>
                         </View>
-                        <TouchableWithoutFeedback onPressIn={unlockPress.onPressIn} onPressOut={unlockPress.onPressOut} onPress={toggleLock} disabled={!isPaired}>
+                        <TouchableWithoutFeedback
+                            onPressIn={unlockPress.onPressIn}
+                            onPressOut={unlockPress.onPressOut}
+                            onPress={handleLockOnly}
+                            disabled={!isPaired || isLocked}
+                        >
                             <Animated.View style={[
                                 styles.unlockButton,
                                 {
                                     backgroundColor: !isPaired ? c.search : (isLocked ? c.greenBg : c.redBg),
                                     borderWidth: 1,
                                     borderColor: !isPaired ? c.border : (isLocked ? c.greenText : c.redText),
+                                    opacity: isLocked ? 0.7 : 1,
                                     ...unlockPress.style
                                 }
                             ]}>
@@ -2462,7 +2593,26 @@ export default function RiderDashboard() {
                         </View>
                     </View>
 
-                    <View style={{ flexDirection: 'row', marginTop: 16, gap: 8 }}>
+                    {/* Quick Unlock Button */}
+                    {isPaired && isLocked && (
+                        <TouchableWithoutFeedback onPressIn={quickUnlockPress.onPressIn} onPressOut={quickUnlockPress.onPressOut} onPress={handleQuickUnlock}>
+                            <Animated.View style={[{ marginTop: 16 }, quickUnlockPress.style]}>
+                                <Button
+                                    mode="contained"
+                                    style={{ borderRadius: 8 }}
+                                    contentStyle={{ height: 48 }}
+                                    labelStyle={{ fontSize: 15, fontFamily: 'Inter_700Bold' }}
+                                    buttonColor={c.accent}
+                                    textColor={c.accentText}
+                                    icon="lock-open-variant-outline"
+                                >
+                                    Quick Unlock Box
+                                </Button>
+                            </Animated.View>
+                        </TouchableWithoutFeedback>
+                    )}
+
+                    <View style={{ flexDirection: 'row', marginTop: isPaired && isLocked ? 8 : 16, gap: 8 }}>
                         {!isPaired && (
                             <Button
                                 mode="contained"
@@ -2557,6 +2707,79 @@ export default function RiderDashboard() {
                 </Animated.View>
 
             </ScrollView >
+
+            {/* Quick Unlock PIN Modal */}
+            <Modal
+                visible={showQuickUnlockModal}
+                transparent
+                animationType="fade"
+                onRequestClose={() => !quickUnlockSubmitting && setShowQuickUnlockModal(false)}
+            >
+                <View style={styles.quickUnlockOverlay}>
+                    <View style={[styles.quickUnlockCard, { backgroundColor: c.card, borderColor: c.border }]}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 16 }}>
+                            <View style={[styles.quickUnlockIconWrap, { backgroundColor: c.greenBg }]}> 
+                                <MaterialCommunityIcons name="lock-open-variant-outline" size={24} color={c.greenText} />
+                            </View>
+                            <View style={{ marginLeft: 12, flex: 1 }}>
+                                <Text style={{ fontFamily: 'Inter_700Bold', fontSize: 18, color: c.text }}>Quick Unlock</Text>
+                                <Text style={{ color: c.textSec, fontSize: 13 }}>Enter your 6-digit Personal PIN</Text>
+                            </View>
+                            {!quickUnlockSubmitting && (
+                                <IconButton icon="close" size={20} iconColor={c.textSec} onPress={() => setShowQuickUnlockModal(false)} />
+                            )}
+                        </View>
+
+                        <View style={[styles.quickUnlockInputRow, { borderColor: c.border, backgroundColor: c.search }]}>
+                            <MaterialCommunityIcons name="lock" size={20} color={c.textSec} style={{ marginRight: 10 }} />
+                            <TextInput
+                                style={[styles.quickUnlockInput, { color: c.text }]}
+                                value={quickUnlockPin}
+                                onChangeText={(v) => setQuickUnlockPin(sanitizeQuickPinInput(v))}
+                                keyboardType="number-pad"
+                                maxLength={6}
+                                secureTextEntry={!showQuickUnlockPinText}
+                                placeholder="••••••"
+                                placeholderTextColor={c.textTer}
+                                editable={!quickUnlockSubmitting}
+                                autoFocus
+                            />
+                            <IconButton
+                                icon={showQuickUnlockPinText ? 'eye-off' : 'eye'}
+                                size={20}
+                                iconColor={c.textSec}
+                                onPress={() => setShowQuickUnlockPinText(!showQuickUnlockPinText)}
+                                style={{ margin: 0 }}
+                            />
+                        </View>
+
+                        <View style={{ flexDirection: 'row', gap: 8, marginTop: 16 }}>
+                            <Button
+                                mode="outlined"
+                                style={{ flex: 1, borderColor: c.border }}
+                                textColor={c.text}
+                                onPress={() => setShowQuickUnlockModal(false)}
+                                disabled={quickUnlockSubmitting}
+                            >
+                                Cancel
+                            </Button>
+                            <Button
+                                mode="contained"
+                                style={{ flex: 1 }}
+                                buttonColor={c.greenText}
+                                textColor="#FFFFFF"
+                                onPress={handleSubmitQuickUnlockPin}
+                                loading={quickUnlockSubmitting}
+                                disabled={quickUnlockSubmitting || quickUnlockPin.length < 6}
+                                icon="lock-open-check"
+                            >
+                                Unlock
+                            </Button>
+                        </View>
+                    </View>
+                </View>
+            </Modal>
+
             {/* Phone Entry Modal */}
             <PhoneEntryModal
                 visible={showPhoneModal}
@@ -3001,8 +3224,92 @@ const styles = StyleSheet.create({
         alignItems: 'center', marginTop: 12, gap: 5, marginBottom: 10,
     },
     dot: { height: 6, borderRadius: 3 },
+    mapPreviewCard: {
+        borderRadius: 16,
+        overflow: 'hidden',
+        marginBottom: 20,
+    },
+    mapPreviewHeader: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        paddingHorizontal: 14,
+        paddingVertical: 12,
+    },
+    mapPreviewIconWrap: {
+        width: 32,
+        height: 32,
+        borderRadius: 10,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    mapPreviewContainer: {
+        height: 180,
+        position: 'relative',
+    },
+    mapPreviewPlaceholder: {
+        flex: 1,
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    mapPreviewOverlay: {
+        position: 'absolute',
+        bottom: 10,
+        left: 10,
+        right: 10,
+    },
+    mapPreviewAddressPill: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: 'rgba(0,0,0,0.6)',
+        paddingHorizontal: 12,
+        paddingVertical: 8,
+        borderRadius: 20,
+        alignSelf: 'flex-start',
+        maxWidth: '90%',
+    },
+    mapPreviewAddressText: {
+        color: '#FFFFFF',
+        fontSize: 12,
+        fontFamily: 'Inter_600SemiBold',
+        marginLeft: 6,
+    },
     emptyIconWrap: {
         width: 56, height: 56, borderRadius: 28,
         alignItems: 'center', justifyContent: 'center', marginBottom: 6,
+    },
+    quickUnlockOverlay: {
+        flex: 1,
+        backgroundColor: 'rgba(0,0,0,0.5)',
+        justifyContent: 'center',
+        alignItems: 'center',
+        paddingHorizontal: 24,
+    },
+    quickUnlockCard: {
+        width: '100%',
+        borderRadius: 16,
+        borderWidth: 1,
+        padding: 20,
+    },
+    quickUnlockIconWrap: {
+        width: 44,
+        height: 44,
+        borderRadius: 12,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    quickUnlockInputRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        borderWidth: 1,
+        borderRadius: 12,
+        paddingHorizontal: 14,
+        height: 52,
+    },
+    quickUnlockInput: {
+        flex: 1,
+        fontSize: 20,
+        fontFamily: 'Inter_700Bold',
+        letterSpacing: 8,
     },
 });

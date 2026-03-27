@@ -407,7 +407,9 @@ export default function AssignedDeliveriesScreen() {
                             <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16 }}>
                                 <View style={{ flex: 1, marginRight: 8 }}>
                                     <Text style={{ fontSize: 16, fontFamily: 'Inter_700Bold', color: c.text }}>{item.customer}</Text>
-                                    <Text style={{ fontSize: 12, color: c.textSec, marginTop: 2 }}>{item.trk}</Text>
+                                    <Text style={{ fontSize: 12, color: c.textSec, marginTop: 2 }}>
+                                        {item.trk}  •  {dayjs(item.date).tz(PH_TIMEZONE).format('MMM D')} · {item.time}
+                                    </Text>
                                 </View>
                                 <View style={{ alignItems: 'flex-end', gap: 6 }}>
                                     <View style={[styles.statusPill, { backgroundColor: c.pillBg }]}>

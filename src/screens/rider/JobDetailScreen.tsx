@@ -90,10 +90,10 @@ export default function JobDetailScreen() {
     /** Calculate total delivery time from timestamps */
     const getTotalDeliveryTime = (): string => {
         // Cancelled or returned deliveries have no meaningful total time
-        if (['CANCELLED', 'RETURNING', 'RETURNED'].includes(jobData.status)) {
-            return 'N/A';
-        }
-        const startTime = jobData.acceptedAt || jobData.pickedUpAt;
+        if (jobData.status === 'CANCELLED') return 'Cancelled';
+        if (jobData.status === 'RETURNING') return 'Returning to sender';
+        if (jobData.status === 'RETURNED') return 'Returned to sender';
+        const startTime = jobData.acceptedAt || jobData.pickedUpAt || jobData.date;
         const endTime = jobData.deliveredAt;
 
         // Parse a timestamp correctly: ISO strings stored by the server are UTC.
@@ -189,8 +189,8 @@ export default function JobDetailScreen() {
     };
     // Helper to ensure time is in PH format
     // Helper to ensure time is in PH format
-    const getFormattedTime = (timeStr: string) => {
-        if (!timeStr || timeStr === '--:--') return '--:--';
+    const getFormattedTime = (timeStr: string | null | undefined) => {
+        if (!timeStr || timeStr === '--:--' || timeStr === 'N/A' || timeStr === '--') return '--:--';
 
         console.log('[JobDetail] Parsing timeStr:', timeStr);
 
@@ -215,7 +215,7 @@ export default function JobDetailScreen() {
             return timeStr;
         }
 
-        return d.format('h:mm A');
+        return d.format('MMM D, h:mm A');
     };
 
     const screenAnim = useEntryAnimation(0);
