@@ -223,6 +223,16 @@ export default function RiderDashboard() {
     const [locationName, setLocationName] = useState('Locating...');
     const [refreshing, setRefreshing] = useState(false);
     const [riderLocation, setRiderLocation] = useState<Location.LocationObject | null>(null);
+    const [mapZoomLevel, setMapZoomLevel] = useState(15);
+    const [showMapControls, setShowMapControls] = useState(false);
+
+    // Real-time address for map preview card
+    const [liveAddress, setLiveAddress] = useState<string>('Locating...');
+    const [isGeocodingAddress, setIsGeocodingAddress] = useState(false);
+    const lastGeocodedCoordsRef = useRef<{ lat: number; lng: number } | null>(null);
+    const lastGeocodeTimeRef = useRef<number>(0);
+    const GEOCODE_THROTTLE_MS = 30_000; // Re-geocode at most every 30s
+    const GEOCODE_DISTANCE_THRESHOLD_M = 50; // Only re-geocode if moved >50m
     const [isRestoringSession, setIsRestoringSession] = useState(false); // EC-Fix: Session restoration state
     const [distance, setDistance] = useState<string>('Calculating...');
     const [boxState, setBoxState] = useState<BoxState | null>(null);
@@ -1623,6 +1633,72 @@ export default function RiderDashboard() {
         fetchLocation();
     }, [fetchLocation]);
 
+    // ── Real-time address geocoding (Mapbox) ──
+    // Haversine helper for distance-based throttling
+    const haversineDistanceM = useCallback((lat1: number, lng1: number, lat2: number, lng2: number): number => {
+        const R = 6371000; // Earth radius in meters
+        const dLat = (lat2 - lat1) * Math.PI / 180;
+        const dLng = (lng2 - lng1) * Math.PI / 180;
+        const a = Math.sin(dLat / 2) ** 2
+            + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLng / 2) ** 2;
+        return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    }, []);
+
+    const geocodeAddress = useCallback(async (lat: number, lng: number, force = false) => {
+        if (!MAPBOX_TOKEN || !Number.isFinite(lat) || !Number.isFinite(lng)) return;
+
+        const now = Date.now();
+        const timeSinceLast = now - lastGeocodeTimeRef.current;
+        const lastCoords = lastGeocodedCoordsRef.current;
+
+        if (!force && lastCoords) {
+            // Check throttle
+            if (timeSinceLast < GEOCODE_THROTTLE_MS) return;
+            // Check distance
+            const distMoved = haversineDistanceM(lastCoords.lat, lastCoords.lng, lat, lng);
+            if (distMoved < GEOCODE_DISTANCE_THRESHOLD_M) return;
+        }
+
+        try {
+            setIsGeocodingAddress(true);
+            lastGeocodeTimeRef.current = now;
+            lastGeocodedCoordsRef.current = { lat, lng };
+
+            const res = await fetch(
+                `https://api.mapbox.com/geocoding/v5/mapbox.places/${lng},${lat}.json?access_token=${MAPBOX_TOKEN}&types=address,poi,place,locality,neighborhood&limit=1&language=en`
+            );
+            if (!res.ok) return;
+            const data = await res.json();
+            const placeName = data.features?.[0]?.place_name;
+            if (placeName) {
+                setLiveAddress(placeName);
+                // Also update the header location name with a more concise version
+                const shortName = data.features?.[0]?.text || placeName.split(',')[0];
+                const context = data.features?.[0]?.context;
+                const city = context?.find((c: any) => c.id?.startsWith('place'))?.text;
+                const region = context?.find((c: any) => c.id?.startsWith('region'))?.text;
+                setLocationName(city ? `${city}, ${region || ''}`.replace(/, $/, '') : shortName);
+            }
+        } catch (err) {
+            console.warn('[RiderDashboard] Geocode failed:', err);
+        } finally {
+            setIsGeocodingAddress(false);
+        }
+    }, [MAPBOX_TOKEN, haversineDistanceM]);
+
+    // Auto-geocode when rider moves
+    useEffect(() => {
+        if (!riderLocation) return;
+        const { latitude, longitude } = riderLocation.coords;
+        geocodeAddress(latitude, longitude);
+    }, [riderLocation, geocodeAddress]);
+
+    // Manual address refresh handler
+    const handleRefreshAddress = useCallback(async () => {
+        if (!riderLocation) return;
+        await geocodeAddress(riderLocation.coords.latitude, riderLocation.coords.longitude, true);
+    }, [riderLocation, geocodeAddress]);
+
     const onRefresh = useCallback(async () => {
         setRefreshing(true);
         await Promise.all([
@@ -1631,6 +1707,14 @@ export default function RiderDashboard() {
         ]);
         setRefreshing(false);
     }, [fetchLocation, checkActiveDeliveries]);
+
+    const handleZoomIn = useCallback(() => {
+        setMapZoomLevel(prev => Math.min(prev + 1, 22)); // Max zoom
+    }, []);
+
+    const handleZoomOut = useCallback(() => {
+        setMapZoomLevel(prev => Math.max(prev - 1, 2)); // Min zoom
+    }, []);
 
     const handleNavigate = (target: 'PICKUP' | 'DROPOFF' = 'DROPOFF') => {
         if (!nextDelivery) return;
@@ -2056,26 +2140,40 @@ export default function RiderDashboard() {
                     </View>
                 </Animated.View>
 
-                {/* Map Preview — Rider's Current Location */}
+                {/* Map Preview — Rider's Current Location (Real-time) */}
                 <Animated.View style={mapPreviewAnim.style}>
                     <View style={[styles.mapPreviewCard, { backgroundColor: c.card, borderColor: c.border, borderWidth: 1 }]}>
                         <View style={styles.mapPreviewHeader}>
-                            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                            <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
                                 <View style={[styles.mapPreviewIconWrap, { backgroundColor: c.greenBg }]}>
                                     <MaterialCommunityIcons name="map-marker-radius" size={20} color={c.greenText} />
                                 </View>
-                                <Text variant="titleSmall" style={{ fontFamily: 'Inter_700Bold', color: c.text, marginLeft: 10 }}>Your Location</Text>
+                                <View style={{ marginLeft: 10, flex: 1 }}>
+                                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                                        <Text variant="titleSmall" style={{ fontFamily: 'Inter_700Bold', color: c.text }}>Your Location</Text>
+                                        {riderLocation && (
+                                            <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: c.greenText, marginLeft: 6 }} />
+                                        )}
+                                    </View>
+                                    {riderLocation && (
+                                        <Text variant="bodySmall" style={{ color: c.textSec, fontSize: 10, marginTop: 1 }}>
+                                            {riderLocation.coords.latitude.toFixed(5)}°, {riderLocation.coords.longitude.toFixed(5)}°
+                                        </Text>
+                                    )}
+                                </View>
                             </View>
-                            {gpsSource !== 'none' && (
-                                <Chip
-                                    compact
-                                    icon={gpsSource === 'box' ? 'access-point' : 'cellphone'}
-                                    style={{ backgroundColor: c.greenBg }}
-                                    textStyle={{ fontSize: 10, color: c.greenText }}
-                                >
-                                    {gpsSource === 'box' ? 'Box GPS' : 'Phone GPS'}
-                                </Chip>
-                            )}
+                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                                {gpsSource !== 'none' && (
+                                    <Chip
+                                        compact
+                                        icon={gpsSource === 'box' ? 'access-point' : 'cellphone'}
+                                        style={{ backgroundColor: c.greenBg }}
+                                        textStyle={{ fontSize: 10, color: c.greenText }}
+                                    >
+                                        {gpsSource === 'box' ? 'Box GPS' : 'Phone GPS'}
+                                    </Chip>
+                                )}
+                            </View>
                         </View>
                         <View style={styles.mapPreviewContainer}>
                             {(lastLocation || riderLocation) && MAPBOX_TOKEN ? (
@@ -2084,6 +2182,8 @@ export default function RiderDashboard() {
                                         style={styles.map}
                                         logoEnabled={false}
                                         attributionEnabled={false}
+                                        scaleBarEnabled={false}
+                                        compassEnabled={false}
                                         styleURL={isDarkMode ? MapboxGL.StyleURL.Dark : MapboxGL.StyleURL.Street}
                                         scrollEnabled={false}
                                         pitchEnabled={false}
@@ -2095,8 +2195,8 @@ export default function RiderDashboard() {
                                                 lastLocation ? lastLocation.longitude : riderLocation!.coords.longitude,
                                                 lastLocation ? lastLocation.latitude : riderLocation!.coords.latitude,
                                             ]}
-                                            zoomLevel={15}
-                                            animationMode="easeTo"
+                                            zoomLevel={mapZoomLevel}
+                                            animationMode="flyTo"
                                             animationDuration={800}
                                         />
                                         <AnimatedRiderMarker
@@ -2106,14 +2206,83 @@ export default function RiderDashboard() {
                                             speed={lastLocation?.speed ?? riderLocation?.coords.speed ?? undefined}
                                         />
                                     </MapboxGL.MapView>
-                                    {/* Address Overlay */}
+                                    {/* Address Overlay with Refresh Button */}
                                     <View style={styles.mapPreviewOverlay}>
-                                        <View style={styles.mapPreviewAddressPill}>
-                                            <MaterialCommunityIcons name="map-marker" size={14} color="#FFFFFF" />
-                                            <Text style={styles.mapPreviewAddressText} numberOfLines={1}>
-                                                {locationName || 'Locating...'}
-                                            </Text>
+                                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                                            <View style={[styles.mapPreviewAddressPill, { flex: 1 }]}>
+                                                <MaterialCommunityIcons name="map-marker" size={14} color="#FFFFFF" />
+                                                <Text style={styles.mapPreviewAddressText} numberOfLines={2}>
+                                                    {liveAddress || 'Locating...'}
+                                                </Text>
+                                            </View>
+                                            <TouchableOpacity
+                                                onPress={handleRefreshAddress}
+                                                disabled={isGeocodingAddress}
+                                                style={{
+                                                    width: 36,
+                                                    height: 36,
+                                                    borderRadius: 18,
+                                                    backgroundColor: 'rgba(0,0,0,0.6)',
+                                                    alignItems: 'center',
+                                                    justifyContent: 'center',
+                                                }}
+                                                activeOpacity={0.7}
+                                            >
+                                                {isGeocodingAddress ? (
+                                                    <ActivityIndicator size={14} color="#FFFFFF" />
+                                                ) : (
+                                                    <MaterialCommunityIcons name="refresh" size={18} color="#FFFFFF" />
+                                                )}
+                                            </TouchableOpacity>
                                         </View>
+                                    </View>
+
+                                    {/* Zoom Controls Overlay */}
+                                    <View style={{
+                                        position: 'absolute',
+                                        right: 10,
+                                        top: 10,
+                                        gap: 8,
+                                        alignItems: 'center'
+                                    }}>
+                                        <TouchableOpacity
+                                            onPress={() => setShowMapControls(!showMapControls)}
+                                            style={{
+                                                width: 32, height: 32, borderRadius: 16,
+                                                backgroundColor: 'rgba(0,0,0,0.6)',
+                                                alignItems: 'center', justifyContent: 'center'
+                                            }}
+                                            activeOpacity={0.7}
+                                        >
+                                            <MaterialCommunityIcons name={showMapControls ? "chevron-up" : "chevron-down"} size={20} color="#FFFFFF" />
+                                        </TouchableOpacity>
+
+                                        {showMapControls && (
+                                            <>
+                                                <TouchableOpacity
+                                                    onPress={handleZoomIn}
+                                                    style={{
+                                                        width: 36, height: 36, borderRadius: 18,
+                                                        backgroundColor: 'rgba(0,0,0,0.6)',
+                                                        alignItems: 'center', justifyContent: 'center'
+                                                    }}
+                                                    activeOpacity={0.7}
+                                                >
+                                                    <MaterialCommunityIcons name="plus" size={24} color="#FFFFFF" />
+                                                </TouchableOpacity>
+                                                <TouchableOpacity
+                                                    onPress={handleZoomOut}
+                                                    style={{
+                                                        width: 36, height: 36, borderRadius: 18,
+                                                        backgroundColor: 'rgba(0,0,0,0.6)',
+                                                        alignItems: 'center', justifyContent: 'center'
+                                                    }}
+                                                    activeOpacity={0.7}
+                                                >
+                                                    <MaterialCommunityIcons name="minus" size={24} color="#FFFFFF" />
+                                                </TouchableOpacity>
+                                            </>
+                                        )}
                                     </View>
                                 </>
                             ) : (
@@ -3264,15 +3433,16 @@ const styles = StyleSheet.create({
         backgroundColor: 'rgba(0,0,0,0.6)',
         paddingHorizontal: 12,
         paddingVertical: 8,
-        borderRadius: 20,
-        alignSelf: 'flex-start',
-        maxWidth: '90%',
+        borderRadius: 16,
+        flexShrink: 1,
     },
     mapPreviewAddressText: {
         color: '#FFFFFF',
-        fontSize: 12,
+        fontSize: 11,
         fontFamily: 'Inter_600SemiBold',
         marginLeft: 6,
+        flexShrink: 1,
+        lineHeight: 15,
     },
     emptyIconWrap: {
         width: 56, height: 56, borderRadius: 28,

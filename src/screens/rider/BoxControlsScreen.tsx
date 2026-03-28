@@ -963,12 +963,14 @@ export default function BoxControlsScreen() {
         return 'battery-alert';
     };
 
-    const TelemetryItem = ({ icon, label, value, color }) => (
-        <Surface style={[styles.telemetryCard, { backgroundColor: c.card, borderColor: c.border, borderWidth: isDarkMode ? 1 : 0 }]} elevation={isDarkMode ? 0 : 1}>
-            <MaterialCommunityIcons name={icon} size={24} color={color} />
-            <Text variant="labelSmall" style={{ marginTop: 4, color: c.textSec }}>{label}</Text>
-            <Text variant="titleMedium" style={{ fontFamily: 'Inter_700Bold', color: c.text }}>{value}</Text>
-        </Surface>
+    const TelemetryItem = ({ icon, label, value, color }: { icon: string; label: string; value: string; color: string }) => (
+        <View style={styles.telemetryRow}>
+            <View style={[styles.telemetryIconPill, { backgroundColor: isDarkMode ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)' }]}>
+                <MaterialCommunityIcons name={icon as any} size={18} color={color} />
+            </View>
+            <Text style={[styles.telemetryLabel, { color: c.textSec }]}>{label}</Text>
+            <Text style={[styles.telemetryValue, { color: c.text }]}>{value}</Text>
+        </View>
     );
 
     // EC-97: Face Unlock Handler
@@ -1174,25 +1176,31 @@ export default function BoxControlsScreen() {
                     </Surface>
                 )}
 
-                {/* Header Animation */}
-                <View style={[styles.headerContainer, { backgroundColor: c.card, borderColor: c.border, borderWidth: isDarkMode ? 1 : 0 }]}>
-                    <MaterialCommunityIcons
-                        name={!isPaired ? "link-variant-off" : (isLocked ? "shield-check" : "shield-alert")}
-                        size={100}
-                        color={!isPaired ? c.textTer : (isLocked ? c.greenText : c.redText)}
-                        style={{ marginBottom: 10 }}
-                    />
-                    <Text variant="headlineSmall" style={{ fontFamily: 'Inter_700Bold', marginTop: 10, color: c.text }}>
-                        {!isPaired ? "No Box Connected" : (isLocked ? "System Secure" : "System Unlocked")}
-                    </Text>
-                    <Text variant="bodyMedium" style={{ color: !isPaired ? c.textTer : (isLocked ? c.greenText : c.redText) }}>
-                        {!isPaired ? "Pair to view status" : (isLocked ? "Lock Engaged" : "Lock Disengaged")}
-                    </Text>
+                {/* ── Status Hero ── */}
+                <View style={[styles.heroSection, { backgroundColor: c.card, borderColor: c.border, borderWidth: isDarkMode ? 1 : 0 }]}>
+                    <View style={[styles.heroIconRing, { backgroundColor: isDarkMode ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.03)' }]}>
+                        <MaterialCommunityIcons
+                            name={!isPaired ? "link-variant-off" : (isLocked ? "shield-check" : "shield-alert")}
+                            size={28}
+                            color={!isPaired ? c.textTer : (isLocked ? c.greenText : c.redText)}
+                        />
+                    </View>
+                    <View style={{ marginLeft: 16, flex: 1 }}>
+                        <Text style={[styles.heroTitle, { color: c.text }]}>
+                            {!isPaired ? "No Box Connected" : (isLocked ? "System Secure" : "System Unlocked")}
+                        </Text>
+                        <Text style={[styles.heroSubtitle, { color: !isPaired ? c.textTer : (isLocked ? c.greenText : c.redText) }]}>
+                            {!isPaired ? "Pair to view status" : (isLocked ? "Lock Engaged" : "Lock Disengaged")}
+                        </Text>
+                    </View>
+                    <View style={[styles.heroBadge, { backgroundColor: !isPaired ? c.search : (isLocked ? c.greenBg : c.redBg) }]}>
+                        <View style={[styles.heroDot, { backgroundColor: !isPaired ? c.textTer : (isLocked ? c.greenText : c.redText) }]} />
+                    </View>
                 </View>
 
-                {/* Telemetry Grid */}
-                <Text variant="titleMedium" style={[styles.sectionTitle, { color: c.text }]}>Live Telemetry</Text>
-                <View style={styles.grid}>
+                {/* ── Live Telemetry ── */}
+                <Text style={[styles.sectionTitle, { color: c.text }]}>Live Telemetry</Text>
+                <View style={[styles.telemetryCard, { backgroundColor: c.card, borderColor: c.border, borderWidth: isDarkMode ? 1 : 0 }]}>
                     <TelemetryItem
                         icon={isPaired ? getBatteryIcon() : "battery-unknown"}
                         label="Battery"
@@ -1201,196 +1209,205 @@ export default function BoxControlsScreen() {
                     />
                     <TelemetryItem
                         icon={isPaired ? (hwDiag?.gps_fix ? 'satellite-variant' : 'crosshairs-question') : 'crosshairs-gps'}
-                        label="GPS Fix"
+                        label="GPS"
                         value={isPaired ? telemetry.gps : '--'}
                         color={isPaired ? (hwDiag?.gps_fix ? c.greenText : c.redText) : c.textTer}
                     />
                     <TelemetryItem
                         icon={isPaired ? (hasValidRssi(boxState?.rssi) && boxState!.rssi! >= -85 ? 'signal-4g' : 'signal') : 'signal-off'}
-                        label="LTE Signal"
+                        label="LTE"
                         value={isPaired ? telemetry.signal : '-- dBm'}
                         color={isPaired ? (hasValidRssi(boxState?.rssi) && boxState!.rssi! >= -85 ? c.greenText : c.orangeText) : c.textTer}
                     />
                     <TelemetryItem
                         icon="sync"
-                        label="Last Sync"
+                        label="Sync"
                         value={isPaired ? telemetry.sync : '--'}
                         color={isPaired ? c.purpleText : c.textTer}
                     />
+                    {isPaired && telemetry.address !== '--' && (
+                        <>
+                            <View style={[styles.thinDivider, { backgroundColor: c.divider }]} />
+                            <View style={styles.telemetryRow}>
+                                <View style={[styles.telemetryIconPill, { backgroundColor: isDarkMode ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)' }]}>
+                                    <MaterialCommunityIcons name="map-marker-outline" size={18} color={c.textSec} />
+                                </View>
+                                <Text style={[styles.telemetryLabel, { color: c.textSec }]}>Location</Text>
+                                <Text style={[styles.telemetryValue, { color: c.text, flex: 1, textAlign: 'right' }]} numberOfLines={1}>{telemetry.address}</Text>
+                            </View>
+                        </>
+                    )}
                 </View>
-                {isPaired && telemetry.address !== '--' && (
-                    <View style={{ marginTop: 12, marginHorizontal: 16 }}>
-                        <Surface style={{ flexDirection: 'row', alignItems: 'center', padding: 12, borderRadius: 12, backgroundColor: c.card, borderColor: c.border, borderWidth: isDarkMode ? 1 : 0 }} elevation={isDarkMode ? 0 : 1}>
-                            <MaterialCommunityIcons name="map-marker-outline" size={20} color={c.textSec} />
-                            <Text variant="labelMedium" style={{ marginLeft: 8, color: c.text }}>{telemetry.address}</Text>
-                        </Surface>
+
+                {/* ── Controls ── */}
+                <Text style={[styles.sectionTitle, { color: c.text }]}>Controls</Text>
+
+                {/* Lock Override */}
+                <View style={[styles.minCard, { backgroundColor: c.card, borderColor: c.border, borderWidth: isDarkMode ? 1 : 0 }]}>
+                    <Text style={[styles.minCardLabel, { color: c.textTer }]}>Manual Override</Text>
+                    <TouchableOpacity
+                        activeOpacity={0.8}
+                        onPress={toggleLock}
+                        disabled={!isPaired || manualOverrideSending || boxState?.status === 'UNLOCKING'}
+                        style={[styles.lockButton, {
+                            backgroundColor: !isPaired ? c.search : (isLocked ? c.accent : c.redText),
+                            opacity: (!isPaired || manualOverrideSending || boxState?.status === 'UNLOCKING') ? 0.5 : 1,
+                        }]}
+                    >
+                        {(manualOverrideSending || boxState?.status === 'UNLOCKING') ? (
+                            <ActivityIndicator size={18} color={c.accentText} />
+                        ) : (
+                            <MaterialCommunityIcons name={isLocked ? "lock" : "lock-open"} size={18} color={!isPaired ? c.textTer : c.accentText} />
+                        )}
+                        <Text style={[styles.lockButtonText, { color: !isPaired ? c.textTer : c.accentText }]}>
+                            {isPaired ? (boxState?.status === 'UNLOCKING' ? "Actuating…" : (isLocked ? "Unlock Box" : "Lock Box")) : "Pair Required"}
+                        </Text>
+                    </TouchableOpacity>
+
+                    {lockAwaitingClose && (
+                        <View style={[styles.inlineNotice, { backgroundColor: c.orangeBg, borderColor: c.orangeText }]}>
+                            <Text style={{ color: c.orangeText, fontFamily: 'Inter_700Bold', fontSize: 13 }}>
+                                Lock pending physical close
+                            </Text>
+                            <Text style={{ marginTop: 2, color: c.orangeText, fontSize: 11 }}>
+                                {lockAwaitingCloseNeedsAssist
+                                    ? 'Close the lid fully. Press # on keypad for retract assist.'
+                                    : 'Close the lid so the reed switch can confirm.'}
+                            </Text>
+                        </View>
+                    )}
+
+                    {lockCloseConfirmed && (
+                        <View style={[styles.inlineNotice, { backgroundColor: c.greenBg, borderColor: c.greenText }]}>
+                            <Text style={{ color: c.greenText, fontFamily: 'Inter_700Bold', fontSize: 13 }}>Lock confirmed</Text>
+                            <Text style={{ marginTop: 2, color: c.greenText, fontSize: 11 }}>Reed close confirmed. Physically secured.</Text>
+                        </View>
+                    )}
+                </View>
+
+                {/* Personal PIN */}
+                <View style={[styles.minCard, { backgroundColor: c.card, borderColor: c.border, borderWidth: isDarkMode ? 1 : 0 }]}>
+                    <Text style={[styles.minCardLabel, { color: c.textTer }]}>Personal PIN</Text>
+                    <View style={styles.diagRow}>
+                        <View style={[styles.iconContainer, {
+                            backgroundColor: c.search,
+                            opacity: !isPaired ? 0.5 : 1
+                        }]}>
+                            <MaterialCommunityIcons
+                                name="form-textbox-password"
+                                size={18}
+                                color={c.textSec}
+                            />
+                        </View>
+                        <View style={styles.diagInfo}>
+                            <Text style={[styles.diagTitle, { color: !isPaired ? c.textTer : c.text }]}>
+                                {personalPinStatus?.enabled ? 'PIN Active' : 'No PIN Set'}
+                            </Text>
+                            <Text style={{ fontSize: 12, color: c.textSec }}>
+                                {personalPinLoading ? 'Loading…' : 'Never shown after saving'}
+                            </Text>
+                        </View>
+                        <View style={[styles.diagBadge, { backgroundColor: c.search }]}>
+                            <Text style={[styles.diagBadgeText, { color: c.text }]}>
+                                {personalPinStatus?.enabled ? 'SET' : 'OFF'}
+                            </Text>
+                        </View>
                     </View>
-                )}
-
-                {/* EC-ENHANCE: Grouped Smart Box Controls */}
-                <Text variant="titleMedium" style={[styles.sectionTitle, { color: c.text }]}>Smart Box Controls</Text>
-                <Card style={[styles.controlsCard, { backgroundColor: c.card, borderColor: c.border, borderWidth: isDarkMode ? 1 : 0 }]}>
-                    <Card.Content>
-                        {/* 1. Manual Lock Control */}
-                        <Text variant="labelMedium" style={{ marginTop: 8, marginBottom: 8, color: c.textTer }}>Manual Override</Text>
-                        <Button
-                            mode="contained"
-                            onPress={toggleLock}
-                            disabled={!isPaired || manualOverrideSending || boxState?.status === 'UNLOCKING'}
-                            loading={manualOverrideSending || boxState?.status === 'UNLOCKING'}
-                            style={[
-                                styles.button,
-                                {
-                                    backgroundColor: !isPaired ? c.search : (isLocked ? c.accent : c.redText),
-                                    marginBottom: 16
-                                }
-                            ]}
-                            textColor={!isPaired ? c.textTer : c.accentText}
-                            icon={boxState?.status === 'UNLOCKING' ? undefined : (isLocked ? "lock" : "lock-open")}
-                            contentStyle={{ height: 48 }}
+                    <View style={[styles.row, { gap: 8 }]}>
+                        <TouchableOpacity
+                            activeOpacity={0.7}
+                            onPress={handleOpenPersonalPinModal}
+                            disabled={!isPaired || personalPinLoading}
+                            style={[styles.pillBtn, { backgroundColor: c.accent, flex: 1, opacity: (!isPaired || personalPinLoading) ? 0.3 : 1 }]}
                         >
-                            {isPaired ? (boxState?.status === 'UNLOCKING' ? "Actuating..." : (isLocked ? "Unlock Box" : "Lock Box")) : "Controls Disabled"}
-                        </Button>
+                            <MaterialCommunityIcons name="shield-edit" size={15} color={c.accentText} />
+                            <Text style={[styles.pillBtnText, { color: c.accentText }]}>{personalPinStatus?.enabled ? 'Change' : 'Set PIN'}</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                            activeOpacity={0.7}
+                            onPress={handleForgotPersonalPin}
+                            disabled={!isPaired || personalPinLoading}
+                            style={[styles.pillBtn, { backgroundColor: c.search, flex: 1, opacity: (!isPaired || personalPinLoading) ? 0.3 : 1 }]}
+                        >
+                            <MaterialCommunityIcons name="help-circle-outline" size={15} color={c.textSec} />
+                            <Text style={[styles.pillBtnText, { color: c.textSec }]}>Forgot</Text>
+                        </TouchableOpacity>
+                    </View>
+                </View>
 
-                        {lockAwaitingClose && (
-                            <View style={{ marginTop: -6, marginBottom: 12, padding: 10, borderRadius: 10, backgroundColor: c.orangeBg, borderWidth: 1, borderColor: c.orangeText }}>
-                                <Text style={{ color: c.orangeText, fontFamily: 'Inter_700Bold' }}>
-                                    Lock pending physical close
-                                </Text>
-                                <Text style={{ marginTop: 4, color: c.orangeText, fontSize: 12 }}>
-                                    {lockAwaitingCloseNeedsAssist
-                                        ? 'Close the lid fully. If the latch is blocking closure, press # on the keypad for brief retract assist, then close again.'
-                                        : 'Close the lid fully so the reed switch can confirm lock completion.'}
-                                </Text>
-                            </View>
-                        )}
+                {/* System Actions */}
+                <View style={[styles.minCard, { backgroundColor: c.card, borderColor: c.border, borderWidth: isDarkMode ? 1 : 0 }]}>
+                    <Text style={[styles.minCardLabel, { color: c.textTer }]}>System</Text>
 
-                        {lockCloseConfirmed && (
-                            <View style={{ marginTop: -6, marginBottom: 12, padding: 10, borderRadius: 10, backgroundColor: c.greenBg, borderWidth: 1, borderColor: c.greenText }}>
-                                <Text style={{ color: c.greenText, fontFamily: 'Inter_700Bold' }}>
-                                    Lock confirmed
-                                </Text>
-                                <Text style={{ marginTop: 4, color: c.greenText, fontSize: 12 }}>
-                                    Reed close confirmed. The lock is physically secured.
-                                </Text>
-                            </View>
-                        )}
-
-                        <Divider style={[styles.divider, { backgroundColor: c.divider }]} />
-
-                        {/* 2. Personal PIN Management */}
-                        <Text variant="labelMedium" style={{ marginTop: 8, marginBottom: 8, color: c.textTer }}>Personal PIN</Text>
-                        <View style={styles.controlRow}>
-                            <View style={[styles.iconContainer, {
-                                backgroundColor: !isPaired ? c.search : (personalPinStatus?.enabled ? c.greenBg : c.orangeBg),
-                                opacity: !isPaired ? 0.5 : 1
-                            }]}>
-                                <MaterialCommunityIcons
-                                    name="form-textbox-password"
-                                    size={24}
-                                    color={!isPaired ? c.textTer : (personalPinStatus?.enabled ? c.greenText : c.orangeText)}
-                                />
-                            </View>
-                            <View style={styles.controlInfo}>
-                                <Text variant="titleMedium" style={{ fontFamily: 'Inter_700Bold', color: !isPaired ? c.textTer : c.text }}>
-                                    {personalPinStatus?.enabled ? 'Personal PIN Enabled' : 'Personal PIN Not Set'}
-                                </Text>
-                                <Text variant="bodySmall" style={{ color: !isPaired ? c.textTer : c.textSec }}>
-                                    {personalPinLoading
-                                        ? 'Loading PIN status...'
-                                        : 'For security, your current PIN is never shown in the app.'}
-                                </Text>
-                            </View>
-                        </View>
-                        <View style={styles.row}>
-                            <Button
-                                mode="contained-tonal"
-                                onPress={handleOpenPersonalPinModal}
-                                disabled={!isPaired || personalPinLoading}
-                                style={{ flex: 1, marginRight: 8 }}
-                                icon="shield-edit"
-                            >
-                                {personalPinStatus?.enabled ? 'Change PIN' : 'Set PIN'}
-                            </Button>
-                            <Button
-                                mode="outlined"
-                                onPress={handleForgotPersonalPin}
-                                disabled={!isPaired || personalPinLoading}
-                                style={{ flex: 1, borderColor: c.orangeText }}
-                                textColor={c.orangeText}
-                                icon="help-circle-outline"
-                            >
-                                Forgot PIN
-                            </Button>
-                        </View>
-                        <Text style={[styles.hintText, { color: c.textTer, marginTop: 8 }]}>Considerations: keep box locked before updates, never share PIN, and reset immediately if compromised.</Text>
-
-                        <Divider style={[styles.divider, { backgroundColor: c.divider }]} />
-
-                        {/* 3. System Maintenance */}
-                        <Text variant="labelMedium" style={{ marginTop: 8, marginBottom: 8, color: c.textTer }}>System Maintenance</Text>
-                        <View style={styles.row}>
-                            <Button
-                                mode="outlined"
-                                onPress={handleReboot}
-                                loading={rebooting}
-                                disabled={!isPaired || rebooting}
-                                style={[styles.button, { flex: 1, marginRight: 8, borderColor: !isPaired ? c.border : c.orangeText }]}
-                                textColor={!isPaired ? c.textTer : c.orangeText}
-                                icon="restart"
-                            >
-                                Reboot
-                            </Button>
-                            <Button
-                                mode="outlined"
-                                onLongPress={handleEmergencyOpen}
-                                delayLongPress={1000}
-                                disabled={!isPaired}
-                                style={[styles.button, { flex: 1, borderColor: !isPaired ? c.border : c.redText }]}
-                                textColor={!isPaired ? c.textTer : c.redText}
-                                icon="alert"
-                                onPress={() => PremiumAlert.alert('Long Press Required', 'Press and hold Emergency for 1 second to trigger force open.')}
-                            >
-                                Emergency
-                            </Button>
-                        </View>
-                        <Text style={[styles.hintText, { color: c.textTer }]}>* Long press "Emergency" to force open</Text>
-
-                        <Button
-                            mode="contained"
-                            onPress={handleReportStolen}
+                    {/* Reboot & Emergency row */}
+                    <View style={[styles.row, { gap: 8 }]}>
+                        <TouchableOpacity
+                            activeOpacity={0.7}
+                            onPress={handleReboot}
+                            disabled={!isPaired || rebooting}
+                            style={[styles.pillBtn, { flex: 1, backgroundColor: c.search, opacity: (!isPaired || rebooting) ? 0.3 : 1 }]}
+                        >
+                            {rebooting ? <ActivityIndicator size={14} color={c.text} /> : <MaterialCommunityIcons name="restart" size={15} color={c.text} />}
+                            <Text style={[styles.pillBtnText, { color: c.text }]}>Reboot</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                            activeOpacity={0.7}
+                            onLongPress={handleEmergencyOpen}
+                            delayLongPress={1000}
                             disabled={!isPaired}
-                            style={[styles.button, { marginTop: 16, backgroundColor: !isPaired ? c.search : c.redText }]}
-                            textColor={!isPaired ? c.textTer : (isDarkMode ? '#000' : '#fff')}
-                            icon="shield-alert-outline"
+                            onPress={() => PremiumAlert.alert('Long Press Required', 'Hold for 1s to force open.')}
+                            style={[styles.pillBtn, { flex: 1, backgroundColor: c.search, opacity: !isPaired ? 0.3 : 1 }]}
                         >
-                            Report Box Stolen/Missing
-                        </Button>
-                    </Card.Content>
-                </Card>
+                            <MaterialCommunityIcons name="alert-outline" size={15} color={c.text} />
+                            <Text style={[styles.pillBtnText, { color: c.text }]}>Emergency</Text>
+                        </TouchableOpacity>
+                    </View>
+                    <Text style={[styles.hintText, { color: c.textTer }]}>Hold "Emergency" 1s to force open</Text>
 
-                {/* Hardware Diagnostics — driven by real firmware data */}
-                <Text variant="titleMedium" style={[styles.sectionTitle, { color: c.text }]}>Hardware Diagnostics</Text>
+                    {/* Report Stolen — separated with divider for gravity */}
+                    <View style={{ height: 1, backgroundColor: c.divider, marginTop: 14, marginBottom: 12 }} />
+                    <TouchableOpacity
+                        activeOpacity={0.7}
+                        onPress={handleReportStolen}
+                        disabled={!isPaired}
+                        style={{
+                            flexDirection: 'row',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            paddingVertical: 12,
+                            borderRadius: 10,
+                            borderWidth: 1,
+                            borderColor: !isPaired ? c.border : c.redText,
+                            gap: 6,
+                            opacity: !isPaired ? 0.3 : 1,
+                        }}
+                    >
+                        <MaterialCommunityIcons name="shield-alert-outline" size={15} color={!isPaired ? c.textTer : c.redText} />
+                        <Text style={{ fontFamily: 'Inter_600SemiBold', fontSize: 13, color: !isPaired ? c.textTer : c.redText }}>Report Stolen</Text>
+                    </TouchableOpacity>
+                </View>
+
+                {/* ── Diagnostics ── */}
+                <Text style={[styles.sectionTitle, { color: c.text }]}>Diagnostics</Text>
 
                 {/* Network & Location */}
-                <Card style={[styles.controlsCard, { marginBottom: 16, backgroundColor: c.card, borderColor: c.border, borderWidth: isDarkMode ? 1 : 0 }]}>
-                    <Card.Content>
-                        <Text variant="labelMedium" style={{ marginBottom: 16, color: c.textTer }}>Network & Location</Text>
+                <View style={[styles.minCard, { backgroundColor: c.card, borderColor: c.border, borderWidth: isDarkMode ? 1 : 0 }]}>
+                    <Text style={[styles.minCardLabel, { color: c.textTer }]}>Network & Location</Text>
                         
                         <View style={styles.diagRow}>
-                            <View style={[styles.iconContainer, { backgroundColor: c.blueBg }]}>
-                                <MaterialCommunityIcons name="antenna" size={22} color={c.blueText} />
+                            <View style={[styles.iconContainer, { backgroundColor: c.search }]}>
+                                <MaterialCommunityIcons name="antenna" size={20} color={c.textSec} />
                             </View>
                             <View style={styles.diagInfo}>
-                                <Text variant="titleSmall" style={{ fontFamily: 'Inter_700Bold', color: c.text }}>Connectivity</Text>
-                                <Text variant="bodySmall" style={{ color: c.textSec }}>
+                                <Text style={[styles.diagTitle, { color: c.text }]}>Connectivity</Text>
+                                <Text style={{ fontSize: 12, color: c.textSec }}>
                                     {isPaired
                                         ? `${hwDiag?.connection || 'LTE'} • ${hwDiag?.op || 'Unknown'} (CSQ: ${hwDiag?.csq ?? '--'}/31)`
                                         : 'Requires pairing'}
                                 </Text>
                             </View>
-                            <View style={[styles.diagBadge, { backgroundColor: isPaired && boxState?.rssi ? c.blueBg : c.search }]}>
-                                <Text style={[styles.diagBadgeText, { color: isPaired && boxState?.rssi ? c.blueText : c.textTer }]}>
+                            <View style={[styles.diagBadge, { backgroundColor: c.search }]}>
+                                <Text style={[styles.diagBadgeText, { color: c.text }]}>
                                     {isPaired ? getRssiQuality(boxState?.rssi) : '--'}
                                 </Text>
                             </View>
@@ -1399,20 +1416,20 @@ export default function BoxControlsScreen() {
                         <Divider style={[styles.divider, { backgroundColor: c.divider }]} />
                         
                         <View style={styles.diagRow}>
-                            <View style={[styles.iconContainer, { backgroundColor: isPaired ? (hwDiag?.gps_fix ? c.greenBg : c.orangeBg) : c.search }]}>
-                                <MaterialCommunityIcons name="satellite-uplink" size={22} color={isPaired ? (hwDiag?.gps_fix ? c.greenText : c.orangeText) : c.textTer} />
+                            <View style={[styles.iconContainer, { backgroundColor: c.search }]}>
+                                <MaterialCommunityIcons name="satellite-uplink" size={20} color={c.textSec} />
                             </View>
                             <View style={styles.diagInfo}>
-                                <Text variant="titleSmall" style={{ fontFamily: 'Inter_700Bold', color: c.text }}>GNSS Tracking</Text>
-                                <Text variant="bodySmall" style={{ color: c.textSec }}>
+                                <Text style={[styles.diagTitle, { color: c.text }]}>GNSS</Text>
+                                <Text style={{ fontSize: 12, color: c.textSec }}>
                                     {isPaired
                                         ? (locationData ? `${locationData.latitude?.toFixed(5)}, ${locationData.longitude?.toFixed(5)}` : (hwDiag?.gps_fix ? 'Fix acquired, fetching' : 'Searching for satellites'))
                                         : 'Requires pairing'}
                                 </Text>
                             </View>
-                            <View style={[styles.diagBadge, { backgroundColor: isPaired ? (hwDiag?.gps_fix ? c.greenBg : c.orangeBg) : c.search }]}>
-                                <Text style={[styles.diagBadgeText, { color: isPaired ? (hwDiag?.gps_fix ? c.greenText : c.orangeText) : c.textTer }]}>
-                                    {isPaired ? (hwDiag?.gps_fix ? 'FIXED' : 'SEARCHING') : '--'}
+                            <View style={[styles.diagBadge, { backgroundColor: c.search }]}>
+                                <Text style={[styles.diagBadgeText, { color: c.text }]}>
+                                    {isPaired ? (hwDiag?.gps_fix ? 'FIXED' : 'SEARCH') : '--'}
                                 </Text>
                             </View>
                         </View>
@@ -1420,45 +1437,43 @@ export default function BoxControlsScreen() {
                         <Divider style={[styles.divider, { backgroundColor: c.divider }]} />
 
                         <View style={styles.diagRow}>
-                            <View style={[styles.iconContainer, { backgroundColor: hwDiag?.geo_state === 'INSIDE' ? c.greenBg : hwDiag?.geo_state === 'DEAD_ZONE' ? c.redBg : c.border }]}>
-                                <MaterialCommunityIcons name="map-marker-radius" size={22} color={hwDiag?.geo_state === 'INSIDE' ? c.greenText : hwDiag?.geo_state === 'DEAD_ZONE' ? c.redText : c.textTer} />
+                            <View style={[styles.iconContainer, { backgroundColor: c.search }]}>
+                                <MaterialCommunityIcons name="map-marker-radius" size={20} color={c.textSec} />
                             </View>
                             <View style={styles.diagInfo}>
-                                <Text variant="titleSmall" style={{ fontFamily: 'Inter_700Bold', color: c.text }}>Geofence State</Text>
-                                <Text variant="bodySmall" style={{ color: c.textSec }}>
+                                <Text style={[styles.diagTitle, { color: c.text }]}>Geofence</Text>
+                                <Text style={{ fontSize: 12, color: c.textSec }}>
                                     {isPaired 
                                         ? (hwDiag?.geo_dist_m != null ? `${hwDiag.geo_dist_m.toFixed(1)}m from dropoff` : 'Distance to target unknown')
                                         : 'Requires pairing'}
                                 </Text>
                             </View>
-                            <View style={[styles.diagBadge, { backgroundColor: hwDiag?.geo_state === 'INSIDE' ? c.greenBg : hwDiag?.geo_state === 'DEAD_ZONE' ? c.redBg : c.border }]}>
-                                <Text style={[styles.diagBadgeText, { color: hwDiag?.geo_state === 'INSIDE' ? c.greenText : hwDiag?.geo_state === 'DEAD_ZONE' ? c.redText : c.textTer }]}>
+                            <View style={[styles.diagBadge, { backgroundColor: c.search }]}>
+                                <Text style={[styles.diagBadgeText, { color: c.text }]}>
                                     {isPaired ? (hwDiag?.geo_state || 'OUTSIDE') : '--'}
                                 </Text>
                             </View>
                         </View>
-                    </Card.Content>
-                </Card>
+                </View>
 
                 {/* Security & Access */}
-                <Card style={[styles.controlsCard, { marginBottom: 16, backgroundColor: c.card, borderColor: c.border, borderWidth: isDarkMode ? 1 : 0 }]}>
-                    <Card.Content>
-                        <Text variant="labelMedium" style={{ marginBottom: 16, color: c.textTer }}>Security & Access</Text>
+                <View style={[styles.minCard, { backgroundColor: c.card, borderColor: c.border, borderWidth: isDarkMode ? 1 : 0 }]}>
+                    <Text style={[styles.minCardLabel, { color: c.textTer }]}>Security & Access</Text>
                         
                         <View style={styles.diagRow}>
-                            <View style={[styles.iconContainer, { backgroundColor: hwDiag?.theft_state === 'NORMAL' || hwDiag?.theft_state == null ? c.greenBg : c.redBg }]}>
-                                <MaterialCommunityIcons name="shield-lock-outline" size={22} color={hwDiag?.theft_state === 'NORMAL' || hwDiag?.theft_state == null ? c.greenText : c.redText} />
+                            <View style={[styles.iconContainer, { backgroundColor: c.search }]}>
+                                <MaterialCommunityIcons name="shield-lock-outline" size={20} color={hwDiag?.theft_state !== 'NORMAL' && hwDiag?.theft_state != null ? c.redText : c.textSec} />
                             </View>
                             <View style={styles.diagInfo}>
-                                <Text variant="titleSmall" style={{ fontFamily: 'Inter_700Bold', color: c.text }}>Theft Guard</Text>
-                                <Text variant="bodySmall" style={{ color: c.textSec }}>
+                                <Text style={[styles.diagTitle, { color: c.text }]}>Theft Guard</Text>
+                                <Text style={{ fontSize: 12, color: c.textSec }}>
                                     {isPaired 
-                                        ? (hwDiag?.theft_state === 'NORMAL' || hwDiag?.theft_state == null ? 'Hardware motion sensors idle/secure' : 'Unusual motion or tamper detected')
+                                        ? (hwDiag?.theft_state === 'NORMAL' || hwDiag?.theft_state == null ? 'Motion sensors idle' : 'Unusual motion detected')
                                         : 'Requires pairing'}
                                 </Text>
                             </View>
-                            <View style={[styles.diagBadge, { backgroundColor: hwDiag?.theft_state === 'NORMAL' || hwDiag?.theft_state == null ? c.greenBg : c.redBg }]}>
-                                <Text style={[styles.diagBadgeText, { color: hwDiag?.theft_state === 'NORMAL' || hwDiag?.theft_state == null ? c.greenText : c.redText }]}>
+                            <View style={[styles.diagBadge, { backgroundColor: hwDiag?.theft_state !== 'NORMAL' && hwDiag?.theft_state != null ? c.redBg : c.search }]}>
+                                <Text style={[styles.diagBadgeText, { color: hwDiag?.theft_state !== 'NORMAL' && hwDiag?.theft_state != null ? c.redText : c.text }]}>
                                     {isPaired ? (hwDiag?.theft_state || 'NORMAL') : '--'}
                                 </Text>
                             </View>
@@ -1467,21 +1482,21 @@ export default function BoxControlsScreen() {
                         <Divider style={[styles.divider, { backgroundColor: c.divider }]} />
                         
                         <View style={styles.diagRow}>
-                            <View style={[styles.iconContainer, { backgroundColor: faceAuthStatus === 'SEARCHING' ? c.orangeBg : faceAuthStatus === 'AUTHENTICATED' ? c.greenBg : c.purpleBg }]}>
-                                <MaterialCommunityIcons name="camera-iris" size={22} color={faceAuthStatus === 'SEARCHING' ? c.orangeText : faceAuthStatus === 'AUTHENTICATED' ? c.greenText : c.purpleText} />
+                            <View style={[styles.iconContainer, { backgroundColor: c.search }]}>
+                                <MaterialCommunityIcons name="camera-iris" size={20} color={c.textSec} />
                             </View>
                             <View style={styles.diagInfo}>
-                                <Text variant="titleSmall" style={{ fontFamily: 'Inter_700Bold', color: c.text }}>Biometric Unit</Text>
-                                <Text variant="bodySmall" style={{ color: c.textSec }}>
-                                    {faceAuthStatus === 'SEARCHING' ? 'Person-detect scan running...' 
+                                <Text style={[styles.diagTitle, { color: c.text }]}>Biometric</Text>
+                                <Text style={{ fontSize: 12, color: c.textSec }}>
+                                    {faceAuthStatus === 'SEARCHING' ? 'Scan running…' 
                                         : faceAuthStatus === 'AUTHENTICATED' ? 'Person verified'
-                                        : faceAuthStatus === 'TIMEOUT_REMOVE_HELMET' ? 'Blocked — helmet detected'
+                                        : faceAuthStatus === 'TIMEOUT_REMOVE_HELMET' ? 'Blocked — helmet'
                                         : faceAuthStatus === 'FAILED_USE_OTP' ? 'Fallback to OTP'
-                                        : 'Idle — ready for capture'}
+                                        : 'Ready'}
                                 </Text>
                             </View>
-                            <View style={[styles.diagBadge, { backgroundColor: faceAuthStatus === 'SEARCHING' ? c.orangeBg : faceAuthStatus === 'AUTHENTICATED' ? c.greenBg : c.purpleBg }]}>
-                                <Text style={[styles.diagBadgeText, { color: faceAuthStatus === 'SEARCHING' ? c.orangeText : faceAuthStatus === 'AUTHENTICATED' ? c.greenText : c.purpleText }]}>
+                            <View style={[styles.diagBadge, { backgroundColor: c.search }]}>
+                                <Text style={[styles.diagBadgeText, { color: c.text }]}>
                                     {faceAuthStatus === 'IDLE' ? 'READY' : faceAuthStatus}
                                 </Text>
                             </View>
@@ -1490,49 +1505,47 @@ export default function BoxControlsScreen() {
                         <Divider style={[styles.divider, { backgroundColor: c.divider }]} />
                         
                         <View style={styles.diagRow}>
-                            <View style={[styles.iconContainer, { backgroundColor: lockoutState?.active ? c.redBg : otpStatus?.otp_expired ? c.orangeBg : c.greenBg }]}>
-                                <MaterialCommunityIcons name="dialpad" size={22} color={lockoutState?.active ? c.redText : otpStatus?.otp_expired ? c.orangeText : c.greenText} />
+                            <View style={[styles.iconContainer, { backgroundColor: c.search }]}>
+                                <MaterialCommunityIcons name="dialpad" size={20} color={lockoutState?.active ? c.redText : c.textSec} />
                             </View>
                             <View style={styles.diagInfo}>
-                                <Text variant="titleSmall" style={{ fontFamily: 'Inter_700Bold', color: c.text }}>Keypad & Access</Text>
-                                <Text variant="bodySmall" style={{ color: c.textSec }}>
+                                <Text style={[styles.diagTitle, { color: c.text }]}>Keypad</Text>
+                                <Text style={{ fontSize: 12, color: c.textSec }}>
                                     {lockoutState?.active 
                                         ? `LOCKOUT: ${lockoutState.attempt_count} failed (${lockoutCountdown} left)`
                                         : otpStatus?.otp_expired 
                                             ? 'OTP expired — new code required'
                                             : activeOtpCode 
-                                                ? `Active OTP assigned (${activeOtpCode.length} digits)`
-                                                : 'Waiting for OTP assignment'}
+                                                ? `OTP active (${activeOtpCode.length} digits)`
+                                                : 'Awaiting OTP'}
                                 </Text>
                             </View>
-                            <View style={[styles.diagBadge, { backgroundColor: lockoutState?.active ? c.redBg : otpStatus?.otp_expired ? c.orangeBg : c.greenBg }]}>
-                                <Text style={[styles.diagBadgeText, { color: lockoutState?.active ? c.redText : otpStatus?.otp_expired ? c.orangeText : c.greenText }]}>
+                            <View style={[styles.diagBadge, { backgroundColor: lockoutState?.active ? c.redBg : c.search }]}>
+                                <Text style={[styles.diagBadgeText, { color: lockoutState?.active ? c.redText : c.text }]}>
                                     {lockoutState?.active ? 'LOCKOUT' : otpStatus?.otp_expired ? 'EXPIRED' : 'READY'}
                                 </Text>
                             </View>
                         </View>
-                    </Card.Content>
-                </Card>
+                </View>
 
                 {/* Power & Hardware */}
-                <Card style={[styles.controlsCard, { marginBottom: 24, backgroundColor: c.card, borderColor: c.border, borderWidth: isDarkMode ? 1 : 0 }]}>
-                    <Card.Content>
-                        <Text variant="labelMedium" style={{ marginBottom: 16, color: c.textTer }}>Power & Hardware</Text>
+                <View style={[styles.minCard, { backgroundColor: c.card, borderColor: c.border, borderWidth: isDarkMode ? 1 : 0 }]}>
+                    <Text style={[styles.minCardLabel, { color: c.textTer }]}>Power & Hardware</Text>
                         
                         <View style={styles.diagRow}>
-                            <View style={[styles.iconContainer, { backgroundColor: c.greenBg }]}>
-                                <MaterialCommunityIcons name="battery-charging-medium" size={22} color={c.greenText} />
+                            <View style={[styles.iconContainer, { backgroundColor: c.search }]}>
+                                <MaterialCommunityIcons name="battery-charging-medium" size={20} color={c.textSec} />
                             </View>
                             <View style={styles.diagInfo}>
-                                <Text variant="titleSmall" style={{ fontFamily: 'Inter_700Bold', color: c.text }}>Battery Controller</Text>
-                                <Text variant="bodySmall" style={{ color: c.textSec }}>
+                                <Text style={[styles.diagTitle, { color: c.text }]}>Battery</Text>
+                                <Text style={{ fontSize: 12, color: c.textSec }}>
                                     {isPaired 
-                                        ? `${batteryState?.percentage ?? hwDiag?.batt_pct ?? '--'}% charge capacity remaining`
+                                        ? `${batteryState?.percentage ?? hwDiag?.batt_pct ?? '--'}% remaining`
                                         : 'Requires pairing'}
                                 </Text>
                             </View>
-                            <View style={[styles.diagBadge, { backgroundColor: c.greenBg }]}>
-                                <Text style={[styles.diagBadgeText, { color: c.greenText }]}>
+                            <View style={[styles.diagBadge, { backgroundColor: c.search }]}>
+                                <Text style={[styles.diagBadgeText, { color: c.text }]}>
                                     {isPaired ? `${(hwDiag?.batt_v ?? batteryState?.voltage ?? 0).toFixed(1)} V` : '--'}
                                 </Text>
                             </View>
@@ -1541,18 +1554,18 @@ export default function BoxControlsScreen() {
                         <Divider style={[styles.divider, { backgroundColor: c.divider }]} />
                         
                         <View style={styles.diagRow}>
-                            <View style={[styles.iconContainer, { backgroundColor: lockHealth?.overheated ? c.redBg : c.greenBg }]}>
-                                <MaterialCommunityIcons name="lock-smart" size={22} color={lockHealth?.overheated ? c.redText : c.greenText} />
+                            <View style={[styles.iconContainer, { backgroundColor: c.search }]}>
+                                <MaterialCommunityIcons name="lock-smart" size={20} color={lockHealth?.overheated ? c.redText : c.textSec} />
                             </View>
                             <View style={styles.diagInfo}>
-                                <Text variant="titleSmall" style={{ fontFamily: 'Inter_700Bold', color: c.text }}>Solenoid Unit</Text>
-                                <Text variant="bodySmall" style={{ color: c.textSec }}>
-                                    {lockHealth?.overheated ? 'Thermal cutoff active (cooling down)' : 'Operating normally'}
+                                <Text style={[styles.diagTitle, { color: c.text }]}>Solenoid</Text>
+                                <Text style={{ fontSize: 12, color: c.textSec }}>
+                                    {lockHealth?.overheated ? 'Thermal cutoff active' : 'Operating normally'}
                                 </Text>
                             </View>
-                            <View style={[styles.diagBadge, { backgroundColor: lockHealth?.overheated ? c.redBg : c.greenBg }]}>
-                                <Text style={[styles.diagBadgeText, { color: lockHealth?.overheated ? c.redText : c.greenText }]}>
-                                    {lockHealth?.overheated ? 'OVERHEATED' : (hwDiag?.temp ? `${hwDiag.temp}°C` : 'NOMINAL')}
+                            <View style={[styles.diagBadge, { backgroundColor: lockHealth?.overheated ? c.redBg : c.search }]}>
+                                <Text style={[styles.diagBadgeText, { color: lockHealth?.overheated ? c.redText : c.text }]}>
+                                    {lockHealth?.overheated ? 'HOT' : (hwDiag?.temp ? `${hwDiag.temp}°C` : 'OK')}
                                 </Text>
                             </View>
                         </View>
@@ -1560,48 +1573,76 @@ export default function BoxControlsScreen() {
                         <Divider style={[styles.divider, { backgroundColor: c.divider }]} />
 
                         <View style={styles.diagRow}>
-                            <View style={[styles.iconContainer, { backgroundColor: c.purpleBg }]}>
-                                <MaterialCommunityIcons name="cpu-64-bit" size={22} color={c.purpleText} />
+                            <View style={[styles.iconContainer, { backgroundColor: c.search }]}>
+                                <MaterialCommunityIcons name="cpu-64-bit" size={20} color={c.textSec} />
                             </View>
                             <View style={styles.diagInfo}>
-                                <Text variant="titleSmall" style={{ fontFamily: 'Inter_700Bold', color: c.text }}>Box Controller</Text>
-                                <Text variant="bodySmall" style={{ color: c.textSec }}>
+                                <Text style={[styles.diagTitle, { color: c.text }]}>Controller</Text>
+                                <Text style={{ fontSize: 12, color: c.textSec }}>
                                     {hwDiag?.uptime_ms 
                                         ? `Up ${Math.floor(hwDiag.uptime_ms / 3600000)}h ${Math.floor((hwDiag.uptime_ms % 3600000) / 60000)}m • NTP ${hwDiag.time_synced ? '✓' : '×'}`
-                                        : isPaired ? 'Uptime pending...' : 'Requires pairing'}
+                                        : isPaired ? 'Uptime pending…' : 'Requires pairing'}
                                 </Text>
                             </View>
-                            <View style={[styles.diagBadge, { backgroundColor: c.purpleBg }]}>
-                                <Text style={[styles.diagBadgeText, { color: c.purpleText }]}>
+                            <View style={[styles.diagBadge, { backgroundColor: c.search }]}>
+                                <Text style={[styles.diagBadgeText, { color: c.text }]}>
                                     {hwDiag?.data_bytes ? `${(hwDiag.data_bytes / 1024).toFixed(1)} KB` : '--'}
                                 </Text>
                             </View>
                         </View>
-                    </Card.Content>
-                </Card>
+                </View>
 
-                {/* Detailed Logs */}
-                <Text variant="titleMedium" style={[styles.sectionTitle, { color: c.text }]}>System Event Log</Text>
-                <Surface style={[styles.logContainer, { backgroundColor: isDarkMode ? '#1C1C1E' : '#1E1E1E' }]} elevation={isDarkMode ? 0 : 2}>
-                    {isPaired ? (
-                        logs.map((log, index) => (
-                            <View key={index} style={[styles.logRow, { borderBottomColor: isDarkMode ? '#38383A' : '#333' }]}>
-                                <Text style={[styles.logTime, { color: c.textTer }]}>{log.time}</Text>
-                                <Text style={[styles.logMessage, {
-                                    color: log.type === 'error' ? c.redText :
-                                        log.type === 'warning' ? c.orangeText :
-                                            log.type === 'success' ? c.greenText : (isDarkMode ? '#AEAEB2' : '#CCC')
-                                }]}>
-                                    {log.message}
+                {/* ── Event Log ── */}
+                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 20, marginBottom: 8 }}>
+                    <Text style={[styles.sectionTitle, { color: c.text, marginTop: 0, marginBottom: 0 }]}>Event Log</Text>
+                    {logs.length > 0 && (
+                        <View style={{ backgroundColor: c.search, paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8 }}>
+                            <Text style={{ fontSize: 10, fontFamily: 'Inter_700Bold', color: c.textSec }}>{logs.length}</Text>
+                        </View>
+                    )}
+                </View>
+                <View style={[styles.logContainer, { backgroundColor: c.card, borderColor: c.border, borderWidth: isDarkMode ? 1 : 0 }]}>
+                    {isPaired && logs.length > 0 ? (
+                        logs.slice(0, 25).map((log, index) => (
+                            <View key={index} style={{
+                                flexDirection: 'row',
+                                alignItems: 'flex-start',
+                                paddingVertical: 7,
+                                borderBottomWidth: index < Math.min(logs.length, 25) - 1 ? 1 : 0,
+                                borderBottomColor: c.divider,
+                            }}>
+                                {/* Type dot */}
+                                <View style={{
+                                    width: 7,
+                                    height: 7,
+                                    borderRadius: 3.5,
+                                    marginTop: 4,
+                                    marginRight: 8,
+                                    backgroundColor: log.type === 'error' ? c.redText
+                                        : log.type === 'warning' ? c.textTer
+                                        : log.type === 'success' ? c.text
+                                        : c.textTer,
+                                    opacity: log.type === 'error' ? 1 : 0.5,
+                                }} />
+                                {/* Content */}
+                                <View style={{ flex: 1 }}>
+                                    <Text style={{ fontSize: 12, fontFamily: 'Inter_400Regular', color: c.text, lineHeight: 16 }} numberOfLines={2}>
+                                        {log.message}
+                                    </Text>
+                                </View>
+                                {/* Timestamp */}
+                                <Text style={{ fontSize: 10, fontFamily: 'monospace', color: c.textTer, marginLeft: 8, marginTop: 1 }}>
+                                    {log.time}
                                 </Text>
                             </View>
                         ))
                     ) : (
-                        <View style={{ alignItems: 'center', justifyContent: 'center', height: 100 }}>
-                            <Text style={{ color: c.textTer, fontStyle: 'italic' }}>No logs available (Unpaired)</Text>
+                        <View style={{ alignItems: 'center', justifyContent: 'center', paddingVertical: 32 }}>
+                            <MaterialCommunityIcons name="console" size={28} color={c.textTer} style={{ marginBottom: 8, opacity: 0.5 }} />
+                            <Text style={{ fontSize: 12, color: c.textTer }}>{isPaired ? 'No events yet' : 'Pair a box to see logs'}</Text>
                         </View>
                     )}
-                </Surface>
+                </View>
 
             </ScrollView>
 
@@ -1787,18 +1828,28 @@ export default function BoxControlsScreen() {
                 onRequestClose={() => setShowPersonalPinModal(false)}
             >
                 <View style={styles.modalOverlay}>
-                    <Surface style={[styles.modalContent, { backgroundColor: c.card }]} elevation={5}>
-                        <View style={styles.modalHeader}>
-                            <Text variant="titleLarge" style={{ fontFamily: 'Inter_700Bold', color: c.text }}>Set Personal PIN</Text>
-                            <IconButton icon="close" size={24} iconColor={c.textSec} onPress={() => setShowPersonalPinModal(false)} />
+                    <View style={[styles.modalContent, { backgroundColor: c.card }]}>
+                        {/* Header */}
+                        <View style={[styles.modalHeader, { borderBottomColor: c.divider }]}>
+                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                                <View style={[styles.iconContainer, { backgroundColor: c.search }]}>
+                                    <MaterialCommunityIcons name="shield-key" size={18} color={c.textSec} />
+                                </View>
+                                <Text style={{ fontFamily: 'Inter_700Bold', fontSize: 16, color: c.text }}>Set Personal PIN</Text>
+                            </View>
+                            <TouchableOpacity onPress={() => setShowPersonalPinModal(false)} hitSlop={12}>
+                                <MaterialCommunityIcons name="close" size={22} color={c.textTer} />
+                            </TouchableOpacity>
                         </View>
-                        <View style={styles.modalBody}>
-                            <Text variant="bodyMedium" style={{ marginBottom: 12, color: c.textSec, textAlign: 'center' }}>
-                                This PIN is used on keypad key 4 manual mode. Existing PIN cannot be viewed after save.
+
+                        {/* Body */}
+                        <View style={{ padding: 20 }}>
+                            <Text style={{ fontSize: 13, color: c.textSec, marginBottom: 16, lineHeight: 18 }}>
+                                This PIN is used on keypad key 4 manual mode. It cannot be viewed after saving.
                             </Text>
                             <TextInput
                                 mode="outlined"
-                                label="New Personal PIN"
+                                label="New PIN"
                                 value={newPersonalPin}
                                 onChangeText={(value) => setNewPersonalPin(sanitizePinInput(value))}
                                 keyboardType="number-pad"
@@ -1815,7 +1866,7 @@ export default function BoxControlsScreen() {
                             />
                             <TextInput
                                 mode="outlined"
-                                label="Confirm Personal PIN"
+                                label="Confirm PIN"
                                 value={confirmPersonalPin}
                                 onChangeText={(value) => setConfirmPersonalPin(sanitizePinInput(value))}
                                 keyboardType="number-pad"
@@ -1831,26 +1882,28 @@ export default function BoxControlsScreen() {
                                 style={{ width: '100%' }}
                             />
                         </View>
-                        <View style={[styles.modalFooter, { paddingBottom: Math.max(16, insets.bottom + 16) }]}>
-                            <Button
-                                mode="outlined"
+
+                        {/* Footer */}
+                        <View style={[styles.modalFooter, { borderTopColor: c.divider, paddingBottom: Math.max(16, insets.bottom + 16), gap: 8 }]}>
+                            <TouchableOpacity
+                                activeOpacity={0.7}
                                 onPress={() => setShowPersonalPinModal(false)}
-                                style={{ flex: 1, marginRight: 8 }}
                                 disabled={savingPersonalPin}
+                                style={[styles.pillBtn, { flex: 1, backgroundColor: c.search, opacity: savingPersonalPin ? 0.4 : 1 }]}
                             >
-                                Cancel
-                            </Button>
-                            <Button
-                                mode="contained"
+                                <Text style={[styles.pillBtnText, { color: c.text }]}>Cancel</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                                activeOpacity={0.7}
                                 onPress={handleSavePersonalPin}
-                                style={{ flex: 1 }}
-                                loading={savingPersonalPin}
                                 disabled={savingPersonalPin || newPersonalPin.length !== 6 || confirmPersonalPin.length !== 6}
+                                style={[styles.pillBtn, { flex: 1, backgroundColor: c.accent, opacity: (savingPersonalPin || newPersonalPin.length !== 6 || confirmPersonalPin.length !== 6) ? 0.3 : 1 }]}
                             >
-                                Save PIN
-                            </Button>
+                                {savingPersonalPin && <ActivityIndicator size={14} color={c.accentText} />}
+                                <Text style={[styles.pillBtnText, { color: c.accentText }]}>Save PIN</Text>
+                            </TouchableOpacity>
                         </View>
-                    </Surface>
+                    </View>
                 </View>
             </Modal>
 
@@ -1861,20 +1914,28 @@ export default function BoxControlsScreen() {
                 onRequestClose={() => setShowUnlockPinModal(false)}
             >
                 <View style={styles.modalOverlay}>
-                    <Surface style={[styles.modalContent, { backgroundColor: c.card }]} elevation={5}>
-                        <View style={styles.modalHeader}>
-                            <Text variant="titleLarge" style={{ fontFamily: 'Inter_700Bold', color: c.text }}>Authorize Unlock</Text>
-                            <IconButton
-                                icon="close"
-                                size={24}
-                                iconColor={c.textSec}
+                    <View style={[styles.modalContent, { backgroundColor: c.card }]}>
+                        {/* Header */}
+                        <View style={[styles.modalHeader, { borderBottomColor: c.divider }]}>
+                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                                <View style={[styles.iconContainer, { backgroundColor: c.search }]}>
+                                    <MaterialCommunityIcons name="lock-open-outline" size={18} color={c.textSec} />
+                                </View>
+                                <Text style={{ fontFamily: 'Inter_700Bold', fontSize: 16, color: c.text }}>Authorize Unlock</Text>
+                            </View>
+                            <TouchableOpacity
                                 onPress={() => setShowUnlockPinModal(false)}
                                 disabled={unlockPinSubmitting}
-                            />
+                                hitSlop={12}
+                            >
+                                <MaterialCommunityIcons name="close" size={22} color={c.textTer} />
+                            </TouchableOpacity>
                         </View>
-                        <View style={styles.modalBody}>
-                            <Text variant="bodyMedium" style={{ marginBottom: 12, color: c.textSec, textAlign: 'center' }}>
-                                Enter your 6-digit Personal PIN to authorize this unlock command.
+
+                        {/* Body */}
+                        <View style={{ padding: 20 }}>
+                            <Text style={{ fontSize: 13, color: c.textSec, marginBottom: 16, lineHeight: 18 }}>
+                                Enter your 6-digit Personal PIN to authorize this unlock.
                             </Text>
                             <TextInput
                                 mode="outlined"
@@ -1894,26 +1955,28 @@ export default function BoxControlsScreen() {
                                 style={{ width: '100%' }}
                             />
                         </View>
-                        <View style={[styles.modalFooter, { paddingBottom: Math.max(16, insets.bottom + 16) }]}>
-                            <Button
-                                mode="outlined"
+
+                        {/* Footer */}
+                        <View style={[styles.modalFooter, { borderTopColor: c.divider, paddingBottom: Math.max(16, insets.bottom + 16), gap: 8 }]}>
+                            <TouchableOpacity
+                                activeOpacity={0.7}
                                 onPress={() => setShowUnlockPinModal(false)}
-                                style={{ flex: 1, marginRight: 8 }}
                                 disabled={unlockPinSubmitting}
+                                style={[styles.pillBtn, { flex: 1, backgroundColor: c.search, opacity: unlockPinSubmitting ? 0.4 : 1 }]}
                             >
-                                Cancel
-                            </Button>
-                            <Button
-                                mode="contained"
+                                <Text style={[styles.pillBtnText, { color: c.text }]}>Cancel</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                                activeOpacity={0.7}
                                 onPress={handleSubmitUnlockWithPin}
-                                style={{ flex: 1 }}
-                                loading={unlockPinSubmitting}
                                 disabled={unlockPinSubmitting || unlockPin.length !== 6}
+                                style={[styles.pillBtn, { flex: 1, backgroundColor: c.accent, opacity: (unlockPinSubmitting || unlockPin.length !== 6) ? 0.3 : 1 }]}
                             >
-                                Authorize
-                            </Button>
+                                {unlockPinSubmitting && <ActivityIndicator size={14} color={c.accentText} />}
+                                <Text style={[styles.pillBtnText, { color: c.accentText }]}>Authorize</Text>
+                            </TouchableOpacity>
                         </View>
-                    </Surface>
+                    </View>
                 </View>
             </Modal>
         </Animated.View>
@@ -1923,208 +1986,305 @@ export default function BoxControlsScreen() {
 const styles = StyleSheet.create({
     container: {
         flex: 1,
-        backgroundColor: '#F7F9FC',
     },
     scrollContent: {
-        padding: 20,
+        padding: 16,
     },
-    headerContainer: {
+
+    // ── Hero ──
+    heroSection: {
+        flexDirection: 'row',
         alignItems: 'center',
-        marginBottom: 24,
-        backgroundColor: 'white',
-        padding: 20,
-        borderRadius: 16,
-        elevation: 2,
+        padding: 16,
+        borderRadius: 14,
+        marginBottom: 8,
     },
-    lottie: {
-        width: 120,
-        height: 120,
+    heroIconRing: {
+        width: 52,
+        height: 52,
+        borderRadius: 26,
+        alignItems: 'center',
+        justifyContent: 'center',
     },
+    heroTitle: {
+        fontFamily: 'Inter_700Bold',
+        fontSize: 17,
+    },
+    heroSubtitle: {
+        fontSize: 13,
+        marginTop: 2,
+    },
+    heroBadge: {
+        width: 28,
+        height: 28,
+        borderRadius: 14,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    heroDot: {
+        width: 8,
+        height: 8,
+        borderRadius: 4,
+    },
+
+    // ── Section Title ──
     sectionTitle: {
         fontFamily: 'Inter_700Bold',
-        marginBottom: 12,
-        color: '#333',
+        fontSize: 14,
+        marginTop: 20,
+        marginBottom: 8,
+        marginLeft: 2,
+        textTransform: 'uppercase' as const,
+        letterSpacing: 0.8,
     },
-    grid: {
-        flexDirection: 'row',
-        flexWrap: 'wrap',
-        justifyContent: 'space-between',
-        marginBottom: 24,
-    },
+
+    // ── Telemetry ──
     telemetryCard: {
-        width: '48%',
-        backgroundColor: 'white',
-        padding: 16,
-        borderRadius: 12,
-        marginBottom: 16,
-        alignItems: 'center',
+        borderRadius: 14,
+        padding: 12,
+        marginBottom: 4,
     },
-    controlsCard: {
-        backgroundColor: 'white',
-        borderRadius: 16,
-        elevation: 2,
-        marginBottom: 24,
-    },
-    controlRow: {
+    telemetryRow: {
         flexDirection: 'row',
         alignItems: 'center',
         paddingVertical: 8,
+        paddingHorizontal: 4,
     },
-    iconContainer: {
-        width: 40,
+    telemetryIconPill: {
+        width: 32,
+        height: 32,
+        borderRadius: 10,
         alignItems: 'center',
         justifyContent: 'center',
-        marginRight: 12,
-        backgroundColor: '#F5F5F5',
-        height: 40,
-        borderRadius: 20,
     },
-    controlInfo: {
-        flex: 1,
+    telemetryLabel: {
+        fontSize: 13,
+        marginLeft: 10,
+        fontFamily: 'Inter_400Regular',
+    },
+    telemetryValue: {
+        fontSize: 13,
+        fontFamily: 'Inter_700Bold',
+        marginLeft: 'auto',
+    },
+    thinDivider: {
+        height: 1,
+        marginVertical: 4,
+        marginHorizontal: 4,
+        opacity: 0.5,
+    },
+
+    // ── Min Card (Controls / Diagnostics) ──
+    minCard: {
+        borderRadius: 14,
+        padding: 14,
+        marginBottom: 10,
+    },
+    minCardLabel: {
+        fontFamily: 'Inter_700Bold',
+        fontSize: 11,
+        textTransform: 'uppercase' as const,
+        letterSpacing: 0.6,
+        marginBottom: 10,
+    },
+
+    // ── Lock Button ──
+    lockButton: {
+        flexDirection: 'row',
+        alignItems: 'center',
         justifyContent: 'center',
+        paddingVertical: 14,
+        borderRadius: 12,
+        gap: 8,
     },
-    divider: {
-        marginVertical: 12,
-        backgroundColor: '#E0E0E0',
+    lockButtonText: {
+        fontFamily: 'Inter_700Bold',
+        fontSize: 14,
     },
-    button: {
-        marginBottom: 12,
-        borderRadius: 8,
+
+    // ── Pill Buttons ──
+    pillBtn: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingVertical: 10,
+        borderRadius: 10,
+        gap: 6,
+    },
+    pillBtnText: {
+        fontFamily: 'Inter_600SemiBold',
+        fontSize: 13,
+    },
+
+    // ── Inline Notice ──
+    inlineNotice: {
+        marginTop: 10,
+        padding: 10,
+        borderRadius: 10,
+        borderWidth: 1,
+    },
+
+    // ── Controls ──
+    iconContainer: {
+        width: 36,
+        height: 36,
+        alignItems: 'center',
+        justifyContent: 'center',
+        borderRadius: 12,
     },
     row: {
         flexDirection: 'row',
+        marginTop: 8,
     },
     hintText: {
         fontSize: 10,
-        color: '#999',
         textAlign: 'center',
-        marginTop: -4,
+        marginTop: 6,
     },
+    divider: {
+        marginVertical: 12,
+    },
+    button: {
+        borderRadius: 10,
+    },
+
+    // ── Diagnostics ──
+    diagRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingVertical: 6,
+    },
+    diagInfo: {
+        flex: 1,
+        marginLeft: 10,
+    },
+    diagTitle: {
+        fontFamily: 'Inter_700Bold',
+        fontSize: 14,
+    },
+    diagBadge: {
+        paddingHorizontal: 8,
+        paddingVertical: 3,
+        borderRadius: 8,
+        minWidth: 56,
+        alignItems: 'center',
+    },
+    diagBadgeText: {
+        fontSize: 10,
+        fontFamily: 'Inter_700Bold',
+    },
+
+    // ── Event Log ──
     logContainer: {
-        backgroundColor: '#1E1E1E',
-        borderRadius: 12,
-        padding: 16,
-        minHeight: 200,
+        borderRadius: 14,
+        padding: 14,
+        minHeight: 160,
+        marginBottom: 16,
     },
     logRow: {
         flexDirection: 'row',
-        marginBottom: 6,
+        marginBottom: 4,
         borderBottomWidth: 1,
-        borderBottomColor: '#333',
         paddingBottom: 4,
     },
     logTime: {
-        color: '#888',
         fontFamily: 'monospace',
-        fontSize: 11,
-        width: 60,
+        fontSize: 10,
+        width: 55,
     },
     logMessage: {
         flex: 1,
         fontFamily: 'monospace',
-        fontSize: 11,
+        fontSize: 10,
     },
-    // EC-18: Tamper Alert Styles
+
+    // ── Alert Banners ──
     alertBanner: {
         flexDirection: 'row',
         alignItems: 'center',
-        backgroundColor: '#D32F2F',
-        padding: 16,
+        padding: 14,
         borderRadius: 12,
-        marginBottom: 16,
+        marginBottom: 10,
     },
     pairingBanner: {
         flexDirection: 'row',
         alignItems: 'center',
-        backgroundColor: '#1D4ED8',
-        padding: 16,
+        padding: 14,
         borderRadius: 12,
-        marginBottom: 16,
+        marginBottom: 10,
     },
     alertTitle: {
-        color: 'white',
         fontFamily: 'Inter_700Bold',
-        fontSize: 16,
+        fontSize: 13,
     },
     alertText: {
-        color: 'rgba(255,255,255,0.9)',
-        fontSize: 14,
+        fontSize: 12,
+        marginTop: 2,
     },
-    // EC-03: Battery Warning Styles
     warningBanner: {
         flexDirection: 'row',
         alignItems: 'center',
-        backgroundColor: '#FEF3C7',
-        padding: 16,
+        padding: 14,
         borderRadius: 12,
-        marginBottom: 16,
+        marginBottom: 10,
     },
-    criticalBanner: {
-        backgroundColor: '#DC2626',
-    },
+    criticalBanner: {},
     warningTitle: {
-        color: '#7B341E',
         fontFamily: 'Inter_700Bold',
-        fontSize: 16,
+        fontSize: 13,
     },
     warningText: {
-        color: '#92400E',
-        fontSize: 14,
+        fontSize: 12,
     },
-    // EC-04: Lockout Status Styles
+
+    // ── Lockout / Expiry ──
     lockoutCard: {
-        backgroundColor: '#FFEBEE',
         borderRadius: 12,
-        padding: 16,
-        marginBottom: 16,
+        padding: 14,
+        marginBottom: 10,
         borderLeftWidth: 4,
-        borderLeftColor: '#D32F2F',
     },
     lockoutHeader: {
         flexDirection: 'row',
         alignItems: 'center',
     },
     lockoutTitle: {
-        color: '#D32F2F',
         fontFamily: 'Inter_700Bold',
-        fontSize: 16,
+        fontSize: 13,
     },
     lockoutText: {
-        color: '#B71C1C',
-        fontSize: 14,
+        fontSize: 12,
     },
     resetButton: {
-        marginTop: 12,
+        marginTop: 10,
     },
-    // EC-07: OTP Expiry Styles
     expiryCard: {
         flexDirection: 'row',
         alignItems: 'center',
-        backgroundColor: '#FFF8E1',
-        padding: 16,
+        padding: 14,
         borderRadius: 12,
-        marginBottom: 16,
+        marginBottom: 10,
         borderLeftWidth: 4,
-        borderLeftColor: '#FF9800',
     },
     expiryTitle: {
-        color: '#E65100',
         fontFamily: 'Inter_700Bold',
-        fontSize: 16,
+        fontSize: 13,
     },
     expiryText: {
-        color: '#EF6C00',
-        fontSize: 14,
+        fontSize: 12,
     },
-    // EC-02: BLE Transfer Styles
+
+    // ── BLE ──
     bleCard: {
-        borderRadius: 16,
-        marginBottom: 24,
+        borderRadius: 14,
+        marginBottom: 16,
     },
     bleInfo: {
         flexDirection: 'row',
         alignItems: 'center',
     },
+
+    // ── Modals ──
     modalOverlay: {
         flex: 1,
         backgroundColor: 'rgba(0,0,0,0.5)',
@@ -2162,7 +2322,6 @@ const styles = StyleSheet.create({
         marginBottom: 8,
     },
     bleMessage: {
-        color: '#666',
         textAlign: 'center',
     },
     deviceList: {
@@ -2172,31 +2331,9 @@ const styles = StyleSheet.create({
     deviceItem: {
         flexDirection: 'row',
         alignItems: 'center',
-        backgroundColor: '#F5F5F5',
         padding: 12,
         borderRadius: 8,
         marginBottom: 8,
-    },
-    // Hardware Diagnostics
-    diagRow: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        paddingVertical: 8,
-    },
-    diagInfo: {
-        flex: 1,
-        marginLeft: 12,
-    },
-    diagBadge: {
-        paddingHorizontal: 8,
-        paddingVertical: 4,
-        borderRadius: 6,
-        minWidth: 64,
-        alignItems: 'center',
-    },
-    diagBadgeText: {
-        fontSize: 11,
-        fontFamily: 'Inter_700Bold',
     },
     modalFooter: {
         flexDirection: 'row',
