@@ -10,6 +10,7 @@ import { useAppTheme } from '../../../context/ThemeContext';
 
 // Import MapboxWrapper for geofence preview map
 import MapboxGL, { isMapboxNativeAvailable, StyleURL } from '../../../components/map/MapboxWrapper';
+import AnimatedRiderMarker from '../../../components/map/AnimatedRiderMarker';
 
 // Same rider image used across all tracking pages (AnimatedRiderMarker)
 const RiderImage = require('../../../../assets/Rider.jpg');
@@ -43,6 +44,7 @@ interface PickupVerificationProps {
     // Rider's current GPS position for map preview
     currentLat: number;
     currentLng: number;
+    currentHeading?: number | null;
     geofenceRadiusM?: number;
 
     onPickupConfirmed: () => void;
@@ -89,6 +91,7 @@ export default function PickupVerification({
     isPhoneOnlyFallback = false,
     currentLat,
     currentLng,
+    currentHeading = null,
     geofenceRadiusM = 50,
     onPickupConfirmed,
 
@@ -283,22 +286,13 @@ export default function PickupVerification({
                                 </MapboxGL.MarkerView>
 
                                 {/* Rider live position — same Rider.jpg icon as tracking pages */}
-                                {hasRiderPosition && (
-                                    <MapboxGL.MarkerView
-                                        id="rider-position"
-                                        coordinate={[currentLng, currentLat]}
-                                    >
-                                        <View style={[
-                                            styles.riderMarkerOuter,
-                                            isPhoneInside && styles.riderMarkerOuterInside,
-                                        ]}>
-                                            <Image
-                                                source={RiderImage}
-                                                style={styles.riderMarkerImage}
-                                                resizeMode="cover"
-                                            />
-                                        </View>
-                                    </MapboxGL.MarkerView>
+                                {hasRiderPosition && currentLat != null && currentLng != null && (
+                                    <AnimatedRiderMarker
+                                        latitude={currentLat}
+                                        longitude={currentLng}
+                                        rotation={currentHeading ?? undefined}
+                                        isSelected={isPhoneInside}
+                                    />
                                 )}
                             </MapboxGL.MapView>
 

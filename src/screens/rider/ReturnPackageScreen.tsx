@@ -30,6 +30,7 @@ import { useAppTheme } from '../../context/ThemeContext';
 // Import MapboxWrapper for geofence preview map
 import MapboxGL, { isMapboxNativeAvailable, StyleURL } from '../../components/map/MapboxWrapper';
 import AnimatedRiderMarker from '../../components/map/AnimatedRiderMarker';
+import { useHeadingSmoothing } from '../../hooks/useHeadingSmoothing';
 
 // ───────────── Distance Formatter ─────────────
 function formatDistanceValue(meters: number | null | undefined): string {
@@ -108,6 +109,11 @@ export default function ReturnPackageScreen() {
     // Rider live position for map preview
     const [riderLat, setRiderLat] = useState(0);
     const [riderLng, setRiderLng] = useState(0);
+    const [riderHeading, setRiderHeading] = useState(0);
+    const [riderSpeed, setRiderSpeed] = useState(0);
+    const [localPhoneHeading, setLocalPhoneHeading] = useState<number | null>(null);
+
+    const headingSmoother = useHeadingSmoothing();
 
     // Geofence circle for map preview
     const mapAvailable = isMapboxNativeAvailable;
@@ -231,9 +237,11 @@ export default function ReturnPackageScreen() {
                     distanceInterval: 5,
                 },
                 (location) => {
-                    const { latitude, longitude } = location.coords;
+                    const { latitude, longitude, heading, speed } = location.coords;
                     setRiderLat(latitude);
                     setRiderLng(longitude);
+                    if (heading !== null) setRiderHeading(heading);
+                    if (speed !== null) setRiderSpeed(speed);
 
                     // Haversine distance
                     const R = 6371000;
@@ -254,6 +262,30 @@ export default function ReturnPackageScreen() {
         startTracking();
         return () => { subscription?.remove(); };
     }, [pickupLat, pickupLng]);
+
+    // Device Compass Heading (Foreground)
+    useEffect(() => {
+        let headingSub: Location.LocationSubscription | null = null;
+        const startHeadingWatcher = async () => {
+            try {
+                const { status } = await Location.getForegroundPermissionsAsync();
+                if (status === 'granted') {
+                    headingSub = await Location.watchHeadingAsync((data) => {
+                        setLocalPhoneHeading(data.trueHeading !== -1 ? data.trueHeading : data.magHeading);
+                    }).catch(err => {
+                        if (__DEV__) console.warn('Heading watcher failed (Simulator?):', err);
+                        return null;
+                    });
+                }
+            } catch (err) {
+                if (__DEV__) console.warn('Failed to start heading watcher:', err);
+            }
+        };
+        startHeadingWatcher();
+        return () => {
+            if (headingSub) headingSub.remove();
+        };
+    }, []);
 
     const formatDistance = () => formatDistanceValue(distanceM);
 
@@ -485,6 +517,7 @@ export default function ReturnPackageScreen() {
                                     <AnimatedRiderMarker
                                         latitude={riderLat}
                                         longitude={riderLng}
+                                        rotation={headingSmoother.smooth(riderHeading, riderSpeed, localPhoneHeading)}
                                     />
                                 )}
                             </MapboxGL.MapView>

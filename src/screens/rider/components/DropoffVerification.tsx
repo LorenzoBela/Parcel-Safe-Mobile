@@ -70,6 +70,7 @@ interface DropoffVerificationProps {
     // Rider's current GPS position for map preview
     currentLat: number;
     currentLng: number;
+    currentHeading?: number | null;
     geofenceRadiusM?: number;
 
     onDeliveryCompleted: () => void;
@@ -117,6 +118,7 @@ export default function DropoffVerification({
     lastPhoneGpsAt,
     currentLat,
     currentLng,
+    currentHeading = null,
     geofenceRadiusM = 50,
     onDeliveryCompleted,
 
@@ -941,6 +943,7 @@ export default function DropoffVerification({
                                     <AnimatedRiderMarker
                                         latitude={currentLat}
                                         longitude={currentLng}
+                                        rotation={currentHeading ?? undefined}
                                         isSelected={isPhoneInside}
                                     />
                                 )}

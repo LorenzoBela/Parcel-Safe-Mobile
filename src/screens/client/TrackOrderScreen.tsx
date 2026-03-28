@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { View, StyleSheet, Dimensions, TouchableOpacity, Alert, Share, Image, Animated, Easing, Linking, ActivityIndicator, Modal, TextInput } from 'react-native';
+import { useHeadingSmoothing } from '../../hooks/useHeadingSmoothing';
 import MapboxGL, { isMapboxNativeAvailable, MapFallback } from '../../components/map/MapboxWrapper';
 import { Text, Card, Avatar, Button, IconButton, Surface, useTheme } from 'react-native-paper';
 import { useNavigation, useRoute } from '@react-navigation/native';
@@ -163,7 +164,7 @@ export default function TrackOrderScreen() {
     const [showCancelModal, setShowCancelModal] = useState(false);
     const [cancelLoading, setCancelLoading] = useState(false);
     const [delivery, setDelivery] = useState<DeliveryRecord | null>(null);
-    const [riderLiveLocation, setRiderLiveLocation] = useState<{ lat: number; lng: number; speed?: number; lastUpdated: number } | null>(null);
+    const [riderLiveLocation, setRiderLiveLocation] = useState<{ lat: number; lng: number; speed?: number; heading?: number; lastUpdated: number } | null>(null);
     const [boxLiveLocation, setBoxLiveLocation] = useState<{ lat: number; lng: number; lastUpdated: number } | null>(null);
     const [routeCoordinates, setRouteCoordinates] = useState<number[][] | null>(null);
     const [completedRouteCoords, setCompletedRouteCoords] = useState<number[][] | null>(null); // P1: traveled route
@@ -460,7 +461,13 @@ export default function TrackOrderScreen() {
     // Compute rider bearing from the same coordinates used by the rendered marker.
     // This keeps rotation stable and aligned with what the user actually sees.
     const prevRiderPos = useRef<{ lat: number; lng: number } | null>(null);
-    const [riderBearing, setRiderBearing] = useState(0);
+    const [computedBearing, setComputedBearing] = useState(0);
+    const headingSmoother = useHeadingSmoothing();
+
+    const riderBearing = headingSmoother.smooth(
+        riderLiveLocation?.heading ?? computedBearing,
+        riderLiveLocation?.speed
+    );
 
     useEffect(() => {
         if (!riderMarkerLocation.latitude || !riderMarkerLocation.longitude) return;
@@ -475,7 +482,7 @@ export default function TrackOrderScreen() {
             if (distKm > 0.005) {
                 let nextBearing = bearing(from, to);
                 if (nextBearing < 0) nextBearing += 360;
-                setRiderBearing(nextBearing);
+                setComputedBearing(nextBearing);
             }
         }
 
@@ -544,6 +551,7 @@ export default function TrackOrderScreen() {
                             lat: riderLoc.lat,
                             lng: riderLoc.lng,
                             speed: riderLoc.speed,
+                            heading: riderLoc.heading,
                             lastUpdated: riderLoc.lastUpdated,
                         });
                         console.log('[TrackOrder] Pre-fetched rider location:', riderLoc.lat, riderLoc.lng);
@@ -631,6 +639,7 @@ export default function TrackOrderScreen() {
                     lat: location.lat,
                     lng: location.lng,
                     speed: location.speed,
+                    heading: location.heading,
                     lastUpdated: location.lastUpdated || Date.now()
                 });
             });

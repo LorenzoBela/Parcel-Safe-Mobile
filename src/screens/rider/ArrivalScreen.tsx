@@ -7,6 +7,7 @@ import * as Location from 'expo-location';
 import { useAppTheme } from '../../context/ThemeContext';
 
 import * as ImagePicker from 'expo-image-picker';
+import { useHeadingSmoothing } from '../../hooks/useHeadingSmoothing';
 
 // Services
 import {
@@ -197,7 +198,9 @@ export default function ArrivalScreen() {
     const boxFirstLoadReceivedRef = useRef<boolean>(false); // Tracks whether we've received first box location callback
     const phoneInsideSinceRef = useRef<number>(0); // Tracks when phone first entered geofence
 
-    const [currentPosition, setCurrentPosition] = useState({ lat: 0, lng: 0, accuracy: 25 });
+    const [currentPosition, setCurrentPosition] = useState({ lat: 0, lng: 0, accuracy: 25, heading: 0, speed: 0 });
+    const [localPhoneHeading, setLocalPhoneHeading] = useState<number | null>(null);
+    const headingSmoother = useHeadingSmoothing();
 
     // EC-FIX: GPS Acquisition Gate — show a loading screen until phone GPS is acquired
     const [gpsAcquired, setGpsAcquired] = useState(false);
@@ -679,11 +682,13 @@ export default function ArrivalScreen() {
             // Fast relock after resume/lockscreen: keep high-accuracy warm briefly.
             startForegroundGpsWarmWindow(25000).catch(() => { });
 
-            const applyPosition = (coords: { latitude: number; longitude: number; accuracy: number | null }, fallbackAccuracy: number) => {
+            const applyPosition = (coords: { latitude: number; longitude: number; accuracy: number | null; heading: number | null; speed: number | null }, fallbackAccuracy: number) => {
                 const position = {
                     lat: coords.latitude,
                     lng: coords.longitude,
                     accuracy: coords.accuracy ?? fallbackAccuracy,
+                    heading: coords.heading ?? 0,
+                    speed: coords.speed ?? 0,
                 };
                 setCurrentPosition(position);
 
@@ -732,6 +737,30 @@ export default function ArrivalScreen() {
             }
         };
     }, [geofence]);
+
+    // Device Compass Heading (Foreground)
+    useEffect(() => {
+        let headingSub: Location.LocationSubscription | null = null;
+        const startHeadingWatcher = async () => {
+            try {
+                const { status } = await Location.getForegroundPermissionsAsync();
+                if (status === 'granted') {
+                    headingSub = await Location.watchHeadingAsync((data) => {
+                        setLocalPhoneHeading(data.trueHeading !== -1 ? data.trueHeading : data.magHeading);
+                    }).catch(err => {
+                        if (__DEV__) console.warn('Heading watcher failed (Simulator?):', err);
+                        return null;
+                    });
+                }
+            } catch (err) {
+                if (__DEV__) console.warn('Failed to start heading watcher:', err);
+            }
+        };
+        startHeadingWatcher();
+        return () => {
+            if (headingSub) headingSub.remove();
+        };
+    }, []);
 
     // 2. Track BOX Location (The "Secondary Check")
     // EC-FIX: Improved offline detection — null data = immediate offline (no debounce),
@@ -1620,6 +1649,8 @@ export default function ArrivalScreen() {
                                                 <AnimatedRiderMarker
                                                     latitude={currentPosition.lat}
                                                     longitude={currentPosition.lng}
+                                                    rotation={headingSmoother.smooth(currentPosition.heading, currentPosition.speed, localPhoneHeading)}
+                                                    speed={currentPosition.speed}
                                                 />
                                             )}
                                         </MapboxGL.MapView>
@@ -1726,6 +1757,7 @@ export default function ArrivalScreen() {
                                 lastPhoneGpsAt={phoneLocationLastSeen}
                                 currentLat={currentPosition.lat}
                                 currentLng={currentPosition.lng}
+                                currentHeading={headingSmoother.smooth(currentPosition.heading, currentPosition.speed, localPhoneHeading)}
                                 geofenceRadiusM={geofence.radiusMeters}
                                 onDeliveryCompleted={() => navigation.goBack()}
 
@@ -1755,6 +1787,7 @@ export default function ArrivalScreen() {
                             isPhoneOnlyFallback={isPhoneOnlyFallback}
                             currentLat={currentPosition.lat}
                             currentLng={currentPosition.lng}
+                            currentHeading={headingSmoother.smooth(currentPosition.heading, currentPosition.speed, localPhoneHeading)}
                             geofenceRadiusM={geofence.radiusMeters}
                             onPickupConfirmed={() => {
                                 // The Firebase listener will pick up the 'IN_TRANSIT' status change
@@ -2138,7 +2171,7 @@ const styles = StyleSheet.create({
     },
     timerContainer: { alignItems: 'center', marginBottom: 20 },
     timerLabel: { fontSize: 12, fontFamily: 'Inter_700Bold', color: '#b45309', letterSpacing: 1.5 },
-    timerDisplay: { fontSize: 64, fontFamily: 'Inter_700Bold', fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace', color: '#d97706' },
+    timerDisplay: { fontSize: 64, fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace', color: '#d97706' },
     timerSubtext: { fontSize: 14, color: '#78350f' },
     photoPreview: { backgroundColor: '#ecfccb', padding: 12, borderRadius: 8, marginBottom: 16 },
     photoLabel: { color: '#365314', textAlign: 'center', fontFamily: 'Inter_700Bold' },
@@ -2196,7 +2229,6 @@ const styles = StyleSheet.create({
     },
     gracePeriodTimer: {
         fontSize: 20,
-        fontFamily: 'Inter_700Bold',
         fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
         color: '#1d4ed8',
     },

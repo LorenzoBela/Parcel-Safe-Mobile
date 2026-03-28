@@ -4,13 +4,26 @@ export const DEV_MODE = process.env.EXPO_PUBLIC_DEV_MODE === 'true';
 
 let GoogleSignin: any = null;
 let statusCodes: any = null;
+let isErrorWithCode: any = null;
+let isSuccessResponse: any = null;
+let isNoSavedCredentialFoundResponse: any = null;
 
 try {
   const googleSigninModule = require('@react-native-google-signin/google-signin');
   GoogleSignin = googleSigninModule.GoogleSignin;
   statusCodes = googleSigninModule.statusCodes;
+  isErrorWithCode = googleSigninModule.isErrorWithCode;
+  isSuccessResponse = googleSigninModule.isSuccessResponse;
+  isNoSavedCredentialFoundResponse = googleSigninModule.isNoSavedCredentialFoundResponse;
 } catch (error) {
   console.warn('Google Sign-In module not available in this runtime');
+}
+
+let GoogleAuth: any = null;
+try {
+  GoogleAuth = require('react-native-google-auth').GoogleAuth;
+} catch (error) {
+  console.warn('New Google Auth module not available in this runtime');
 }
 
 import { GoogleAuthProvider, signInWithCredential, signOut as firebaseSignOut } from 'firebase/auth';
@@ -23,19 +36,17 @@ const getSupabaseClient = async () => {
 
 // Configure Google Sign-In with the Web Client ID from google-services.json
 export const configureGoogleSignIn = () => {
-  if (DEV_MODE || !GoogleSignin) {
+  if (DEV_MODE || !GoogleAuth) {
     console.log('Skipping Google Sign-In configuration');
     return;
   }
 
-  GoogleSignin.configure({
+  GoogleAuth.configure({
     webClientId:
       process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID ||
       '535049149934-ne2jfkpgmhm6741fgn3sv4pj1otf1rc5.apps.googleusercontent.com',
     iosClientId: process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID,
-    offlineAccess: true,
-    scopes: ['profile', 'email'],
-  });
+  }).catch((e: any) => console.warn('Failed to configure Google Auth', e));
 };
 
 export type GoogleSignInResult = {
@@ -61,36 +72,54 @@ const mapRole = (role?: string | null): AuthRole => {
   return 'customer';
 };
 
+/**
+ * Extracts GoogleSignInResult from a successful One Tap response.
+ */
+const extractResult = (data: any): GoogleSignInResult => {
+  const idToken = data?.idToken;
+  if (!idToken) {
+    throw new Error('No ID token present in sign-in response!');
+  }
+  return {
+    idToken,
+    email: data?.user?.email,
+    name: data?.user?.name,
+    photo: data?.user?.photo,
+  };
+};
+
+/**
+ * Google Sign-In flow (v16 handles Credential Manager natively under the hood)
+ */
 export const signInWithGoogle = async (): Promise<GoogleSignInResult> => {
-  if (DEV_MODE || !GoogleSignin) {
+  if (DEV_MODE || !GoogleAuth) {
     throw new Error('Google Sign-In is not available in this runtime. Use a dev client or native build.');
   }
 
   try {
-    await GoogleSignin.hasPlayServices({ showPlayServicesUpdateDialog: true });
-    const userInfo = await GoogleSignin.signIn();
-    const idToken = userInfo?.idToken || userInfo?.data?.idToken;
-    const user = userInfo?.user || userInfo?.data?.user;
+    const response = await GoogleAuth.signIn();
 
-    if (!idToken) {
-      throw new Error('No ID token present!');
+    if (response.type === 'success') {
+      return {
+        idToken: response.data.idToken,
+        email: response.data.user.email,
+        name: response.data.user.name || undefined,
+        photo: response.data.user.photo || undefined,
+      };
+    } else if (response.type === 'cancelled') {
+        throw new Error('Sign-in cancelled.');
+    } else if (response.type === 'noSavedCredentialFound') {
+        throw new Error('No saved Google credentials found. Please sign in to Google on your device.');
     }
 
-    return {
-      idToken,
-      email: user?.email,
-      name: user?.name,
-      photo: user?.photo,
-    };
+    throw new Error('Sign-in returned unexpected response.');
   } catch (error: any) {
-    if (error.code === statusCodes.SIGN_IN_CANCELLED) {
-      console.log('User cancelled the login flow');
-    } else if (error.code === statusCodes.IN_PROGRESS) {
-      console.log('Sign in is in progress');
-    } else if (error.code === statusCodes.PLAY_SERVICES_NOT_AVAILABLE) {
-      console.log('Play services not available or outdated');
+    if (error?.code === 'SIGN_IN_CANCELLED') {
+      console.warn('Google Sign-in cancelled');
+    } else if (error?.code === 'PLAY_SERVICES_NOT_AVAILABLE') {
+      console.error('Play Services not available or outdated');
     } else {
-      console.error('Some other error happened:', error);
+      console.error('Google Sign-In error:', error?.code, error?.message || error);
     }
     throw error;
   }
@@ -236,13 +265,13 @@ export const signInWithGoogleAndSyncProfile = async (): Promise<AuthSessionResul
 };
 
 export const signOut = async () => {
-  if (DEV_MODE || !GoogleSignin) {
+  if (DEV_MODE || !GoogleAuth) {
     console.log('Skipping Google Sign-Out');
     return;
   }
 
   try {
-    await GoogleSignin.signOut();
+    await GoogleAuth.signOut();
     // Ensure Firebase is initialized before using getAuth()
     const auth = getFirebaseAuth();
     await firebaseSignOut(auth);
@@ -252,4 +281,4 @@ export const signOut = async () => {
 };
 
 // Check if Google Sign-In is available (for UI conditional rendering)
-export const isGoogleSignInAvailable = () => !DEV_MODE && GoogleSignin !== null;
+export const isGoogleSignInAvailable = () => !DEV_MODE && GoogleAuth !== null;

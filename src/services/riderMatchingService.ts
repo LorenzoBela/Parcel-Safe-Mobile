@@ -175,6 +175,7 @@ export interface RiderLiveLocation {
     lat: number;
     lng: number;
     speed?: number;
+    heading?: number;
     lastUpdated: number;
 }
 
@@ -1325,6 +1326,7 @@ export function subscribeToRiderLocation(
             lat: data.lat,
             lng: data.lng,
             speed: data.speed,
+            heading: data.heading,
             lastUpdated: data.last_updated || Date.now(),
         });
     });
@@ -1354,6 +1356,7 @@ export async function getInitialRiderLocation(
             lat: data.lat,
             lng: data.lng,
             speed: data.speed,
+            heading: data.heading,
             lastUpdated: data.last_updated || Date.now(),
         };
     } catch (error) {

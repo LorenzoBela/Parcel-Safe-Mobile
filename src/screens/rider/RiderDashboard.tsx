@@ -23,6 +23,7 @@ import {
     verifyRiderPersonalPinForUnlock,
     sendRiderUnlockCommand,
 } from '../../services/personalPinService';
+import { useHeadingSmoothing } from '../../hooks/useHeadingSmoothing';
 import { offlineCache, PendingSync } from '../../services/offlineCache';
 import { NetworkStatusBanner } from '../../components';
 import { isSpeedAnomaly, isClockSyncRequired, canAddToPhotoQueue, isGpsStale, SAFETY_CONSTANTS } from '../../services/SafetyLogic';
@@ -224,6 +225,7 @@ export default function RiderDashboard() {
     const [refreshing, setRefreshing] = useState(false);
     const [riderLocation, setRiderLocation] = useState<Location.LocationObject | null>(null);
     const [mapZoomLevel, setMapZoomLevel] = useState(15);
+    const headingSmoother = useHeadingSmoothing();
     const [showMapControls, setShowMapControls] = useState(false);
 
     // Real-time address for map preview card
@@ -377,6 +379,8 @@ export default function RiderDashboard() {
 
     // EC-FIX: Local phone location state for fallback
     const [localPhoneLocation, setLocalPhoneLocation] = useState<Location.LocationObject | null>(null);
+    const [localPhoneHeading, setLocalPhoneHeading] = useState<number | null>(null);
+    const localPhoneHeadingRef = useRef<number | null>(null);
     // Ref so the foreground watcher callback can access the current boxId without a stale closure
     const activeBoxIdRef = useRef<string | null>(null);
     const lastForegroundWriteRef = useRef<number>(0);
@@ -424,7 +428,9 @@ export default function RiderDashboard() {
                                     location.coords.latitude,
                                     location.coords.longitude,
                                     location.coords.speed ?? 0,
-                                    location.coords.heading ?? 0
+                                    (location.coords.speed !== null && location.coords.speed < 1.5 && localPhoneHeadingRef.current !== null)
+                                        ? localPhoneHeadingRef.current
+                                        : (location.coords.heading ?? 0)
                                 ).then(() => {
                                     if (__DEV__ && now - lastFgLogRef.current >= 30_000) {
                                         lastFgLogRef.current = now;
@@ -457,6 +463,32 @@ export default function RiderDashboard() {
             if (subscription) {
                 subscription.remove();
             }
+        };
+    }, []);
+
+    // Device Compass Heading (Foreground)
+    useEffect(() => {
+        let headingSub: Location.LocationSubscription | null = null;
+        const startHeadingWatcher = async () => {
+            try {
+                const { status } = await Location.getForegroundPermissionsAsync();
+                if (status === 'granted') {
+                    headingSub = await Location.watchHeadingAsync((data) => {
+                        const newHeading = data.trueHeading !== -1 ? data.trueHeading : data.magHeading;
+                        setLocalPhoneHeading(newHeading);
+                        localPhoneHeadingRef.current = newHeading;
+                    }).catch(err => {
+                        if (__DEV__) console.warn('Heading watcher failed (Simulator?):', err);
+                        return null;
+                    });
+                }
+            } catch (err) {
+                if (__DEV__) console.warn('Failed to start heading watcher:', err);
+            }
+        };
+        startHeadingWatcher();
+        return () => {
+            if (headingSub) headingSub.remove();
         };
     }, []);
 
@@ -2202,7 +2234,7 @@ export default function RiderDashboard() {
                                         <AnimatedRiderMarker
                                             latitude={lastLocation ? lastLocation.latitude : riderLocation!.coords.latitude}
                                             longitude={lastLocation ? lastLocation.longitude : riderLocation!.coords.longitude}
-                                            rotation={riderLocation?.coords.heading || 0}
+                                            rotation={headingSmoother.smooth(riderLocation?.coords.heading ?? -1, lastLocation?.speed ?? riderLocation?.coords.speed, localPhoneHeading)}
                                             speed={lastLocation?.speed ?? riderLocation?.coords.speed ?? undefined}
                                         />
                                     </MapboxGL.MapView>
@@ -2442,7 +2474,7 @@ export default function RiderDashboard() {
                                         <AnimatedRiderMarker
                                             latitude={lastLocation ? lastLocation.latitude : riderLocation!.coords.latitude}
                                             longitude={lastLocation ? lastLocation.longitude : riderLocation!.coords.longitude}
-                                            rotation={riderLocation?.coords.heading || 0}
+                                            rotation={headingSmoother.smooth(riderLocation?.coords.heading ?? -1, lastLocation?.speed ?? riderLocation?.coords.speed, localPhoneHeading)}
                                             speed={lastLocation?.speed ?? riderLocation?.coords.speed ?? undefined}
                                         />
 
