@@ -5,6 +5,7 @@ export interface LocationData {
     server_timestamp?: number;
     speed?: number;
     heading?: number;
+    compassHeading?: number;
     /** Horizontal accuracy in metres (from phone OS location API or derived from box HDOP) */
     accuracy?: number;
     /** Horizontal Dilution of Precision from box hardware GNSS (lower = better, < 2 is excellent) */

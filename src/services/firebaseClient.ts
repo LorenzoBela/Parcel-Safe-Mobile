@@ -337,14 +337,15 @@ export async function writePhoneLocation(
     latitude: number,
     longitude: number,
     speed?: number,
-    heading?: number
+    heading?: number,
+    compassHeading?: number | null
 ): Promise<void> {
     const db = getFirebaseDatabase();
     const locationRef = ref(db, `locations/${boxId}/phone`);
     const phoneStatusRef = ref(db, `hardware/${boxId}/phone_status`);
     const now = Date.now();
 
-    const locationData: LocationData = {
+    const locationData: any = {
         latitude,
         longitude,
         timestamp: now,
@@ -353,11 +354,15 @@ export async function writePhoneLocation(
         source: 'phone',
     };
 
+    if (compassHeading !== undefined && compassHeading !== null) {
+        locationData.compassHeading = compassHeading;
+    }
+
     const currentBytes = await getPhoneDataBytes(boxId);
     const writeBytes = estimateWriteBytes(`locations/${boxId}/phone`, locationData);
     const nextBytes = currentBytes + writeBytes;
 
-    await set(locationRef, {
+    await update(locationRef, {
         ...locationData,
         server_timestamp: serverTimestamp(),
     });
@@ -371,6 +376,31 @@ export async function writePhoneLocation(
 
     phoneDataBytesCache.set(boxId, nextBytes);
     AsyncStorage.setItem(`${PHONE_DATA_BYTES_KEY_PREFIX}${boxId}`, String(nextBytes)).catch(() => undefined);
+}
+
+/**
+ * Rapidly push compass heading updates to Firebase to avoid massive data writes.
+ * Updates both the hardware tracking node (for admins) and online riders node (for customers).
+ */
+export async function updateLivePhoneCompassHeading(
+    riderId: string | null,
+    boxId: string | null,
+    compassHeading: number
+): Promise<void> {
+    const db = getFirebaseDatabase();
+    const promises: Promise<any>[] = [];
+
+    if (riderId) {
+        const riderRef = ref(db, `online_riders/${riderId}`);
+        promises.push(update(riderRef, { compassHeading }));
+    }
+
+    if (boxId) {
+        const phoneRef = ref(db, `locations/${boxId}/phone`);
+        promises.push(update(phoneRef, { compassHeading }));
+    }
+
+    await Promise.allSettled(promises);
 }
 
 /**

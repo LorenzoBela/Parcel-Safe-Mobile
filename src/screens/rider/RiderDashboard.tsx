@@ -18,7 +18,7 @@ import AnimatedRiderMarker from '../../components/map/AnimatedRiderMarker';
 import LottieView from 'lottie-react-native';
 import { useLocationRedundancy, getStatusMessage, getStatusColor } from '../../hooks/useLocationRedundancy';
 import { useSecurityAlerts } from '../../hooks/useSecurityAlerts';
-import { subscribeToBattery, BatteryState, subscribeToTamper, TamperState, subscribeToLocation, LocationData, subscribeToKeypad, KeypadState, subscribeToHinge, HingeState, subscribeToBoxState, BoxState, updateBoxState, writePhoneLocation } from '../../services/firebaseClient';
+import { subscribeToBattery, BatteryState, subscribeToTamper, TamperState, subscribeToLocation, LocationData, subscribeToKeypad, KeypadState, subscribeToHinge, HingeState, subscribeToBoxState, BoxState, updateBoxState, writePhoneLocation, updateLivePhoneCompassHeading } from '../../services/firebaseClient';
 import {
     verifyRiderPersonalPinForUnlock,
     sendRiderUnlockCommand,
@@ -318,6 +318,12 @@ export default function RiderDashboard() {
 
     const MAPBOX_TOKEN = process.env.EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN;
 
+    const authedUserId = useAuthStore((state: any) => state.user?.userId) as string | undefined;
+    const authedUser = useAuthStore((state: any) => state.user) as any;
+    const riderId = authedUserId;
+    const riderName = authedUser?.fullName || authedUser?.name || undefined;
+    const riderPhone = authedUser?.phone || undefined;
+
     // Route data for map
     const [routeGeometry, setRouteGeometry] = useState<any>(null);
 
@@ -384,6 +390,8 @@ export default function RiderDashboard() {
     // Ref so the foreground watcher callback can access the current boxId without a stale closure
     const activeBoxIdRef = useRef<string | null>(null);
     const lastForegroundWriteRef = useRef<number>(0);
+    const lastCompassWriteTimeRef = useRef<number>(0);
+    const lastCompassWriteHeadingRef = useRef<number>(0);
     /** Throttle noisy dev logs to once per 30s */
     const lastFgLogRef = useRef<number>(0);
     // Track previous delivery status so we can detect changes on the rider's side
@@ -430,7 +438,8 @@ export default function RiderDashboard() {
                                     location.coords.speed ?? 0,
                                     (location.coords.speed !== null && location.coords.speed < 1.5 && localPhoneHeadingRef.current !== null)
                                         ? localPhoneHeadingRef.current
-                                        : (location.coords.heading ?? 0)
+                                        : (location.coords.heading ?? 0),
+                                    localPhoneHeadingRef.current
                                 ).then(() => {
                                     if (__DEV__ && now - lastFgLogRef.current >= 30_000) {
                                         lastFgLogRef.current = now;
@@ -477,6 +486,24 @@ export default function RiderDashboard() {
                         const newHeading = data.trueHeading !== -1 ? data.trueHeading : data.magHeading;
                         setLocalPhoneHeading(newHeading);
                         localPhoneHeadingRef.current = newHeading;
+
+                        // Real-time compass telemetry to Firebase
+                        const now = Date.now();
+                        const timeSinceLastWrite = now - lastCompassWriteTimeRef.current;
+                        const deltaHeading = Math.abs((newHeading - lastCompassWriteHeadingRef.current + 540) % 360 - 180);
+                        
+                        // Write if it changed by > 5 degrees and at least 500ms elapsed
+                        if (deltaHeading > 5 && timeSinceLastWrite > 500) {
+                            lastCompassWriteTimeRef.current = now;
+                            lastCompassWriteHeadingRef.current = newHeading;
+                            
+                            // Safe to fire-and-forget
+                            if (authedUserId) {
+                                updateLivePhoneCompassHeading(authedUserId, activeBoxIdRef.current, newHeading).catch(err => {
+                                    if (__DEV__) console.warn('Compass push failed', err);
+                                });
+                            }
+                        }
                     }).catch(err => {
                         if (__DEV__) console.warn('Heading watcher failed (Simulator?):', err);
                         return null;
@@ -490,7 +517,7 @@ export default function RiderDashboard() {
         return () => {
             if (headingSub) headingSub.remove();
         };
-    }, []);
+    }, [authedUserId]);
 
     // EC-FIX: Sync riderLocation state with redundancy service updates OR fallback to local phone
     // EC-FIX: Decouple Rider Location from Box Location
@@ -560,11 +587,7 @@ export default function RiderDashboard() {
         bookingId: string;
         customerName: string;
     } | null>(null);
-    const authedUserId = useAuthStore((state: any) => state.user?.userId) as string | undefined;
-    const authedUser = useAuthStore((state: any) => state.user) as any;
-    const riderId = authedUserId;
-    const riderName = authedUser?.fullName || authedUser?.name || undefined;
-    const riderPhone = authedUser?.phone || undefined;
+
     const [pushToken, setPushToken] = useState<string | null>(null);
     const [pairingState, setPairingState] = useState<BoxPairingState | null>(null);
 
@@ -1177,19 +1200,32 @@ export default function RiderDashboard() {
 
         const loc = shouldUseRedundancy ? {
             latitude: lastLocation!.latitude,
-            longitude: lastLocation!.longitude
+            longitude: lastLocation!.longitude,
+            speed: lastLocation!.speed,
+            heading: lastLocation!.heading,
         } : (riderLocation ? {
             latitude: riderLocation.coords.latitude,
-            longitude: riderLocation.coords.longitude
+            longitude: riderLocation.coords.longitude,
+            speed: riderLocation.coords.speed ?? undefined,
+            heading: riderLocation.coords.heading ?? undefined,
         } : null);
 
         if (loc) {
+            // Derive the best heading: if stationary, prefer compass; else GPS heading
+            const effectiveSpeed = loc.speed ?? 0;
+            const effectiveHeading = (effectiveSpeed < 1.5 && localPhoneHeadingRef.current !== null)
+                ? localPhoneHeadingRef.current
+                : loc.heading;
+
             updateRiderStatus(
                 riderId,
                 loc.latitude,
                 loc.longitude,
                 !hasActiveDelivery, // Only available if NO active delivery
-                pushToken || undefined
+                pushToken || undefined,
+                effectiveSpeed,
+                effectiveHeading,
+                localPhoneHeadingRef.current // compassHeading — always pass raw device compass
             );
         }
     }, [isOnline, lastLocation, riderLocation, riderId, pushToken, hasActiveDelivery]);

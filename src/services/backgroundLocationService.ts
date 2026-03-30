@@ -79,9 +79,25 @@ async function writePathValue(path: string, value: any): Promise<void> {
 
 async function writeMultiPathUpdates(updatesMap: Record<string, any>): Promise<void> {
     const writePromise = (async () => {
+        // Flatten phone location objects so we don't overwrite compassHeading
+        const flattenedUpdatesMap: Record<string, any> = {};
+        for (const [path, value] of Object.entries(updatesMap)) {
+            // Match locations/{boxId}/phone exactly (but also match if /phone happens to be at the end)
+            // Allow optional leading slash since paths often don't have it
+            if (path.match(/(?:^|\/)locations\/.+\/phone$/) && typeof value === 'object' && value !== null) {
+                for (const [k, v] of Object.entries(value)) {
+                    if (v !== undefined) {
+                        flattenedUpdatesMap[`${path}/${k}`] = v;
+                    }
+                }
+            } else {
+                flattenedUpdatesMap[path] = value;
+            }
+        }
+
         if (nativeDatabase) {
             const normalizedUpdates: Record<string, any> = {};
-            Object.entries(updatesMap).forEach(([path, value]) => {
+            Object.entries(flattenedUpdatesMap).forEach(([path, value]) => {
                 normalizedUpdates[normalizeFirebasePath(path)] = value;
             });
             await nativeDatabase.ref('/').update(normalizedUpdates);
@@ -89,7 +105,7 @@ async function writeMultiPathUpdates(updatesMap: Record<string, any>): Promise<v
         }
 
         const db = getFirebaseDatabase();
-        await update(ref(db), updatesMap);
+        await update(ref(db), flattenedUpdatesMap);
     })();
 
     await Promise.race([

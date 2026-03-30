@@ -176,6 +176,7 @@ export interface RiderLiveLocation {
     lng: number;
     speed?: number;
     heading?: number;
+    compassHeading?: number | null;
     lastUpdated: number;
 }
 
@@ -1327,6 +1328,7 @@ export function subscribeToRiderLocation(
             lng: data.lng,
             speed: data.speed,
             heading: data.heading,
+            compassHeading: data.compassHeading,
             lastUpdated: data.last_updated || Date.now(),
         });
     });
@@ -1357,6 +1359,7 @@ export async function getInitialRiderLocation(
             lng: data.lng,
             speed: data.speed,
             heading: data.heading,
+            compassHeading: data.compassHeading,
             lastUpdated: data.last_updated || Date.now(),
         };
     } catch (error) {
@@ -1596,7 +1599,10 @@ export async function updateRiderStatus(
     lat: number,
     lng: number,
     isAvailable: boolean,
-    pushToken?: string
+    pushToken?: string,
+    speed?: number,
+    heading?: number,
+    compassHeading?: number | null
 ): Promise<boolean> {
     try {
         // console.log('[RiderMatching] updateRiderStatus called for:', riderId, 'Available:', isAvailable);
@@ -1607,6 +1613,10 @@ export async function updateRiderStatus(
             is_available: isAvailable,
             last_updated: Date.now(),
         };
+
+        if (speed !== undefined) updateData.speed = speed;
+        if (heading !== undefined) updateData.heading = heading;
+        if (compassHeading !== undefined) updateData.compassHeading = compassHeading;
 
         if (pushToken) {
             updateData.push_token = pushToken;

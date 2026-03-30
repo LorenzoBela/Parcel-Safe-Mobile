@@ -164,7 +164,7 @@ export default function TrackOrderScreen() {
     const [showCancelModal, setShowCancelModal] = useState(false);
     const [cancelLoading, setCancelLoading] = useState(false);
     const [delivery, setDelivery] = useState<DeliveryRecord | null>(null);
-    const [riderLiveLocation, setRiderLiveLocation] = useState<{ lat: number; lng: number; speed?: number; heading?: number; lastUpdated: number } | null>(null);
+    const [riderLiveLocation, setRiderLiveLocation] = useState<{ lat: number; lng: number; speed?: number; heading?: number; compassHeading?: number | null; lastUpdated: number } | null>(null);
     const [boxLiveLocation, setBoxLiveLocation] = useState<{ lat: number; lng: number; lastUpdated: number } | null>(null);
     const [routeCoordinates, setRouteCoordinates] = useState<number[][] | null>(null);
     const [completedRouteCoords, setCompletedRouteCoords] = useState<number[][] | null>(null); // P1: traveled route
@@ -466,7 +466,8 @@ export default function TrackOrderScreen() {
 
     const riderBearing = headingSmoother.smooth(
         riderLiveLocation?.heading ?? computedBearing,
-        riderLiveLocation?.speed
+        riderLiveLocation?.speed,
+        riderLiveLocation?.compassHeading
     );
 
     useEffect(() => {
@@ -552,6 +553,7 @@ export default function TrackOrderScreen() {
                             lng: riderLoc.lng,
                             speed: riderLoc.speed,
                             heading: riderLoc.heading,
+                            compassHeading: riderLoc.compassHeading,
                             lastUpdated: riderLoc.lastUpdated,
                         });
                         console.log('[TrackOrder] Pre-fetched rider location:', riderLoc.lat, riderLoc.lng);
@@ -640,6 +642,7 @@ export default function TrackOrderScreen() {
                     lng: location.lng,
                     speed: location.speed,
                     heading: location.heading,
+                    compassHeading: location.compassHeading,
                     lastUpdated: location.lastUpdated || Date.now()
                 });
             });
@@ -741,6 +744,8 @@ export default function TrackOrderScreen() {
                 lat: location.lat,
                 lng: location.lng,
                 speed: location.speed,
+                heading: location.heading,
+                compassHeading: location.compassHeading,
                 lastUpdated: location.lastUpdated || Date.now()
             });
         });

@@ -13,6 +13,7 @@ import MapboxGL from '../../components/map/MapboxWrapper';
 import AnimatedRiderMarker from '../../components/map/AnimatedRiderMarker';
 import bearing from '@turf/bearing';
 import { point } from '@turf/helpers';
+import { createHeadingSmoother } from '../../utils/headingUtils';
 import {
     HardwareByBoxId,
     HardwareDiagnostics,
@@ -49,6 +50,8 @@ type BoxMarker = {
     lat: number;
     lng: number;
     speed?: number;
+    heading?: number;
+    compassHeading?: number;
     alert: boolean;
     status: string;
     gpsSource?: string;
@@ -517,6 +520,8 @@ export default function GlobalMapScreen() {
                     lat: typeof location?.latitude === 'number' ? location.latitude : NaN,
                     lng: typeof location?.longitude === 'number' ? location.longitude : NaN,
                     speed: typeof location?.speed === 'number' ? location.speed : undefined,
+                    heading: typeof location?.heading === 'number' ? location.heading : undefined,
+                    compassHeading: typeof location?.compassHeading === 'number' ? location.compassHeading : undefined,
                     alert,
                     status,
                     gpsSource: location?.source,
@@ -592,6 +597,9 @@ export default function GlobalMapScreen() {
     const emaSmoothStates = useRef<Map<string, [number, number]>>(new Map());
     const EMA_ALPHA = 0.4; // 0 = full smooth (laggy), 1 = no smooth (raw)
 
+    // Per-box heading smoother (using web/mobile shared circular EMA)
+    const headingSmoothers = useRef<Map<string, ReturnType<typeof createHeadingSmoother>>>(new Map());
+
     // Animation Loop
     useEffect(() => {
         const updateAnimationTargets = () => {
@@ -609,24 +617,35 @@ export default function GlobalMapScreen() {
 
                 let targetRotation = 0;
                 
-                // Compute bearing from previous → current position
-                const prevTarget = animationStates.current.get(box.id)?.target;
-                if (prevTarget) {
-                    const dLng = smoothedTarget[0] - prevTarget[0];
-                    const dLat = smoothedTarget[1] - prevTarget[1];
-                    const distKm = Math.sqrt(dLng * dLng + dLat * dLat) * 111;
-                    if (distKm > 0.005) { // ~5m threshold
-                        targetRotation = bearing(
-                            point([prevTarget[0], prevTarget[1]]),
-                            point([smoothedTarget[0], smoothedTarget[1]])
-                        );
-                        if (targetRotation < 0) targetRotation += 360;
-                        boxBearings.current.set(box.id, targetRotation);
+                // Use Firebase heading/compassHeading if available, otherwise compute from Turf
+                if (box.heading != null && box.heading >= 0) {
+                    let smoother = headingSmoothers.current.get(box.id);
+                    if (!smoother) {
+                        smoother = createHeadingSmoother();
+                        headingSmoothers.current.set(box.id, smoother);
+                    }
+                    targetRotation = smoother.update(box.heading, box.speed, box.compassHeading);
+                    boxBearings.current.set(box.id, targetRotation);
+                } else {
+                    // Compute bearing from previous → current position
+                    const prevTarget = animationStates.current.get(box.id)?.target;
+                    if (prevTarget) {
+                        const dLng = smoothedTarget[0] - prevTarget[0];
+                        const dLat = smoothedTarget[1] - prevTarget[1];
+                        const distKm = Math.sqrt(dLng * dLng + dLat * dLat) * 111;
+                        if (distKm > 0.005) { // ~5m threshold
+                            targetRotation = bearing(
+                                point([prevTarget[0], prevTarget[1]]),
+                                point([smoothedTarget[0], smoothedTarget[1]])
+                            );
+                            if (targetRotation < 0) targetRotation += 360;
+                            boxBearings.current.set(box.id, targetRotation);
+                        } else {
+                            targetRotation = boxBearings.current.get(box.id) ?? 0;
+                        }
                     } else {
                         targetRotation = boxBearings.current.get(box.id) ?? 0;
                     }
-                } else {
-                    targetRotation = boxBearings.current.get(box.id) ?? 0;
                 }
 
                 let state = animationStates.current.get(box.id);
