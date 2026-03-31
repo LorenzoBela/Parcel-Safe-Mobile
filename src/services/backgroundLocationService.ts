@@ -1026,17 +1026,23 @@ class BackgroundLocationManager {
                 }
             }
 
-            // Always stop + restart to kill any zombie task from a prior session.
-            // If isTaskRegistered=true and we skip restart, the old task still runs
-            // with currentBoxId=null in JS memory — it silently drops every update
-            // and nothing reaches Firebase ("logged but not sending" bug).
-            if (isTaskRegistered) {
-                console.log('[EC-15] Task already registered — stopping zombie before restart');
-                try {
-                    await Location.stopLocationUpdatesAsync(CONFIG.TASK_NAME);
-                } catch (stopErr) {
-                    console.warn('[EC-15] Could not stop existing task (continuing):', stopErr);
+            // Aggressively attempt to tear down any corrupted native state
+            // ALWAYS execute this, even if `isTaskRegistered` returns false.
+            // The JS bridge can falsely report `false` while Native Android holds corrupted state.
+            console.log('[EC-15] Aggressively clearing native tracking states before start...');
+            try {
+                // Ignore any internal "Task not found" exceptions.
+                await Location.stopLocationUpdatesAsync(CONFIG.TASK_NAME).catch(() => {});
+                await TaskManager.unregisterTaskAsync(CONFIG.TASK_NAME).catch(() => {});
+                
+                if (Platform.OS === 'android') {
+                    // Critical wait for Native Android Foreground Service to fully self-destruct.
+                    // A larger delay (1500ms) guarantees the system completely flushes
+                    // SharedPreferences for the notification before restarting.
+                    await new Promise(resolve => setTimeout(resolve, 1500));
                 }
+            } catch (cleanupErr) {
+                console.warn('[EC-15] Cleanup threw (ignoring):', cleanupErr);
             }
 
             // Start background location updates (Expo Task Manager)
@@ -1177,6 +1183,7 @@ class BackgroundLocationManager {
 
             if (isTaskRegistered) {
                 await Location.stopLocationUpdatesAsync(CONFIG.TASK_NAME);
+                await TaskManager.unregisterTaskAsync(CONFIG.TASK_NAME).catch(() => {});
             }
         } catch (error) {
             console.error('[EC-15] Error stopping location updates:', error);

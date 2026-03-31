@@ -9,7 +9,9 @@ import AppNavigator from './src/navigation/AppNavigator';
 import { configureGoogleSignIn } from './src/services/auth';
 import { ThemeProvider, useAppTheme } from './src/context/ThemeContext';
 import GlobalPremiumAlert from './src/components/modals/GlobalPremiumAlert';
+import OTAUpdateModal from './src/components/modals/OTAUpdateModal';
 import ResumeScreen from './src/screens/auth/ResumeScreen';
+import { useOTAUpdateMonitor } from './src/hooks/useOTAUpdateMonitor';
 
 import * as SplashScreen from 'expo-splash-screen';
 import * as Font from 'expo-font';
@@ -37,6 +39,7 @@ let supabase = null;
 
 const AppContent = () => {
   const { theme, isDarkMode } = useAppTheme();
+  const { showModal, handleRestart, handleDismiss, currentlyRunning } = useOTAUpdateMonitor();
   const [appState, setAppState] = useState(AppState.currentState);
   const [isResuming, setIsResuming] = useState(false);
   // Only trigger ResumeScreen when the app truly went to background (not just inactive).
@@ -261,6 +264,12 @@ const AppContent = () => {
       />
       <AppNavigator />
       <GlobalPremiumAlert />
+      <OTAUpdateModal
+        visible={showModal}
+        onRestart={handleRestart}
+        onDismiss={handleDismiss}
+        runtimeVersion={currentlyRunning?.runtimeVersion}
+      />
       {isResuming && (
         <ResumeScreen onReady={() => setIsResuming(false)} />
       )}

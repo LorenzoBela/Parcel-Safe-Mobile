@@ -53,7 +53,7 @@ export const consolidateLocation = (boxLoc: LocationData | null, phoneLoc: Locat
         const wPhone = (1 / (phoneAccM * phoneAccM)) * distanceFade;
         const wTotal = wBox + wPhone;
 
-        return {
+        const blended: LocationData = {
             ...boxLoc,
             latitude: (boxLoc.latitude * wBox + phoneLoc.latitude * wPhone) / wTotal,
             longitude: (boxLoc.longitude * wBox + phoneLoc.longitude * wPhone) / wTotal,
@@ -61,6 +61,20 @@ export const consolidateLocation = (boxLoc: LocationData | null, phoneLoc: Locat
             source: 'consolidated' as any,
             timestamp: Math.max(boxTime, phoneTime),
         };
+
+        // Merge phone sensor fields — the box hardware has no compass sensor,
+        // so compassHeading is only available from the phone.
+        if (phoneLoc.compassHeading != null && blended.compassHeading == null) {
+            blended.compassHeading = phoneLoc.compassHeading;
+        }
+        if (phoneLoc.speed != null && (blended.speed == null || blended.speed === 0)) {
+            blended.speed = phoneLoc.speed;
+        }
+        if (phoneLoc.heading != null && (blended.heading == null || blended.heading === 0)) {
+            blended.heading = phoneLoc.heading;
+        }
+
+        return blended;
     }
 
     if (boxFresh) return boxLoc;

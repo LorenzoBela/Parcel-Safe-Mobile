@@ -2226,6 +2226,7 @@ export default function RiderDashboard() {
                                     {riderLocation && (
                                         <Text variant="bodySmall" style={{ color: c.textSec, fontSize: 10, marginTop: 1 }}>
                                             {riderLocation.coords.latitude.toFixed(5)}°, {riderLocation.coords.longitude.toFixed(5)}°
+                                            {localPhoneHeading != null ? `  •  🧭 ${Math.round(localPhoneHeading)}°` : ''}
                                         </Text>
                                     )}
                                 </View>
