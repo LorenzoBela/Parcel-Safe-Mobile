@@ -65,6 +65,7 @@ export async function dispatchSecurityNotification(
     targetUserId?: string
 ): Promise<void> {
     try {
+        const hasExplicitTarget = Boolean(deliveryId || targetUserId);
         await fetch(`${API_BASE_URL}/api/notifications/send`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -72,6 +73,7 @@ export async function dispatchSecurityNotification(
                 type,
                 ...(deliveryId ? { deliveryId, includeCustomer: true, includeRider: true } : {}),
                 ...(targetUserId ? { targetUserId } : {}),
+                ...(!hasExplicitTarget ? { targetRole: 'ADMIN' as const } : {}),
                 includeAdmins: true,
                 context,
             }),

@@ -1,10 +1,8 @@
-import React, { useRef } from 'react';
+import React from 'react';
 import {
   StyleSheet,
   View,
   TouchableOpacity,
-  PanResponder,
-  Animated,
 } from 'react-native';
 import { Modal, Portal, Text } from 'react-native-paper';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -38,61 +36,22 @@ const darkC: ColorPalette = {
 interface OTAUpdateModalProps {
   visible: boolean;
   onRestart: () => void;
-  onDismiss: () => void;
   runtimeVersion?: string | null;
 }
 
 /**
  * A premium bottom-sheet modal that prompts the user to restart the app
- * after an OTA update has been downloaded. Mirrors the exact same design
- * language as `GlobalPremiumAlert` (drag indicator, icon circle, rounded
- * pill buttons, dark/light palette, PanResponder swipe-to-dismiss).
+ * after an OTA update has been downloaded. Mirrors the same visual
+ * language as GlobalPremiumAlert, but is intentionally non-dismissible.
  */
 export default function OTAUpdateModal({
   visible,
   onRestart,
-  onDismiss,
   runtimeVersion,
 }: OTAUpdateModalProps) {
   const { isDarkMode } = useAppTheme();
   const c = isDarkMode ? darkC : lightC;
   const insets = useSafeAreaInsets();
-
-  // ── Swipe-to-dismiss (same logic as GlobalPremiumAlert) ──────────
-  const panY = useRef(new Animated.Value(0)).current;
-
-  const resetPositionAnim = Animated.spring(panY, {
-    toValue: 0,
-    useNativeDriver: true,
-    bounciness: 0,
-  });
-
-  const panResponder = useRef(
-    PanResponder.create({
-      onStartShouldSetPanResponder: () => false,
-      onStartShouldSetPanResponderCapture: () => false,
-      onMoveShouldSetPanResponder: (_, gs) =>
-        gs.dy > 5 && Math.abs(gs.dx) < 30,
-      onMoveShouldSetPanResponderCapture: (_, gs) =>
-        gs.dy > 5 && Math.abs(gs.dx) < 30,
-      onPanResponderMove: (_, gs) => {
-        if (gs.dy > 0) panY.setValue(gs.dy);
-      },
-      onPanResponderRelease: (_, gs) => {
-        if (gs.dy > 60 || gs.vy > 0.5) {
-          handleDismiss();
-        } else {
-          resetPositionAnim.start();
-        }
-      },
-    }),
-  ).current;
-
-  const handleDismiss = () => {
-    onDismiss();
-    // Reset pan for next appearance
-    setTimeout(() => panY.setValue(0), 300);
-  };
 
   return (
     <Portal>
@@ -112,10 +71,7 @@ export default function OTAUpdateModal({
         ]}
         style={styles.modalOverlay}
       >
-        <Animated.View
-          style={{ transform: [{ translateY: panY }] }}
-          {...panResponder.panHandlers}
-        >
+        <View>
           {/* ── Drag indicator ─────────────────────────────────── */}
           <View style={styles.dragIndicator} />
 
@@ -141,7 +97,7 @@ export default function OTAUpdateModal({
 
             {/* ── Subtitle ───────────────────────────────────── */}
             <Text style={[styles.description, { color: c.textSecondary }]}>
-              A newer version has been downloaded and is ready to install.
+              A newer version has been downloaded and must be applied now.
             </Text>
 
             {/* ── Version pill ────────────────────────────────── */}
@@ -160,28 +116,6 @@ export default function OTAUpdateModal({
 
             {/* ── Buttons ────────────────────────────────────── */}
             <View style={styles.buttonContainer}>
-              {/* Later (secondary) */}
-              <TouchableOpacity
-                style={[
-                  styles.button,
-                  {
-                    backgroundColor: c.pillBg,
-                    borderWidth: 1,
-                    borderColor: c.border,
-                  },
-                ]}
-                onPress={handleDismiss}
-                activeOpacity={0.7}
-              >
-                <Text
-                  numberOfLines={1}
-                  adjustsFontSizeToFit
-                  style={[styles.buttonText, { color: c.textPrimary }]}
-                >
-                  Later
-                </Text>
-              </TouchableOpacity>
-
               {/* Restart Now (primary) */}
               <TouchableOpacity
                 style={[
@@ -204,7 +138,7 @@ export default function OTAUpdateModal({
               </TouchableOpacity>
             </View>
           </View>
-        </Animated.View>
+        </View>
       </Modal>
     </Portal>
   );

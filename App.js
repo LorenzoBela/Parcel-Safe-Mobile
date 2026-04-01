@@ -35,11 +35,12 @@ let registerForPushNotifications = null;
 let onTokenRefresh = null;
 let setupFCMForegroundHandler = null;
 let initializeScheduledPromos = null;
+let recordPromoHistoryItem = null;
 let supabase = null;
 
 const AppContent = () => {
   const { theme, isDarkMode } = useAppTheme();
-  const { showModal, handleRestart, handleDismiss, currentlyRunning } = useOTAUpdateMonitor();
+  const { showModal, handleRestart, currentlyRunning } = useOTAUpdateMonitor();
   const [appState, setAppState] = useState(AppState.currentState);
   const [isResuming, setIsResuming] = useState(false);
   // Only trigger ResumeScreen when the app truly went to background (not just inactive).
@@ -86,6 +87,7 @@ const AppContent = () => {
         onTokenRefresh = notifService.onTokenRefresh;
         setupFCMForegroundHandler = notifService.setupFCMForegroundHandler;
         initializeScheduledPromos = promoService.initializeScheduledPromos;
+        recordPromoHistoryItem = promoService.recordPromoHistoryItem;
         supabase = supabaseModule.supabase;
       } catch (error) {
         // if (__DEV__) console.log('[App] Notification services not available - requires dev build');
@@ -139,6 +141,16 @@ const AppContent = () => {
           (response) => {
             // if (__DEV__) console.log('[App] Notification tapped');
             const data = response.notification.request.content.data;
+            const content = response.notification.request.content;
+
+            if (
+              recordPromoHistoryItem
+              && (data?.type === 'PROMO' || data?.type === 'PROMO_SCHEDULED')
+              && content?.title
+              && content?.body
+            ) {
+              recordPromoHistoryItem(String(content.title), String(content.body)).catch(() => { });
+            }
 
             if (data.type === 'new_order') {
               // Navigate to order screen
@@ -146,6 +158,23 @@ const AppContent = () => {
           }
         );
         cleanupFunctions.push(() => notificationResponseSubscription.remove());
+
+        const notificationReceivedSubscription = Notifications.addNotificationReceivedListener(
+          (notification) => {
+            const data = notification.request.content.data;
+            const content = notification.request.content;
+
+            if (
+              recordPromoHistoryItem
+              && (data?.type === 'PROMO' || data?.type === 'PROMO_SCHEDULED')
+              && content?.title
+              && content?.body
+            ) {
+              recordPromoHistoryItem(String(content.title), String(content.body)).catch(() => { });
+            }
+          }
+        );
+        cleanupFunctions.push(() => notificationReceivedSubscription.remove());
 
         // FCM foreground handler — shows heads-up notification when app is open
         if (setupFCMForegroundHandler) {
@@ -267,7 +296,6 @@ const AppContent = () => {
       <OTAUpdateModal
         visible={showModal}
         onRestart={handleRestart}
-        onDismiss={handleDismiss}
         runtimeVersion={currentlyRunning?.runtimeVersion}
       />
       {isResuming && (

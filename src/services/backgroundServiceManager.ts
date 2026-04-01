@@ -14,7 +14,13 @@
 import { Platform, AppState, AppStateStatus, Linking, Alert } from 'react-native';
 import * as Notifications from 'expo-notifications';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { scheduleDeliveryReminderNotification, NOTIFICATION_CHANNELS, showIncomingOrderNotification } from './pushNotificationService';
+import {
+    scheduleDeliveryReminderNotification,
+    NOTIFICATION_CHANNELS,
+    showIncomingOrderNotification,
+    showSecurityNotification,
+    showStatusNotification,
+} from './pushNotificationService';
 import { PremiumAlert } from '../services/PremiumAlertService';
 
 // Native modules - conditionally imported to prevent startup crashes
@@ -201,11 +207,18 @@ function setupFCMHandlers(): void {
             }
         }
 
-        if (remoteMessage.data?.type === 'order') {
-            await emitEvent('order_received', remoteMessage.data);
-            await showOrderNotification(remoteMessage.data);
-        } else if (remoteMessage.data?.type === 'status') {
-            await emitEvent('status_update', remoteMessage.data);
+        const data = remoteMessage.data || {};
+        const type = String(data.type || '').toUpperCase();
+
+        if (type === 'ORDER' || type === 'INCOMING_ORDER') {
+            await emitEvent('order_received', data);
+            await showOrderNotification(data);
+            return;
+        }
+
+        if (type) {
+            await emitEvent('status_update', data);
+            await showPushDataLocally(data);
         }
     });
 
@@ -234,21 +247,45 @@ export async function handleBackgroundMessage(remoteMessage: any): Promise<void>
     }
 
     const data = remoteMessage.data || {};
+    const type = String(data.type || '').toUpperCase();
 
-    if (data.type === 'order') {
+    if (type === 'ORDER' || type === 'INCOMING_ORDER') {
         // Process order even when app is in background/killed
         await emitEvent('order_received', data);
         await showOrderNotification(data);
+    } else if (type) {
+        await emitEvent('status_update', data);
+        await showPushDataLocally(data);
     }
 
     // When the customer receives an ORDER_ACCEPTED push (rider accepted their booking),
     // schedule a local 2-hour reminder so they know delivery is inbound.
-    if (data.type === 'ORDER_ACCEPTED') {
+    if (type === 'ORDER_ACCEPTED') {
         await scheduleDeliveryReminderNotification(
             data.riderName || 'Your rider',
             data.deliveryId
         );
     }
+}
+
+const SECURITY_TYPES = new Set([
+    'TAMPER_DETECTED',
+    'THEFT_REPORTED',
+    'GEOFENCE_BREACH',
+    'SECURITY_HOLD',
+]);
+
+async function showPushDataLocally(data: Record<string, any>): Promise<void> {
+    const type = String(data.type || '').toUpperCase();
+    const title = String(data.title || 'Parcel Safe');
+    const body = String(data.body || 'You have a new notification.');
+
+    if (SECURITY_TYPES.has(type)) {
+        await showSecurityNotification(title, body, data);
+        return;
+    }
+
+    await showStatusNotification(title, body, data);
 }
 
 // ==================== Notification Display ====================

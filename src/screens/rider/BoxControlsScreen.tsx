@@ -260,6 +260,14 @@ export default function BoxControlsScreen() {
     // Last-resort fallback for dev screens when box has no active delivery.
     const activeDeliveryId = routeDeliveryId || boxState?.delivery_id || 'DEL_001';
     const activeOtpCode = boxState?.otp_code || '';
+    const incidentPhaseLabel =
+        activeTamperIncident?.status === 'PENDING_REVIEW'
+            ? 'Step 2 of 3: Admin review in progress'
+            : activeTamperIncident?.status === 'CLOSED'
+                ? 'Step 3 of 3: Incident resolved'
+                : tamperState?.detected
+                    ? 'Step 1 of 3: Rider evidence required'
+                    : null;
 
     // Derive lock state from real data
     const isLocked = boxState?.status === 'LOCKED';
@@ -1117,6 +1125,9 @@ export default function BoxControlsScreen() {
                                     ? 'Evidence submitted. Awaiting admin review.'
                                     : 'Box in Security Hold. Submit required rider evidence.'}
                             </Text>
+                            {incidentPhaseLabel && (
+                                <Text style={[styles.alertText, { color: c.textSec, marginTop: 4 }]}>{incidentPhaseLabel}</Text>
+                            )}
                         </View>
                     </Surface>
                 )}

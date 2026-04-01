@@ -17,6 +17,8 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { NOTIFICATION_CHANNELS, isNotificationCategoryEnabled } from './pushNotificationService';
 
 const LAST_PROMO_KEY = '@last_promo_notification';
+const PROMO_HISTORY_KEY = '@promo_notification_history';
+const MAX_PROMO_HISTORY = 40;
 // 110 minutes — prevents double-fire on adjacent hourly slots
 const MIN_PROMO_INTERVAL_MS = 110 * 60 * 1000;
 
@@ -49,6 +51,13 @@ function isWithinPromoHours(): boolean {
 interface PromoAd {
     title: string;
     body: string;
+}
+
+export interface PromoHistoryItem {
+    id: string;
+    title: string;
+    body: string;
+    createdAt: string;
 }
 
 // Kept in sync with web/src/lib/notificationService.ts PROMO_ADS
@@ -91,6 +100,58 @@ function getRandomPromoAd(): PromoAd {
     return PROMO_ADS[Math.floor(Math.random() * PROMO_ADS.length)];
 }
 
+async function loadPromoHistory(): Promise<PromoHistoryItem[]> {
+    try {
+        const raw = await AsyncStorage.getItem(PROMO_HISTORY_KEY);
+        if (!raw) return [];
+        const parsed = JSON.parse(raw);
+        if (!Array.isArray(parsed)) return [];
+        return parsed.filter((item) =>
+            item
+            && typeof item.id === 'string'
+            && typeof item.title === 'string'
+            && typeof item.body === 'string'
+            && typeof item.createdAt === 'string'
+        );
+    } catch {
+        return [];
+    }
+}
+
+async function savePromoHistory(items: PromoHistoryItem[]): Promise<void> {
+    try {
+        await AsyncStorage.setItem(PROMO_HISTORY_KEY, JSON.stringify(items.slice(0, MAX_PROMO_HISTORY)));
+    } catch {
+        // Ignore local history cache failures
+    }
+}
+
+export async function recordPromoHistoryItem(title: string, body: string, createdAt?: string): Promise<void> {
+    const timestamp = createdAt || new Date().toISOString();
+    const nextItem: PromoHistoryItem = {
+        id: `promo-${Date.parse(timestamp)}-${Math.random().toString(36).slice(2, 8)}`,
+        title,
+        body,
+        createdAt: timestamp,
+    };
+
+    const current = await loadPromoHistory();
+    const duplicate = current.some((item) =>
+        item.title === nextItem.title
+        && item.body === nextItem.body
+        && Math.abs(Date.parse(item.createdAt) - Date.parse(nextItem.createdAt)) < 2 * 60 * 1000
+    );
+
+    if (duplicate) return;
+
+    await savePromoHistory([nextItem, ...current]);
+}
+
+export async function getPromoHistory(limit = 20): Promise<PromoHistoryItem[]> {
+    const current = await loadPromoHistory();
+    return current.slice(0, Math.max(1, limit));
+}
+
 // ============ Cooldown check ============
 
 async function shouldSendPromo(): Promise<boolean> {
@@ -126,6 +187,7 @@ async function performPromoSmartCheck(): Promise<void> {
                 ? { channelId: NOTIFICATION_CHANNELS.PROMOTIONS }
                 : null,
         });
+            await recordPromoHistoryItem(ad.title, ad.body);
         await AsyncStorage.setItem(LAST_PROMO_KEY, Date.now().toString());
         if (__DEV__) console.log('[ScheduledPromo] Smart-check promo fired:', ad.title);
     } catch (error) {

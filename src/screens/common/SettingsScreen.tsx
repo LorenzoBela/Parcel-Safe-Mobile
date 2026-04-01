@@ -9,6 +9,8 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { signOut, signInWithGoogleAndSyncProfile } from '../../services/auth';
 import useAuthStore from '../../store/authStore';
 import { useSafeAreaInsets, SafeAreaView } from 'react-native-safe-area-context';
+import * as Updates from 'expo-updates';
+import * as Application from 'expo-application';
 import {
     clearNotificationPreferencesCache,
 } from '../../services/pushNotificationService';
@@ -63,6 +65,8 @@ export default function SettingsScreen() {
     const role = useAuthStore((state: any) => state.role);
     const [profile, setProfile] = useState<any>(null);
     const [isSwitching, setIsSwitching] = useState(false);
+    const [isCheckingUpdate, setIsCheckingUpdate] = useState(false);
+    const [updateStatus, setUpdateStatus] = useState('Tap to check for updates');
 
     const logoPulse = usePulseAnimation(0.5, 800);
     const progressAnim = useRef(new Animated.Value(0)).current;
@@ -98,6 +102,47 @@ export default function SettingsScreen() {
     useFocusEffect(useCallback(() => {
         fetchProfile();
     }, []));
+
+    const handleManualUpdateCheck = async () => {
+        if (isCheckingUpdate) return;
+
+        if (__DEV__) {
+            setUpdateStatus('Unavailable in development builds');
+            return;
+        }
+
+        setIsCheckingUpdate(true);
+        setUpdateStatus('Checking for updates...');
+
+        try {
+            const checkResult = await Updates.checkForUpdateAsync();
+
+            if (!checkResult.isAvailable) {
+                setUpdateStatus('You already have the latest version');
+                return;
+            }
+
+            setUpdateStatus('Downloading update...');
+            const fetchResult = await Updates.fetchUpdateAsync();
+
+            if (fetchResult.isNew) {
+                setUpdateStatus('Update ready. Restarting...');
+            } else {
+                setUpdateStatus('Update already downloaded. Restarting...');
+            }
+
+            await Updates.reloadAsync();
+        } catch (error) {
+            console.error('Manual OTA update check failed:', error);
+            setUpdateStatus('Update check failed. Tap to retry.');
+        } finally {
+            setIsCheckingUpdate(false);
+        }
+    };
+
+    const appVersion = Application.nativeApplicationVersion || 'Unknown';
+    const buildVersion = Application.nativeBuildVersion ? ` (${Application.nativeBuildVersion})` : '';
+    const runtimeVersion = Updates.runtimeVersion || 'Unknown';
 
     const handleLogout = async () => {
         try {
@@ -236,6 +281,20 @@ export default function SettingsScreen() {
                             />
                         }
                     />
+                    <SettingsRow
+                        icon="update"
+                        label="Check for Updates"
+                        subtitle={updateStatus}
+                        c={c}
+                        onPress={handleManualUpdateCheck}
+                        right={
+                            isCheckingUpdate ? (
+                                <ActivityIndicator size="small" color={c.textSec} />
+                            ) : (
+                                <MaterialCommunityIcons name="refresh" size={20} color={c.textTer} />
+                            )
+                        }
+                    />
                 </View>
             </Animated.View>
 
@@ -275,7 +334,8 @@ export default function SettingsScreen() {
                     <Text style={[styles.logoutText, { color: c.red }]}>Log Out</Text>
                 </TouchableOpacity>
 
-                <Text style={[styles.version, { color: c.textTer }]}>App Version 1.0.1</Text>
+                <Text style={[styles.version, { color: c.textTer }]}>App Version {appVersion}{buildVersion}</Text>
+                <Text style={[styles.versionRuntime, { color: c.textTer }]}>Runtime {runtimeVersion}</Text>
             </Animated.View>
         </ScrollView>
         </Animated.View>
@@ -328,6 +388,7 @@ const styles = StyleSheet.create({
     },
     logoutText: { fontSize: 15, fontFamily: 'Inter_600SemiBold' },
     version: { textAlign: 'center', fontSize: 12, marginTop: 16 },
+    versionRuntime: { textAlign: 'center', fontSize: 11, marginTop: 4 },
 
     // Loading Screen Styles
     loadingContainer: {

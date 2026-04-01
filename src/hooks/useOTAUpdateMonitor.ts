@@ -78,12 +78,10 @@ export function useOTAUpdateMonitor() {
 
   // ── Callbacks for the modal ──────────────────────────────────────
   const handleRestart = useCallback(() => {
-    Updates.reloadAsync();
+    Updates.reloadAsync().catch((err) => {
+      if (__DEV__) console.warn('[OTA] reloadAsync failed:', err);
+    });
   }, []);
 
-  const handleDismiss = useCallback(() => {
-    setShowModal(false);
-  }, []);
-
-  return { showModal, handleRestart, handleDismiss, currentlyRunning };
+  return { showModal, handleRestart, currentlyRunning };
 }

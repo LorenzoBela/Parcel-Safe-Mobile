@@ -8,7 +8,7 @@
  * - Relative timestamps
  */
 
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import {
     View,
     FlatList,
@@ -16,9 +16,9 @@ import {
     TouchableOpacity,
     RefreshControl,
     StatusBar,
-    Alert,
+    ScrollView,
 } from 'react-native';
-import { Text, Divider } from 'react-native-paper';
+import { Text } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -36,14 +36,75 @@ import {
 
 dayjs.extend(relativeTime);
 
+type NotificationTab = 'ORDER_UPDATES' | 'ADS' | 'OTHER';
+
+const TAB_LABELS: Record<NotificationTab, string> = {
+    ORDER_UPDATES: 'Order Updates',
+    ADS: 'Ads',
+    OTHER: 'Other',
+};
+
+const TAB_ICONS: Record<NotificationTab, string> = {
+    ORDER_UPDATES: 'truck-fast-outline',
+    ADS: 'bullhorn-outline',
+    OTHER: 'dots-horizontal-circle-outline',
+};
+
+const TYPE_ALLOWED_ROLES: Record<string, Array<'admin' | 'customer' | 'rider'>> = {
+    ORDER_ACCEPTED: ['customer'],
+    PARCEL_PICKED_UP: ['customer'],
+    RIDER_EN_ROUTE: ['customer'],
+    RIDER_ARRIVED: ['customer'],
+    DELIVERY_COMPLETED: ['customer'],
+    ORDER_CANCELLED_BY_CUSTOMER: ['rider', 'admin'],
+    ORDER_CANCELLED_BY_RIDER: ['customer', 'admin'],
+    DELIVERY_CANCELLED_REFUND_PROCESSING: ['customer', 'admin'],
+    TAMPER_DETECTED: ['admin', 'customer', 'rider'],
+    SECURITY_HOLD: ['admin', 'customer', 'rider'],
+    DELIVERY_RESUMED_AFTER_REVIEW: ['admin', 'customer', 'rider'],
+    RIDER_EVIDENCE_SUBMITTED: ['admin', 'rider'],
+    ADMIN_REVIEW_REQUIRED: ['admin'],
+    THEFT_REPORTED: ['admin'],
+    BOX_OFFLINE: ['admin'],
+    LOW_BATTERY: ['admin'],
+    GEOFENCE_BREACH: ['admin'],
+    PROMO: ['customer', 'rider', 'admin'],
+};
+
+function isNotificationVisibleForRole(notification: AppNotification, role?: string): boolean {
+    if (!role) return true;
+    const normalizedRole = role.toLowerCase();
+    if (normalizedRole !== 'admin' && normalizedRole !== 'customer' && normalizedRole !== 'rider') {
+        return true;
+    }
+
+    const allowedRoles = TYPE_ALLOWED_ROLES[notification.type];
+    if (!allowedRoles) return true;
+
+    return allowedRoles.includes(normalizedRole);
+}
+
 // ── Icon mapping ───────────────────────────────────────────────────────────────
 
 function notificationIcon(type: string): string {
     switch (type) {
-        case 'DELIVERY_STATUS': return 'truck-delivery';
         case 'ORDER_ACCEPTED': return 'check-circle-outline';
-        case 'ORDER_CANCELLED': return 'close-circle-outline';
-        case 'TAMPER_ALERT': return 'alert-decagram';
+        case 'PARCEL_PICKED_UP': return 'package-variant-closed';
+        case 'RIDER_EN_ROUTE': return 'motorbike';
+        case 'RIDER_ARRIVED': return 'map-marker-check-outline';
+        case 'DELIVERY_COMPLETED': return 'check-decagram-outline';
+        case 'ORDER_CANCELLED_BY_CUSTOMER': return 'close-circle-outline';
+        case 'ORDER_CANCELLED_BY_RIDER': return 'close-circle-outline';
+        case 'DELIVERY_CANCELLED_REFUND_PROCESSING': return 'cash-refund';
+        case 'TAMPER_DETECTED': return 'alert-decagram';
+        case 'THEFT_REPORTED': return 'shield-alert-outline';
+        case 'GEOFENCE_BREACH': return 'map-marker-alert-outline';
+        case 'SECURITY_HOLD': return 'shield-lock-outline';
+        case 'DELIVERY_RESUMED_AFTER_REVIEW': return 'shield-check-outline';
+        case 'LOW_BATTERY': return 'battery-alert-variant-outline';
+        case 'BOX_OFFLINE': return 'wifi-off';
+        case 'PROMO': return 'bullhorn-outline';
+        case 'DELIVERY_STATUS': return 'truck-delivery';
         case 'SYSTEM': return 'information-outline';
         default: return 'bell-outline';
     }
@@ -51,9 +112,24 @@ function notificationIcon(type: string): string {
 
 function notificationColor(type: string, colors: { green: string; red: string; orange: string; accent: string }): string {
     switch (type) {
-        case 'ORDER_ACCEPTED': return colors.green;
-        case 'ORDER_CANCELLED': return colors.red;
-        case 'TAMPER_ALERT': return colors.red;
+        case 'ORDER_ACCEPTED':
+        case 'PARCEL_PICKED_UP':
+        case 'RIDER_EN_ROUTE':
+        case 'RIDER_ARRIVED':
+        case 'DELIVERY_COMPLETED':
+        case 'DELIVERY_RESUMED_AFTER_REVIEW':
+            return colors.green;
+        case 'ORDER_CANCELLED_BY_CUSTOMER':
+        case 'ORDER_CANCELLED_BY_RIDER':
+        case 'DELIVERY_CANCELLED_REFUND_PROCESSING':
+        case 'TAMPER_DETECTED':
+        case 'THEFT_REPORTED':
+        case 'SECURITY_HOLD':
+            return colors.red;
+        case 'GEOFENCE_BREACH':
+        case 'LOW_BATTERY':
+        case 'BOX_OFFLINE':
+            return colors.orange;
         default: return colors.accent;
     }
 }
@@ -83,7 +159,9 @@ export default function NotificationListScreen() {
     const c = isDarkMode ? dark : light;
 
     const userId = useAuthStore((state: any) => state.user?.userId) as string | undefined;
+    const role = useAuthStore((state: any) => state.role || state.user?.role) as string | undefined;
     const [notifications, setNotifications] = useState<AppNotification[]>([]);
+    const [activeTab, setActiveTab] = useState<NotificationTab>('ORDER_UPDATES');
     const [refreshing, setRefreshing] = useState(false);
     const [loading, setLoading] = useState(true);
 
@@ -113,18 +191,45 @@ export default function NotificationListScreen() {
         setRefreshing(false);
     }, [loadNotifications]);
 
+    const roleFilteredNotifications = useMemo(
+        () => notifications.filter((notification) => isNotificationVisibleForRole(notification, role)),
+        [notifications, role],
+    );
+
+    const tabNotifications = useMemo(
+        () => roleFilteredNotifications.filter((notification) => notification.category === activeTab),
+        [roleFilteredNotifications, activeTab],
+    );
+
+    const tabCounts = useMemo(() => {
+        return roleFilteredNotifications.reduce<Record<NotificationTab, number>>((acc, notification) => {
+            const category = notification.category as NotificationTab;
+            if (category in acc) {
+                acc[category] += 1;
+            }
+            return acc;
+        }, {
+            ORDER_UPDATES: 0,
+            ADS: 0,
+            OTHER: 0,
+        });
+    }, [roleFilteredNotifications]);
+
     // ── Actions ────────────────────────────────────────────────────────────────
 
     const handleMarkRead = useCallback(async (notifId: string) => {
+        const target = notifications.find((notification) => notification.id === notifId);
         try {
-            await markNotificationsRead({ notificationId: notifId });
+            if (target?.source !== 'local-promo') {
+                await markNotificationsRead({ notificationId: notifId });
+            }
             setNotifications((prev) =>
                 prev.map((n) => (n.id === notifId ? { ...n, read: true } : n)),
             );
         } catch (error) {
             console.warn('[NotificationList] markRead error:', error);
         }
-    }, []);
+    }, [notifications]);
 
     const handleMarkAllRead = useCallback(async () => {
         if (!userId) return;
@@ -142,7 +247,10 @@ export default function NotificationListScreen() {
         setNotifications((prev) => prev.filter((n) => n.id !== notifId));
 
         try {
-            await clearNotifications({ notificationId: notifId });
+            const target = previousNotifications.find((notification) => notification.id === notifId);
+            if (target?.source !== 'local-promo') {
+                await clearNotifications({ notificationId: notifId });
+            }
         } catch (error) {
             console.warn('[NotificationList] clear error:', error);
             // Revert UI on failure
@@ -244,7 +352,7 @@ export default function NotificationListScreen() {
     const EmptyState = () => (
         <View style={styles.emptyContainer}>
             <MaterialCommunityIcons name="bell-off-outline" size={64} color={c.textTer} />
-            <Text style={[styles.emptyTitle, { color: c.textSec }]}>No Notifications</Text>
+            <Text style={[styles.emptyTitle, { color: c.textSec }]}>No {TAB_LABELS[activeTab]}</Text>
             <Text style={[styles.emptySubtitle, { color: c.textTer }]}>
                 You're all caught up!
             </Text>
@@ -253,7 +361,7 @@ export default function NotificationListScreen() {
 
     // ── Main ───────────────────────────────────────────────────────────────────
 
-    const hasUnread = notifications.some((n) => !n.read);
+    const hasUnread = tabNotifications.some((n) => !n.read);
 
     return (
         <View style={[styles.container, { backgroundColor: c.bg, paddingTop: insets.top }]}>
@@ -279,16 +387,62 @@ export default function NotificationListScreen() {
                 </View>
             </View>
 
+            <View style={[styles.tabsOuter, { borderBottomColor: c.border }]}>
+                <ScrollView 
+                    horizontal 
+                    showsHorizontalScrollIndicator={false}
+                    contentContainerStyle={styles.tabsContainer}
+                >
+                    {(Object.keys(TAB_LABELS) as NotificationTab[]).map((tab) => {
+                        const selected = activeTab === tab;
+                        return (
+                            <TouchableOpacity
+                                key={tab}
+                                onPress={() => setActiveTab(tab)}
+                                activeOpacity={0.7}
+                                style={[
+                                    styles.tabButton,
+                                    selected && { borderBottomColor: c.text }
+                                ]}
+                            >
+                                <View style={styles.tabInner}>
+                                    <Text style={[
+                                        styles.tabLabel, 
+                                        { color: selected ? c.text : c.textSec },
+                                        selected && { fontFamily: 'Inter_700Bold' }
+                                    ]}>
+                                        {TAB_LABELS[tab]}
+                                    </Text>
+                                    {tabCounts[tab] > 0 && (
+                                        <View style={[
+                                            styles.tabCountPill, 
+                                            { backgroundColor: selected ? c.text : c.card }
+                                        ]}> 
+                                            <Text style={[
+                                                styles.tabCountText, 
+                                                { color: selected ? c.bg : c.textSec }
+                                            ]}>
+                                                {tabCounts[tab]}
+                                            </Text>
+                                        </View>
+                                    )}
+                                </View>
+                            </TouchableOpacity>
+                        );
+                    })}
+                </ScrollView>
+            </View>
+
             {/* ── List ────────────────────────────────────────────────────── */}
             <FlatList
-                data={notifications}
+                data={tabNotifications}
                 keyExtractor={(item) => item.id}
                 renderItem={renderItem}
                 ListEmptyComponent={!loading ? EmptyState : null}
                 refreshControl={
                     <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
                 }
-                contentContainerStyle={notifications.length === 0 ? styles.emptyList : undefined}
+                contentContainerStyle={tabNotifications.length === 0 ? styles.emptyList : undefined}
                 showsVerticalScrollIndicator={false}
             />
         </View>
@@ -310,6 +464,43 @@ const styles = StyleSheet.create({
     topBarTitle: { fontSize: 18, fontFamily: 'Inter_700Bold', flex: 1 },
     topBarActions: { flexDirection: 'row', gap: 8 },
     actionBtn: { padding: 6 },
+    tabsOuter: {
+        borderBottomWidth: StyleSheet.hairlineWidth,
+    },
+    tabsContainer: {
+        flexDirection: 'row',
+        paddingHorizontal: 16,
+        gap: 24,
+    },
+    tabButton: {
+        paddingVertical: 14,
+        alignItems: 'center',
+        justifyContent: 'center',
+        borderBottomWidth: 2,
+        borderBottomColor: 'transparent',
+    },
+    tabInner: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+    },
+    tabLabel: {
+        fontSize: 14,
+        fontFamily: 'Inter_500Medium',
+        letterSpacing: 0.1,
+    },
+    tabCountPill: {
+        minWidth: 20,
+        height: 20,
+        borderRadius: 10,
+        paddingHorizontal: 6,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    tabCountText: {
+        fontSize: 11,
+        fontFamily: 'Inter_700Bold',
+    },
 
     // ── List item ──
     item: {
@@ -322,24 +513,24 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         alignItems: 'flex-start',
         paddingHorizontal: 16,
-        paddingVertical: 14,
+        paddingVertical: 18,
     },
     iconCircle: {
-        width: 36,
-        height: 36,
-        borderRadius: 18,
+        width: 42,
+        height: 42,
+        borderRadius: 21,
         justifyContent: 'center',
         alignItems: 'center',
-        marginRight: 12,
-        marginTop: 2,
+        marginRight: 14,
+        marginTop: 0,
     },
     itemContent: { flex: 1 },
-    itemHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 2 },
-    itemTitle: { fontSize: 14, fontFamily: 'Inter_600SemiBold', flex: 1 },
-    unreadDot: { width: 8, height: 8, borderRadius: 4, marginLeft: 6 },
-    itemMessage: { fontSize: 13, lineHeight: 18 },
-    itemTime: { fontSize: 11, marginTop: 4 },
-    clearBtn: { padding: 14, alignSelf: 'center' },
+    itemHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 4 },
+    itemTitle: { fontSize: 15, fontFamily: 'Inter_600SemiBold', flex: 1 },
+    unreadDot: { width: 8, height: 8, borderRadius: 4, marginLeft: 8 },
+    itemMessage: { fontSize: 14, lineHeight: 20 },
+    itemTime: { fontSize: 12, marginTop: 6 },
+    clearBtn: { padding: 16, alignSelf: 'center' },
 
     // ── Empty ──
     emptyList: { flex: 1 },

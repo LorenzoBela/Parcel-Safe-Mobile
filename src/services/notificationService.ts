@@ -7,6 +7,8 @@
  *   POST /api/notifications/clear  – Delete one/all notifications
  */
 
+import { getPromoHistory } from './scheduledPromoService';
+
 const API_BASE_URL =
     process.env.EXPO_PUBLIC_TRACKING_WEB_BASE_URL || 'https://parcel-safe.vercel.app';
 
@@ -18,14 +20,75 @@ export interface AppNotification {
     title: string;
     message: string;
     type: string;
+    category: NotificationCategory;
+    read: boolean;
+    createdAt: string;
+    deliveryId?: string | null;
+    source?: 'server' | 'local-promo';
+}
+
+export type NotificationCategory = 'ORDER_UPDATES' | 'ADS' | 'OTHER';
+
+export interface NotificationListResponse {
+    notifications: AppNotification[];
+    unreadCount: number;
+}
+
+interface RawNotification {
+    id: string;
+    userId: string;
+    title: string;
+    message?: string;
+    body?: string;
+    type: string;
+    category?: string;
     read: boolean;
     createdAt: string;
     deliveryId?: string | null;
 }
 
-export interface NotificationListResponse {
-    notifications: AppNotification[];
-    unreadCount: number;
+export function categorizeNotificationType(type: string): NotificationCategory {
+    switch (type) {
+        case 'ORDER_ACCEPTED':
+        case 'PARCEL_PICKED_UP':
+        case 'RIDER_EN_ROUTE':
+        case 'RIDER_ARRIVED':
+        case 'DELIVERY_COMPLETED':
+            return 'ORDER_UPDATES';
+        case 'PROMO':
+            return 'ADS';
+        default:
+            return 'OTHER';
+    }
+}
+
+function normalizeNotification(raw: RawNotification): AppNotification {
+    const rawCategory = raw.category;
+    const category =
+        rawCategory === 'ORDER_UPDATES' || rawCategory === 'ADS' || rawCategory === 'OTHER'
+            ? rawCategory
+            : categorizeNotificationType(raw.type);
+
+    return {
+        id: raw.id,
+        userId: raw.userId,
+        title: raw.title,
+        message: raw.message || raw.body || '',
+        type: raw.type,
+        category,
+        read: raw.read,
+        createdAt: raw.createdAt,
+        deliveryId: raw.deliveryId ?? null,
+        source: 'server',
+    };
+}
+
+function mergeAndSortNotifications(serverNotifs: AppNotification[], localPromoNotifs: AppNotification[]): AppNotification[] {
+    const merged = [...serverNotifs, ...localPromoNotifs];
+
+    merged.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+    return merged;
 }
 
 // ── Fetch helpers ──────────────────────────────────────────────────────────────
@@ -61,7 +124,34 @@ export async function fetchNotifications(
         throw new Error(`[NotificationService] list failed (${response.status})`);
     }
 
-    return response.json() as Promise<NotificationListResponse>;
+    const data = await response.json() as {
+        notifications: RawNotification[];
+        unreadCount: number;
+    };
+
+    const serverNotifications = (data.notifications || []).map(normalizeNotification);
+
+    const promoHistory = await getPromoHistory(limit);
+    const localPromoNotifications: AppNotification[] = promoHistory.map((promo) => ({
+        id: promo.id,
+        userId,
+        title: promo.title,
+        message: promo.body,
+        type: 'PROMO',
+        category: 'ADS',
+        read: false,
+        createdAt: promo.createdAt,
+        deliveryId: null,
+        source: 'local-promo',
+    }));
+
+    const notifications = mergeAndSortNotifications(serverNotifications, localPromoNotifications);
+    const unreadCount = notifications.filter((notification) => !notification.read).length;
+
+    return {
+        unreadCount,
+        notifications,
+    };
 }
 
 /**

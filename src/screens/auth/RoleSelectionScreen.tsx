@@ -15,6 +15,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Text, useTheme } from 'react-native-paper';
 import { useNavigation } from '@react-navigation/native';
 import useAuthStore from '../../store/authStore';
+import { signOut } from '../../services/auth';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useAppTheme } from '../../context/ThemeContext';
 
@@ -64,11 +65,12 @@ export default function RoleSelectionScreen() {
     const navigation = useNavigation<any>();
     const theme = useTheme();
     const { isDarkMode: isDark } = useAppTheme();
-    const { role, user } = useAuthStore((state: any) => state);
+    const { role, user, logout } = useAuthStore((state: any) => state);
 
     const [currentTime, setCurrentTime] = useState(dayjs());
     const [weather, setWeather] = useState<WeatherData | null>(null);
     const [locationName, setLocationName] = useState<string | null>(null);
+    const [isSwitchingAccount, setIsSwitchingAccount] = useState(false);
 
     // Live clock
     useEffect(() => {
@@ -109,6 +111,21 @@ export default function RoleSelectionScreen() {
             navigation.replace('RiderLoading');
         } else {
             navigation.replace(targetApp);
+        }
+    };
+
+    const handleSwitchAccount = async () => {
+        if (isSwitchingAccount) return;
+
+        try {
+            setIsSwitchingAccount(true);
+            await signOut();
+            logout();
+        } catch (error) {
+            console.error('Switch account failed:', error);
+        } finally {
+            navigation.replace('Login');
+            setIsSwitchingAccount(false);
         }
     };
 
@@ -219,6 +236,28 @@ export default function RoleSelectionScreen() {
 
             {/* Footer */}
             <View style={styles.footer}>
+                <Pressable
+                    onPress={handleSwitchAccount}
+                    disabled={isSwitchingAccount}
+                    style={({ pressed }) => [
+                        styles.switchAccountButton,
+                        {
+                            borderColor: colors.border,
+                            backgroundColor: pressed ? colors.surface : 'transparent',
+                            opacity: isSwitchingAccount ? 0.6 : 1,
+                        },
+                    ]}
+                >
+                    <MaterialCommunityIcons
+                        name="account-switch-outline"
+                        size={16}
+                        color={colors.textSecondary}
+                    />
+                    <Text style={[styles.switchAccountText, { color: colors.textSecondary }]}>
+                        {isSwitchingAccount ? 'Switching...' : 'Switch account'}
+                    </Text>
+                </Pressable>
+
                 <Text style={[styles.footerText, { color: colors.textSecondary }]}>
                     Parcel Safe
                 </Text>
@@ -428,6 +467,20 @@ const styles = StyleSheet.create({
     footer: {
         paddingVertical: 24,
         alignItems: 'center',
+    },
+    switchAccountButton: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+        borderWidth: 1,
+        borderRadius: 999,
+        paddingHorizontal: 12,
+        paddingVertical: 8,
+        marginBottom: 12,
+    },
+    switchAccountText: {
+        fontSize: 12,
+        fontFamily: 'Inter_500Medium',
     },
     footerText: {
         fontSize: 12,

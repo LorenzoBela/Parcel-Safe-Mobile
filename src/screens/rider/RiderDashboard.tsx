@@ -334,6 +334,7 @@ export default function RiderDashboard() {
     const [tamperState, setTamperState] = useState<TamperState | null>(null);
     const [activeTamperIncident, setActiveTamperIncident] = useState<RiderTamperIncident | null>(null);
     const [incidentLoading, setIncidentLoading] = useState(false);
+    const tamperDetectedEdgeRef = useRef(false);
 
     // EC-82: Keypad State
     const [keypadState, setKeypadState] = useState<KeypadState | null>(null);
@@ -1009,17 +1010,21 @@ export default function RiderDashboard() {
         // EC-18: Subscribe to tamper state
         const unsubscribeTamper = subscribeToTamper(boxIdForMonitoring, (state) => {
             setTamperState(state);
+            const currentlyDetected = Boolean(state?.detected);
+            const wasDetected = tamperDetectedEdgeRef.current;
+            tamperDetectedEdgeRef.current = currentlyDetected;
 
-            // Show critical alert on tamper detection (in-app modal + local notification)
-            if (state?.detected) {
+            // Trigger alert only on edge transition (false -> true) to avoid
+            // repeated popups from realtime snapshot churn.
+            if (currentlyDetected && !wasDetected) {
                 PremiumAlert.alert(
-                    '🚨 SECURITY ALERT',
-                    'Unauthorized access detected on your assigned box! The box is now in lockdown mode. Contact support immediately.',
+                    '🔒 Security Hold',
+                    'A security incident was detected on your assigned box. Submit incident evidence in Box Controls and wait for admin review.',
                     [{ text: 'Contact Support', style: 'destructive' }]
                 );
                 showSecurityNotification(
-                    '🚨 TAMPER ALERT',
-                    `Unauthorized access detected on Box ${boxIdForMonitoring}. Lockdown activated.`,
+                    '🔒 Security Hold Active',
+                    `Box ${boxIdForMonitoring} is in security hold. Complete incident response to continue.`,
                     { boxId: boxIdForMonitoring || '', type: 'TAMPER_DETECTED' }
                 ).catch(() => {});
             }

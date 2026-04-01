@@ -276,6 +276,7 @@ export default function ArrivalScreen() {
     // EC-97: Low-Light State
     const [lowLightState, setLowLightState] = useState<LowLightState | null>(null);
     const tamperDeliveryFlaggedRef = useRef(false);
+    const tamperAlertShownRef = useRef(false);
     const pickupArrivalNotifSentRef = useRef(false);
 
     // Lock Events (OTP + Face Detection from hardware)
@@ -345,11 +346,16 @@ export default function ArrivalScreen() {
                         tamper_lockdown: Boolean(state.lockdown),
                     });
                 }
-                PremiumAlert.alert(
-                    'SECURITY ALERT',
-                    'Box tamper detected! The box is now in lockdown mode. Contact support.',
-                    [{ text: 'Contact Support', style: 'destructive' }]
-                );
+                if (!tamperAlertShownRef.current) {
+                    tamperAlertShownRef.current = true;
+                    PremiumAlert.alert(
+                        'Security Hold',
+                        'A security incident was detected and controls are temporarily paused. Please contact support and follow incident workflow.',
+                        [{ text: 'Contact Support', style: 'destructive' }]
+                    );
+                }
+            } else {
+                tamperAlertShownRef.current = false;
             }
         });
 

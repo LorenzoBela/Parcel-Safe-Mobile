@@ -18,6 +18,49 @@ import { subscribeToBoxState, BoxState } from '../services/firebaseClient';
 import { showSecurityNotification } from '../services/pushNotificationService';
 
 const THREAT_STATES = ['SUSPICIOUS', 'STOLEN', 'LOCKDOWN'] as const;
+const ALERT_DEDUPE_WINDOW_MS = 12000;
+let lastSecurityAlertKey = '';
+let lastSecurityAlertAt = 0;
+
+function buildSecurityCopy(
+    theftState: string,
+    boxId: string,
+    hasActiveDelivery: boolean
+): { title: string; message: string; modalRequired: boolean } {
+    if (theftState === 'STOLEN') {
+        return hasActiveDelivery
+            ? {
+                title: '🚨 Security Hold Active',
+                message: `Box ${boxId} triggered a theft signal during delivery. Do not attempt manual unlock. Submit incident evidence in Box Controls and await admin review.`,
+                modalRequired: true,
+            }
+            : {
+                title: '🚨 Theft Signal Detected',
+                message: `Box ${boxId} reported movement without an active delivery. Admin investigation is in progress.`,
+                modalRequired: true,
+            };
+    }
+
+    if (theftState === 'LOCKDOWN') {
+        return hasActiveDelivery
+            ? {
+                title: '🔒 Security Lockdown',
+                message: `Box ${boxId} is locked for safety while this incident is reviewed. Delivery controls are temporarily paused.`,
+                modalRequired: true,
+            }
+            : {
+                title: '🔒 Lockdown Confirmed',
+                message: `Box ${boxId} is locked with no active delivery. Admin team has been notified.`,
+                modalRequired: true,
+            };
+    }
+
+    return {
+        title: '⚠️ Security Watch',
+        message: `Unusual movement detected on Box ${boxId}. Monitoring is active.`,
+        modalRequired: false,
+    };
+}
 
 export function useSecurityAlerts(
     boxId: string | null | undefined,
@@ -41,27 +84,38 @@ export function useSecurityAlerts(
                 THREAT_STATES.includes(currentTheft as any) &&
                 prev !== currentTheft
             ) {
-                const title =
-                    currentTheft === 'STOLEN' ? '🚨 THEFT DETECTED'
-                    : currentTheft === 'LOCKDOWN' ? '🔒 BOX LOCKED DOWN'
-                    : '⚠️ Suspicious Activity';
+                const hasActiveDelivery = Boolean(deliveryId);
+                const { title, message, modalRequired } = buildSecurityCopy(
+                    String(currentTheft),
+                    boxId,
+                    hasActiveDelivery
+                );
 
-                const message =
-                    currentTheft === 'STOLEN'
-                        ? `Box ${boxId} may have been stolen! Motion detected without an active delivery. Do not attempt retrieval — contact support immediately.`
-                    : currentTheft === 'LOCKDOWN'
-                        ? `Box ${boxId} has been locked down by an admin. All OTP and unlock functions are disabled.`
-                        : `Unusual movement detected on Box ${boxId}. The system is monitoring the situation.`;
+                const dedupeKey = `${boxId}:${currentTheft}:${hasActiveDelivery ? 'with_delivery' : 'no_delivery'}`;
+                const now = Date.now();
+                const dedupeBlocked =
+                    dedupeKey === lastSecurityAlertKey &&
+                    now - lastSecurityAlertAt < ALERT_DEDUPE_WINDOW_MS;
+                if (dedupeBlocked) {
+                    prevTheftState.current = currentTheft;
+                    return;
+                }
+
+                lastSecurityAlertKey = dedupeKey;
+                lastSecurityAlertAt = now;
 
                 // 1. Local notification (shows in system tray, survives app background)
                 showSecurityNotification(title, message, {
                     boxId,
                     theftState: currentTheft,
+                    hasActiveDelivery,
                     ...(deliveryId ? { deliveryId } : {}),
                 }).catch(() => {});
 
-                // 2. In-app modal alert for immediate attention
-                Alert.alert(title, message, [{ text: 'OK' }]);
+                // 2. In-app modal only for high-severity states to reduce alert fatigue.
+                if (modalRequired) {
+                    Alert.alert(title, message, [{ text: 'OK' }]);
+                }
 
                 // Cloud-first security orchestration:
                 // backend listeners dispatch tamper/theft fanout notifications.

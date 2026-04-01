@@ -14,6 +14,12 @@ import { getFirebaseDatabase } from './firebaseClient';
 import { ref, set, update, serverTimestamp, onValue, off } from 'firebase/database';
 import { supabase } from './supabaseClient';
 
+const API_BASE_URL = (
+  process.env.EXPO_PUBLIC_TRACKING_WEB_BASE_URL
+  || process.env.EXPO_PUBLIC_API_URL
+  || 'https://parcel-safe.vercel.app'
+).replace(/\/+$/, '');
+
 // ==================== Constants ====================
 export const RETURN_OTP_VALIDITY_MS = 86400000; // 24 hours
 export const RETURN_OTP_LENGTH = 6;
@@ -59,6 +65,53 @@ export interface CancellationResult {
   success: boolean;
   returnOtp?: string;
   error?: string;
+}
+
+async function getAccessToken(): Promise<string> {
+  if (!supabase) {
+    throw new Error('Supabase client is not configured.');
+  }
+
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
+
+  const token = session?.access_token;
+  if (!token) {
+    throw new Error('No active session token. Please log in again.');
+  }
+
+  return token;
+}
+
+async function dispatchImmediateCancellationNotification(
+  deliveryId: string,
+  cancelledBy: 'customer' | 'rider',
+  reason?: string,
+): Promise<void> {
+  try {
+    const token = await getAccessToken();
+    const response = await fetch(`${API_BASE_URL}/api/cancellations/notify`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        deliveryId,
+        cancelledBy,
+        reason: reason || '',
+      }),
+    });
+
+    if (!response.ok) {
+      const errText = await response.text().catch(() => '');
+      console.warn('[Cancellation] Immediate notify dispatch returned non-OK:', response.status, errText);
+    }
+  } catch (error) {
+    // Non-fatal: cancellation state is already persisted and fallback sync still runs.
+    console.warn('[Cancellation] Immediate notify dispatch failed:', error);
+  }
 }
 
 // ==================== Helper Functions ====================
@@ -253,6 +306,12 @@ export async function requestCancellation(
         console.log(`[EC-32] Synced ${newStatus} to Supabase:`, request.deliveryId);
       }
     }
+
+    await dispatchImmediateCancellationNotification(
+      request.deliveryId,
+      'rider',
+      formatCancellationReason(request.reason)
+    );
 
     return {
       success: true,
@@ -608,6 +667,12 @@ export async function requestCustomerCancellation(
       status: 'PENDING',
       createdAt: serverTimestamp(),
     });
+
+    await dispatchImmediateCancellationNotification(
+      request.deliveryId,
+      'customer',
+      formatCustomerCancellationReason(request.reason)
+    );
 
     return {
       success: true,
