@@ -58,6 +58,7 @@ export interface PromoHistoryItem {
     title: string;
     body: string;
     createdAt: string;
+    read?: boolean;
 }
 
 // Kept in sync with web/src/lib/notificationService.ts PROMO_ADS
@@ -112,7 +113,10 @@ async function loadPromoHistory(): Promise<PromoHistoryItem[]> {
             && typeof item.title === 'string'
             && typeof item.body === 'string'
             && typeof item.createdAt === 'string'
-        );
+        ).map((item) => ({
+            ...item,
+            read: Boolean(item.read),
+        }));
     } catch {
         return [];
     }
@@ -133,6 +137,7 @@ export async function recordPromoHistoryItem(title: string, body: string, create
         title,
         body,
         createdAt: timestamp,
+        read: false,
     };
 
     const current = await loadPromoHistory();
@@ -150,6 +155,22 @@ export async function recordPromoHistoryItem(title: string, body: string, create
 export async function getPromoHistory(limit = 20): Promise<PromoHistoryItem[]> {
     const current = await loadPromoHistory();
     return current.slice(0, Math.max(1, limit));
+}
+
+export async function markPromoHistoryItemRead(id: string): Promise<void> {
+    const current = await loadPromoHistory();
+    const next = current.map((item) => (item.id === id ? { ...item, read: true } : item));
+    await savePromoHistory(next);
+}
+
+export async function removePromoHistoryItem(id: string): Promise<void> {
+    const current = await loadPromoHistory();
+    const next = current.filter((item) => item.id !== id);
+    await savePromoHistory(next);
+}
+
+export async function clearPromoHistory(): Promise<void> {
+    await savePromoHistory([]);
 }
 
 // ============ Cooldown check ============

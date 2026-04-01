@@ -139,7 +139,7 @@ export async function fetchNotifications(
         message: promo.body,
         type: 'PROMO',
         category: 'ADS',
-        read: false,
+        read: Boolean(promo.read),
         createdAt: promo.createdAt,
         deliveryId: null,
         source: 'local-promo',
