@@ -97,7 +97,7 @@ export default function OTAUpdateModal({
 
             {/* ── Subtitle ───────────────────────────────────── */}
             <Text style={[styles.description, { color: c.textSecondary }]}>
-              A newer version has been downloaded and must be applied now.
+              A newer version has been downloaded. The app will now close so you can reopen on the latest version.
             </Text>
 
             {/* ── Version pill ────────────────────────────────── */}
@@ -133,7 +133,7 @@ export default function OTAUpdateModal({
                     { color: isDarkMode ? '#000000' : '#FFFFFF' },
                   ]}
                 >
-                  Restart Now
+                  Close and Reopen
                 </Text>
               </TouchableOpacity>
             </View>

@@ -1,6 +1,7 @@
 import * as Updates from 'expo-updates';
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { AppState, AppStateStatus } from 'react-native';
+import ExitApp from 'react-native-exit-app';
 
 /** How often (ms) to poll for updates as a safety-net alongside the reactive hook. */
 const POLL_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
@@ -19,6 +20,7 @@ const POLL_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 export function useOTAUpdateMonitor() {
   const [showModal, setShowModal] = useState(false);
   const hasPrompted = useRef(false);
+  const isRestarting = useRef(false);
 
   // ── Reactive update state ────────────────────────────────────────
   // useUpdates() only works inside a production build that has the
@@ -77,10 +79,30 @@ export function useOTAUpdateMonitor() {
   }, []);
 
   // ── Callbacks for the modal ──────────────────────────────────────
-  const handleRestart = useCallback(() => {
-    Updates.reloadAsync().catch((err) => {
-      if (__DEV__) console.warn('[OTA] reloadAsync failed:', err);
-    });
+  const handleRestart = useCallback(async () => {
+    if (isRestarting.current) return;
+    isRestarting.current = true;
+
+    // Hide modal immediately to avoid double-taps while we exit.
+    setShowModal(false);
+
+    // For reliability, force a cold restart path instead of relying on in-process reload.
+    // The downloaded update will be applied on next app launch.
+    try {
+      if (__DEV__) {
+        await Updates.reloadAsync();
+      } else {
+        ExitApp.exitApp();
+      }
+    } catch (err) {
+      if (__DEV__) console.warn('[OTA] hard restart failed:', err);
+      // Last attempt to close app even if the first call failed.
+      try {
+        ExitApp.exitApp();
+      } catch {
+        isRestarting.current = false;
+      }
+    }
   }, []);
 
   return { showModal, handleRestart, currentlyRunning };

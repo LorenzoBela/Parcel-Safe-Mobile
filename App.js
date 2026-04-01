@@ -10,8 +10,10 @@ import { configureGoogleSignIn } from './src/services/auth';
 import { ThemeProvider, useAppTheme } from './src/context/ThemeContext';
 import GlobalPremiumAlert from './src/components/modals/GlobalPremiumAlert';
 import OTAUpdateModal from './src/components/modals/OTAUpdateModal';
+import BinaryUpdateRequiredModal from './src/components/modals/BinaryUpdateRequiredModal';
 import ResumeScreen from './src/screens/auth/ResumeScreen';
 import { useOTAUpdateMonitor } from './src/hooks/useOTAUpdateMonitor';
+import { useBinaryUpdateGate } from './src/hooks/useBinaryUpdateGate';
 
 import * as SplashScreen from 'expo-splash-screen';
 import * as Font from 'expo-font';
@@ -40,6 +42,15 @@ let supabase = null;
 
 const AppContent = () => {
   const { theme, isDarkMode } = useAppTheme();
+  const {
+    isUpdateRequired,
+    currentVersion,
+    latestVersion,
+    releaseNotes,
+    isChecking,
+    recheck,
+    openUpdateUrl,
+  } = useBinaryUpdateGate();
   const { showModal, handleRestart, currentlyRunning } = useOTAUpdateMonitor();
   const [appState, setAppState] = useState(AppState.currentState);
   const [isResuming, setIsResuming] = useState(false);
@@ -293,8 +304,17 @@ const AppContent = () => {
       />
       <AppNavigator />
       <GlobalPremiumAlert />
+      <BinaryUpdateRequiredModal
+        visible={isUpdateRequired}
+        currentVersion={currentVersion}
+        latestVersion={latestVersion}
+        releaseNotes={releaseNotes}
+        onUpdateNow={openUpdateUrl}
+        onRecheck={recheck}
+        isChecking={isChecking}
+      />
       <OTAUpdateModal
-        visible={showModal}
+        visible={!isUpdateRequired && showModal}
         onRestart={handleRestart}
         runtimeVersion={currentlyRunning?.runtimeVersion}
       />
