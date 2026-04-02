@@ -20,9 +20,11 @@ import { useLocationRedundancy, getStatusMessage, getStatusColor } from '../../h
 import { useSecurityAlerts } from '../../hooks/useSecurityAlerts';
 import { subscribeToBattery, BatteryState, subscribeToTamper, TamperState, subscribeToLocation, LocationData, subscribeToKeypad, KeypadState, subscribeToHinge, HingeState, subscribeToBoxState, BoxState, updateBoxState, writePhoneLocation, updateLivePhoneCompassHeading } from '../../services/firebaseClient';
 import {
+    verifyRiderBiometricForUnlock,
     verifyRiderPersonalPinForUnlock,
     sendRiderUnlockCommand,
 } from '../../services/personalPinService';
+import { authenticateBiometricForUnlock } from '../../services/biometricAuthService';
 import { useHeadingSmoothing } from '../../hooks/useHeadingSmoothing';
 import { offlineCache, PendingSync } from '../../services/offlineCache';
 import { NetworkStatusBanner } from '../../components';
@@ -148,6 +150,7 @@ import { useExitAppConfirmation } from '../../hooks/useExitAppConfirmation';
 import ExitConfirmationModal from '../../components/modals/ExitConfirmationModal';
 import { StatusBar } from 'expo-status-bar';
 import { PremiumAlert } from '../../services/PremiumAlertService';
+import { authenticateBiometricForSensitiveAction } from '../../services/biometricAuthService';
 import EarningsWidget from '../../components/EarningsWidget';
 
 // ── Uber-style dual palette ──
@@ -274,10 +277,17 @@ export default function RiderDashboard() {
     const [quickUnlockPin, setQuickUnlockPin] = useState('');
     const [quickUnlockSubmitting, setQuickUnlockSubmitting] = useState(false);
     const [showQuickUnlockPinText, setShowQuickUnlockPinText] = useState(false);
+    const [quickUnlockProgress, setQuickUnlockProgress] = useState(0);
+    const [quickUnlockProgressLabel, setQuickUnlockProgressLabel] = useState('');
 
     const sanitizeQuickPinInput = (value: string) => value.replace(/\D/g, '').slice(0, 6);
 
-    const handleQuickUnlock = () => {
+    const resetQuickUnlockProgress = () => {
+        setQuickUnlockProgress(0);
+        setQuickUnlockProgressLabel('');
+    };
+
+    const handleQuickUnlock = async () => {
         if (!isPaired || !pairedBoxId) {
             PremiumAlert.alert('No Box Paired', 'Scan your box QR to access controls.', [
                 { text: 'Pair Box', onPress: () => navigation.navigate('PairBox') },
@@ -288,10 +298,52 @@ export default function RiderDashboard() {
             PremiumAlert.alert('Already Unlocked', 'The box is already in an unlocked state.');
             return;
         }
-        // Open PIN modal
-        setQuickUnlockPin('');
-        setShowQuickUnlockPinText(false);
-        setShowQuickUnlockModal(true);
+
+        const openPinModal = () => {
+            setQuickUnlockPin('');
+            setShowQuickUnlockPinText(false);
+            setShowQuickUnlockModal(true);
+            resetQuickUnlockProgress();
+        };
+
+        // High-risk state policy: PIN-only
+        if (tamperState?.detected) {
+            openPinModal();
+            return;
+        }
+
+        try {
+            setQuickUnlockSubmitting(true);
+            setQuickUnlockProgress(0.2);
+            setQuickUnlockProgressLabel('Verifying biometric...');
+            const biometricResult = await authenticateBiometricForUnlock();
+
+            if (!biometricResult.success) {
+                openPinModal();
+                return;
+            }
+
+            setQuickUnlockProgress(0.55);
+            setQuickUnlockProgressLabel('Authorizing unlock...');
+            const { unlockToken } = await verifyRiderBiometricForUnlock(pairedBoxId, biometricResult.method);
+
+            setQuickUnlockProgress(0.85);
+            setQuickUnlockProgressLabel('Sending command to box...');
+            await sendRiderUnlockCommand(pairedBoxId, unlockToken);
+
+            setQuickUnlockProgress(1);
+            setQuickUnlockProgressLabel('Command sent. Waiting for box acknowledgment...');
+            PremiumAlert.alert('Unlock Command Sent', `Unlock queued for ${pairedBoxId}. Waiting for hardware acknowledgment.`);
+            setTimeout(() => {
+                resetQuickUnlockProgress();
+            }, 1200);
+        } catch (error: any) {
+            console.error('[QuickUnlock] Biometric failed:', error);
+            resetQuickUnlockProgress();
+            openPinModal();
+        } finally {
+            setQuickUnlockSubmitting(false);
+        }
     };
 
     const handleSubmitQuickUnlockPin = async () => {
@@ -1457,6 +1509,17 @@ export default function RiderDashboard() {
             PremiumAlert.alert('Error', 'No active delivery to cancel');
             return;
         }
+
+        const highImpactStatuses = new Set(['IN_TRANSIT', 'ARRIVED', 'RETURNING', 'TAMPERED']);
+        const requiresStepUp = highImpactStatuses.has(String(nextDelivery.status || '').toUpperCase());
+        if (requiresStepUp) {
+            const authResult = await authenticateBiometricForSensitiveAction('Authorize cancellation');
+            if (!authResult.success) {
+                PremiumAlert.alert('Authorization Required', `${authResult.message} Cancellation was canceled.`);
+                return;
+            }
+        }
+
         setCancelLoading(true);
         try {
             const result = await requestCancellation({
@@ -2838,8 +2901,13 @@ export default function RiderDashboard() {
 
                     {/* Quick Unlock Button */}
                     {isPaired && isLocked && (
-                        <TouchableWithoutFeedback onPressIn={quickUnlockPress.onPressIn} onPressOut={quickUnlockPress.onPressOut} onPress={handleQuickUnlock}>
-                            <Animated.View style={[{ marginTop: 16 }, quickUnlockPress.style]}>
+                        <TouchableWithoutFeedback
+                            onPressIn={quickUnlockPress.onPressIn}
+                            onPressOut={quickUnlockPress.onPressOut}
+                            onPress={handleQuickUnlock}
+                            disabled={quickUnlockSubmitting}
+                        >
+                            <Animated.View style={[{ marginTop: 16, opacity: quickUnlockSubmitting ? 0.85 : 1 }, quickUnlockPress.style]}>
                                 <Button
                                     mode="contained"
                                     style={{ borderRadius: 8 }}
@@ -2848,11 +2916,26 @@ export default function RiderDashboard() {
                                     buttonColor={c.accent}
                                     textColor={c.accentText}
                                     icon="lock-open-variant-outline"
+                                    loading={quickUnlockSubmitting}
+                                    disabled={quickUnlockSubmitting}
                                 >
                                     Quick Unlock Box
                                 </Button>
                             </Animated.View>
                         </TouchableWithoutFeedback>
+                    )}
+
+                    {isPaired && isLocked && quickUnlockSubmitting && quickUnlockProgress > 0 && (
+                        <View style={{ marginTop: 10 }}>
+                            <Text style={{ fontSize: 12, color: c.textSec, marginBottom: 6 }}>
+                                {quickUnlockProgressLabel || 'Processing unlock...'}
+                            </Text>
+                            <ProgressBar
+                                progress={quickUnlockProgress}
+                                color={c.accent}
+                                style={{ height: 6, borderRadius: 6, backgroundColor: c.search }}
+                            />
+                        </View>
                     )}
 
                     <View style={{ flexDirection: 'row', marginTop: isPaired && isLocked ? 8 : 16, gap: 8 }}>

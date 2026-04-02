@@ -18,6 +18,8 @@ import useAuthStore from '../../store/authStore';
 import { signOut } from '../../services/auth';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useAppTheme } from '../../context/ThemeContext';
+import { PremiumAlert } from '../../services/PremiumAlertService';
+import { authenticateBiometricForSensitiveAction } from '../../services/biometricAuthService';
 
 // Uber-inspired minimalist colors
 const COLORS = {
@@ -71,6 +73,7 @@ export default function RoleSelectionScreen() {
     const [weather, setWeather] = useState<WeatherData | null>(null);
     const [locationName, setLocationName] = useState<string | null>(null);
     const [isSwitchingAccount, setIsSwitchingAccount] = useState(false);
+    const [isAuthorizingRole, setIsAuthorizingRole] = useState(false);
 
     // Live clock
     useEffect(() => {
@@ -105,7 +108,26 @@ export default function RoleSelectionScreen() {
 
     const colors = isDark ? COLORS.dark : COLORS.light;
 
-    const handleNavigation = (targetApp: 'RiderApp' | 'CustomerApp' | 'AdminApp') => {
+    const handleNavigation = async (targetApp: 'RiderApp' | 'CustomerApp' | 'AdminApp') => {
+        if (isAuthorizingRole) return;
+
+        const requiresStepUp = targetApp === 'RiderApp' || targetApp === 'AdminApp';
+        if (requiresStepUp) {
+            try {
+                setIsAuthorizingRole(true);
+                const authResult = await authenticateBiometricForSensitiveAction('Authorize dashboard access');
+                if (!authResult.success) {
+                    PremiumAlert.alert(
+                        'Authorization Required',
+                        `${authResult.message} Dashboard switch was canceled.`
+                    );
+                    return;
+                }
+            } finally {
+                setIsAuthorizingRole(false);
+            }
+        }
+
         if (targetApp === 'RiderApp') {
             // Route through the warmup/loading screen first
             navigation.replace('RiderLoading');

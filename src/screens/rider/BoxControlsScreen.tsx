@@ -79,9 +79,11 @@ import {
     setRiderPersonalPin,
     resetRiderPersonalPin,
     RiderPersonalPinStatus,
+    verifyRiderBiometricForUnlock,
     verifyRiderPersonalPinForUnlock,
     sendRiderUnlockCommand,
 } from '../../services/personalPinService';
+import { authenticateBiometricForSensitiveAction, authenticateBiometricForUnlock } from '../../services/biometricAuthService';
 import { uploadTamperEvidencePhoto } from '../../services/proofPhotoService';
 import {
     fetchActiveTamperIncident,
@@ -181,6 +183,9 @@ export default function BoxControlsScreen() {
     const [unlockPin, setUnlockPin] = useState('');
     const [showUnlockPin, setShowUnlockPin] = useState(false);
     const [unlockPinSubmitting, setUnlockPinSubmitting] = useState(false);
+    const [unlockProgress, setUnlockProgress] = useState(0);
+    const [unlockProgressLabel, setUnlockProgressLabel] = useState('');
+    const [showUnlockProgress, setShowUnlockProgress] = useState(false);
     const lastCommandAckKeyRef = useRef('');
     const [activeTamperIncident, setActiveTamperIncident] = useState<RiderTamperIncident | null>(null);
     const [incidentLoading, setIncidentLoading] = useState(false);
@@ -277,6 +282,7 @@ export default function BoxControlsScreen() {
     const lockAwaitingClose = commandAckCommand === 'LOCKED' && commandAckStatus === 'waiting_close';
     const lockAwaitingCloseNeedsAssist = lockAwaitingClose && commandAckDetails === 'reed_open';
     const lockCloseConfirmed = commandAckCommand === 'LOCKED' && commandAckStatus === 'executed' && commandAckDetails === 'reed_closed_confirmed';
+    const requiresPinOnlyUnlock = Boolean(adminOverrideState?.active || tamperState?.detected);
 
     // Initialize Logs and Subscriptions
     useEffect(() => {
@@ -483,6 +489,12 @@ export default function BoxControlsScreen() {
         setLogs(prev => [{ time: dayjs().format('HH:mm:ss'), message, type }, ...prev]);
     };
 
+    const resetUnlockProgress = () => {
+        setUnlockProgress(0);
+        setUnlockProgressLabel('');
+        setShowUnlockProgress(false);
+    };
+
     const loadActiveTamperIncident = async () => {
         if (!tamperState?.detected || !isPaired) {
             setActiveTamperIncident(null);
@@ -665,10 +677,65 @@ export default function BoxControlsScreen() {
             return;
         }
 
-        if (isLocked) {
+        const openUnlockPinModal = () => {
             setUnlockPin('');
             setShowUnlockPin(false);
             setShowUnlockPinModal(true);
+            resetUnlockProgress();
+        };
+
+        if (isLocked) {
+            if (requiresPinOnlyUnlock) {
+                addLog('High-risk state active. Personal PIN required for unlock.', 'warning');
+                openUnlockPinModal();
+                return;
+            }
+
+            try {
+                setManualOverrideSending(true);
+                setShowUnlockProgress(true);
+                setUnlockProgress(0.2);
+                setUnlockProgressLabel('Verifying biometric...');
+                const biometricResult = await authenticateBiometricForUnlock();
+
+                if (!biometricResult.success) {
+                    addLog(`Biometric unavailable/failed: ${biometricResult.reason}`, 'warning');
+                    openUnlockPinModal();
+                    return;
+                }
+
+                setUnlockProgress(0.55);
+                setUnlockProgressLabel('Authorizing unlock...');
+                const { unlockToken } = await verifyRiderBiometricForUnlock(boxId, biometricResult.method);
+
+                setUnlockProgress(0.85);
+                setUnlockProgressLabel('Sending command to box...');
+                await sendRiderUnlockCommand(boxId, unlockToken);
+
+                setUnlockProgress(1);
+                setUnlockProgressLabel('Command sent. Waiting for box acknowledgment...');
+
+                addLog(`Manual override queued (biometric): UNLOCKING -> ${boxId}`, 'success');
+                PremiumAlert.alert(
+                    'Unlock Command Queued',
+                    `Unlock command queued for ${boxId}. Waiting for hardware acknowledgment.`
+                );
+                setTimeout(() => {
+                    resetUnlockProgress();
+                }, 1200);
+                return;
+            } catch (error: any) {
+                console.error('[toggleLock] Biometric unlock failed:', error);
+                addLog('Biometric unlock failed. Falling back to Personal PIN.', 'warning');
+                if (error?.message) {
+                    PremiumAlert.alert('Biometric Unlock Unavailable', `${error.message}\n\nUse your Personal PIN to continue.`);
+                }
+                openUnlockPinModal();
+                return;
+            } finally {
+                setManualOverrideSending(false);
+            }
+
             return;
         }
 
@@ -709,9 +776,18 @@ export default function BoxControlsScreen() {
         try {
             setUnlockPinSubmitting(true);
             setManualOverrideSending(true);
+            setShowUnlockProgress(true);
+            setUnlockProgress(0.55);
+            setUnlockProgressLabel('Authorizing Personal PIN...');
 
             const { unlockToken } = await verifyRiderPersonalPinForUnlock(boxId, sanitizedPin);
+
+            setUnlockProgress(0.85);
+            setUnlockProgressLabel('Sending command to box...');
             await sendRiderUnlockCommand(boxId, unlockToken);
+
+            setUnlockProgress(1);
+            setUnlockProgressLabel('Command sent. Waiting for box acknowledgment...');
 
             addLog(`Manual override queued: UNLOCKING -> ${boxId}`, 'info');
             setShowUnlockPinModal(false);
@@ -721,10 +797,14 @@ export default function BoxControlsScreen() {
                 'Unlock Command Queued',
                 `Unlock command queued for ${boxId}. Waiting for hardware acknowledgment.`
             );
+            setTimeout(() => {
+                resetUnlockProgress();
+            }, 1200);
         } catch (error: any) {
             console.error('[handleSubmitUnlockWithPin] Unlock failed:', error);
             addLog('Manual unlock failed: PIN verification or authorization error', 'error');
             PremiumAlert.alert('Unlock Failed', error?.message || 'Could not authorize unlock.');
+            resetUnlockProgress();
         } finally {
             setUnlockPinSubmitting(false);
             setManualOverrideSending(false);
@@ -1028,6 +1108,12 @@ export default function BoxControlsScreen() {
             return;
         }
 
+        const authResult = await authenticateBiometricForSensitiveAction('Authorize Personal PIN change');
+        if (!authResult.success) {
+            PremiumAlert.alert('Authorization Required', `${authResult.message} PIN change was canceled.`);
+            return;
+        }
+
         try {
             setSavingPersonalPin(true);
             await setRiderPersonalPin(boxId, sanitizedNewPin);
@@ -1061,6 +1147,12 @@ export default function BoxControlsScreen() {
                     style: 'destructive',
                     onPress: async () => {
                         try {
+                            const authResult = await authenticateBiometricForSensitiveAction('Authorize Personal PIN reset');
+                            if (!authResult.success) {
+                                PremiumAlert.alert('Authorization Required', `${authResult.message} PIN reset was canceled.`);
+                                return;
+                            }
+
                             setPersonalPinLoading(true);
                             await resetRiderPersonalPin(boxId);
                             addLog('Personal PIN reset requested (forgot PIN flow)', 'warning');
@@ -1274,6 +1366,19 @@ export default function BoxControlsScreen() {
                             {isPaired ? (boxState?.status === 'UNLOCKING' ? "Actuating…" : (isLocked ? "Unlock Box" : "Lock Box")) : "Pair Required"}
                         </Text>
                     </TouchableOpacity>
+
+                    {showUnlockProgress && isLocked && (
+                        <View style={{ marginTop: 10 }}>
+                            <Text style={{ fontSize: 12, color: c.textSec, marginBottom: 6 }}>
+                                {unlockProgressLabel || 'Processing unlock...'}
+                            </Text>
+                            <ProgressBar
+                                progress={unlockProgress}
+                                color={c.accent}
+                                style={{ height: 6, borderRadius: 6, backgroundColor: c.search }}
+                            />
+                        </View>
+                    )}
 
                     {lockAwaitingClose && (
                         <View style={[styles.inlineNotice, { backgroundColor: c.orangeBg, borderColor: c.orangeText }]}>

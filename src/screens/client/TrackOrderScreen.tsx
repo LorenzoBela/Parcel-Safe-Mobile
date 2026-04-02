@@ -112,6 +112,7 @@ function mapStatusToCancellationStatus(status: string | undefined): DeliveryStat
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { PremiumAlert } from '../../services/PremiumAlertService';
 import { useEntryAnimation } from '../../hooks/useEntryAnimation';
+import { authenticateBiometricForSensitiveAction } from '../../services/biometricAuthService';
 
 const RiderImage = require('../../../assets/Rider.jpg');
 const ArrowHeadImage = require('../../../assets/arrow_head.png');
@@ -760,6 +761,12 @@ export default function TrackOrderScreen() {
 
     // Customer cancellation handler
     const handleCancellationSubmit = async (reason: CustomerCancellationReason, details: string) => {
+        const authResult = await authenticateBiometricForSensitiveAction('Authorize order cancellation');
+        if (!authResult.success) {
+            PremiumAlert.alert('Authorization Required', `${authResult.message} Cancellation was canceled.`);
+            return;
+        }
+
         setCancelLoading(true);
         try {
             if (!customerId) {

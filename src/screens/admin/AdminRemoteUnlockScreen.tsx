@@ -1,13 +1,14 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { View, Animated, StyleSheet, KeyboardAvoidingView, Platform, ScrollView, TouchableOpacity, StatusBar } from 'react-native';
 import { useEntryAnimation } from '../../hooks/useEntryAnimation';
-import { ActivityIndicator, Text, TextInput, IconButton } from 'react-native-paper';
+import { ActivityIndicator, Text, TextInput, IconButton, ProgressBar } from 'react-native-paper';
 import { useNavigation } from '@react-navigation/native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { triggerAdminOverride } from '../../services/adminOverrideService';
 import { getCurrentUser, listSmartBoxes, SmartBoxSummary } from '../../services/supabaseClient';
 import { useAppTheme } from '../../context/ThemeContext';
 import { PremiumAlert } from '../../services/PremiumAlertService';
+import { authenticateBiometricForSensitiveAction } from '../../services/biometricAuthService';
 
 const lightC = {
     bg: '#FFFFFF', card: '#F6F6F6', card2: '#EEEEEE', border: '#E5E5EA',
@@ -34,6 +35,9 @@ export default function AdminRemoteUnlockScreen() {
     const [isLoadingBoxes, setIsLoadingBoxes] = useState(false);
     const [loadError, setLoadError] = useState('');
     const [isSubmitting, setIsSubmitting] = useState(false);
+    const [isAuthorizing, setIsAuthorizing] = useState(false);
+    const [unlockProgress, setUnlockProgress] = useState(0);
+    const [unlockProgressLabel, setUnlockProgressLabel] = useState('');
     const [successMessage, setSuccessMessage] = useState('');
 
     const activeBoxes = useMemo(() => {
@@ -72,6 +76,11 @@ export default function AdminRemoteUnlockScreen() {
         fetchBoxes();
     }, [fetchBoxes]);
 
+    const resetUnlockProgress = () => {
+        setUnlockProgress(0);
+        setUnlockProgressLabel('');
+    };
+
     const handleUnlock = async () => {
         if (!resolvedTargetBox) {
             PremiumAlert.alert('Error', 'Select a box or enter a Box ID/MAC address');
@@ -82,21 +91,45 @@ export default function AdminRemoteUnlockScreen() {
             return;
         }
 
+        try {
+            setIsAuthorizing(true);
+            setUnlockProgress(0.25);
+            setUnlockProgressLabel('Waiting for biometric/device credential...');
+
+            const authResult = await authenticateBiometricForSensitiveAction('Authorize remote unlock');
+            if (!authResult.success) {
+                PremiumAlert.alert('Authorization Required', `${authResult.message} Remote unlock was canceled.`);
+                resetUnlockProgress();
+                return;
+            }
+        } finally {
+            setIsAuthorizing(false);
+        }
+
         setIsSubmitting(true);
         setSuccessMessage('');
+        setUnlockProgress(0.65);
+        setUnlockProgressLabel('Sending override command to box...');
 
         try {
             const user = await getCurrentUser();
             const adminId = user?.id || 'admin-unknown';
             await triggerAdminOverride(resolvedTargetBox, adminId, reason.trim());
 
+            setUnlockProgress(1);
+            setUnlockProgressLabel('Command sent. Awaiting device acknowledgment...');
+
             setSuccessMessage(`Unlock command sent to ${resolvedTargetBox} successfully.`);
             setManualBoxId('');
             setSelectedBoxId('');
             setReason('');
             fetchBoxes();
+            setTimeout(() => {
+                resetUnlockProgress();
+            }, 1200);
         } catch (error: any) {
             PremiumAlert.alert('Error', `Failed to trigger unlock: ${error.message}`);
+            resetUnlockProgress();
         } finally {
             setIsSubmitting(false);
         }
@@ -239,16 +272,29 @@ export default function AdminRemoteUnlockScreen() {
                     />
 
                     <TouchableOpacity
-                        style={[styles.button, { backgroundColor: c.red }, isSubmitting && { opacity: 0.5 }]}
+                        style={[styles.button, { backgroundColor: c.red }, (isSubmitting || isAuthorizing) && { opacity: 0.5 }]}
                         onPress={handleUnlock}
-                        disabled={isSubmitting || !resolvedTargetBox}
+                        disabled={isSubmitting || isAuthorizing || !resolvedTargetBox}
                         activeOpacity={0.7}
                     >
                         <MaterialCommunityIcons name="lock-open-variant" size={18} color="#FFF" />
                         <Text style={styles.buttonText}>
-                            {isSubmitting ? 'Unlocking…' : 'Force Unlock'}
+                            {isAuthorizing ? 'Authorizing…' : isSubmitting ? 'Unlocking…' : 'Force Unlock'}
                         </Text>
                     </TouchableOpacity>
+
+                    {(isAuthorizing || isSubmitting || unlockProgress > 0) && (
+                        <View style={styles.progressWrap}>
+                            <Text style={[styles.progressText, { color: c.textSec }]}>
+                                {unlockProgressLabel || 'Processing...'}
+                            </Text>
+                            <ProgressBar
+                                progress={unlockProgress}
+                                color={c.red}
+                                style={[styles.progressBar, { backgroundColor: c.card2 }]}
+                            />
+                        </View>
+                    )}
                 </View>
 
                 {successMessage ? (
@@ -407,6 +453,19 @@ const styles = StyleSheet.create({
         color: '#FFFFFF',
         fontFamily: 'Inter_700Bold',
         fontSize: 15,
+    },
+    progressWrap: {
+        width: '100%',
+        marginTop: 12,
+    },
+    progressText: {
+        fontSize: 12,
+        fontFamily: 'Inter_500Medium',
+        marginBottom: 6,
+    },
+    progressBar: {
+        height: 6,
+        borderRadius: 6,
     },
     successBanner: {
         flexDirection: 'row',

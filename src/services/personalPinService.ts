@@ -18,6 +18,8 @@ export interface RiderUnlockVerificationResult {
   expiresAt: number;
 }
 
+export type RiderBiometricMethod = 'face' | 'fingerprint' | 'iris' | 'unknown';
+
 async function getAccessToken(): Promise<string> {
   if (!supabase) {
     throw new Error('Supabase client is not configured.');
@@ -134,6 +136,42 @@ export async function verifyRiderPersonalPinForUnlock(
     boxId: sanitizedBoxId,
     pin: sanitizedPin,
   });
+
+  if (!data?.unlockToken || !data?.expiresAt) {
+    throw new Error('Unlock authorization failed. Please try again.');
+  }
+
+  return {
+    unlockToken: String(data.unlockToken),
+    expiresAt: Number(data.expiresAt),
+  };
+}
+
+export async function verifyRiderBiometricForUnlock(
+  boxId: string,
+  biometricMethod: RiderBiometricMethod
+): Promise<RiderUnlockVerificationResult> {
+  const sanitizedBoxId = boxId.trim();
+
+  if (!sanitizedBoxId) {
+    throw new Error('Missing box ID. Please pair your box again.');
+  }
+
+  let data: any;
+  try {
+    data = await request('/api/rider/personal-pin/verify-unlock-biometric', 'POST', {
+      boxId: sanitizedBoxId,
+      biometricConfirmed: true,
+      biometricMethod,
+    });
+  } catch (error: any) {
+    const message = String(error?.message || '');
+    const htmlResponse = message.includes('<!DOCTYPE html>') || message.includes('<html');
+    if (htmlResponse) {
+      throw new Error('Biometric authorization service is unavailable. Please use Personal PIN for now.');
+    }
+    throw error;
+  }
 
   if (!data?.unlockToken || !data?.expiresAt) {
     throw new Error('Unlock authorization failed. Please try again.');
