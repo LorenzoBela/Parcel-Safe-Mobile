@@ -230,6 +230,70 @@ function Get-CombinedHash {
     }
 }
 
+function Get-PropertiesFromFile {
+    param([string]$Path)
+
+    $props = @{}
+    if (-not (Test-Path $Path)) { return $props }
+
+    Get-Content -Path $Path | ForEach-Object {
+        $line = $_.Trim()
+        if (-not $line) { return }
+        if ($line.StartsWith("#") -or $line.StartsWith("!")) { return }
+
+        $idx = $line.IndexOf("=")
+        if ($idx -lt 1) { return }
+
+        $key = $line.Substring(0, $idx).Trim()
+        $value = $line.Substring($idx + 1).Trim()
+        if ($key) { $props[$key] = $value }
+    }
+
+    return $props
+}
+
+function Configure-SentryBuildUpload {
+    param(
+        [string]$AndroidDir
+    )
+
+    $sentryPropsPath = Join-Path $AndroidDir "sentry.properties"
+    $sentryProps = Get-PropertiesFromFile -Path $sentryPropsPath
+
+    $authToken = $env:SENTRY_AUTH_TOKEN
+    if ([string]::IsNullOrWhiteSpace($authToken) -and $sentryProps.ContainsKey("auth.token")) {
+        $authToken = $sentryProps["auth.token"]
+    }
+
+    $org = $env:SENTRY_ORG
+    if ([string]::IsNullOrWhiteSpace($org) -and $sentryProps.ContainsKey("defaults.org")) {
+        $org = $sentryProps["defaults.org"]
+    }
+
+    $project = $env:SENTRY_PROJECT
+    if ([string]::IsNullOrWhiteSpace($project) -and $sentryProps.ContainsKey("defaults.project")) {
+        $project = $sentryProps["defaults.project"]
+    }
+
+    if (
+        [string]::IsNullOrWhiteSpace($authToken) -or
+        [string]::IsNullOrWhiteSpace($org) -or
+        [string]::IsNullOrWhiteSpace($project)
+    ) {
+        $env:SENTRY_DISABLE_AUTO_UPLOAD = "true"
+        Write-Host "[WARN] Sentry upload disabled: missing auth/org/project configuration." -ForegroundColor DarkYellow
+        Write-Host "       Set SENTRY_AUTH_TOKEN, SENTRY_ORG, and SENTRY_PROJECT (or defaults.* in android/sentry.properties) to enable upload." -ForegroundColor Gray
+        return
+    }
+
+    $env:SENTRY_AUTH_TOKEN = $authToken
+    $env:SENTRY_ORG = $org
+    $env:SENTRY_PROJECT = $project
+    $env:SENTRY_DISABLE_AUTO_UPLOAD = "false"
+
+    Write-Host "[OK] Sentry upload enabled for org '$org' / project '$project'" -ForegroundColor Green
+}
+
 # Step 0: Ensure signing secrets are loaded
 Write-Host "`nStep 0: Loading signing configuration..." -ForegroundColor Yellow
 $KEYSTORE_PATH = Join-Path $SOURCE_DIR "release.keystore"
@@ -891,6 +955,9 @@ if ($env:ANDROID_HOME) { Write-Host "[OK] ANDROID_HOME: $env:ANDROID_HOME" -Fore
 if ($env:ANDROID_NDK_HOME) { Write-Host "[OK] ANDROID_NDK_HOME: $env:ANDROID_NDK_HOME" -ForegroundColor Green }
 Write-Host "`nJava version:" -ForegroundColor Gray
 & java -version 2>&1 | ForEach-Object { Write-Host $_ }
+
+Write-Host "`nStep 7.1: Validating Sentry upload settings..." -ForegroundColor Yellow
+Configure-SentryBuildUpload -AndroidDir $ANDROID_DIR
 
 
 Write-Host "`n====================================" -ForegroundColor Cyan

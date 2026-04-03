@@ -8,7 +8,7 @@ import * as Haptics from 'expo-haptics';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { supabase } from '../../services/supabaseClient'; // Import Supabase
 import { KeyboardAwareScrollView } from 'react-native-keyboard-aware-scroll-view';
-import { TextInputMask } from 'react-native-mask-text';
+
 
 const getDistance = (lat1: number, lon1: number, lat2: number, lon2: number) => {
     const R = 6371e3; // metres
@@ -1165,20 +1165,7 @@ export default function BookServiceScreen() {
                             <Text variant="titleSmall" style={styles.sectionTitle}>Pickup Contact</Text>
                             <View style={styles.inputRow}>
                                 <TextInput mode="flat" placeholder="Sender Name" value={senderName} onChangeText={setSenderName} style={styles.modernInput} activeUnderlineColor={theme.colors.primary} underlineColor={theme.colors.outlineVariant} />
-                                <View style={{ flex: 1 }}>
-                                    <TextInputMask
-                                        type="custom"
-                                        options={{
-                                            mask: '0999 999 9999',
-                                        }}
-                                        value={senderPhone}
-                                        onChangeText={(_, rawText) => setSenderPhone(normalizePhoneInput(rawText || ''))}
-                                        keyboardType="phone-pad"
-                                        style={[styles.modernInput, { color: theme.colors.onSurface }]}
-                                        placeholder="09XX XXX XXXX"
-                                        placeholderTextColor={theme.colors.onSurfaceVariant}
-                                    />
-                                </View>
+                                <TextInput mode="flat" placeholder="09XX XXX XXXX" value={senderPhone} onChangeText={(text) => setSenderPhone(normalizePhoneInput(text))} keyboardType="phone-pad" maxLength={11} style={styles.modernInput} activeUnderlineColor={theme.colors.primary} underlineColor={theme.colors.outlineVariant} />
                             </View>
                             {senderName.trim() && senderPhone.length === 11 && !savedContacts.some(c => c.name === senderName.trim() && c.phone === senderPhone.trim()) && (
                                 <TouchableOpacity
@@ -1195,20 +1182,7 @@ export default function BookServiceScreen() {
                             <Text variant="titleSmall" style={styles.sectionTitle}>Drop-off Contact</Text>
                             <View style={styles.inputRow}>
                                 <TextInput mode="flat" placeholder="Recipient Name" value={recipientName} onChangeText={setRecipientName} style={styles.modernInput} activeUnderlineColor={theme.colors.primary} underlineColor={theme.colors.outlineVariant} />
-                                <View style={{ flex: 1 }}>
-                                    <TextInputMask
-                                        type="custom"
-                                        options={{
-                                            mask: '0999 999 9999',
-                                        }}
-                                        value={recipientPhone}
-                                        onChangeText={(_, rawText) => setRecipientPhone(normalizePhoneInput(rawText || ''))}
-                                        keyboardType="phone-pad"
-                                        style={[styles.modernInput, { color: theme.colors.onSurface }]}
-                                        placeholder="09XX XXX XXXX"
-                                        placeholderTextColor={theme.colors.onSurfaceVariant}
-                                    />
-                                </View>
+                                <TextInput mode="flat" placeholder="09XX XXX XXXX" value={recipientPhone} onChangeText={(text) => setRecipientPhone(normalizePhoneInput(text))} keyboardType="phone-pad" maxLength={11} style={styles.modernInput} activeUnderlineColor={theme.colors.primary} underlineColor={theme.colors.outlineVariant} />
                             </View>
                             {recipientName.trim() && recipientPhone.length === 11 && !savedContacts.some(c => c.name === recipientName.trim() && c.phone === recipientPhone.trim()) && (
                                 <TouchableOpacity

@@ -282,6 +282,11 @@ export default function RiderDashboard() {
 
     const sanitizeQuickPinInput = (value: string) => value.replace(/\D/g, '').slice(0, 6);
 
+    const isPinOnlyUnlockError = (error: any): boolean => {
+        const rawMessage = String(error?.message || '').toLowerCase();
+        return rawMessage.includes('pin is required') || rawMessage.includes('high-risk state');
+    };
+
     const resetQuickUnlockProgress = () => {
         setQuickUnlockProgress(0);
         setQuickUnlockProgressLabel('');
@@ -308,6 +313,10 @@ export default function RiderDashboard() {
 
         // High-risk state policy: PIN-only
         if (tamperState?.detected) {
+            PremiumAlert.alert(
+                'Personal PIN Required',
+                'This box is in a high-risk state. Use your Rider Personal PIN (6 digits). Phone lock PIN/biometric fallback is not accepted for this unlock.'
+            );
             openPinModal();
             return;
         }
@@ -340,6 +349,12 @@ export default function RiderDashboard() {
         } catch (error: any) {
             console.error('[QuickUnlock] Biometric failed:', error);
             resetQuickUnlockProgress();
+            if (isPinOnlyUnlockError(error)) {
+                PremiumAlert.alert(
+                    'Personal PIN Required',
+                    'High-risk unlock requires your Rider Personal PIN. Your phone unlock PIN is different and cannot be used for box unlock authorization.'
+                );
+            }
             openPinModal();
         } finally {
             setQuickUnlockSubmitting(false);
@@ -1515,7 +1530,7 @@ export default function RiderDashboard() {
         if (requiresStepUp) {
             const authResult = await authenticateBiometricForSensitiveAction('Authorize cancellation');
             if (!authResult.success) {
-                PremiumAlert.alert('Authorization Required', `${authResult.message} Cancellation was canceled.`);
+                PremiumAlert.alert('Authorization Required', `${'message' in authResult ? authResult.message : 'Authorization failed.'} Cancellation was canceled.`);
                 return;
             }
         }

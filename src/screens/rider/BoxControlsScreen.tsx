@@ -199,6 +199,11 @@ export default function BoxControlsScreen() {
 
     const sanitizePinInput = (value: string) => value.replace(/\D/g, '').slice(0, 6);
 
+    const isPinOnlyUnlockError = (error: any): boolean => {
+        const rawMessage = String(error?.message || '').toLowerCase();
+        return rawMessage.includes('pin is required') || rawMessage.includes('high-risk state');
+    };
+
     // Extended hardware diagnostics — fields written by GPS_LTE_Firebase_Test firmware
     const [hwDiag, setHwDiag] = useState<{
         gps_fix?: boolean;
@@ -689,6 +694,10 @@ export default function BoxControlsScreen() {
         if (isLocked) {
             if (requiresPinOnlyUnlock) {
                 addLog('High-risk state active. Personal PIN required for unlock.', 'warning');
+                PremiumAlert.alert(
+                    'Personal PIN Required',
+                    'This box is in a high-risk state. Use your Rider Personal PIN (6 digits). Phone lock PIN/biometric fallback is not accepted for this unlock.'
+                );
                 openUnlockPinModal();
                 return;
             }
@@ -705,7 +714,7 @@ export default function BoxControlsScreen() {
                 const biometricResult = await authenticateBiometricForUnlock();
 
                 if (!biometricResult.success) {
-                    addLog(`Biometric unavailable/failed: ${biometricResult.reason}`, 'warning');
+                    addLog(`Biometric unavailable/failed: ${'reason' in biometricResult ? biometricResult.reason : 'unknown'}`, 'warning');
                     openUnlockPinModal();
                     return;
                 }
@@ -733,7 +742,12 @@ export default function BoxControlsScreen() {
             } catch (error: any) {
                 console.error('[toggleLock] Biometric unlock failed:', error);
                 addLog('Biometric unlock failed. Falling back to Personal PIN.', 'warning');
-                if (error?.message) {
+                if (isPinOnlyUnlockError(error)) {
+                    PremiumAlert.alert(
+                        'Personal PIN Required',
+                        'High-risk unlock requires your Rider Personal PIN. Your phone unlock PIN is different and cannot be used for box unlock authorization.'
+                    );
+                } else if (error?.message) {
                     PremiumAlert.alert('Biometric Unlock Unavailable', `${error.message}\n\nUse your Personal PIN to continue.`);
                 }
                 openUnlockPinModal();
@@ -1128,7 +1142,7 @@ export default function BoxControlsScreen() {
 
         const authResult = await authenticateBiometricForSensitiveAction('Authorize Personal PIN change');
         if (!authResult.success) {
-            PremiumAlert.alert('Authorization Required', `${authResult.message} PIN change was canceled.`);
+            PremiumAlert.alert('Authorization Required', `${'message' in authResult ? authResult.message : 'Authorization failed.'} PIN change was canceled.`);
             return;
         }
 
@@ -1167,7 +1181,7 @@ export default function BoxControlsScreen() {
                         try {
                             const authResult = await authenticateBiometricForSensitiveAction('Authorize Personal PIN reset');
                             if (!authResult.success) {
-                                PremiumAlert.alert('Authorization Required', `${authResult.message} PIN reset was canceled.`);
+                                PremiumAlert.alert('Authorization Required', `${'message' in authResult ? authResult.message : 'Authorization failed.'} PIN reset was canceled.`);
                                 return;
                             }
 

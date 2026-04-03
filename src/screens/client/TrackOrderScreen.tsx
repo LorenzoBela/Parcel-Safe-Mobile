@@ -763,7 +763,7 @@ export default function TrackOrderScreen() {
     const handleCancellationSubmit = async (reason: CustomerCancellationReason, details: string) => {
         const authResult = await authenticateBiometricForSensitiveAction('Authorize order cancellation');
         if (!authResult.success) {
-            PremiumAlert.alert('Authorization Required', `${authResult.message} Cancellation was canceled.`);
+            PremiumAlert.alert('Authorization Required', `${'message' in authResult ? authResult.message : 'Authorization failed.'} Cancellation was canceled.`);
             return;
         }
 

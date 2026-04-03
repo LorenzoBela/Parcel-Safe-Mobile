@@ -122,7 +122,7 @@ export default function RoleSelectionScreen() {
                 if (!authResult.success) {
                     PremiumAlert.alert(
                         'Authorization Required',
-                        `${authResult.message} Dashboard switch was canceled.`
+                        `${'message' in authResult ? authResult.message : 'Authorization failed.'} Dashboard switch was canceled.`
                     );
                     return;
                 }

@@ -11,7 +11,7 @@ const pendingQueue: PendingNav[] = [];
 
 export function navigateWhenReady(name: string, params?: Record<string, any>): void {
     if (navigationRef.isReady()) {
-        navigationRef.navigate(name as never, params as never);
+        (navigationRef.navigate as any)(name, params);
         return;
     }
     pendingQueue.push({ name, params });
@@ -22,6 +22,6 @@ export function flushPendingNavigation(): void {
     while (pendingQueue.length > 0) {
         const item = pendingQueue.shift();
         if (!item) continue;
-        navigationRef.navigate(item.name as never, item.params as never);
+        (navigationRef.navigate as any)(item.name, item.params);
     }
 }

@@ -98,7 +98,7 @@ export default function AdminRemoteUnlockScreen() {
 
             const authResult = await authenticateBiometricForSensitiveAction('Authorize remote unlock');
             if (!authResult.success) {
-                PremiumAlert.alert('Authorization Required', `${authResult.message} Remote unlock was canceled.`);
+                PremiumAlert.alert('Authorization Required', `${'message' in authResult ? authResult.message : 'Authorization failed.'} Remote unlock was canceled.`);
                 resetUnlockProgress();
                 return;
             }

@@ -1,5 +1,5 @@
 ﻿{
-    "lastSuccessfulBuild":  "2026-04-02T10:51:40.9710519+08:00",
+    "lastSuccessfulBuild":  "2026-04-03T10:08:02.0580064+08:00",
     "environment":  {
                         "androidSdkRoot":  "C:/Users/Lorenzo Bela/AppData/Local/Android/Sdk",
                         "androidHome":  "C:/Users/Lorenzo Bela/AppData/Local/Android/Sdk",
@@ -151,7 +151,7 @@
                              "PREBUILD_WIPES: All android/ patches re-applied after prebuild --clean"
                          ],
     "buildConfig":  {
-                        "timestamp":  "2026-04-02T10:38:08.2203000+08:00",
+                        "timestamp":  "2026-04-03T09:55:27.7842783+08:00",
                         "projectRoot":  "C:\\Dev\\TopBox\\mobile",
                         "androidDir":  "C:\\Dev\\TopBox\\mobile\\android",
                         "androidSdkRoot":  "C:/Users/Lorenzo Bela/AppData/Local/Android/Sdk",

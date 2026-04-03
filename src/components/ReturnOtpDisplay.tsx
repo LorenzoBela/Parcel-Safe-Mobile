@@ -73,7 +73,6 @@ export default function ReturnOtpDisplay({
                         variant="labelLarge"
                         style={{
                             letterSpacing: 2,
-                            fontFamily: 'Inter_700Bold',
                             color: theme.colors.primary,
                             marginLeft: 8,
                             fontFamily: 'monospace',
@@ -121,7 +120,6 @@ export default function ReturnOtpDisplay({
                         variant="displaySmall"
                         style={{
                             letterSpacing: 8,
-                            fontFamily: 'Inter_700Bold',
                             color: theme.colors.primary,
                             fontFamily: 'monospace',
                         }}
