@@ -61,6 +61,29 @@ const Stack = createStackNavigator();
 const Tab = createBottomTabNavigator();
 const NAV_STATE_STORAGE_KEY = 'nav_state_v1';
 
+function enforceRiderStartupGate(restoredState: any) {
+    if (!restoredState || !Array.isArray(restoredState.routes) || restoredState.routes.length === 0) {
+        return restoredState;
+    }
+
+    const currentIndex = typeof restoredState.index === 'number' ? restoredState.index : restoredState.routes.length - 1;
+    const activeRoute = restoredState.routes[currentIndex];
+
+    // If cold-launch restore would jump straight into Rider tabs, route through RiderLoading first.
+    if (activeRoute?.name !== 'RiderApp') {
+        return restoredState;
+    }
+
+    const nextRoutes = restoredState.routes.map((route: any, index: number) =>
+        index === currentIndex ? { ...route, name: 'RiderLoading', state: undefined, params: undefined } : route
+    );
+
+    return {
+        ...restoredState,
+        routes: nextRoutes,
+    };
+}
+
 const linking = {
     prefixes: ['parcelsafe://', 'parcel-safe://'],
     config: {
@@ -272,7 +295,8 @@ export default function AppNavigator() {
         AsyncStorage.getItem(NAV_STATE_STORAGE_KEY)
             .then((stateString) => {
                 if (stateString) {
-                    setInitialNavState(JSON.parse(stateString));
+                    const restoredState = JSON.parse(stateString);
+                    setInitialNavState(enforceRiderStartupGate(restoredState));
                 }
             })
             .catch(() => {

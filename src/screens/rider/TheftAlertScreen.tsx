@@ -39,6 +39,7 @@ export default function TheftAlertScreen() {
     const navigation = useNavigation<any>();
     const route = useRoute<any>();
     const theme = useTheme();
+    const isDark = theme.dark;
 
     const authedUserId = useAuthStore((state: any) => state.user?.userId) as string | undefined;
 
@@ -54,6 +55,19 @@ export default function TheftAlertScreen() {
     const [showNotesInput, setShowNotesInput] = useState(false);
     const [exportingEvidence, setExportingEvidence] = useState(false);
 
+    const c = {
+        bg: theme.colors.background,
+        surface: theme.colors.surface,
+        text: (theme.colors as any).onSurface || (isDark ? '#FFFFFF' : '#111111'),
+        textSecondary: (theme.colors as any).onSurfaceVariant || (isDark ? '#A1A1AA' : '#6B7280'),
+        border: isDark ? '#2A2A2A' : '#E5E7EB',
+        headerSafe: isDark ? '#2A2A2A' : '#111111',
+        danger: '#D32F2F',
+        dangerSoft: isDark ? '#3A1E1E' : '#FFEBEE',
+        neutralButton: isDark ? '#FFFFFF' : '#000000',
+        neutralButtonText: isDark ? '#000000' : '#FFFFFF',
+    };
+
     // Subscribe to theft status
     useEffect(() => {
         const unsubscribe = subscribeToTheftStatus(boxId, (status) => {
@@ -63,6 +77,14 @@ export default function TheftAlertScreen() {
 
         return () => unsubscribe();
     }, [boxId]);
+
+    useEffect(() => {
+        // Prevent indefinite loading if subscription fails or is delayed.
+        const timer = setTimeout(() => {
+            setLoading(false);
+        }, 5000);
+        return () => clearTimeout(timer);
+    }, []);
 
     // Report theft handler
     const handleReportTheft = async () => {
@@ -127,23 +149,23 @@ export default function TheftAlertScreen() {
 
     const displayLabel = theftStatus
         ? formatTheftState(theftStatus.state)
-        : 'Loading...';
+        : (loading ? 'Loading...' : 'No Active Alert');
 
     if (loading) {
         return (
-            <View style={styles.loadingContainer}>
+            <View style={[styles.loadingContainer, { backgroundColor: c.bg }]}>
                 <ActivityIndicator size="large" color={theme.colors.primary} />
-                <Text style={{ marginTop: 16, color: '#666' }}>Loading theft status...</Text>
+                <Text style={{ marginTop: 16, color: c.textSecondary }}>Loading theft status...</Text>
             </View>
         );
     }
 
     return (
-        <ScrollView style={styles.container} contentContainerStyle={styles.scrollContent}>
+        <ScrollView style={[styles.container, { backgroundColor: c.bg }]} contentContainerStyle={styles.scrollContent}>
             {/* Header Banner */}
             <Surface style={[
                 styles.headerBanner,
-                { backgroundColor: theftStatus?.is_stolen ? '#D32F2F' : theme.colors.primary }
+                { backgroundColor: theftStatus?.is_stolen ? c.danger : c.headerSafe }
             ]} elevation={4}>
                 <MaterialCommunityIcons
                     name={theftStatus?.is_stolen ? 'alert-circle' : 'shield-check'}
@@ -163,8 +185,8 @@ export default function TheftAlertScreen() {
             </Surface>
 
             {/* Current Status Card */}
-            <Text style={styles.sectionTitle}>Current Status</Text>
-            <Card style={styles.card} mode="elevated">
+            <Text style={[styles.sectionTitle, { color: c.text }]}>Current Status</Text>
+            <Card style={[styles.card, { backgroundColor: c.surface, borderColor: c.border, borderWidth: 1 }]} mode="elevated">
                 <Card.Content>
                     <View style={styles.statusRow}>
                         <View style={[styles.statusIcon, { backgroundColor: severityColor + '20' }]}>
@@ -179,9 +201,12 @@ export default function TheftAlertScreen() {
                                 {displayLabel}
                             </Text>
                             {theftStatus?.reported_at && (
-                                <Text style={styles.statusTime}>
+                                <Text style={[styles.statusTime, { color: c.textSecondary }]}>
                                     Reported {dayjs(theftStatus.reported_at).fromNow()}
                                 </Text>
+                            )}
+                            {!theftStatus?.reported_at && (
+                                <Text style={[styles.statusTime, { color: c.textSecondary }]}>Monitoring active</Text>
                             )}
                         </View>
                         <Chip
@@ -195,10 +220,10 @@ export default function TheftAlertScreen() {
 
                     {theftStatus?.lockdown_active && (
                         <>
-                            <Divider style={{ marginVertical: 16 }} />
-                            <View style={styles.lockdownBanner}>
-                                <MaterialCommunityIcons name="lock" size={24} color="#D32F2F" />
-                                <Text style={styles.lockdownText}>
+                            <Divider style={{ marginVertical: 16, backgroundColor: c.border }} />
+                            <View style={[styles.lockdownBanner, { backgroundColor: c.dangerSoft }]}>
+                                <MaterialCommunityIcons name="lock" size={24} color={c.danger} />
+                                <Text style={[styles.lockdownText, { color: c.danger }]}> 
                                     LOCKDOWN ACTIVE - All OTPs blocked
                                 </Text>
                             </View>
@@ -207,10 +232,10 @@ export default function TheftAlertScreen() {
 
                     {theftStatus?.last_known_location && (
                         <>
-                            <Divider style={{ marginVertical: 16 }} />
+                            <Divider style={{ marginVertical: 16, backgroundColor: c.border }} />
                             <View style={styles.locationRow}>
-                                <MaterialCommunityIcons name="map-marker" size={20} color="#666" />
-                                <Text style={styles.locationText}>
+                                <MaterialCommunityIcons name="map-marker" size={20} color={c.textSecondary} />
+                                <Text style={[styles.locationText, { color: c.textSecondary }]}> 
                                     Last seen: {theftStatus.last_known_location.lat.toFixed(4)}, {theftStatus.last_known_location.lng.toFixed(4)}
                                 </Text>
                             </View>
@@ -220,18 +245,18 @@ export default function TheftAlertScreen() {
             </Card>
 
             {/* Actions */}
-            <Text style={styles.sectionTitle}>Actions</Text>
+            <Text style={[styles.sectionTitle, { color: c.text }]}>Actions</Text>
 
             {/* Track My Box */}
             {theftStatus?.is_stolen && (
-                <Surface style={styles.actionCard} elevation={2}>
+                <Surface style={[styles.actionCard, { backgroundColor: c.surface, borderColor: c.border, borderWidth: 1 }]} elevation={2}>
                     <View style={styles.actionHeader}>
-                        <View style={[styles.actionIcon, { backgroundColor: '#2196F320' }]}>
-                            <MaterialCommunityIcons name="map-search" size={28} color="#2196F3" />
+                        <View style={[styles.actionIcon, { backgroundColor: isDark ? '#2A2A2A' : '#F1F1F1' }]}>
+                            <MaterialCommunityIcons name="map-search" size={28} color={c.text} />
                         </View>
                         <View style={styles.actionInfo}>
-                            <Text style={styles.actionTitle}>Track My Box</Text>
-                            <Text style={styles.actionDescription}>
+                            <Text style={[styles.actionTitle, { color: c.text }]}>Track My Box</Text>
+                            <Text style={[styles.actionDescription, { color: c.textSecondary }]}> 
                                 View live location on map
                             </Text>
                         </View>
@@ -239,7 +264,8 @@ export default function TheftAlertScreen() {
                     <Button
                         mode="contained"
                         onPress={handleTrackMyBox}
-                        buttonColor="#2196F3"
+                        buttonColor={c.neutralButton}
+                        textColor={c.neutralButtonText}
                         style={styles.actionButton}
                     >
                         Open Map
@@ -249,14 +275,14 @@ export default function TheftAlertScreen() {
 
             {/* Export Evidence */}
             {theftStatus?.is_stolen && (
-                <Surface style={styles.actionCard} elevation={2}>
+                <Surface style={[styles.actionCard, { backgroundColor: c.surface, borderColor: c.border, borderWidth: 1 }]} elevation={2}>
                     <View style={styles.actionHeader}>
-                        <View style={[styles.actionIcon, { backgroundColor: '#9C27B020' }]}>
-                            <MaterialCommunityIcons name="file-document" size={28} color="#9C27B0" />
+                        <View style={[styles.actionIcon, { backgroundColor: isDark ? '#2A2A2A' : '#F1F1F1' }]}>
+                            <MaterialCommunityIcons name="file-document" size={28} color={c.text} />
                         </View>
                         <View style={styles.actionInfo}>
-                            <Text style={styles.actionTitle}>Download Evidence</Text>
-                            <Text style={styles.actionDescription}>
+                            <Text style={[styles.actionTitle, { color: c.text }]}>Download Evidence</Text>
+                            <Text style={[styles.actionDescription, { color: c.textSecondary }]}> 
                                 GPS trail + photos for insurance
                             </Text>
                         </View>
@@ -264,7 +290,8 @@ export default function TheftAlertScreen() {
                     <Button
                         mode="contained"
                         onPress={handleExportEvidence}
-                        buttonColor="#9C27B0"
+                        buttonColor={c.neutralButton}
+                        textColor={c.neutralButtonText}
                         style={styles.actionButton}
                         loading={exportingEvidence}
                         disabled={exportingEvidence}
@@ -276,12 +303,12 @@ export default function TheftAlertScreen() {
 
             {/* Report Theft (only if not already reported) */}
             {!theftStatus?.is_stolen && (
-                <Surface style={styles.reportCard} elevation={3}>
+                <Surface style={[styles.reportCard, { backgroundColor: c.surface, borderColor: isDark ? '#5F2B2B' : '#FFCDD2' }]} elevation={3}>
                     <View style={styles.reportHeader}>
-                        <MaterialCommunityIcons name="alert-octagon" size={32} color="#D32F2F" />
-                        <Text style={styles.reportTitle}>Report Theft</Text>
+                        <MaterialCommunityIcons name="alert-octagon" size={32} color={c.danger} />
+                        <Text style={[styles.reportTitle, { color: c.danger }]}>Report Theft</Text>
                     </View>
-                    <Text style={styles.reportDescription}>
+                    <Text style={[styles.reportDescription, { color: c.textSecondary }]}> 
                         If your box has been stolen or you suspect unauthorized access,
                         report it immediately. This will alert the admin team and enable tracking.
                     </Text>
@@ -295,7 +322,10 @@ export default function TheftAlertScreen() {
                                 onChangeText={setNotes}
                                 multiline
                                 numberOfLines={3}
-                                style={styles.notesInput}
+                                style={[styles.notesInput, { backgroundColor: c.surface }]}
+                                textColor={c.text}
+                                outlineColor={c.border}
+                                activeOutlineColor={isDark ? '#FFFFFF' : '#000000'}
                             />
                             <View style={styles.reportButtons}>
                                 <Button
@@ -309,6 +339,7 @@ export default function TheftAlertScreen() {
                                     mode="contained"
                                     onPress={handleReportTheft}
                                     buttonColor="#D32F2F"
+                                    textColor="#FFFFFF"
                                     style={{ flex: 1 }}
                                     loading={reporting}
                                     disabled={reporting}
@@ -322,6 +353,7 @@ export default function TheftAlertScreen() {
                             mode="contained"
                             onPress={() => setShowNotesInput(true)}
                             buttonColor="#D32F2F"
+                            textColor="#FFFFFF"
                             style={styles.reportButton}
                             icon="alert"
                         >
@@ -332,15 +364,17 @@ export default function TheftAlertScreen() {
             )}
 
             {/* Contact Support */}
-            <Surface style={styles.supportCard} elevation={1}>
-                <MaterialCommunityIcons name="headphones" size={24} color="#666" />
+            <Surface style={[styles.supportCard, { backgroundColor: c.surface, borderColor: c.border, borderWidth: 1 }]} elevation={1}>
+                <MaterialCommunityIcons name="headphones" size={24} color={c.textSecondary} />
                 <View style={styles.supportInfo}>
-                    <Text style={styles.supportTitle}>Need Help?</Text>
-                    <Text style={styles.supportText}>Contact our 24/7 support team</Text>
+                    <Text style={[styles.supportTitle, { color: c.text }]}>Need Help?</Text>
+                    <Text style={[styles.supportText, { color: c.textSecondary }]}>Contact our 24/7 support team</Text>
                 </View>
                 <Button
                     mode="outlined"
                     onPress={() => Linking.openURL('tel:+639123456789')}
+                    textColor={c.text}
+                    style={{ borderColor: c.border }}
                     compact
                 >
                     Call

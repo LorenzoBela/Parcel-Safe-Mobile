@@ -114,15 +114,27 @@ export function subscribeToTheftStatus(
     boxId: string,
     callback: (status: TheftStatus | null) => void
 ): () => void {
+    if (!boxId) {
+        callback(null);
+        return () => { };
+    }
+
     const db = getFirebaseDatabase();
     const theftRef = ref(db, `boxes/${boxId}/theft_status`);
 
-    const unsubscribe = onValue(theftRef, (snapshot) => {
-        const data = snapshot.val();
-        callback(data as TheftStatus | null);
-    });
+    const unsubscribe = onValue(
+        theftRef,
+        (snapshot) => {
+            const data = snapshot.val();
+            callback(data as TheftStatus | null);
+        },
+        (error) => {
+            console.warn('[EC-81] Theft status subscription failed:', error);
+            callback(null);
+        }
+    );
 
-    return () => off(theftRef);
+    return unsubscribe;
 }
 
 /**
