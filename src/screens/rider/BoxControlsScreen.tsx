@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { View, Animated, StyleSheet, ScrollView, Alert, TouchableOpacity, Modal } from 'react-native';
 import { useEntryAnimation } from '../../hooks/useEntryAnimation';
-import { Text, Card, Button, Surface, ProgressBar, useTheme, IconButton, Divider, Portal, ActivityIndicator, TextInput } from 'react-native-paper';
+import { Text, Card, Button, Surface, useTheme, IconButton, Divider, Portal, ActivityIndicator, TextInput } from 'react-native-paper';
+import * as Progress from 'react-native-progress';
 import LottieView from 'lottie-react-native';
 import { useAppTheme } from '../../context/ThemeContext';
 
@@ -91,6 +92,7 @@ import {
     RiderTamperIncident,
 } from '../../services/tamperIncidentService';
 import { showSecurityNotification } from '../../services/pushNotificationService';
+import { getActionCriticality, shouldUseOptimisticUi } from '../../services/actionCriticality';
 
 export default function BoxControlsScreen() {
     const navigation = useNavigation();
@@ -692,6 +694,10 @@ export default function BoxControlsScreen() {
             }
 
             try {
+                const actionType = 'UNLOCK_COMMAND';
+                if (!shouldUseOptimisticUi(actionType)) {
+                    addLog(`Critical action (${getActionCriticality(actionType)}): waiting for command acknowledgment.`, 'info');
+                }
                 setManualOverrideSending(true);
                 setShowUnlockProgress(true);
                 setUnlockProgress(0.2);
@@ -744,6 +750,10 @@ export default function BoxControlsScreen() {
 
         // EC-FIX: Send command to Firebase instead of local toggle
         try {
+            const actionType = 'LOCK_COMMAND';
+            if (!shouldUseOptimisticUi(actionType)) {
+                addLog(`Critical action (${getActionCriticality(actionType)}): lock command requires explicit confirmation.`, 'info');
+            }
             setManualOverrideSending(true);
             addLog(`Sending manual override: ${action} -> ${boxId}`, "warning");
             const { updateBoxState } = await import('../../services/firebaseClient');
@@ -774,6 +784,10 @@ export default function BoxControlsScreen() {
         }
 
         try {
+            const actionType = 'UNLOCK_COMMAND';
+            if (!shouldUseOptimisticUi(actionType)) {
+                addLog(`Critical action (${getActionCriticality(actionType)}): waiting for command acknowledgment.`, 'info');
+            }
             setUnlockPinSubmitting(true);
             setManualOverrideSending(true);
             setShowUnlockProgress(true);
@@ -822,6 +836,10 @@ export default function BoxControlsScreen() {
                     style: "destructive",
                     onPress: async () => {
                         try {
+                            const actionType = 'EMERGENCY_UNLOCK_COMMAND';
+                            if (!shouldUseOptimisticUi(actionType)) {
+                                addLog(`Critical action (${getActionCriticality(actionType)}): emergency command uses explicit pending state.`, 'warning');
+                            }
                             setManualOverrideSending(true);
                             const { updateBoxState } = await import('../../services/firebaseClient');
                             await updateBoxState(boxId, {
@@ -1372,10 +1390,14 @@ export default function BoxControlsScreen() {
                             <Text style={{ fontSize: 12, color: c.textSec, marginBottom: 6 }}>
                                 {unlockProgressLabel || 'Processing unlock...'}
                             </Text>
-                            <ProgressBar
+                            <Progress.Bar
                                 progress={unlockProgress}
                                 color={c.accent}
-                                style={{ height: 6, borderRadius: 6, backgroundColor: c.search }}
+                                unfilledColor={c.search}
+                                borderWidth={0}
+                                borderRadius={6}
+                                height={8}
+                                width={null}
                             />
                         </View>
                     )}

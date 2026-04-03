@@ -9,6 +9,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import axios from 'axios';
 import { AppState, AppStateStatus } from 'react-native';
+import { clearAuthSecrets, persistAuthSecrets } from './security/authSecretStore';
 
 const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL || '';
 const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || '';
@@ -132,6 +133,23 @@ const MIN_BACKGROUND_FOR_REFRESH_MS = 60_000; // Only refresh if backgrounded > 
 
 if (supabase) {
     let _prevAppState: AppStateStatus = AppState.currentState;
+
+    supabase.auth.onAuthStateChange(async (event, session) => {
+        try {
+            if ((event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') && session?.access_token && session?.refresh_token) {
+                await persistAuthSecrets({
+                    accessToken: session.access_token,
+                    refreshToken: session.refresh_token,
+                });
+            }
+
+            if (event === 'SIGNED_OUT') {
+                await clearAuthSecrets();
+            }
+        } catch (error) {
+            console.warn('[Supabase] Failed to sync auth secrets to SecureStore:', error);
+        }
+    });
 
     AppState.addEventListener('change', (nextState: AppStateStatus) => {
         if (nextState === 'background' || nextState === 'inactive') {

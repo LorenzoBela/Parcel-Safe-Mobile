@@ -1,12 +1,14 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { StyleSheet } from 'react-native';
 import { NavigationContainer, DefaultTheme, DarkTheme as NavDarkTheme } from '@react-navigation/native';
 import { createStackNavigator, CardStyleInterpolators } from '@react-navigation/stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { useTheme } from 'react-native-paper'; // Import useTheme
 import { triggerDeliverySync } from '../services/deliverySyncService';
+import { flushPendingNavigation, navigationRef } from './navigationService';
 
 import AuthLoadingScreen from '../screens/auth/AuthLoadingScreen';
 import LoginScreen from '../screens/auth/LoginScreen';
@@ -57,6 +59,21 @@ import NotificationPreferencesScreen from '../screens/common/NotificationPrefere
 
 const Stack = createStackNavigator();
 const Tab = createBottomTabNavigator();
+const NAV_STATE_STORAGE_KEY = 'nav_state_v1';
+
+const linking = {
+    prefixes: ['parcelsafe://', 'parcel-safe://'],
+    config: {
+        screens: {
+            TrackOrder: 'order/:bookingId',
+            DeliveryDetail: 'delivery/:deliveryId',
+            JobDetail: 'job/:jobId',
+            BoxControls: 'box/:boxId',
+            PairBox: 'pair',
+            TheftAlert: 'theft/:boxId',
+        },
+    },
+};
 
 const TabIcon = ({ name, color, size }: { name: any; color: string; size: number }) => (
     <MaterialCommunityIcons name={name} color={color} size={size} />
@@ -221,6 +238,7 @@ const AdminNavigator = () => {
 export default function AppNavigator() {
     const paperTheme = useTheme();
     const isDark = paperTheme.dark;
+    const [initialNavState, setInitialNavState] = useState<any>(undefined);
     
     // Create a nav theme that automatically styles all Stack Headers globally based on dark mode.
     const navTheme = isDark ? {
@@ -250,8 +268,33 @@ export default function AppNavigator() {
         triggerDeliverySync().catch(() => { });
     }, []);
 
+    useEffect(() => {
+        AsyncStorage.getItem(NAV_STATE_STORAGE_KEY)
+            .then((stateString) => {
+                if (stateString) {
+                    setInitialNavState(JSON.parse(stateString));
+                }
+            })
+            .catch(() => {
+                // Best-effort restore only.
+            });
+    }, []);
+
     return (
-        <NavigationContainer theme={navTheme}>
+        <NavigationContainer
+            ref={navigationRef}
+            theme={navTheme}
+            linking={linking}
+            initialState={initialNavState}
+            onReady={() => {
+                flushPendingNavigation();
+            }}
+            onStateChange={(state) => {
+                AsyncStorage.setItem(NAV_STATE_STORAGE_KEY, JSON.stringify(state)).catch(() => {
+                    // Navigation persistence is best-effort.
+                });
+            }}
+        >
             <Stack.Navigator id="RootStack" initialRouteName="AuthLoading" screenOptions={{ headerShown: false, cardStyleInterpolator: CardStyleInterpolators.forFadeFromCenter }}>
                 <Stack.Screen name="AuthLoading" component={AuthLoadingScreen} />
                 <Stack.Screen name="Login" component={LoginScreen} />

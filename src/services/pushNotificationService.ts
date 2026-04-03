@@ -37,6 +37,7 @@ const CHANNEL_TO_NOTIFEE: Record<string, string> = {
     'cancellation': NOTIFEE_CANCELLATION_CHANNEL,
 };
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { shouldProcessNotification } from './notificationDedupService';
 
 // Conditionally import modules
 let Notifications: any = null;
@@ -124,6 +125,10 @@ export const NOTIFICATION_CHANNELS = {
     SECURITY_ALERTS: 'security-alerts-v2',  // v2: lockscreenVisibility PUBLIC + bypassDnd
     CANCELLATION: 'cancellation-v2',        // v2: lockscreenVisibility PUBLIC + bypassDnd
     PROMOTIONS: 'promotions-v2',            // v2: bumped to HIGH so promos show outside the app
+};
+
+export const NOTIFICATION_CATEGORIES = {
+    SECURITY_ACTIONS: 'security-actions',
 };
 
 /**
@@ -267,6 +272,23 @@ export async function setupNotificationChannels(): Promise<void> {
             enableLights: true,
             lightColor: '#FF6B00',
         });
+
+        await Notifications.setNotificationCategoryAsync(NOTIFICATION_CATEGORIES.SECURITY_ACTIONS, [
+            {
+                identifier: 'REAUTH_NOW',
+                buttonTitle: 'Re-authenticate',
+                options: {
+                    opensAppToForeground: true,
+                },
+            },
+            {
+                identifier: 'DISMISS_ALERT',
+                buttonTitle: 'Dismiss',
+                options: {
+                    opensAppToForeground: false,
+                },
+            },
+        ]);
     } catch (error) {
         console.warn('Failed to setup notification channels:', error);
         nativeNotificationsAvailable = false;
@@ -375,6 +397,12 @@ function setupFCMBackgroundHandler(): void {
         messaging().setBackgroundMessageHandler(async (remoteMessage: any) => {
             console.log('[FCM] Background message:', remoteMessage);
 
+            const shouldProcess = await shouldProcessNotification(remoteMessage);
+            if (!shouldProcess) {
+                console.log('[FCM] Skipping duplicate background message');
+                return;
+            }
+
             // FCM data messages need to be shown as local notifications
             const data = remoteMessage.data || {};
             const title = remoteMessage.notification?.title || data.title || 'Parcel Safe';
@@ -411,6 +439,12 @@ export function setupFCMForegroundHandler(): () => void {
     try {
         const unsubscribe = messaging().onMessage(async (remoteMessage: any) => {
             console.log('[FCM] Foreground message:', remoteMessage);
+
+            const shouldProcess = await shouldProcessNotification(remoteMessage);
+            if (!shouldProcess) {
+                console.log('[FCM] Skipping duplicate foreground message');
+                return;
+            }
 
             const data = remoteMessage.data || {};
             const title = remoteMessage.notification?.title || data.title || 'Parcel Safe';

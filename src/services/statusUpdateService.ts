@@ -11,6 +11,9 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { ref, update, serverTimestamp } from 'firebase/database';
 import { getFirebaseDatabase } from './firebaseClient';
 import { supabase } from './supabaseClient';
+import { generateQueueUuid } from './queueIdentity';
+import { getExponentialBackoffDelayMs, NETWORK_POLICY } from './networkPolicy';
+import { captureHandledError, captureHandledMessage } from './observability/sentryService';
 
 
 // Storage keys
@@ -22,7 +25,7 @@ const STORAGE_KEYS = {
 export const EC35_CONFIG = {
     MAX_QUEUE_ENTRIES: 10,
     MAX_RETRIES: 5,
-    BASE_RETRY_MS: 1000, // 1 second, doubles each retry
+    BASE_RETRY_MS: NETWORK_POLICY.RETRY.BASE_MS,
 };
 
 export type DeliveryStatus =
@@ -41,6 +44,7 @@ export type DeliveryStatus =
     | string;
 
 export interface StatusUpdateEntry {
+    queueId?: string;
     deliveryId: string;
     boxId: string;
     status: DeliveryStatus;
@@ -55,9 +59,11 @@ export interface StatusUpdateEntry {
  * Calculate exponential backoff delay
  */
 export function getRetryDelay(retryCount: number): number {
-    if (retryCount <= 0) return EC35_CONFIG.BASE_RETRY_MS;
-    if (retryCount >= EC35_CONFIG.MAX_RETRIES) return 0;
-    return EC35_CONFIG.BASE_RETRY_MS * Math.pow(2, retryCount); // 1s, 2s, 4s, 8s, 16s
+    return getExponentialBackoffDelayMs(
+        retryCount,
+        EC35_CONFIG.BASE_RETRY_MS,
+        EC35_CONFIG.MAX_RETRIES
+    );
 }
 
 /**
@@ -126,9 +132,16 @@ class StatusUpdateService {
                 // Update existing entry
                 existing.status = status;
                 existing.lastAttemptAt = Date.now();
+                captureHandledMessage('status_queue_updated', {
+                    queue_uuid: existing.queueId || 'unknown',
+                    action_type: 'status_update',
+                    flush_stage: 'enqueue',
+                    idempotency_result: 'updated',
+                });
             } else {
                 // Add new entry
                 const entry: StatusUpdateEntry = {
+                    queueId: generateQueueUuid('status'),
                     deliveryId,
                     boxId,
                     status,
@@ -138,6 +151,12 @@ class StatusUpdateService {
                     synced: false,
                 };
                 queue.push(entry);
+                captureHandledMessage('status_queue_enqueued', {
+                    queue_uuid: entry.queueId || 'unknown',
+                    action_type: 'status_update',
+                    flush_stage: 'enqueue',
+                    idempotency_result: 'new',
+                });
             }
 
             await this.saveQueue(queue);
@@ -145,6 +164,12 @@ class StatusUpdateService {
             return true;
         } catch (error) {
             console.error('[EC35] Failed to queue status update:', error);
+            captureHandledError(error, {
+                queue_uuid: 'unknown',
+                action_type: 'status_update',
+                flush_stage: 'enqueue',
+                idempotency_result: 'error',
+            });
             return false;
         }
     }
@@ -169,6 +194,12 @@ class StatusUpdateService {
                 if (entry.synced) continue;
 
                 if (!isRetryDue(entry, currentTime)) {
+                    captureHandledMessage('status_queue_backoff_pending', {
+                        queue_uuid: entry.queueId || 'unknown',
+                        action_type: 'status_update',
+                        flush_stage: 'process_backoff',
+                        idempotency_result: 'backoff_pending',
+                    });
                     results.pending++;
                     continue;
                 }
@@ -181,6 +212,7 @@ class StatusUpdateService {
                         updated_at: serverTimestamp(),
                         status_retry_source: 'mobile_retry',
                         status_retry_box_id: entry.boxId,
+                        status_retry_queue_id: entry.queueId || null,
                     });
 
                     // Sync to Supabase (Source of Truth)
@@ -208,6 +240,12 @@ class StatusUpdateService {
                     }
 
                     entry.synced = true;
+                    captureHandledMessage('status_queue_synced', {
+                        queue_uuid: entry.queueId || 'unknown',
+                        action_type: 'status_update',
+                        flush_stage: 'process_sync',
+                        idempotency_result: 'synced',
+                    });
                     results.success++;
                     console.log('[EC35] Status synced:', entry.deliveryId);
                 } catch (error) {
@@ -216,9 +254,21 @@ class StatusUpdateService {
                     entry.error = String(error);
 
                     if (isMaxRetriesExceeded(entry)) {
+                        captureHandledError(error, {
+                            queue_uuid: entry.queueId || 'unknown',
+                            action_type: 'status_update',
+                            flush_stage: 'process_sync',
+                            idempotency_result: 'max_retries',
+                        });
                         results.failed++;
                         console.error('[EC35] Max retries exceeded:', entry.deliveryId);
                     } else {
+                        captureHandledError(error, {
+                            queue_uuid: entry.queueId || 'unknown',
+                            action_type: 'status_update',
+                            flush_stage: 'process_sync',
+                            idempotency_result: 'retry_scheduled',
+                        });
                         results.pending++;
                         console.log(`[EC35] Retry ${entry.retryCount} scheduled:`, entry.deliveryId);
                     }

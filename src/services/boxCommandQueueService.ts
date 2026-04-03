@@ -1,4 +1,5 @@
 import { Platform } from 'react-native';
+import { captureHandledError, captureHandledMessage } from './observability/sentryService';
 
 let SQLite: typeof import('expo-sqlite') | null = null;
 if (Platform.OS !== 'web') {
@@ -102,6 +103,13 @@ export async function enqueueBoxCommand(params: {
             now,
         ]
     );
+
+    captureHandledMessage('box_command_enqueued', {
+        queue_uuid: params.requestId,
+        action_type: 'box_command',
+        flush_stage: 'enqueue',
+        idempotency_result: 'queued_or_ignored',
+    });
 }
 
 export async function flushQueuedBoxCommands(
@@ -125,6 +133,13 @@ export async function flushQueuedBoxCommands(
     let sent = 0;
     let failed = 0;
 
+    captureHandledMessage('box_command_flush_start', {
+        queue_uuid: items.map((item) => item.request_id).join(','),
+        action_type: 'box_command',
+        flush_stage: 'flush_batch',
+        idempotency_result: `batch_${items.length}`,
+    });
+
     for (const item of items) {
         const now = Date.now();
         try {
@@ -145,6 +160,12 @@ export async function flushQueuedBoxCommands(
                  WHERE id=?`,
                 [now, now, item.id]
             );
+            captureHandledMessage('box_command_sent', {
+                queue_uuid: item.request_id,
+                action_type: 'box_command',
+                flush_stage: 'flush_sent',
+                idempotency_result: 'sent',
+            });
             sent += 1;
         } catch (error) {
             await database.runAsync(
@@ -158,6 +179,12 @@ export async function flushQueuedBoxCommands(
                  WHERE id=?`,
                 [getNextRetryAt(item.attempt_count), now, String(error), now, item.id]
             );
+            captureHandledError(error, {
+                queue_uuid: item.request_id,
+                action_type: 'box_command',
+                flush_stage: 'flush_retry',
+                idempotency_result: `attempt_${item.attempt_count + 1}`,
+            });
             failed += 1;
         }
     }
@@ -205,4 +232,11 @@ export async function markLatestSentCommandAcked(params: {
             params.command,
         ]
     );
+
+    captureHandledMessage('box_command_acked', {
+        queue_uuid: `${params.deliveryId}_${params.boxId}_${params.command}`,
+        action_type: 'box_command_ack',
+        flush_stage: 'ack',
+        idempotency_result: params.ackStatus || 'acked',
+    });
 }

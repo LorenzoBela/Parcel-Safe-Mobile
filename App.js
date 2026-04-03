@@ -5,6 +5,8 @@ import { config } from '@gluestack-ui/config';
 import { PaperProvider } from 'react-native-paper';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { AppState, Alert, StatusBar } from 'react-native';
+import NetInfo from '@react-native-community/netinfo';
+import * as ExpoNotifications from 'expo-notifications';
 import AppNavigator from './src/navigation/AppNavigator';
 import { configureGoogleSignIn } from './src/services/auth';
 import { ThemeProvider, useAppTheme } from './src/context/ThemeContext';
@@ -14,6 +16,10 @@ import BinaryUpdateRequiredModal from './src/components/modals/BinaryUpdateRequi
 import ResumeScreen from './src/screens/auth/ResumeScreen';
 import { useOTAUpdateMonitor } from './src/hooks/useOTAUpdateMonitor';
 import { useBinaryUpdateGate } from './src/hooks/useBinaryUpdateGate';
+import { initializeSentry } from './src/services/observability/sentryService';
+import { navigateWhenReady } from './src/navigation/navigationService';
+import { PersistQueryClientProvider } from '@tanstack/react-query-persist-client';
+import { queryClient, queryPersister } from './src/services/queryClient';
 
 import * as SplashScreen from 'expo-splash-screen';
 import * as Font from 'expo-font';
@@ -23,6 +29,8 @@ import { SpaceGrotesk_500Medium, SpaceGrotesk_700Bold } from '@expo-google-fonts
 
 // Keep splash screen visible while we initialize
 SplashScreen.preventAutoHideAsync();
+
+initializeSentry();
 
 // Conditionally import modules
 let Notifications = null;
@@ -57,6 +65,32 @@ const AppContent = () => {
   // Only trigger ResumeScreen when the app truly went to background (not just inactive).
   // inactive alone is caused by notification shade, dropdowns, system dialogs — not a real background trip.
   const wasBackgroundedRef = useRef(false);
+
+  const navigateFromNotificationData = (data) => {
+    if (!data) return;
+
+    const type = String(data.type || '').toUpperCase();
+    const deliveryId = data.deliveryId || data.delivery_id || data.orderId || data.bookingId;
+    const boxId = data.boxId || data.box_id;
+
+    if (type === 'ORDER' || type === 'INCOMING_ORDER' || type === 'NEW_ORDER' || type === 'ORDER_ACCEPTED') {
+      if (deliveryId) {
+        navigateWhenReady('TrackOrder', { bookingId: deliveryId });
+      } else {
+        navigateWhenReady('AssignedDeliveries');
+      }
+      return;
+    }
+
+    if (type === 'TAMPER_DETECTED' || type === 'THEFT_REPORTED' || type === 'GEOFENCE_BREACH') {
+      navigateWhenReady('TheftAlert', boxId ? { boxId } : undefined);
+      return;
+    }
+
+    if (deliveryId) {
+      navigateWhenReady('DeliveryDetail', { deliveryId });
+    }
+  };
 
   useEffect(() => {
     let cleanupFunctions = [];
@@ -149,10 +183,24 @@ const AppContent = () => {
 
         // Listen for notification taps
         const notificationResponseSubscription = Notifications.addNotificationResponseReceivedListener(
-          (response) => {
+          async (response) => {
             // if (__DEV__) console.log('[App] Notification tapped');
             const data = response.notification.request.content.data;
             const content = response.notification.request.content;
+            const actionIdentifier = response.actionIdentifier;
+
+            if (actionIdentifier === 'REAUTH_NOW') {
+              try {
+                const { supabase } = require('./src/services/supabaseClient');
+                const useAuthStore = require('./src/store/authStore').default;
+                await supabase?.auth?.signOut();
+                useAuthStore.getState().logout();
+                Alert.alert('Re-authentication required', 'Please sign in again to continue.');
+              } catch (err) {
+                console.warn('[App] Failed to process REAUTH_NOW action:', err);
+              }
+              return;
+            }
 
             if (
               recordPromoHistoryItem
@@ -163,9 +211,7 @@ const AppContent = () => {
               recordPromoHistoryItem(String(content.title), String(content.body)).catch(() => { });
             }
 
-            if (data.type === 'new_order') {
-              // Navigate to order screen
-            }
+            navigateFromNotificationData(data);
           }
         );
         cleanupFunctions.push(() => notificationResponseSubscription.remove());
@@ -186,6 +232,17 @@ const AppContent = () => {
           }
         );
         cleanupFunctions.push(() => notificationReceivedSubscription.remove());
+
+        ExpoNotifications.getLastNotificationResponseAsync()
+          .then((response) => {
+            const data = response?.notification?.request?.content?.data;
+            if (data) {
+              navigateFromNotificationData(data);
+            }
+          })
+          .catch(() => {
+            // Best-effort cold-start deep-link recovery only.
+          });
 
         // FCM foreground handler — shows heads-up notification when app is open
         if (setupFCMForegroundHandler) {
@@ -280,9 +337,27 @@ const AppContent = () => {
       setAppState(nextAppState);
     });
 
+    let wasOnline = true;
+    // Resume-first strategy: when connectivity returns in foreground, aggressively reconcile.
+    const unsubscribeNetInfo = NetInfo.addEventListener(state => {
+      const isOnline = Boolean(state.isConnected && state.isInternetReachable !== false);
+      if (!wasOnline && isOnline && AppState.currentState === 'active') {
+        try {
+          const { runForegroundResumePipeline } = require('./src/services/foregroundResumePipelineService');
+          runForegroundResumePipeline().catch(() => {
+            // Best-effort recovery path.
+          });
+        } catch (_) {
+          // Non-fatal if module is unavailable.
+        }
+      }
+      wasOnline = isOnline;
+    });
+
     return () => {
       if (timeoutId) clearTimeout(timeoutId);
       subscription.remove();
+      unsubscribeNetInfo();
       if (authUnsubscribe) authUnsubscribe.unsubscribe();
 
       // execution safety: reverse order cleanup
@@ -367,12 +442,20 @@ export default function App() {
   }
 
   return (
-    <SafeAreaProvider>
-      <GluestackUIProvider config={config}>
-        <ThemeProvider>
-          <AppContent />
-        </ThemeProvider>
-      </GluestackUIProvider>
-    </SafeAreaProvider>
+    <PersistQueryClientProvider
+      client={queryClient}
+      persistOptions={{
+        persister: queryPersister,
+        maxAge: 1000 * 60 * 60,
+      }}
+    >
+      <SafeAreaProvider>
+        <GluestackUIProvider config={config}>
+          <ThemeProvider>
+            <AppContent />
+          </ThemeProvider>
+        </GluestackUIProvider>
+      </SafeAreaProvider>
+    </PersistQueryClientProvider>
   );
 }

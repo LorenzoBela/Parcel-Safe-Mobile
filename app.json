@@ -71,6 +71,13 @@
         }
       ],
       [
+        "expo-secure-store",
+        {
+          "configureAndroidBackup": true,
+          "faceIDPermission": "Allow Parcel Safe to securely access biometric-protected credentials."
+        }
+      ],
+      [
         "@react-native-firebase/app"
       ],
       [
@@ -101,7 +108,8 @@
           "photosPermission": "Allow Parcel Safe to access your photos to attach proof of delivery.",
           "cameraPermission": "Allow Parcel Safe to access your camera to take proof of delivery photos."
         }
-      ]
+      ],
+      "@sentry/react-native"
     ],
     "extra": {
       "eas": {

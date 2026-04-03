@@ -11,12 +11,16 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { ref, onValue, set, off, serverTimestamp } from 'firebase/database';
 import { getFirebaseDatabase } from './firebaseClient';
+import { getSecureItem, setSecureItem } from './security/secureStoreService';
+import { collectDeviceRiskSnapshot } from './security/deviceRiskService';
 
 // Storage keys
 const STORAGE_KEYS = {
     SESSION_ID: 'ec36_session_id',
     DEVICE_ID: 'ec36_device_id',
 };
+
+const DEVICE_ID_SECURE_KEY = 'session_device_id';
 
 // Configuration
 export const EC36_CONFIG = {
@@ -53,10 +57,20 @@ export function generateSessionId(): string {
  */
 export async function getDeviceId(): Promise<string> {
     try {
-        let deviceId = await AsyncStorage.getItem(STORAGE_KEYS.DEVICE_ID);
+        let deviceId = await getSecureItem(DEVICE_ID_SECURE_KEY);
+
+        if (!deviceId) {
+            // Backward-compatible fallback for old installs.
+            deviceId = await AsyncStorage.getItem(STORAGE_KEYS.DEVICE_ID);
+        }
+
         if (!deviceId) {
             deviceId = `device-${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 8)}`;
+            await setSecureItem(DEVICE_ID_SECURE_KEY, deviceId);
             await AsyncStorage.setItem(STORAGE_KEYS.DEVICE_ID, deviceId);
+        } else {
+            // Migrate legacy value into secure storage and keep AsyncStorage for compatibility.
+            await setSecureItem(DEVICE_ID_SECURE_KEY, deviceId);
         }
         return deviceId;
     } catch {
@@ -83,6 +97,7 @@ class SessionService {
     ): Promise<{ sessionId: string; deviceId: string }> {
         const sessionId = generateSessionId();
         const deviceId = await getDeviceId();
+        const deviceRisk = await collectDeviceRiskSnapshot();
         const database = getFirebaseDatabase();
 
         // Save session locally
@@ -96,6 +111,7 @@ class SessionService {
             deviceId,
             platform,
             appVersion,
+            deviceRisk,
             createdAt: serverTimestamp(),
             lastActiveAt: serverTimestamp(),
         });

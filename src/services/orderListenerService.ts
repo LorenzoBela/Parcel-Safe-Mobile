@@ -449,6 +449,15 @@ export function isOrderListenerActive(): boolean {
 }
 
 /**
+ * Ensure rider order listener is attached after long background periods.
+ */
+export async function ensureOrderListenerHealthy(riderId?: string | null): Promise<void> {
+    if (!riderId) return;
+    if (isListening) return;
+    await startOrderListener(riderId);
+}
+
+/**
  * Get pending orders count
  */
 export async function getPendingOrdersCount(): Promise<number> {

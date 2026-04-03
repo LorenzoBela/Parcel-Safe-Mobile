@@ -16,6 +16,7 @@ import useAuthStore from '../../store/authStore';
 import { supabase } from '../../services/supabaseClient';
 import { warmUpLocationServices } from '../../services/gpsWarmupService';
 import { useAppTheme } from '../../context/ThemeContext';
+import { validateBiometricBoundSecrets } from '../../services/security/authSecretStore';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -147,6 +148,18 @@ export default function AuthLoadingScreen() {
     useEffect(() => {
         const restoreSession = async () => {
             try {
+                const biometricBinding = await validateBiometricBoundSecrets();
+                if (biometricBinding.requiresHardRelogin) {
+                    console.warn('[AuthLoading] Biometric-bound key invalidated. Forcing hard re-login.');
+                    try {
+                        await supabase.auth.signOut();
+                    } catch {
+                        // Ignore signOut errors and continue to Login.
+                    }
+                    navigation.replace('Login');
+                    return;
+                }
+
                 // ── Fast path: MMKV-hydrated state ──────────────────────────
                 // If Zustand already has user data (restored from MMKV on disk),
                 // skip the network call and go straight to the dashboard.

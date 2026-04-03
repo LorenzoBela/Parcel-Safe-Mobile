@@ -8,7 +8,8 @@ import {
     Pressable,
     Animated,
     Image,
-    StatusBar
+    StatusBar,
+    Platform,
 } from 'react-native';
 import { useEntryAnimation, useStaggerAnimation } from '../../hooks/useEntryAnimation';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -20,6 +21,7 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useAppTheme } from '../../context/ThemeContext';
 import { PremiumAlert } from '../../services/PremiumAlertService';
 import { authenticateBiometricForSensitiveAction } from '../../services/biometricAuthService';
+import { sessionService } from '../../services/sessionService';
 
 // Uber-inspired minimalist colors
 const COLORS = {
@@ -68,6 +70,7 @@ export default function RoleSelectionScreen() {
     const theme = useTheme();
     const { isDarkMode: isDark } = useAppTheme();
     const { role, user, logout } = useAuthStore((state: any) => state);
+    const userId = user?.userId;
 
     const [currentTime, setCurrentTime] = useState(dayjs());
     const [weather, setWeather] = useState<WeatherData | null>(null);
@@ -129,6 +132,17 @@ export default function RoleSelectionScreen() {
         }
 
         if (targetApp === 'RiderApp') {
+            if (userId) {
+                try {
+                    await sessionService.registerSession(
+                        userId,
+                        Platform.OS === 'ios' ? 'ios' : 'android',
+                        '1.0.1'
+                    );
+                } catch (error) {
+                    console.warn('[RoleSelection] Failed to register rider session:', error);
+                }
+            }
             // Route through the warmup/loading screen first
             navigation.replace('RiderLoading');
         } else {

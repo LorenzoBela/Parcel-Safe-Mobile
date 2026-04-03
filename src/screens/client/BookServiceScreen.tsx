@@ -7,6 +7,8 @@ import * as Location from 'expo-location';
 import * as Haptics from 'expo-haptics';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { supabase } from '../../services/supabaseClient'; // Import Supabase
+import { KeyboardAwareScrollView } from 'react-native-keyboard-aware-scroll-view';
+import { TextInputMask } from 'react-native-mask-text';
 
 const getDistance = (lat1: number, lon1: number, lat2: number, lon2: number) => {
     const R = 6371e3; // metres
@@ -1094,7 +1096,12 @@ export default function BookServiceScreen() {
                         <Text variant="titleMedium" style={{ fontFamily: 'Inter_600SemiBold', color: theme.colors.onSurface }}>Contact Details</Text>
                         <View style={{ width: 40 }} />
                     </View>
-                    <ScrollView style={{ padding: 20 }} showsVerticalScrollIndicator={false}>
+                    <KeyboardAwareScrollView
+                        style={{ padding: 20 }}
+                        showsVerticalScrollIndicator={false}
+                        extraScrollHeight={20}
+                        enableOnAndroid
+                    >
                         {/* Saved contacts quick-fill — compact dropdowns */}
                         {savedContacts.length > 0 ? (
                             <View style={{ flexDirection: 'row', gap: 8, marginBottom: 16 }}>
@@ -1158,7 +1165,20 @@ export default function BookServiceScreen() {
                             <Text variant="titleSmall" style={styles.sectionTitle}>Pickup Contact</Text>
                             <View style={styles.inputRow}>
                                 <TextInput mode="flat" placeholder="Sender Name" value={senderName} onChangeText={setSenderName} style={styles.modernInput} activeUnderlineColor={theme.colors.primary} underlineColor={theme.colors.outlineVariant} />
-                                <TextInput mode="flat" placeholder="09XXXXXXXXX" value={senderPhone} onChangeText={(value) => setSenderPhone(normalizePhoneInput(value))} keyboardType="phone-pad" style={styles.modernInput} activeUnderlineColor={theme.colors.outlineVariant} maxLength={11} />
+                                <View style={{ flex: 1 }}>
+                                    <TextInputMask
+                                        type="custom"
+                                        options={{
+                                            mask: '0999 999 9999',
+                                        }}
+                                        value={senderPhone}
+                                        onChangeText={(_, rawText) => setSenderPhone(normalizePhoneInput(rawText || ''))}
+                                        keyboardType="phone-pad"
+                                        style={[styles.modernInput, { color: theme.colors.onSurface }]}
+                                        placeholder="09XX XXX XXXX"
+                                        placeholderTextColor={theme.colors.onSurfaceVariant}
+                                    />
+                                </View>
                             </View>
                             {senderName.trim() && senderPhone.length === 11 && !savedContacts.some(c => c.name === senderName.trim() && c.phone === senderPhone.trim()) && (
                                 <TouchableOpacity
@@ -1175,7 +1195,20 @@ export default function BookServiceScreen() {
                             <Text variant="titleSmall" style={styles.sectionTitle}>Drop-off Contact</Text>
                             <View style={styles.inputRow}>
                                 <TextInput mode="flat" placeholder="Recipient Name" value={recipientName} onChangeText={setRecipientName} style={styles.modernInput} activeUnderlineColor={theme.colors.primary} underlineColor={theme.colors.outlineVariant} />
-                                <TextInput mode="flat" placeholder="09XXXXXXXXX" value={recipientPhone} onChangeText={(value) => setRecipientPhone(normalizePhoneInput(value))} keyboardType="phone-pad" style={styles.modernInput} activeUnderlineColor={theme.colors.outlineVariant} maxLength={11} />
+                                <View style={{ flex: 1 }}>
+                                    <TextInputMask
+                                        type="custom"
+                                        options={{
+                                            mask: '0999 999 9999',
+                                        }}
+                                        value={recipientPhone}
+                                        onChangeText={(_, rawText) => setRecipientPhone(normalizePhoneInput(rawText || ''))}
+                                        keyboardType="phone-pad"
+                                        style={[styles.modernInput, { color: theme.colors.onSurface }]}
+                                        placeholder="09XX XXX XXXX"
+                                        placeholderTextColor={theme.colors.onSurfaceVariant}
+                                    />
+                                </View>
                             </View>
                             {recipientName.trim() && recipientPhone.length === 11 && !savedContacts.some(c => c.name === recipientName.trim() && c.phone === recipientPhone.trim()) && (
                                 <TouchableOpacity
@@ -1211,7 +1244,7 @@ export default function BookServiceScreen() {
                         >
                             Confirm Booking
                         </Button>
-                    </ScrollView>
+                    </KeyboardAwareScrollView>
                 </View>
             ) : isMapVisible ? (
                 // --- MAP VIEW ---

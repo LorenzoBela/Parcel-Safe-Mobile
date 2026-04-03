@@ -63,10 +63,9 @@ export function categorizeNotificationType(type: string): NotificationCategory {
 }
 
 function normalizeNotification(raw: RawNotification): AppNotification {
-    const rawCategory = raw.category;
-    const category =
-        rawCategory === 'ORDER_UPDATES' || rawCategory === 'ADS' || rawCategory === 'OTHER'
-            ? rawCategory
+    const category: NotificationCategory =
+        raw.category === 'ORDER_UPDATES' || raw.category === 'ADS' || raw.category === 'OTHER'
+            ? raw.category
             : categorizeNotificationType(raw.type);
 
     return {

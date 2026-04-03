@@ -11,6 +11,8 @@
  * - Timeout enforcement
  */
 
+import { NETWORK_POLICY } from './networkPolicy';
+
 const SYNC_ENDPOINT = `${process.env.EXPO_PUBLIC_TRACKING_WEB_BASE_URL || 'https://parcel-safe.vercel.app'}/api/sync-deliveries`;
 
 // Throttle: don't sync more than once per 30 seconds
@@ -55,7 +57,7 @@ export async function triggerDeliverySync(force = false): Promise<SyncResult | n
     lastSyncTime = now;
     console.log('[DeliverySync] Triggering sync at:', SYNC_ENDPOINT);
 
-    const MAX_RETRIES = 5; // Increased retries
+    const MAX_RETRIES = NETWORK_POLICY.RETRY.MAX_ATTEMPTS;
     let attempt = 0;
 
     try {
@@ -64,7 +66,7 @@ export async function triggerDeliverySync(force = false): Promise<SyncResult | n
             try {
                 const controller = new AbortController();
                 // Increase timeout to 30s to match Vercel Pro potential max before it cuts off
-                const timeoutId = setTimeout(() => controller.abort(), 30_000);
+                const timeoutId = setTimeout(() => controller.abort(), NETWORK_POLICY.TIMEOUTS_MS.DELIVERY_SYNC);
 
                 const response = await fetch(SYNC_ENDPOINT, {
                     method: 'GET',
@@ -102,7 +104,7 @@ export async function triggerDeliverySync(force = false): Promise<SyncResult | n
 
             } catch (err: any) {
                 const isTimeout = err.name === 'AbortError';
-                const errorMessage = isTimeout ? 'Request Timed Out (30s)' : err.message;
+                const errorMessage = isTimeout ? 'Request Timed Out' : err.message;
 
                 console.warn(`[DeliverySync] Attempt ${attempt} failed: ${errorMessage}`);
 
@@ -113,7 +115,7 @@ export async function triggerDeliverySync(force = false): Promise<SyncResult | n
                 }
 
                 // Exponential backoff: 2s, 4s, 8s, 16s...
-                const backoffTime = Math.pow(2, attempt) * 1000;
+                const backoffTime = Math.pow(2, attempt) * NETWORK_POLICY.RETRY.BASE_MS;
                 console.log(`[DeliverySync] Retrying in ${backoffTime}ms...`);
                 await delay(backoffTime);
             }

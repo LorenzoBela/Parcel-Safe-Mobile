@@ -22,6 +22,7 @@ import {
     showStatusNotification,
 } from './pushNotificationService';
 import { PremiumAlert } from '../services/PremiumAlertService';
+import { shouldProcessNotification } from './notificationDedupService';
 
 // Native modules - conditionally imported to prevent startup crashes
 let NetInfo: any = null;
@@ -198,6 +199,12 @@ function setupFCMHandlers(): void {
     messaging().onMessage(async (remoteMessage: any) => {
         if (__DEV__) console.log('[BackgroundService] Foreground FCM message');
 
+        const shouldProcess = await shouldProcessNotification(remoteMessage);
+        if (!shouldProcess) {
+            if (__DEV__) console.log('[BackgroundService] Skipping duplicate foreground message');
+            return;
+        }
+
         // EC-FIX: Ignore stale foreground messages queued up by FCM
         if (remoteMessage.sentTime) {
             const ageMs = Date.now() - remoteMessage.sentTime;
@@ -236,6 +243,12 @@ function setupFCMHandlers(): void {
  */
 export async function handleBackgroundMessage(remoteMessage: any): Promise<void> {
     if (__DEV__) console.log('[BackgroundService] Background FCM message');
+
+    const shouldProcess = await shouldProcessNotification(remoteMessage);
+    if (!shouldProcess) {
+        if (__DEV__) console.log('[BackgroundService] Skipping duplicate background message');
+        return;
+    }
 
     // EC-FIX: Ignore stale background messages queued up by FCM
     if (remoteMessage.sentTime) {

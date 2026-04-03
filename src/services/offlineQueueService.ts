@@ -7,6 +7,9 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import NetInfo from '@react-native-community/netinfo';
 import { getFirebaseDatabase, ref, serverTimestamp } from './firebaseClient';
 import { update } from 'firebase/database';
+import { generateQueueUuid } from './queueIdentity';
+import { NETWORK_POLICY } from './networkPolicy';
+import { captureHandledError, captureHandledMessage } from './observability/sentryService';
 
 const QUEUE_STORAGE_KEY = 'offline_location_queue';
 const MAX_QUEUE_SIZE = 100; // Prevent unlimited growth
@@ -21,6 +24,7 @@ function sanitizeBoxId(value: unknown): string | null {
 }
 
 export interface QueuedLocation {
+    queueId?: string;
     latitude: number;
     longitude: number;
     timestamp: number;
@@ -125,6 +129,7 @@ class OfflineQueueService {
         }
 
         const locationData: QueuedLocation = {
+            queueId: generateQueueUuid('location'),
             boxId: sanitizedBoxId,
             latitude,
             longitude,
@@ -140,13 +145,31 @@ class OfflineQueueService {
                 // If we have a queue, send that first to maintain order
                 if (this.queue.length > 0) {
                     this.queue.push(locationData);
+                    captureHandledMessage('location_queue_enqueued_online', {
+                        queue_uuid: locationData.queueId || 'unknown',
+                        action_type: 'location_update',
+                        flush_stage: 'enqueue_direct',
+                        idempotency_result: 'queued_for_ordered_flush',
+                    });
                     await this.processQueue();
                 } else {
                     await this.sendToFirebase(locationData);
+                    captureHandledMessage('location_queue_direct_sent', {
+                        queue_uuid: locationData.queueId || 'unknown',
+                        action_type: 'location_update',
+                        flush_stage: 'enqueue_direct',
+                        idempotency_result: 'sent_direct',
+                    });
                 }
                 return;
             } catch (error) {
                 console.warn('[OfflineQueue] Send failed, falling back to queue');
+                captureHandledError(error, {
+                    queue_uuid: locationData.queueId || 'unknown',
+                    action_type: 'location_update',
+                    flush_stage: 'enqueue_direct',
+                    idempotency_result: 'fallback_queue',
+                });
                 // Fallthrough to queue logic
             }
         }
@@ -160,6 +183,12 @@ class OfflineQueueService {
         }
 
         this.queue.push(locationData);
+        captureHandledMessage('location_queue_enqueued_offline', {
+            queue_uuid: locationData.queueId || 'unknown',
+            action_type: 'location_update',
+            flush_stage: 'enqueue_queue',
+            idempotency_result: 'queued_offline',
+        });
         await this.persistQueue();
 
         if (__DEV__) console.log(`[OfflineQueue] Location buffered. Queue size: ${this.queue.length}`);
@@ -180,6 +209,12 @@ class OfflineQueueService {
         try {
             // We clone the queue to iterate safely
             const batch = [...this.queue];
+            captureHandledMessage('location_queue_flush_start', {
+                queue_uuid: batch.map((item) => item.queueId || 'unknown').join(','),
+                action_type: 'location_update',
+                flush_stage: 'flush_batch',
+                idempotency_result: `batch_${batch.length}`,
+            });
             const db = getFirebaseDatabase();
 
             // Construct a multi-path update for atomicity (or at least efficiency)
@@ -229,17 +264,30 @@ class OfflineQueueService {
 
             await Promise.race([
                 update(ref(db), updates),
-                new Promise((_, reject) => setTimeout(() => reject(new Error('Firebase write timeout')), 10000))
+                new Promise((_, reject) => setTimeout(() => reject(new Error('Firebase write timeout')), NETWORK_POLICY.TIMEOUTS_MS.FIREBASE_WRITE))
             ]);
 
             // Clear queue only after successful send
             this.queue = [];
             await this.persistQueue();
+            captureHandledMessage('location_queue_flush_success', {
+                queue_uuid: batch.map((item) => item.queueId || 'unknown').join(','),
+                action_type: 'location_update',
+                flush_stage: 'flush_committed',
+                idempotency_result: 'all_synced',
+            });
 
             if (__DEV__) console.log('[OfflineQueue] Sync complete');
 
         } catch (error) {
             console.error('[OfflineQueue] Sync failed:', error);
+            const queueUuids = this.queue.map((item) => item.queueId || 'unknown').join(',');
+            captureHandledError(error, {
+                queue_uuid: queueUuids || 'unknown',
+                action_type: 'location_update',
+                flush_stage: 'flush_failed',
+                idempotency_result: 'retry_later',
+            });
             // Keep items in queue for next retry
         } finally {
             this.isSyncing = false;
@@ -284,8 +332,14 @@ class OfflineQueueService {
 
         await Promise.race([
             update(ref(db), updates),
-            new Promise((_, reject) => setTimeout(() => reject(new Error('Firebase write timeout')), 10000))
+            new Promise((_, reject) => setTimeout(() => reject(new Error('Firebase write timeout')), NETWORK_POLICY.TIMEOUTS_MS.FIREBASE_WRITE))
         ]);
+        captureHandledMessage('location_direct_send_success', {
+            queue_uuid: data.queueId || 'unknown',
+            action_type: 'location_update',
+            flush_stage: 'send_direct',
+            idempotency_result: 'sent',
+        });
     }
 }
 

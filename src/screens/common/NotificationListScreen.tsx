@@ -80,13 +80,13 @@ function isNotificationVisibleForRole(notification: AppNotification, role?: stri
     if (!role) return true;
     const normalizedRole = role.toLowerCase();
     if (normalizedRole !== 'admin' && normalizedRole !== 'customer' && normalizedRole !== 'rider') {
-        return true;
+        return false;
     }
 
     const allowedRoles = TYPE_ALLOWED_ROLES[notification.type];
     if (!allowedRoles) return true;
 
-    return allowedRoles.includes(normalizedRole);
+    return allowedRoles.includes(normalizedRole as 'admin' | 'customer' | 'rider');
 }
 
 // ── Icon mapping ───────────────────────────────────────────────────────────────
@@ -375,7 +375,7 @@ export default function NotificationListScreen() {
             <MaterialCommunityIcons name="bell-off-outline" size={64} color={c.textTer} />
             <Text style={[styles.emptyTitle, { color: c.textSec }]}>No {TAB_LABELS[activeTab]}</Text>
             <Text style={[styles.emptySubtitle, { color: c.textTer }]}>
-                You're all caught up!
+                You are all caught up!
             </Text>
         </View>
     );

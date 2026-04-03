@@ -1,14 +1,15 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { View, StyleSheet, FlatList, TouchableOpacity, RefreshControl, ActivityIndicator, Animated } from 'react-native';
 import { Text, Chip, Searchbar, IconButton } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { useNavigation, useFocusEffect } from '@react-navigation/native';
+import { useNavigation } from '@react-navigation/native';
 import { useEntryAnimation } from '../../hooks/useEntryAnimation';
 import { useAppTheme } from '../../context/ThemeContext';
 import { DeliveryHistoryItem, DeliveryViewMode } from '../../types/deliveryHistory';
 import { normalizeDeliveryHistoryRow } from '../../utils/deliveryHistory';
 import { listAdminDeliveryRecords } from '../../services/supabaseClient';
 import DeliveryHistoryCard from '../../components/DeliveryHistoryCard';
+import { useInfiniteQuery } from '@tanstack/react-query';
 
 const lightC = {
     bg: '#F7F7F8',
@@ -71,75 +72,61 @@ export default function AdminRecordsScreen() {
     const c = isDarkMode ? darkC : lightC;
 
     const [searchQuery, setSearchQuery] = useState('');
+    const [debouncedSearchQuery, setDebouncedSearchQuery] = useState('');
     const [filter, setFilter] = useState<DateFilter>('All');
     const [viewMode, setViewMode] = useState<DeliveryViewMode>('list');
 
-    const [historyData, setHistoryData] = useState<DeliveryHistoryItem[]>([]);
-    const [page, setPage] = useState(1);
-    const [hasMore, setHasMore] = useState(true);
-    const [loading, setLoading] = useState(true);
-    const [loadingMore, setLoadingMore] = useState(false);
     const [refreshing, setRefreshing] = useState(false);
-    const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
     const dateRange = useMemo(() => toDateRange(filter), [filter]);
 
-    const loadPage = useCallback(
-        async (targetPage: number, mode: 'initial' | 'refresh' | 'append') => {
-            if (mode === 'initial') {
-                setLoading(true);
-            }
-            if (mode === 'refresh') {
-                setRefreshing(true);
-            }
-            if (mode === 'append') {
-                setLoadingMore(true);
-            }
+    useEffect(() => {
+        const handle = setTimeout(() => {
+            setDebouncedSearchQuery(searchQuery);
+        }, 250);
 
-            setErrorMsg(null);
+        return () => clearTimeout(handle);
+    }, [searchQuery]);
 
+    const {
+        data,
+        error,
+        isLoading,
+        isFetchingNextPage,
+        hasNextPage,
+        fetchNextPage,
+        refetch,
+    } = useInfiniteQuery({
+        queryKey: ['admin-delivery-records', debouncedSearchQuery, dateRange.fromDate || '', dateRange.toDate || ''],
+        initialPageParam: 1,
+        queryFn: async ({ pageParam }) => {
             const result = await listAdminDeliveryRecords({
-                page: targetPage,
+                page: Number(pageParam),
                 pageSize: PAGE_SIZE,
-                search: searchQuery,
+                search: debouncedSearchQuery,
                 fromDate: dateRange.fromDate,
                 toDate: dateRange.toDate,
             });
 
             if (result.error) {
-                setErrorMsg(result.error);
-            } else {
-                const mapped = (result.data || []).map(normalizeDeliveryHistoryRow);
-                setPage(targetPage);
-                setHasMore(result.hasMore);
-
-                if (targetPage === 1) {
-                    setHistoryData(mapped);
-                } else {
-                    setHistoryData((prev) => [...prev, ...mapped]);
-                }
+                throw new Error(result.error);
             }
 
-            setLoading(false);
-            setRefreshing(false);
-            setLoadingMore(false);
+            const items = (result.data || []).map(normalizeDeliveryHistoryRow);
+            return {
+                items,
+                nextPage: result.hasMore ? Number(pageParam) + 1 : undefined,
+            };
         },
-        [dateRange.fromDate, dateRange.toDate, searchQuery]
+        getNextPageParam: (lastPage) => lastPage.nextPage,
+    });
+
+    const historyData: DeliveryHistoryItem[] = useMemo(
+        () => (data?.pages || []).flatMap((page) => page.items || []),
+        [data]
     );
 
-    useEffect(() => {
-        const handle = setTimeout(() => {
-            loadPage(1, 'initial');
-        }, 250);
-
-        return () => clearTimeout(handle);
-    }, [loadPage]);
-
-    useFocusEffect(
-        useCallback(() => {
-            loadPage(1, 'refresh');
-        }, [loadPage])
-    );
+    const errorMsg = error instanceof Error ? error.message : null;
 
     const totalEarnings = historyData
         .filter((item) => item.status === 'Delivered')
@@ -149,10 +136,19 @@ export default function AdminRecordsScreen() {
         }, 0);
 
     const onEndReached = () => {
-        if (loading || loadingMore || refreshing || !hasMore) {
+        if (isLoading || isFetchingNextPage || refreshing || !hasNextPage) {
             return;
         }
-        loadPage(page + 1, 'append');
+        fetchNextPage();
+    };
+
+    const onRefresh = async () => {
+        setRefreshing(true);
+        try {
+            await refetch();
+        } finally {
+            setRefreshing(false);
+        }
     };
 
     const renderItem = ({ item }: { item: DeliveryHistoryItem }) => (
@@ -229,7 +225,7 @@ export default function AdminRecordsScreen() {
                     ))}
                 </View>
 
-                {loading ? (
+                {isLoading ? (
                     <View style={styles.emptyState}>
                         <ActivityIndicator size="large" color={c.accent} />
                         <Text style={{ marginTop: 10, color: c.textSec }}>Loading records...</Text>
@@ -238,7 +234,7 @@ export default function AdminRecordsScreen() {
                     <View style={styles.emptyState}>
                         <MaterialCommunityIcons name="alert-circle-outline" size={60} color="#D32F2F" />
                         <Text style={{ marginTop: 10, color: '#D32F2F' }}>{errorMsg}</Text>
-                        <TouchableOpacity onPress={() => loadPage(1, 'initial')} style={{ marginTop: 16 }}>
+                        <TouchableOpacity onPress={() => refetch()} style={{ marginTop: 16 }}>
                             <Text style={{ color: c.accent, fontFamily: 'Inter_700Bold' }}>Tap to retry</Text>
                         </TouchableOpacity>
                     </View>
@@ -257,12 +253,12 @@ export default function AdminRecordsScreen() {
                         refreshControl={
                             <RefreshControl
                                 refreshing={refreshing}
-                                onRefresh={() => loadPage(1, 'refresh')}
+                                onRefresh={onRefresh}
                                 colors={[c.accent]}
                             />
                         }
                         ListFooterComponent={
-                            loadingMore ? (
+                            isFetchingNextPage ? (
                                 <View style={{ paddingVertical: 16 }}>
                                     <ActivityIndicator size="small" color={c.accent} />
                                 </View>

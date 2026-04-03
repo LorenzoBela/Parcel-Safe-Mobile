@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { View, StyleSheet, FlatList, TouchableOpacity, ScrollView, RefreshControl, ActivityIndicator, StatusBar, TextInput, Animated } from 'react-native';
+import React, { useState, useCallback } from 'react';
+import { View, StyleSheet, FlatList, TouchableOpacity, RefreshControl, ActivityIndicator, StatusBar, TextInput, Animated } from 'react-native';
 import { useEntryAnimation } from '../../hooks/useEntryAnimation';
 import { Text } from 'react-native-paper';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
@@ -10,6 +10,7 @@ import { supabase } from '../../services/supabaseClient';
 import { parseUTCString } from '../../utils/date';
 import { triggerDeliverySync } from '../../services/deliverySyncService';
 import useAuthStore from '../../store/authStore';
+import { useQuery } from '@tanstack/react-query';
 
 // ─── Colors ─────────────────────────────────────────────────────────────────────
 const light = {
@@ -74,23 +75,27 @@ export default function DeliveryLogScreen() {
     const [searchQuery, setSearchQuery] = useState('');
     const [selectedFilter, setSelectedFilter] = useState('All');
     const [showFilters, setShowFilters] = useState(false);
-    const [logs, setLogs] = useState<any[]>([]);
-    const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
-    const [errorMsg, setErrorMsg] = useState<string | null>(null);
-
-    const fetchDeliveries = useCallback(async (isRefresh = false) => {
-        if (!userId || !supabase) { setLoading(false); return; }
-        if (isRefresh) setRefreshing(true); else setLoading(true);
-        setErrorMsg(null);
-        try {
+    const {
+        data: logs = [],
+        isLoading: loading,
+        error,
+        refetch,
+    } = useQuery({
+        queryKey: ['delivery-log', userId],
+        enabled: Boolean(userId && supabase),
+        queryFn: async () => {
             const { data, error } = await supabase
                 .from('deliveries')
                 .select('*, customer:customer_id(full_name)')
                 .eq('customer_id', userId)
                 .order('created_at', { ascending: false });
-            if (error) { setErrorMsg('Failed to load history.'); return; }
-            setLogs((data || []).map((d: any) => ({
+
+            if (error) {
+                throw new Error('Failed to load history.');
+            }
+
+            return (data || []).map((d: any) => ({
                 id: d.id,
                 trk: d.tracking_number || d.id,
                 status: mapStatus(d.status),
@@ -104,13 +109,27 @@ export default function DeliveryLogScreen() {
                 dropoffAddress: d.dropoff_address || 'No dropoff address',
                 distance: d.pickup_lat && d.pickup_lng && d.dropoff_lat && d.dropoff_lng
                     ? `${getDistanceFromLatLonInKm(d.pickup_lat, d.pickup_lng, d.dropoff_lat, d.dropoff_lng).toFixed(1)} km` : 'N/A',
-            })));
-        } catch { setErrorMsg('Something went wrong.'); }
-        finally { setLoading(false); setRefreshing(false); }
-    }, [userId]);
+            }));
+        },
+    });
 
-    useEffect(() => { fetchDeliveries(); }, [fetchDeliveries]);
-    useFocusEffect(useCallback(() => { triggerDeliverySync().then(() => fetchDeliveries()); }, [fetchDeliveries]));
+    useFocusEffect(useCallback(() => {
+        triggerDeliverySync().finally(() => {
+            refetch();
+        });
+    }, [refetch]));
+
+    const errorMsg = error ? 'Failed to load history.' : null;
+
+    const onRefresh = useCallback(async () => {
+        setRefreshing(true);
+        try {
+            await triggerDeliverySync();
+            await refetch();
+        } finally {
+            setRefreshing(false);
+        }
+    }, [refetch]);
 
     const filtered = logs.filter(l =>
         l.trk.toLowerCase().includes(searchQuery.toLowerCase()) &&
@@ -259,7 +278,7 @@ export default function DeliveryLogScreen() {
                 <View style={styles.emptyState}>
                     <MaterialCommunityIcons name="alert-circle-outline" size={48} color="#FF3B30" />
                     <Text style={[styles.emptyText, { color: '#FF3B30' }]}>{errorMsg}</Text>
-                    <TouchableOpacity onPress={() => fetchDeliveries()}>
+                    <TouchableOpacity onPress={() => refetch()}>
                         <Text style={[styles.retryText, { color: c.accent }]}>Tap to retry</Text>
                     </TouchableOpacity>
                 </View>
@@ -270,7 +289,7 @@ export default function DeliveryLogScreen() {
                     keyExtractor={item => item.id}
                     contentContainerStyle={{ padding: 16, paddingBottom: 80 + insets.bottom }}
                     showsVerticalScrollIndicator={false}
-                    refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => fetchDeliveries(true)} />}
+                    refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
                     ListEmptyComponent={
                         <View style={styles.emptyState}>
                             <MaterialCommunityIcons name="package-variant-closed" size={48} color={c.textTer} />

@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import { View, StyleSheet, FlatList, TouchableOpacity, RefreshControl, Linking, Platform, Alert, Animated, TextInput, Text, ListRenderItem } from 'react-native';
 import { useEntryAnimation, useStaggerAnimation } from '../../hooks/useEntryAnimation';
 import { Card, Button, Chip, Surface, IconButton, Badge } from 'react-native-paper';
@@ -13,6 +13,7 @@ import dayjs from 'dayjs';
 import utc from 'dayjs/plugin/utc';
 import timezone from 'dayjs/plugin/timezone';
 import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/datetimepicker';
+import { useQuery } from '@tanstack/react-query';
 
 dayjs.extend(utc);
 dayjs.extend(timezone);
@@ -98,9 +99,6 @@ export default function AssignedDeliveriesScreen() {
     const [selectedDelivery, setSelectedDelivery] = useState<any>(null);
     const [cancelLoading, setCancelLoading] = useState(false);
 
-    // Data State
-    const [deliveries, setDeliveries] = useState<any[]>([]);
-
     // Mapbox token for accurate road distance
     const MAPBOX_TOKEN = process.env.EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN;
 
@@ -131,10 +129,14 @@ export default function AssignedDeliveriesScreen() {
         return null;
     };
 
-    const fetchDeliveries = async () => {
-        if (!authedUserId) return;
-        setRefreshing(true);
-        try {
+    const {
+        data: deliveries = [],
+        isLoading: deliveriesLoading,
+        refetch,
+    } = useQuery({
+        queryKey: ['assigned-deliveries', authedUserId],
+        enabled: Boolean(authedUserId),
+        queryFn: async () => {
             const { data, error } = await supabase
                 .from('deliveries')
                 .select('*, customer:profiles!deliveries_customer_id_fkey(full_name, phone_number)')
@@ -142,115 +144,113 @@ export default function AssignedDeliveriesScreen() {
                 .order('created_at', { ascending: false });
 
             if (error) {
-                console.error('Error fetching deliveries:', error);
-                PremiumAlert.alert('Error', 'Failed to fetch deliveries');
-            } else {
-                const mapped = data.map((d: any) => ({
-                    id: d.id,
-                    trk: d.tracking_number,
-                    status: d.status,
-                    customer: d.customer?.full_name || 'Unknown',
-                    phone: d.customer?.phone_number || 'N/A',
-                    address: d.dropoff_address,
-                    pickupAddress: d.pickup_address,
-                    lat: d.dropoff_lat,
-                    lng: d.dropoff_lng,
-                    pickupLat: d.pickup_lat,
-                    pickupLng: d.pickup_lng,
-                    dropoffLat: d.dropoff_lat,
-                    dropoffLng: d.dropoff_lng,
-                    snappedPickupLat: d.snapped_pickup_lat,
-                    snappedPickupLng: d.snapped_pickup_lng,
-                    snappedDropoffLat: d.snapped_dropoff_lat,
-                    snappedDropoffLng: d.snapped_dropoff_lng,
-                    date: d.created_at,
-                    time: d.accepted_at
-                        ? formatTimeAsPH(d.accepted_at)
-                        : (d.created_at ? formatTimeAsPH(d.created_at) : '--:--'),
-                    distance: d.distance ? `${d.distance.toFixed(1)} km` : null,
-                    _rawDistance: d.distance,
-                    fare: d.estimated_fare ? `₱${d.estimated_fare}` : '--',
-                    earnings: d.estimated_fare ? `₱${d.estimated_fare}` : '--',
-                    estimatedTime: (() => {
-                        const durationSec: number | null = d.duration
-                            ? d.duration
-                            : d.distance
-                                ? Math.round((d.distance / 30) * 3600)
-                                : null;
-                        if (!durationSec) return '-- min';
-                        const mins = Math.round(durationSec / 60);
-                        const display = mins >= 60
-                            ? `${Math.floor(mins / 60)}h ${mins % 60}m`
-                            : `${mins} min`;
-                        const arrival = new Date(Date.now() + durationSec * 1000);
-                        const arrivalStr = arrival.toLocaleTimeString('en-US', {
-                            timeZone: 'Asia/Manila',
-                            hour: 'numeric',
-                            minute: '2-digit',
-                            hour12: true,
-                        });
-                        return `${d.duration ? '' : '~'}${display} (Arrives ~${arrivalStr})`;
-                    })(),
-                    boxId: d.assigned_box_id || d.box_id,
-                    pickupTime: d.created_at,
-                    dropoffTime: d.accepted_at || d.created_at,
-                    acceptedAt: d.accepted_at,
-                    deliveredAt: d.delivered_at,
-                    pickedUpAt: d.picked_up_at,
-                    packageType: 'Standard',
-                    weight: 'N/A',
-                    priority: 'Standard',
-                    specialInstructions: d.package_description || '',
-                    senderName: d.sender_name,
-                    senderPhone: d.sender_phone,
-                    recipientName: d.recipient_name,
-                    deliveryNotes: d.delivery_notes,
-                }));
-                setDeliveries(mapped);
-
-                // Fire Mapbox distance requests for deliveries missing distance
-                const needsDistance = mapped.filter(
-                    (m: any) => !m._rawDistance && m.pickupLat && m.pickupLng && m.dropoffLat && m.dropoffLng
-                );
-                if (needsDistance.length > 0) {
-                    const distanceResults = await Promise.allSettled(
-                        needsDistance.map((m: any) => fetchMapboxDistance(m.pickupLat, m.pickupLng, m.dropoffLat, m.dropoffLng).then(r => ({ id: m.id, result: r })))
-                    );
-                    setDeliveries(prev => prev.map(d => {
-                        const match = distanceResults.find(
-                            r => r.status === 'fulfilled' && r.value?.id === d.id && r.value?.result
-                        );
-                        if (match && match.status === 'fulfilled' && match.value.result) {
-                            const { distanceKm, durationMin } = match.value.result;
-                            const display = durationMin >= 60
-                                ? `${Math.floor(durationMin / 60)}h ${durationMin % 60}m`
-                                : `${durationMin} min`;
-                            const arrival = new Date(Date.now() + durationMin * 60 * 1000);
-                            const arrivalStr = arrival.toLocaleTimeString('en-US', { timeZone: 'Asia/Manila', hour: 'numeric', minute: '2-digit', hour12: true });
-                            return {
-                                ...d,
-                                distance: distanceKm,
-                                estimatedTime: `~${display} (Arrives ~${arrivalStr})`,
-                            };
-                        }
-                        return { ...d, distance: d.distance || '--' };
-                    }));
-                }
+                throw error;
             }
-        } catch (err) {
-            console.error('Unexpected error fetching deliveries:', err);
+
+            const mapped = (data || []).map((d: any) => ({
+                id: d.id,
+                trk: d.tracking_number,
+                status: d.status,
+                customer: d.customer?.full_name || 'Unknown',
+                phone: d.customer?.phone_number || 'N/A',
+                address: d.dropoff_address,
+                pickupAddress: d.pickup_address,
+                lat: d.dropoff_lat,
+                lng: d.dropoff_lng,
+                pickupLat: d.pickup_lat,
+                pickupLng: d.pickup_lng,
+                dropoffLat: d.dropoff_lat,
+                dropoffLng: d.dropoff_lng,
+                snappedPickupLat: d.snapped_pickup_lat,
+                snappedPickupLng: d.snapped_pickup_lng,
+                snappedDropoffLat: d.snapped_dropoff_lat,
+                snappedDropoffLng: d.snapped_dropoff_lng,
+                date: d.created_at,
+                time: d.accepted_at
+                    ? formatTimeAsPH(d.accepted_at)
+                    : (d.created_at ? formatTimeAsPH(d.created_at) : '--:--'),
+                distance: d.distance ? `${d.distance.toFixed(1)} km` : null,
+                _rawDistance: d.distance,
+                fare: d.estimated_fare ? `₱${d.estimated_fare}` : '--',
+                earnings: d.estimated_fare ? `₱${d.estimated_fare}` : '--',
+                estimatedTime: (() => {
+                    const durationSec: number | null = d.duration
+                        ? d.duration
+                        : d.distance
+                            ? Math.round((d.distance / 30) * 3600)
+                            : null;
+                    if (!durationSec) return '-- min';
+                    const mins = Math.round(durationSec / 60);
+                    const display = mins >= 60
+                        ? `${Math.floor(mins / 60)}h ${mins % 60}m`
+                        : `${mins} min`;
+                    const arrival = new Date(Date.now() + durationSec * 1000);
+                    const arrivalStr = arrival.toLocaleTimeString('en-US', {
+                        timeZone: 'Asia/Manila',
+                        hour: 'numeric',
+                        minute: '2-digit',
+                        hour12: true,
+                    });
+                    return `${d.duration ? '' : '~'}${display} (Arrives ~${arrivalStr})`;
+                })(),
+                boxId: d.assigned_box_id || d.box_id,
+                pickupTime: d.created_at,
+                dropoffTime: d.accepted_at || d.created_at,
+                acceptedAt: d.accepted_at,
+                deliveredAt: d.delivered_at,
+                pickedUpAt: d.picked_up_at,
+                packageType: 'Standard',
+                weight: 'N/A',
+                priority: 'Standard',
+                specialInstructions: d.package_description || '',
+                senderName: d.sender_name,
+                senderPhone: d.sender_phone,
+                recipientName: d.recipient_name,
+                deliveryNotes: d.delivery_notes,
+            }));
+
+            const needsDistance = mapped.filter(
+                (m: any) => !m._rawDistance && m.pickupLat && m.pickupLng && m.dropoffLat && m.dropoffLng
+            );
+
+            if (needsDistance.length === 0) {
+                return mapped.map((m: any) => ({ ...m, distance: m.distance || '--' }));
+            }
+
+            const distanceResults = await Promise.allSettled(
+                needsDistance.map((m: any) => fetchMapboxDistance(m.pickupLat, m.pickupLng, m.dropoffLat, m.dropoffLng).then(r => ({ id: m.id, result: r })))
+            );
+
+            return mapped.map((d: any) => {
+                const match = distanceResults.find(
+                    r => r.status === 'fulfilled' && r.value?.id === d.id && r.value?.result
+                );
+                if (match && match.status === 'fulfilled' && match.value.result) {
+                    const { distanceKm, durationMin } = match.value.result;
+                    const display = durationMin >= 60
+                        ? `${Math.floor(durationMin / 60)}h ${durationMin % 60}m`
+                        : `${durationMin} min`;
+                    const arrival = new Date(Date.now() + durationMin * 60 * 1000);
+                    const arrivalStr = arrival.toLocaleTimeString('en-US', { timeZone: 'Asia/Manila', hour: 'numeric', minute: '2-digit', hour12: true });
+                    return {
+                        ...d,
+                        distance: distanceKm,
+                        estimatedTime: `~${display} (Arrives ~${arrivalStr})`,
+                    };
+                }
+                return { ...d, distance: d.distance || '--' };
+            });
+        },
+    });
+
+    const onRefresh = useCallback(async () => {
+        setRefreshing(true);
+        try {
+            await refetch();
         } finally {
             setRefreshing(false);
         }
-    };
-
-    React.useEffect(() => {
-        fetchDeliveries();
-    }, [authedUserId]);
-
-    const onRefresh = () => {
-        fetchDeliveries();
-    };
+    }, [refetch]);
 
     const openGoogleMaps = async (lat, lng, address) => {
         if (!lat || !lng) {
@@ -307,7 +307,7 @@ export default function AssignedDeliveriesScreen() {
                 setShowCancelModal(false);
                 setSelectedDelivery(null);
                 PremiumAlert.alert('Success', 'Delivery cancelled successfully.');
-                fetchDeliveries();
+                await refetch();
             } else {
                 PremiumAlert.alert('Error', result.error || 'Cancellation failed');
             }
@@ -768,6 +768,12 @@ export default function AssignedDeliveriesScreen() {
             </View>
 
             {/* Validated List Content */}
+            {deliveriesLoading ? (
+                <View style={[styles.emptyCard, { backgroundColor: c.card, borderColor: c.border }]}> 
+                    <MaterialCommunityIcons name="truck-delivery-outline" size={40} color={c.textTer} />
+                    <Text style={{ fontSize: 15, fontFamily: 'Inter_600SemiBold', color: c.textSec, marginTop: 10 }}>Loading deliveries...</Text>
+                </View>
+            ) : (
             <FlatList
                 data={filteredDeliveries}
                 renderItem={(info) => viewMode === 'list' ? renderItem(info) : renderGridItem(info)}
@@ -781,6 +787,7 @@ export default function AssignedDeliveriesScreen() {
                     </View>
                 }
             />
+            )}
 
             <CancellationModal
                 visible={showCancelModal}
