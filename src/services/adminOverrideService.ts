@@ -106,7 +106,8 @@ export function formatAdminId(adminId: string): string {
 export async function triggerAdminOverride(
     boxId: string,
     adminId: string,
-    reason: string
+    reason: string,
+    clientRequestId?: string
 ): Promise<void> {
     const db = getFirebaseDatabase();
     const overrideRef = ref(db, `boxes/${boxId}/admin_override`);
@@ -116,6 +117,7 @@ export async function triggerAdminOverride(
         triggered_by: adminId,
         triggered_at: serverTimestamp(),
         reason: reason,
-        processed: false
+        processed: false,
+        ...(clientRequestId ? { client_request_id: clientRequestId } : {})
     });
 }

@@ -119,7 +119,8 @@ export async function resetRiderPersonalPin(boxId: string): Promise<void> {
 
 export async function verifyRiderPersonalPinForUnlock(
   boxId: string,
-  pin: string
+  pin: string,
+  clientRequestId?: string
 ): Promise<RiderUnlockVerificationResult> {
   const sanitizedBoxId = boxId.trim();
   const sanitizedPin = pin.replace(/\D/g, '');
@@ -135,6 +136,7 @@ export async function verifyRiderPersonalPinForUnlock(
   const data = await request('/api/rider/personal-pin/verify-unlock', 'POST', {
     boxId: sanitizedBoxId,
     pin: sanitizedPin,
+    ...(clientRequestId ? { clientRequestId } : {}),
   });
 
   if (!data?.unlockToken || !data?.expiresAt) {
@@ -149,7 +151,8 @@ export async function verifyRiderPersonalPinForUnlock(
 
 export async function verifyRiderBiometricForUnlock(
   boxId: string,
-  biometricMethod: RiderBiometricMethod
+  biometricMethod: RiderBiometricMethod,
+  clientRequestId?: string
 ): Promise<RiderUnlockVerificationResult> {
   const sanitizedBoxId = boxId.trim();
 
@@ -163,6 +166,7 @@ export async function verifyRiderBiometricForUnlock(
       boxId: sanitizedBoxId,
       biometricConfirmed: true,
       biometricMethod,
+      ...(clientRequestId ? { clientRequestId } : {}),
     });
   } catch (error: any) {
     const message = String(error?.message || '');
@@ -183,7 +187,11 @@ export async function verifyRiderBiometricForUnlock(
   };
 }
 
-export async function sendRiderUnlockCommand(boxId: string, unlockToken: string): Promise<void> {
+export async function sendRiderUnlockCommand(
+  boxId: string,
+  unlockToken: string,
+  clientRequestId?: string
+): Promise<void> {
   const sanitizedBoxId = boxId.trim();
   const sanitizedToken = unlockToken.trim();
 
@@ -198,5 +206,6 @@ export async function sendRiderUnlockCommand(boxId: string, unlockToken: string)
   await request('/api/rider/box-unlock', 'POST', {
     boxId: sanitizedBoxId,
     unlockToken: sanitizedToken,
+    ...(clientRequestId ? { clientRequestId } : {}),
   });
 }

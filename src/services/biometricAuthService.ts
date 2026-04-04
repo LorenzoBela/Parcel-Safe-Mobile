@@ -1,6 +1,8 @@
 import * as LocalAuthentication from 'expo-local-authentication';
 import type { RiderBiometricMethod } from './personalPinService';
 
+let biometricInProgress = false;
+
 type BiometricAuthFailure = {
   success: false;
   reason: 'not-supported' | 'not-enrolled' | 'user-cancel' | 'system-cancel' | 'lockout' | 'unknown-error';
@@ -79,21 +81,34 @@ export async function authenticateBiometricForUnlock(): Promise<BiometricAuthRes
     };
   }
 
+  if (biometricInProgress) {
+    return {
+      success: false,
+      reason: 'system-cancel',
+      message: 'Biometric authentication already in progress. Please wait.',
+    };
+  }
+
   const supportedTypes = await LocalAuthentication.supportedAuthenticationTypesAsync();
   const method = mapTypesToMethod(supportedTypes);
 
-  const authResult = await LocalAuthentication.authenticateAsync({
-    promptMessage: 'Authorize unlock',
-    fallbackLabel: 'Use Personal PIN',
-    disableDeviceFallback: false,
-    cancelLabel: 'Cancel',
-  });
+  biometricInProgress = true;
+  try {
+    const authResult = await LocalAuthentication.authenticateAsync({
+      promptMessage: 'Authorize unlock',
+      fallbackLabel: 'Use Personal PIN',
+      disableDeviceFallback: false,
+      cancelLabel: 'Cancel',
+    });
 
-  if (authResult.success) {
-    return { success: true, method };
+    if (authResult.success) {
+      return { success: true, method };
+    }
+
+    return mapLocalAuthError('error' in authResult ? authResult.error : undefined);
+  } finally {
+    biometricInProgress = false;
   }
-
-  return mapLocalAuthError('error' in authResult ? authResult.error : undefined);
 }
 
 export async function authenticateBiometricForSensitiveAction(
@@ -115,17 +130,29 @@ export async function authenticateBiometricForSensitiveAction(
     };
   }
 
-  const authResult = await LocalAuthentication.authenticateAsync({
-    promptMessage,
-    fallbackLabel: 'Use device passcode',
-    disableDeviceFallback: false,
-    cancelLabel: 'Cancel',
-  });
-
-  if (authResult.success) {
-    return { success: true };
+  if (biometricInProgress) {
+    return {
+      success: false,
+      message: 'Biometric authentication already in progress. Please wait.',
+    };
   }
 
-  const mapped = mapLocalAuthError('error' in authResult ? authResult.error : undefined);
-  return { success: false, message: mapped.message.replace('Use your Personal PIN.', 'Use device passcode and try again.') };
+  biometricInProgress = true;
+  try {
+    const authResult = await LocalAuthentication.authenticateAsync({
+      promptMessage,
+      fallbackLabel: 'Use device passcode',
+      disableDeviceFallback: false,
+      cancelLabel: 'Cancel',
+    });
+
+    if (authResult.success) {
+      return { success: true };
+    }
+
+    const mapped = mapLocalAuthError('error' in authResult ? authResult.error : undefined);
+    return { success: false, message: mapped.message.replace('Use your Personal PIN.', 'Use device passcode and try again.') };
+  } finally {
+    biometricInProgress = false;
+  }
 }

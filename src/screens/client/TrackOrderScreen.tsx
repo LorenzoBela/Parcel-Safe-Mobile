@@ -164,6 +164,7 @@ export default function TrackOrderScreen() {
     const [cancellation, setCancellation] = useState<CancellationState | null>(null);
     const [showCancelModal, setShowCancelModal] = useState(false);
     const [cancelLoading, setCancelLoading] = useState(false);
+    const cancelAuthLockRef = useRef(false);
     const [delivery, setDelivery] = useState<DeliveryRecord | null>(null);
     const [riderLiveLocation, setRiderLiveLocation] = useState<{ lat: number; lng: number; speed?: number; heading?: number; compassHeading?: number | null; lastUpdated: number } | null>(null);
     const [boxLiveLocation, setBoxLiveLocation] = useState<{ lat: number; lng: number; lastUpdated: number } | null>(null);
@@ -761,45 +762,59 @@ export default function TrackOrderScreen() {
 
     // Customer cancellation handler
     const handleCancellationSubmit = async (reason: CustomerCancellationReason, details: string) => {
-        const authResult = await authenticateBiometricForSensitiveAction('Authorize order cancellation');
-        if (!authResult.success) {
-            PremiumAlert.alert('Authorization Required', `${'message' in authResult ? authResult.message : 'Authorization failed.'} Cancellation was canceled.`);
+        if (cancelAuthLockRef.current || cancelLoading) {
             return;
         }
 
-        setCancelLoading(true);
+        cancelAuthLockRef.current = true;
+
         try {
-            if (!customerId) {
-                PremiumAlert.alert('Authentication Required', 'Please log in again to manage this delivery.');
-                setCancelLoading(false);
+            const authResult = await authenticateBiometricForSensitiveAction('Authorize order cancellation');
+            if (!authResult.success) {
+                PremiumAlert.alert('Authorization Required', `${'message' in authResult ? authResult.message : 'Authorization failed.'} Cancellation was canceled.`);
                 return;
             }
 
-            const result = await requestCustomerCancellation(
-                {
-                    deliveryId,
-                    customerId,
-                    reason,
-                    reasonDetails: details,
-                },
-                deliveryStatus
-            );
+            setCancelLoading(true);
+            try {
+                if (!customerId) {
+                    PremiumAlert.alert('Authentication Required', 'Please log in again to manage this delivery.');
+                    setCancelLoading(false);
+                    return;
+                }
 
-            if (result.success) {
-                setShowCancelModal(false);
-                navigation.navigate('CustomerCancellationConfirm', {
-                    deliveryId,
-                    reason,
-                    reasonDetails: details,
-                    refundStatus: result.refundStatus,
-                });
-            } else {
-                PremiumAlert.alert('Cancellation Failed', result.error || 'Unable to cancel order');
+                const clientRequestId = `customer_cancel_${deliveryId}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+
+                const result = await requestCustomerCancellation(
+                    {
+                        deliveryId,
+                        customerId,
+                        reason,
+                        reasonDetails: details,
+                        clientRequestId,
+                    },
+                    deliveryStatus
+                );
+
+                if (result.success) {
+                    setShowCancelModal(false);
+                    PremiumAlert.alert('Success', 'Your cancellation request was submitted successfully.');
+                    navigation.navigate('CustomerCancellationConfirm', {
+                        deliveryId,
+                        reason,
+                        reasonDetails: details,
+                        refundStatus: result.refundStatus,
+                    });
+                } else {
+                    PremiumAlert.alert('Cancellation Failed', result.error || 'Unable to cancel order');
+                }
+            } catch (err) {
+                PremiumAlert.alert('Error', 'An unexpected error occurred');
+            } finally {
+                setCancelLoading(false);
             }
-        } catch (err) {
-            PremiumAlert.alert('Error', 'An unexpected error occurred');
         } finally {
-            setCancelLoading(false);
+            cancelAuthLockRef.current = false;
         }
     };
 

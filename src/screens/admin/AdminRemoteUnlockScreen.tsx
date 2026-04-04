@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { View, Animated, StyleSheet, KeyboardAvoidingView, Platform, ScrollView, TouchableOpacity, StatusBar } from 'react-native';
 import { useEntryAnimation } from '../../hooks/useEntryAnimation';
 import { ActivityIndicator, Text, TextInput, IconButton, ProgressBar } from 'react-native-paper';
@@ -39,6 +39,7 @@ export default function AdminRemoteUnlockScreen() {
     const [unlockProgress, setUnlockProgress] = useState(0);
     const [unlockProgressLabel, setUnlockProgressLabel] = useState('');
     const [successMessage, setSuccessMessage] = useState('');
+    const unlockActionLockRef = useRef(false);
 
     const activeBoxes = useMemo(() => {
         return boxes.filter((box) => box.status === 'IN_TRANSIT' || Boolean(box.current_rider_id));
@@ -82,6 +83,10 @@ export default function AdminRemoteUnlockScreen() {
     };
 
     const handleUnlock = async () => {
+        if (unlockActionLockRef.current || isSubmitting || isAuthorizing) {
+            return;
+        }
+
         if (!resolvedTargetBox) {
             PremiumAlert.alert('Error', 'Select a box or enter a Box ID/MAC address');
             return;
@@ -91,47 +96,55 @@ export default function AdminRemoteUnlockScreen() {
             return;
         }
 
-        try {
-            setIsAuthorizing(true);
-            setUnlockProgress(0.25);
-            setUnlockProgressLabel('Waiting for biometric/device credential...');
+        unlockActionLockRef.current = true;
 
-            const authResult = await authenticateBiometricForSensitiveAction('Authorize remote unlock');
-            if (!authResult.success) {
-                PremiumAlert.alert('Authorization Required', `${'message' in authResult ? authResult.message : 'Authorization failed.'} Remote unlock was canceled.`);
+        try {
+            try {
+                setIsAuthorizing(true);
+                setUnlockProgress(0.25);
+                setUnlockProgressLabel('Waiting for biometric/device credential...');
+
+                const authResult = await authenticateBiometricForSensitiveAction('Authorize remote unlock');
+                if (!authResult.success) {
+                    PremiumAlert.alert('Authorization Required', `${'message' in authResult ? authResult.message : 'Authorization failed.'} Remote unlock was canceled.`);
+                    resetUnlockProgress();
+                    return;
+                }
+            } finally {
+                setIsAuthorizing(false);
+            }
+
+            setIsSubmitting(true);
+            setSuccessMessage('');
+            setUnlockProgress(0.65);
+            setUnlockProgressLabel('Sending override command to box...');
+
+            try {
+                const user = await getCurrentUser();
+                const adminId = user?.id || 'admin-unknown';
+                const clientRequestId = `admin_unlock_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+                await triggerAdminOverride(resolvedTargetBox, adminId, reason.trim(), clientRequestId);
+
+                setUnlockProgress(1);
+                setUnlockProgressLabel('Command sent. Awaiting device acknowledgment...');
+
+                setSuccessMessage(`Unlock command sent to ${resolvedTargetBox} successfully.`);
+                PremiumAlert.alert('Success', `Unlock command sent to ${resolvedTargetBox} successfully.`);
+                setManualBoxId('');
+                setSelectedBoxId('');
+                setReason('');
+                fetchBoxes();
+                setTimeout(() => {
+                    resetUnlockProgress();
+                }, 1200);
+            } catch (error: any) {
+                PremiumAlert.alert('Error', `Failed to trigger unlock: ${error.message}`);
                 resetUnlockProgress();
-                return;
+            } finally {
+                setIsSubmitting(false);
             }
         } finally {
-            setIsAuthorizing(false);
-        }
-
-        setIsSubmitting(true);
-        setSuccessMessage('');
-        setUnlockProgress(0.65);
-        setUnlockProgressLabel('Sending override command to box...');
-
-        try {
-            const user = await getCurrentUser();
-            const adminId = user?.id || 'admin-unknown';
-            await triggerAdminOverride(resolvedTargetBox, adminId, reason.trim());
-
-            setUnlockProgress(1);
-            setUnlockProgressLabel('Command sent. Awaiting device acknowledgment...');
-
-            setSuccessMessage(`Unlock command sent to ${resolvedTargetBox} successfully.`);
-            setManualBoxId('');
-            setSelectedBoxId('');
-            setReason('');
-            fetchBoxes();
-            setTimeout(() => {
-                resetUnlockProgress();
-            }, 1200);
-        } catch (error: any) {
-            PremiumAlert.alert('Error', `Failed to trigger unlock: ${error.message}`);
-            resetUnlockProgress();
-        } finally {
-            setIsSubmitting(false);
+            unlockActionLockRef.current = false;
         }
     };
 

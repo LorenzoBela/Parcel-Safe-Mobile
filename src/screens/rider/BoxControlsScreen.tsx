@@ -188,6 +188,8 @@ export default function BoxControlsScreen() {
     const [unlockProgress, setUnlockProgress] = useState(0);
     const [unlockProgressLabel, setUnlockProgressLabel] = useState('');
     const [showUnlockProgress, setShowUnlockProgress] = useState(false);
+    const personalPinAuthLockRef = useRef(false);
+    const unlockActionLockRef = useRef(false);
     const lastCommandAckKeyRef = useRef('');
     const [activeTamperIncident, setActiveTamperIncident] = useState<RiderTamperIncident | null>(null);
     const [incidentLoading, setIncidentLoading] = useState(false);
@@ -659,6 +661,10 @@ export default function BoxControlsScreen() {
     }, [commandAckCommand, commandAckStatus, commandAckDetails]);
 
     const toggleLock = async () => {
+        if (isLocked && (unlockActionLockRef.current || manualOverrideSending)) {
+            return;
+        }
+
         if (!isPaired) {
             PremiumAlert.alert('Pair Required', 'Scan your box QR to unlock controls.');
             navigation.navigate('PairBox' as never);
@@ -703,6 +709,7 @@ export default function BoxControlsScreen() {
             }
 
             try {
+                unlockActionLockRef.current = true;
                 const actionType = 'UNLOCK_COMMAND';
                 if (!shouldUseOptimisticUi(actionType)) {
                     addLog(`Critical action (${getActionCriticality(actionType)}): waiting for command acknowledgment.`, 'info');
@@ -721,11 +728,12 @@ export default function BoxControlsScreen() {
 
                 setUnlockProgress(0.55);
                 setUnlockProgressLabel('Authorizing unlock...');
-                const { unlockToken } = await verifyRiderBiometricForUnlock(boxId, biometricResult.method);
+                const clientRequestId = `rider_box_unlock_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+                const { unlockToken } = await verifyRiderBiometricForUnlock(boxId, biometricResult.method, clientRequestId);
 
                 setUnlockProgress(0.85);
                 setUnlockProgressLabel('Sending command to box...');
-                await sendRiderUnlockCommand(boxId, unlockToken);
+                await sendRiderUnlockCommand(boxId, unlockToken, clientRequestId);
 
                 setUnlockProgress(1);
                 setUnlockProgressLabel('Command sent. Waiting for box acknowledgment...');
@@ -754,6 +762,7 @@ export default function BoxControlsScreen() {
                 return;
             } finally {
                 setManualOverrideSending(false);
+                unlockActionLockRef.current = false;
             }
 
             return;
@@ -791,6 +800,10 @@ export default function BoxControlsScreen() {
     };
 
     const handleSubmitUnlockWithPin = async () => {
+        if (unlockActionLockRef.current || unlockPinSubmitting) {
+            return;
+        }
+
         const sanitizedPin = sanitizePinInput(unlockPin);
         if (!/^\d{6}$/.test(sanitizedPin)) {
             PremiumAlert.alert('Invalid PIN', 'Enter your 6-digit Personal PIN to unlock.');
@@ -798,6 +811,7 @@ export default function BoxControlsScreen() {
         }
 
         try {
+            unlockActionLockRef.current = true;
             const actionType = 'UNLOCK_COMMAND';
             if (!shouldUseOptimisticUi(actionType)) {
                 addLog(`Critical action (${getActionCriticality(actionType)}): waiting for command acknowledgment.`, 'info');
@@ -808,11 +822,12 @@ export default function BoxControlsScreen() {
             setUnlockProgress(0.55);
             setUnlockProgressLabel('Authorizing Personal PIN...');
 
-            const { unlockToken } = await verifyRiderPersonalPinForUnlock(boxId, sanitizedPin);
+            const clientRequestId = `rider_box_unlock_pin_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+            const { unlockToken } = await verifyRiderPersonalPinForUnlock(boxId, sanitizedPin, clientRequestId);
 
             setUnlockProgress(0.85);
             setUnlockProgressLabel('Sending command to box...');
-            await sendRiderUnlockCommand(boxId, unlockToken);
+            await sendRiderUnlockCommand(boxId, unlockToken, clientRequestId);
 
             setUnlockProgress(1);
             setUnlockProgressLabel('Command sent. Waiting for box acknowledgment...');
@@ -836,6 +851,7 @@ export default function BoxControlsScreen() {
         } finally {
             setUnlockPinSubmitting(false);
             setManualOverrideSending(false);
+            unlockActionLockRef.current = false;
         }
     };
 
@@ -1128,6 +1144,10 @@ export default function BoxControlsScreen() {
     };
 
     const handleSavePersonalPin = async () => {
+        if (personalPinAuthLockRef.current || savingPersonalPin || personalPinLoading) {
+            return;
+        }
+
         const sanitizedNewPin = sanitizePinInput(newPersonalPin);
         const sanitizedConfirmPin = sanitizePinInput(confirmPersonalPin);
 
@@ -1140,13 +1160,15 @@ export default function BoxControlsScreen() {
             return;
         }
 
-        const authResult = await authenticateBiometricForSensitiveAction('Authorize Personal PIN change');
-        if (!authResult.success) {
-            PremiumAlert.alert('Authorization Required', `${'message' in authResult ? authResult.message : 'Authorization failed.'} PIN change was canceled.`);
-            return;
-        }
+        personalPinAuthLockRef.current = true;
 
         try {
+            const authResult = await authenticateBiometricForSensitiveAction('Authorize Personal PIN change');
+            if (!authResult.success) {
+                PremiumAlert.alert('Authorization Required', `${'message' in authResult ? authResult.message : 'Authorization failed.'} PIN change was canceled.`);
+                return;
+            }
+
             setSavingPersonalPin(true);
             await setRiderPersonalPin(boxId, sanitizedNewPin);
             addLog('Personal PIN updated from rider dashboard', 'success');
@@ -1160,10 +1182,15 @@ export default function BoxControlsScreen() {
             PremiumAlert.alert('Failed', error?.message || 'Could not update Personal PIN.');
         } finally {
             setSavingPersonalPin(false);
+            personalPinAuthLockRef.current = false;
         }
     };
 
     const handleForgotPersonalPin = async () => {
+        if (personalPinAuthLockRef.current || personalPinLoading || savingPersonalPin) {
+            return;
+        }
+
         if (!isPaired) {
             PremiumAlert.alert('Pair Required', 'Scan your box QR before requesting PIN reset.');
             return;
@@ -1178,6 +1205,12 @@ export default function BoxControlsScreen() {
                     text: 'Reset PIN',
                     style: 'destructive',
                     onPress: async () => {
+                        if (personalPinAuthLockRef.current || personalPinLoading || savingPersonalPin) {
+                            return;
+                        }
+
+                        personalPinAuthLockRef.current = true;
+
                         try {
                             const authResult = await authenticateBiometricForSensitiveAction('Authorize Personal PIN reset');
                             if (!authResult.success) {
@@ -1196,6 +1229,7 @@ export default function BoxControlsScreen() {
                             PremiumAlert.alert('Failed', error?.message || 'Could not reset Personal PIN.');
                         } finally {
                             setPersonalPinLoading(false);
+                            personalPinAuthLockRef.current = false;
                         }
                     }
                 }
@@ -1514,7 +1548,7 @@ export default function BoxControlsScreen() {
                             <Text style={[styles.pillBtnText, { color: c.text }]}>Emergency</Text>
                         </TouchableOpacity>
                     </View>
-                    <Text style={[styles.hintText, { color: c.textTer }]}>Hold "Emergency" 1s to force open</Text>
+                    <Text style={[styles.hintText, { color: c.textTer }]}>Hold &quot;Emergency&quot; 1s to force open</Text>
 
                     {/* Report Stolen — separated with divider for gravity */}
                     <View style={{ height: 1, backgroundColor: c.divider, marginTop: 14, marginBottom: 12 }} />

@@ -59,6 +59,7 @@ export interface CancellationRequest {
   riderId: string;
   riderName?: string;
   currentStatus?: string;
+  clientRequestId?: string;
 }
 
 export interface CancellationResult {
@@ -234,6 +235,7 @@ export async function requestCancellation(
       ...cancellationState,
       cancelledAt: serverTimestamp(),
       returnOtpIssuedAt: serverTimestamp(),
+      ...(request.clientRequestId ? { client_request_id: request.clientRequestId } : {}),
     });
 
     // 2. Revoke current OTP on box
@@ -254,6 +256,7 @@ export async function requestCancellation(
       return_otp: returnOtp,
       created_at: serverTimestamp(),
       sent: false,
+      ...(request.clientRequestId ? { client_request_id: request.clientRequestId } : {}),
     });
 
     // Determine if the order was already picked up
@@ -454,6 +457,7 @@ export interface CustomerCancellationRequest {
   customerName?: string;
   reason: CustomerCancellationReason;
   reasonDetails?: string;
+  clientRequestId?: string;
 }
 
 export interface CustomerCancellationState {
@@ -604,6 +608,7 @@ export async function requestCustomerCancellation(
     await set(cancellationRef, {
       ...cleanState,
       cancelledAt: serverTimestamp(),
+      ...(request.clientRequestId ? { client_request_id: request.clientRequestId } : {}),
     });
 
     // 2. Update delivery status and cancellation context
@@ -653,6 +658,7 @@ export async function requestCustomerCancellation(
         reason: formatCustomerCancellationReason(request.reason),
         createdAt: serverTimestamp(),
         read: false,
+        ...(request.clientRequestId ? { client_request_id: request.clientRequestId } : {}),
       });
 
       // Update cancellation state to reflect rider was notified
@@ -666,6 +672,7 @@ export async function requestCustomerCancellation(
       customerId: request.customerId,
       status: 'PENDING',
       createdAt: serverTimestamp(),
+      ...(request.clientRequestId ? { client_request_id: request.clientRequestId } : {}),
     });
 
     await dispatchImmediateCancellationNotification(

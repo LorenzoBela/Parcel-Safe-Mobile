@@ -44,6 +44,8 @@ class OfflineQueueService {
     private queue: QueuedLocation[] = [];
     private isSyncing: boolean = false;
     private isInitialized: boolean = false;
+    private retryBackoffMs: number = NETWORK_POLICY.RETRY.BASE_MS;
+    private nextRetryAt: number = 0;
 
     constructor() {
         this.initialize();
@@ -83,6 +85,26 @@ class OfflineQueueService {
         } catch (error) {
             console.error('[OfflineQueue] Failed to persist queue:', error);
         }
+    }
+
+    private isTimeoutError(error: unknown): boolean {
+        const message = String((error as any)?.message ?? error ?? '').toLowerCase();
+        return message.includes('timeout');
+    }
+
+    private upsertLatestLocation(locationData: QueuedLocation): void {
+        const existingIndex = this.queue.findIndex((item) => item.boxId === locationData.boxId);
+
+        if (existingIndex >= 0) {
+            this.queue[existingIndex] = locationData;
+            return;
+        }
+
+        if (this.queue.length >= MAX_QUEUE_SIZE) {
+            this.queue.shift();
+        }
+
+        this.queue.push(locationData);
     }
 
     /**
@@ -144,7 +166,7 @@ class OfflineQueueService {
             try {
                 // If we have a queue, send that first to maintain order
                 if (this.queue.length > 0) {
-                    this.queue.push(locationData);
+                    this.upsertLatestLocation(locationData);
                     captureHandledMessage('location_queue_enqueued_online', {
                         queue_uuid: locationData.queueId || 'unknown',
                         action_type: 'location_update',
@@ -175,14 +197,7 @@ class OfflineQueueService {
         }
 
         // Offline or upload failed - add to queue
-        if (this.queue.length >= MAX_QUEUE_SIZE) {
-            // Drop oldest if full (circular buffer behavior is usually better for tracking)
-            // But for delivery, maybe we want the latest?
-            // Let's drop the oldest to keep the "gap" at the beginning, usually better than a gap at the end
-            this.queue.shift();
-        }
-
-        this.queue.push(locationData);
+        this.upsertLatestLocation(locationData);
         captureHandledMessage('location_queue_enqueued_offline', {
             queue_uuid: locationData.queueId || 'unknown',
             action_type: 'location_update',
@@ -199,6 +214,9 @@ class OfflineQueueService {
      */
     public async processQueue(): Promise<void> {
         if (this.isSyncing || this.queue.length === 0) return;
+
+        const now = Date.now();
+        if (now < this.nextRetryAt) return;
 
         const netState = await NetInfo.fetch();
         if (!netState.isConnected) return;
@@ -270,6 +288,8 @@ class OfflineQueueService {
             // Clear queue only after successful send
             this.queue = [];
             await this.persistQueue();
+            this.retryBackoffMs = NETWORK_POLICY.RETRY.BASE_MS;
+            this.nextRetryAt = 0;
             captureHandledMessage('location_queue_flush_success', {
                 queue_uuid: batch.map((item) => item.queueId || 'unknown').join(','),
                 action_type: 'location_update',
@@ -281,6 +301,10 @@ class OfflineQueueService {
 
         } catch (error) {
             console.error('[OfflineQueue] Sync failed:', error);
+            if (this.isTimeoutError(error)) {
+                this.nextRetryAt = Date.now() + this.retryBackoffMs;
+                this.retryBackoffMs = Math.min(this.retryBackoffMs * 2, 30_000);
+            }
             const queueUuids = this.queue.map((item) => item.queueId || 'unknown').join(',');
             captureHandledError(error, {
                 queue_uuid: queueUuids || 'unknown',

@@ -16,7 +16,7 @@ import BinaryUpdateRequiredModal from './src/components/modals/BinaryUpdateRequi
 import ResumeScreen from './src/screens/auth/ResumeScreen';
 import { useOTAUpdateMonitor } from './src/hooks/useOTAUpdateMonitor';
 import { useBinaryUpdateGate } from './src/hooks/useBinaryUpdateGate';
-import { initializeSentry } from './src/services/observability/sentryService';
+import { captureHandledError, captureHandledMessage, initializeSentry } from './src/services/observability/sentryService';
 import { navigateWhenReady } from './src/navigation/navigationService';
 import { PersistQueryClientProvider } from '@tanstack/react-query-persist-client';
 import { queryClient, queryPersister } from './src/services/queryClient';
@@ -402,9 +402,24 @@ const AppContent = () => {
 
 export default function App() {
   const [isReady, setIsReady] = useState(false);
+  const didFinishBootstrap = useRef(false);
 
   useEffect(() => {
     async function prepare() {
+      const failSafeTimer = setTimeout(async () => {
+        if (didFinishBootstrap.current) return;
+        console.warn('[App] Bootstrap timeout reached. Forcing splash hide.');
+        captureHandledMessage('app_bootstrap_watchdog_triggered', {}, 'warning');
+        didFinishBootstrap.current = true;
+        setIsReady(true);
+        try {
+          await SplashScreen.hideAsync();
+        } catch (error) {
+          // Ignore splash hide races/errors on watchdog path
+          captureHandledError(error, { module: 'app-bootstrap', phase: 'watchdog-hide-splash' });
+        }
+      }, 12000);
+
       try {
         // 0. Load premium fonts
         await Font.loadAsync({
@@ -427,10 +442,19 @@ export default function App() {
         await new Promise(resolve => setTimeout(resolve, 100));
       } catch (e) {
         console.warn(e);
+        captureHandledError(e, { module: 'app-bootstrap', phase: 'prepare-catch' });
       } finally {
+        clearTimeout(failSafeTimer);
+        if (didFinishBootstrap.current) return;
+        didFinishBootstrap.current = true;
         setIsReady(true);
         // Hide the native splash screen now that JS is parsed and the tree is built
-        await SplashScreen.hideAsync();
+        try {
+          await SplashScreen.hideAsync();
+          captureHandledMessage('app_bootstrap_completed', {}, 'info');
+        } catch (error) {
+          captureHandledError(error, { module: 'app-bootstrap', phase: 'final-hide-splash' });
+        }
       }
     }
 

@@ -279,6 +279,7 @@ export default function RiderDashboard() {
     const [showQuickUnlockPinText, setShowQuickUnlockPinText] = useState(false);
     const [quickUnlockProgress, setQuickUnlockProgress] = useState(0);
     const [quickUnlockProgressLabel, setQuickUnlockProgressLabel] = useState('');
+    const quickUnlockActionLockRef = useRef(false);
 
     const sanitizeQuickPinInput = (value: string) => value.replace(/\D/g, '').slice(0, 6);
 
@@ -293,6 +294,10 @@ export default function RiderDashboard() {
     };
 
     const handleQuickUnlock = async () => {
+        if (quickUnlockActionLockRef.current || quickUnlockSubmitting) {
+            return;
+        }
+
         if (!isPaired || !pairedBoxId) {
             PremiumAlert.alert('No Box Paired', 'Scan your box QR to access controls.', [
                 { text: 'Pair Box', onPress: () => navigation.navigate('PairBox') },
@@ -322,6 +327,7 @@ export default function RiderDashboard() {
         }
 
         try {
+            quickUnlockActionLockRef.current = true;
             setQuickUnlockSubmitting(true);
             setQuickUnlockProgress(0.2);
             setQuickUnlockProgressLabel('Verifying biometric...');
@@ -334,11 +340,12 @@ export default function RiderDashboard() {
 
             setQuickUnlockProgress(0.55);
             setQuickUnlockProgressLabel('Authorizing unlock...');
-            const { unlockToken } = await verifyRiderBiometricForUnlock(pairedBoxId, biometricResult.method);
+            const clientRequestId = `rider_quick_unlock_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+            const { unlockToken } = await verifyRiderBiometricForUnlock(pairedBoxId, biometricResult.method, clientRequestId);
 
             setQuickUnlockProgress(0.85);
             setQuickUnlockProgressLabel('Sending command to box...');
-            await sendRiderUnlockCommand(pairedBoxId, unlockToken);
+            await sendRiderUnlockCommand(pairedBoxId, unlockToken, clientRequestId);
 
             setQuickUnlockProgress(1);
             setQuickUnlockProgressLabel('Command sent. Waiting for box acknowledgment...');
@@ -358,19 +365,26 @@ export default function RiderDashboard() {
             openPinModal();
         } finally {
             setQuickUnlockSubmitting(false);
+            quickUnlockActionLockRef.current = false;
         }
     };
 
     const handleSubmitQuickUnlockPin = async () => {
+        if (quickUnlockActionLockRef.current || quickUnlockSubmitting) {
+            return;
+        }
+
         const sanitized = sanitizeQuickPinInput(quickUnlockPin);
         if (!/^\d{6}$/.test(sanitized)) {
             PremiumAlert.alert('Invalid PIN', 'Enter your 6-digit Personal PIN to unlock.');
             return;
         }
         try {
+            quickUnlockActionLockRef.current = true;
             setQuickUnlockSubmitting(true);
-            const { unlockToken } = await verifyRiderPersonalPinForUnlock(pairedBoxId!, sanitized);
-            await sendRiderUnlockCommand(pairedBoxId!, unlockToken);
+            const clientRequestId = `rider_quick_unlock_pin_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+            const { unlockToken } = await verifyRiderPersonalPinForUnlock(pairedBoxId!, sanitized, clientRequestId);
+            await sendRiderUnlockCommand(pairedBoxId!, unlockToken, clientRequestId);
             setShowQuickUnlockModal(false);
             setQuickUnlockPin('');
             PremiumAlert.alert('Unlock Command Sent', `Unlock queued for ${pairedBoxId}. Waiting for hardware acknowledgment.`);
@@ -379,6 +393,7 @@ export default function RiderDashboard() {
             PremiumAlert.alert('Unlock Failed', error?.message || 'Could not authorize unlock. Check your PIN.');
         } finally {
             setQuickUnlockSubmitting(false);
+            quickUnlockActionLockRef.current = false;
         }
     };
     const unlockPress = usePressScale();
@@ -662,6 +677,7 @@ export default function RiderDashboard() {
     // EC-32: Cancellation State
     const [showCancelModal, setShowCancelModal] = useState(false);
     const [cancelLoading, setCancelLoading] = useState(false);
+    const cancelAuthLockRef = useRef(false);
 
     // EC-78: Delivery Reassignment State
     const [reassignmentState, setReassignmentState] = useState<ReassignmentState | null>(null);
@@ -1520,56 +1536,69 @@ export default function RiderDashboard() {
 
     // EC-32: Handle Cancellation Submit
     const handleCancellationSubmit = async (reason: CancellationReason, details: string) => {
+        if (cancelAuthLockRef.current || cancelLoading) {
+            return;
+        }
+
         if (!nextDelivery) {
             PremiumAlert.alert('Error', 'No active delivery to cancel');
             return;
         }
 
-        const highImpactStatuses = new Set(['IN_TRANSIT', 'ARRIVED', 'RETURNING', 'TAMPERED']);
-        const requiresStepUp = highImpactStatuses.has(String(nextDelivery.status || '').toUpperCase());
-        if (requiresStepUp) {
-            const authResult = await authenticateBiometricForSensitiveAction('Authorize cancellation');
-            if (!authResult.success) {
-                PremiumAlert.alert('Authorization Required', `${'message' in authResult ? authResult.message : 'Authorization failed.'} Cancellation was canceled.`);
-                return;
-            }
-        }
+        cancelAuthLockRef.current = true;
 
-        setCancelLoading(true);
         try {
-            const result = await requestCancellation({
-                deliveryId: nextDelivery.id,
-                boxId: boxIdForMonitoring,
-                reason,
-                reasonDetails: details,
-                riderId: riderId || getAuth().currentUser?.uid || '', // EC-Fix: Fallback to Firebase Auth
-                riderName: riderName || 'Rider',
-                currentStatus: nextDelivery.status,
-            });
-
-            if (result.success) {
-                setShowCancelModal(false);
-                // Immediately clear stale delivery state so the dashboard
-                // doesn't show the cancelled job when the rider navigates back.
-                setActiveDelivery(null);
-                setHasActiveDelivery(false);
-                // Navigate to confirmation screen with return OTP
-                navigation.navigate('CancellationConfirmation', {
-                    deliveryId: nextDelivery.id,
-                    returnOtp: result.returnOtp,
-                    reason: reason,
-                    reasonDetails: details,
-                    senderName: nextDelivery.customer,
-                    pickupAddress: nextDelivery.address,
-                    isPickedUp: ['IN_TRANSIT', 'ARRIVED', 'COMPLETED', 'RETURNING', 'TAMPERED'].includes(nextDelivery.status),
-                });
-            } else {
-                PremiumAlert.alert('Cancellation Failed', result.error || 'Unknown error');
+            const highImpactStatuses = new Set(['IN_TRANSIT', 'ARRIVED', 'RETURNING', 'TAMPERED']);
+            const requiresStepUp = highImpactStatuses.has(String(nextDelivery.status || '').toUpperCase());
+            if (requiresStepUp) {
+                const authResult = await authenticateBiometricForSensitiveAction('Authorize cancellation');
+                if (!authResult.success) {
+                    PremiumAlert.alert('Authorization Required', `${'message' in authResult ? authResult.message : 'Authorization failed.'} Cancellation was canceled.`);
+                    return;
+                }
             }
-        } catch (err) {
-            PremiumAlert.alert('Error', 'An unexpected error occurred');
+
+            setCancelLoading(true);
+            try {
+                const clientRequestId = `rider_cancel_${nextDelivery.id}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+                const result = await requestCancellation({
+                    deliveryId: nextDelivery.id,
+                    boxId: boxIdForMonitoring,
+                    reason,
+                    reasonDetails: details,
+                    riderId: riderId || getAuth().currentUser?.uid || '', // EC-Fix: Fallback to Firebase Auth
+                    riderName: riderName || 'Rider',
+                    currentStatus: nextDelivery.status,
+                    clientRequestId,
+                });
+
+                if (result.success) {
+                    setShowCancelModal(false);
+                    PremiumAlert.alert('Success', 'Delivery cancellation submitted successfully.');
+                    // Immediately clear stale delivery state so the dashboard
+                    // doesn't show the cancelled job when the rider navigates back.
+                    setActiveDelivery(null);
+                    setHasActiveDelivery(false);
+                    // Navigate to confirmation screen with return OTP
+                    navigation.navigate('CancellationConfirmation', {
+                        deliveryId: nextDelivery.id,
+                        returnOtp: result.returnOtp,
+                        reason: reason,
+                        reasonDetails: details,
+                        senderName: nextDelivery.customer,
+                        pickupAddress: nextDelivery.address,
+                        isPickedUp: ['IN_TRANSIT', 'ARRIVED', 'COMPLETED', 'RETURNING', 'TAMPERED'].includes(nextDelivery.status),
+                    });
+                } else {
+                    PremiumAlert.alert('Cancellation Failed', result.error || 'Unknown error');
+                }
+            } catch (err) {
+                PremiumAlert.alert('Error', 'An unexpected error occurred');
+            } finally {
+                setCancelLoading(false);
+            }
         } finally {
-            setCancelLoading(false);
+            cancelAuthLockRef.current = false;
         }
     };
 
@@ -2182,7 +2211,7 @@ export default function RiderDashboard() {
                         <MaterialCommunityIcons name="keyboard-off" size={24} color={c.orangeText} />
                         <View style={{ flex: 1, marginLeft: 12 }}>
                             <Text style={[styles.bannerTitle, { color: c.orangeText }]}>KEYPAD MALFUNCTION</Text>
-                            <Text style={[styles.bannerText, { color: c.orangeText }]}>Key '{keypadState.stuck_key}' is stuck. Use App Unlock.</Text>
+                            <Text style={[styles.bannerText, { color: c.orangeText }]}>Key &apos;{keypadState.stuck_key}&apos; is stuck. Use App Unlock.</Text>
                         </View>
                     </View>
                 )}

@@ -10,10 +10,11 @@ import {
     Image,
     StatusBar,
     Platform,
+    ActivityIndicator,
 } from 'react-native';
 import { useEntryAnimation, useStaggerAnimation } from '../../hooks/useEntryAnimation';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Text, useTheme } from 'react-native-paper';
+import { Text } from 'react-native-paper';
 import { useNavigation } from '@react-navigation/native';
 import useAuthStore from '../../store/authStore';
 import { signOut } from '../../services/auth';
@@ -67,7 +68,6 @@ const DASHBOARD_OPTIONS = {
 
 export default function RoleSelectionScreen() {
     const navigation = useNavigation<any>();
-    const theme = useTheme();
     const { isDarkMode: isDark } = useAppTheme();
     const { role, user, logout } = useAuthStore((state: any) => state);
     const userId = user?.userId;
@@ -76,7 +76,9 @@ export default function RoleSelectionScreen() {
     const [weather, setWeather] = useState<WeatherData | null>(null);
     const [locationName, setLocationName] = useState<string | null>(null);
     const [isSwitchingAccount, setIsSwitchingAccount] = useState(false);
-    const [isAuthorizingRole, setIsAuthorizingRole] = useState(false);
+    const [loadingPhase, setLoadingPhase] = useState<'idle' | 'authorizing' | 'registering' | 'routing'>('idle');
+    const actionLockRef = useRef(false);
+    const progressAnim = useRef(new Animated.Value(0)).current;
 
     // Live clock
     useEffect(() => {
@@ -103,21 +105,74 @@ export default function RoleSelectionScreen() {
 
                 const data = await fetchWeather(location.coords.latitude, location.coords.longitude);
                 if (data) setWeather(data);
-            } catch (err) {
+            } catch {
                 // Ignore gracefully
             }
         })();
     }, []);
 
+    useEffect(() => {
+        if (loadingPhase === 'idle' && !isSwitchingAccount) {
+            progressAnim.stopAnimation();
+            progressAnim.setValue(0);
+            return;
+        }
+
+        progressAnim.setValue(0);
+        const loopAnim = Animated.loop(
+            Animated.sequence([
+                Animated.timing(progressAnim, {
+                    toValue: 0.92,
+                    duration: 1200,
+                    useNativeDriver: false,
+                }),
+                Animated.timing(progressAnim, {
+                    toValue: 0.2,
+                    duration: 0,
+                    useNativeDriver: false,
+                }),
+            ])
+        );
+        loopAnim.start();
+
+        return () => {
+            loopAnim.stop();
+            progressAnim.stopAnimation();
+            progressAnim.setValue(0);
+        };
+    }, [loadingPhase, isSwitchingAccount, progressAnim]);
+
+    useEffect(() => {
+        return () => {
+            actionLockRef.current = false;
+        };
+    }, []);
+
     const colors = isDark ? COLORS.dark : COLORS.light;
+    const isBusy = isSwitchingAccount || loadingPhase !== 'idle';
+    const progressWidth = progressAnim.interpolate({
+        inputRange: [0, 1],
+        outputRange: ['8%', '100%'],
+    });
+
+    const loadingLabel = isSwitchingAccount
+        ? 'Switching account...'
+        : loadingPhase === 'authorizing'
+            ? 'Authorizing fingerprint...'
+            : loadingPhase === 'registering'
+                ? 'Starting rider session...'
+                : 'Opening dashboard...';
 
     const handleNavigation = async (targetApp: 'RiderApp' | 'CustomerApp' | 'AdminApp') => {
-        if (isAuthorizingRole) return;
+        if (actionLockRef.current || isSwitchingAccount) return;
 
-        const requiresStepUp = targetApp === 'RiderApp' || targetApp === 'AdminApp';
-        if (requiresStepUp) {
-            try {
-                setIsAuthorizingRole(true);
+        actionLockRef.current = true;
+        let didNavigate = false;
+
+        try {
+            const requiresStepUp = targetApp === 'RiderApp' || targetApp === 'AdminApp';
+            if (requiresStepUp) {
+                setLoadingPhase('authorizing');
                 const authResult = await authenticateBiometricForSensitiveAction('Authorize dashboard access');
                 if (!authResult.success) {
                     PremiumAlert.alert(
@@ -126,35 +181,46 @@ export default function RoleSelectionScreen() {
                     );
                     return;
                 }
-            } finally {
-                setIsAuthorizingRole(false);
             }
-        }
 
-        if (targetApp === 'RiderApp') {
-            if (userId) {
-                try {
-                    await sessionService.registerSession(
-                        userId,
-                        Platform.OS === 'ios' ? 'ios' : 'android',
-                        '1.0.1'
-                    );
-                } catch (error) {
-                    console.warn('[RoleSelection] Failed to register rider session:', error);
+            if (targetApp === 'RiderApp') {
+                setLoadingPhase('registering');
+                if (userId) {
+                    try {
+                        await sessionService.registerSession(
+                            userId,
+                            Platform.OS === 'ios' ? 'ios' : 'android',
+                            '1.0.1'
+                        );
+                    } catch (error) {
+                        console.warn('[RoleSelection] Failed to register rider session:', error);
+                    }
                 }
+                setLoadingPhase('routing');
+                navigation.replace('RiderLoading');
+                didNavigate = true;
+                return;
             }
-            // Route through the warmup/loading screen first
-            navigation.replace('RiderLoading');
-        } else {
+
+            setLoadingPhase('routing');
             navigation.replace(targetApp);
+            didNavigate = true;
+        } finally {
+            actionLockRef.current = false;
+            if (!didNavigate) {
+                setLoadingPhase('idle');
+            }
         }
     };
 
     const handleSwitchAccount = async () => {
-        if (isSwitchingAccount) return;
+        if (actionLockRef.current || isSwitchingAccount) return;
+
+        actionLockRef.current = true;
 
         try {
             setIsSwitchingAccount(true);
+            setLoadingPhase('routing');
             await signOut();
             logout();
         } catch (error) {
@@ -162,6 +228,8 @@ export default function RoleSelectionScreen() {
         } finally {
             navigation.replace('Login');
             setIsSwitchingAccount(false);
+            setLoadingPhase('idle');
+            actionLockRef.current = false;
         }
     };
 
@@ -244,6 +312,7 @@ export default function RoleSelectionScreen() {
                                 {...DASHBOARD_OPTIONS.admin}
                                 colors={colors}
                                 onPress={() => handleNavigation('AdminApp')}
+                                disabled={isBusy}
                             />
                         </Animated.View>
                     )}
@@ -255,6 +324,7 @@ export default function RoleSelectionScreen() {
                                 {...DASHBOARD_OPTIONS.rider}
                                 colors={colors}
                                 onPress={() => handleNavigation('RiderApp')}
+                                disabled={isBusy}
                             />
                         </Animated.View>
                     )}
@@ -265,6 +335,7 @@ export default function RoleSelectionScreen() {
                             {...DASHBOARD_OPTIONS.customer}
                             colors={colors}
                             onPress={() => handleNavigation('CustomerApp')}
+                            disabled={isBusy}
                         />
                     </Animated.View>
                 </View>
@@ -274,13 +345,13 @@ export default function RoleSelectionScreen() {
             <View style={styles.footer}>
                 <Pressable
                     onPress={handleSwitchAccount}
-                    disabled={isSwitchingAccount}
+                    disabled={isBusy}
                     style={({ pressed }) => [
                         styles.switchAccountButton,
                         {
                             borderColor: colors.border,
                             backgroundColor: pressed ? colors.surface : 'transparent',
-                            opacity: isSwitchingAccount ? 0.6 : 1,
+                            opacity: isBusy ? 0.6 : 1,
                         },
                     ]}
                 >
@@ -298,6 +369,39 @@ export default function RoleSelectionScreen() {
                     Parcel Safe
                 </Text>
             </View>
+
+            {isBusy && (
+                <View
+                    style={[
+                        styles.progressOverlay,
+                        {
+                            backgroundColor: isDark ? 'rgba(0,0,0,0.55)' : 'rgba(255,255,255,0.70)',
+                        },
+                    ]}
+                    pointerEvents="auto"
+                >
+                    <View
+                        style={[
+                            styles.progressCard,
+                            { backgroundColor: colors.surface, borderColor: colors.border },
+                        ]}
+                    >
+                        <View style={styles.progressHeader}>
+                            <ActivityIndicator size="small" color={colors.text} />
+                            <Text style={[styles.progressLabel, { color: colors.text }]}>{loadingLabel}</Text>
+                        </View>
+
+                        <View style={[styles.progressTrack, { backgroundColor: colors.border }]}>
+                            <Animated.View
+                                style={[
+                                    styles.progressFill,
+                                    { width: progressWidth, backgroundColor: colors.accent },
+                                ]}
+                            />
+                        </View>
+                    </View>
+                </View>
+            )}
         </SafeAreaView>
     );
 }
@@ -309,12 +413,14 @@ interface DashboardCardProps {
     icon: keyof typeof MaterialCommunityIcons.glyphMap;
     colors: typeof COLORS.light;
     onPress: () => void;
+    disabled?: boolean;
 }
 
-const DashboardCard = ({ title, subtitle, icon, colors, onPress }: DashboardCardProps) => {
+const DashboardCard = ({ title, subtitle, icon, colors, onPress, disabled = false }: DashboardCardProps) => {
     const scaleAnim = useRef(new Animated.Value(1)).current;
 
     const handlePressIn = () => {
+        if (disabled) return;
         Animated.spring(scaleAnim, {
             toValue: 0.98,
             useNativeDriver: true,
@@ -324,6 +430,7 @@ const DashboardCard = ({ title, subtitle, icon, colors, onPress }: DashboardCard
     };
 
     const handlePressOut = () => {
+        if (disabled) return;
         Animated.spring(scaleAnim, {
             toValue: 1,
             useNativeDriver: true,
@@ -337,6 +444,7 @@ const DashboardCard = ({ title, subtitle, icon, colors, onPress }: DashboardCard
             onPress={onPress}
             onPressIn={handlePressIn}
             onPressOut={handlePressOut}
+            disabled={disabled}
         >
             <Animated.View
                 style={[
@@ -344,6 +452,7 @@ const DashboardCard = ({ title, subtitle, icon, colors, onPress }: DashboardCard
                     {
                         backgroundColor: colors.surface,
                         borderColor: colors.border,
+                        opacity: disabled ? 0.55 : 1,
                         transform: [{ scale: scaleAnim }]
                     }
                 ]}
@@ -517,6 +626,40 @@ const styles = StyleSheet.create({
     switchAccountText: {
         fontSize: 12,
         fontFamily: 'Inter_500Medium',
+    },
+    progressOverlay: {
+        ...StyleSheet.absoluteFillObject,
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingHorizontal: 24,
+    },
+    progressCard: {
+        width: '100%',
+        maxWidth: 360,
+        borderRadius: 16,
+        borderWidth: 1,
+        paddingHorizontal: 16,
+        paddingVertical: 14,
+    },
+    progressHeader: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+        marginBottom: 12,
+    },
+    progressLabel: {
+        fontSize: 13,
+        fontFamily: 'Inter_500Medium',
+    },
+    progressTrack: {
+        height: 4,
+        width: '100%',
+        borderRadius: 999,
+        overflow: 'hidden',
+    },
+    progressFill: {
+        height: '100%',
+        borderRadius: 999,
     },
     footerText: {
         fontSize: 12,
