@@ -100,8 +100,10 @@ export default function AuthLoadingScreen() {
     const [authError, setAuthError] = useState<string | null>(null);
     const [isCheckingAuth, setIsCheckingAuth] = useState(true);
     const [isOffline, setIsOffline] = useState(false);
+    const [startupSignal, setStartupSignal] = useState<'loading' | 'slow' | 'offline' | 'timeout' | 'error' | 'success'>('loading');
     const [authAttempt, setAuthAttempt] = useState(0);
     const didNavigateRef = useRef(false);
+    const offlineRef = useRef(false);
 
     // Ad carousel
     const [adIndex, setAdIndex] = useState(0);
@@ -143,7 +145,9 @@ export default function AuthLoadingScreen() {
 
     useEffect(() => {
         const unsubscribe = NetInfo.addEventListener((state) => {
-            setIsOffline(!(state.isConnected && state.isInternetReachable !== false));
+            const offlineNow = !(state.isConnected && state.isInternetReachable !== false);
+            offlineRef.current = offlineNow;
+            setIsOffline(offlineNow);
         });
         return () => unsubscribe();
     }, []);
@@ -214,20 +218,35 @@ export default function AuthLoadingScreen() {
     useEffect(() => {
         let cancelled = false;
         const watchdogMs = 15000;
+        const slowSignalMs = 8000;
 
         const restoreSession = async () => {
             setIsCheckingAuth(true);
             setAuthError(null);
+            setStartupSignal('loading');
+
+            if (!supabase) {
+                setStartupSignal('error');
+                setAuthError('Authentication service is unavailable. Please try again.');
+                setIsCheckingAuth(false);
+                return;
+            }
 
             const watchdog = setTimeout(() => {
                 if (cancelled || didNavigateRef.current) return;
                 setIsCheckingAuth(false);
-                setAuthError(isOffline ? 'No internet connection. Please reconnect and try again.' : 'Session check is taking longer than expected.');
-                captureHandledMessage('auth_loading_watchdog_triggered', { offline: String(isOffline) }, 'warning');
+                setStartupSignal(offlineRef.current ? 'offline' : 'timeout');
+                setAuthError(offlineRef.current ? 'No internet connection. Please reconnect and try again.' : 'Session check is taking longer than expected.');
+                captureHandledMessage('auth_loading_watchdog_triggered', { offline: String(offlineRef.current) }, 'warning');
             }, watchdogMs);
 
+            const slowSignalTimer = setTimeout(() => {
+                if (cancelled || didNavigateRef.current) return;
+                setStartupSignal('slow');
+            }, slowSignalMs);
+
             try {
-                const biometricBinding = await validateBiometricBoundSecrets();
+                const biometricBinding = await withTimeout(validateBiometricBoundSecrets(), 'Biometric validation', 5000);
                 if (biometricBinding.requiresHardRelogin) {
                     console.warn('[AuthLoading] Biometric-bound key invalidated. Forcing hard re-login.');
                     captureHandledMessage('auth_loading_hard_relogin_biometric_binding', {}, 'warning');
@@ -248,6 +267,7 @@ export default function AuthLoadingScreen() {
                 const cachedState = useAuthStore.getState() as any;
                 if (cachedState.user && cachedState.role) {
                     console.log('[AuthLoading] Fast path: state hydrated from MMKV, skipping network');
+                    setStartupSignal('success');
                     Animated.timing(progressAnim, {
                         toValue: 1,
                         duration: 200,
@@ -269,7 +289,7 @@ export default function AuthLoadingScreen() {
                                     .select('role, full_name, phone_number, avatar_url')
                                     .eq('id', session.user.id)
                                     .maybeSingle(), 'Background profile refresh');
-                                if (profile) {
+                                if (profile && !cancelled) {
                                     const rawRole = profile.role || session.user.user_metadata?.role || 'CUSTOMER';
                                     const role = typeof rawRole === 'string' ? rawRole.toLowerCase() : 'customer';
                                     login({
@@ -292,12 +312,26 @@ export default function AuthLoadingScreen() {
                     return;
                 }
 
+                const netSnapshot = await NetInfo.fetch();
+                const offlineNow = !(netSnapshot.isConnected && netSnapshot.isInternetReachable !== false);
+                offlineRef.current = offlineNow;
+                setIsOffline(offlineNow);
+
+                if (offlineNow) {
+                    setStartupSignal('offline');
+                    setAuthError('No internet connection. Please reconnect and try again.');
+                    setIsCheckingAuth(false);
+                    captureHandledMessage('auth_loading_offline_fail_fast', {}, 'info');
+                    return;
+                }
+
                 // ── Slow path: no cached state, fetch from network ──────────
                 const { data: { session }, error } = await withTimeout(supabase.auth.getSession(), 'Session restoration');
 
                 if (error) {
                     console.error('Session restoration error:', error);
-                    setAuthError(isOffline ? 'No internet connection. Please reconnect and try again.' : 'Could not restore your session.');
+                    setStartupSignal(offlineRef.current ? 'offline' : 'error');
+                    setAuthError(offlineRef.current ? 'No internet connection. Please reconnect and try again.' : 'Could not restore your session.');
                     captureHandledError(error, { module: 'auth-loading', phase: 'session-restore' });
                     setIsCheckingAuth(false);
                     return;
@@ -336,19 +370,26 @@ export default function AuthLoadingScreen() {
                     }).start(() => {
                         // Always go to RoleSelection so the user can pick their dashboard
                         if (!cancelled) {
+                            setStartupSignal('success');
                             safeReplace('RoleSelection');
                         }
                     });
                 } else {
+                    setStartupSignal('success');
                     safeReplace('Login');
                 }
             } catch (err) {
                 console.error('Auth check error:', err);
-                setAuthError(isOffline ? 'No internet connection. Please reconnect and try again.' : 'Unable to finish startup checks.');
-                captureHandledError(err, { module: 'auth-loading', phase: 'restore-session-catch', offline: String(isOffline) });
+                setStartupSignal(offlineRef.current ? 'offline' : 'error');
+                setAuthError(offlineRef.current ? 'No internet connection. Please reconnect and try again.' : 'Unable to finish startup checks.');
+                captureHandledError(err, { module: 'auth-loading', phase: 'restore-session-catch', offline: String(offlineRef.current) });
                 setIsCheckingAuth(false);
             } finally {
                 clearTimeout(watchdog);
+                clearTimeout(slowSignalTimer);
+                if (!cancelled && !didNavigateRef.current && startupSignal !== 'success') {
+                    setIsCheckingAuth(false);
+                }
             }
         };
 
@@ -357,7 +398,7 @@ export default function AuthLoadingScreen() {
         return () => {
             cancelled = true;
         };
-    }, [authAttempt, login, navigation, progressAnim]);
+    }, [authAttempt, login, navigation, progressAnim, startupSignal]);
 
     const progressWidth = progressAnim.interpolate({
         inputRange: [0, 1],
@@ -460,11 +501,18 @@ export default function AuthLoadingScreen() {
                     />
                 </View>
                 <View style={styles.statusRow}>
-                    <ActivityIndicator size="small" color={colors.textSecondary} />
+                    {isCheckingAuth ? <ActivityIndicator size="small" color={colors.textSecondary} /> : null}
                     <Text style={[styles.statusText, { color: colors.textSecondary }]}>
                         {authError || LOAD_STEPS[stepIndex]?.label || 'Loading...'}
                     </Text>
                 </View>
+
+                {startupSignal === 'slow' && !authError && isCheckingAuth && !didNavigateRef.current && (
+                    <View style={[styles.offlineBadge, { borderColor: colors.border, backgroundColor: colors.surface }]}>
+                        <MaterialCommunityIcons name="timer-sand" size={14} color={colors.textSecondary} />
+                        <Text style={[styles.offlineBadgeText, { color: colors.textSecondary }]}>Connection is slower than usual</Text>
+                    </View>
+                )}
 
                 {isOffline && !didNavigateRef.current && (
                     <View style={[styles.offlineBadge, { borderColor: colors.border, backgroundColor: colors.surface }]}>
@@ -481,6 +529,9 @@ export default function AuthLoadingScreen() {
                                 captureHandledMessage('auth_loading_retry_pressed', { offline: String(isOffline) }, 'info');
                                 setStepIndex(0);
                                 progressAnim.setValue(0);
+                                setStartupSignal('loading');
+                                setAuthError(null);
+                                setIsCheckingAuth(true);
                                 setAuthAttempt((prev) => prev + 1);
                             }}
                             disabled={isCheckingAuth}

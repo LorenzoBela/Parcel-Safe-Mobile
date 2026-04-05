@@ -79,6 +79,7 @@ export default function RiderLoadingScreen() {
     const logoPulse = usePulseAnimation(0.5, 800);
     const progressAnim = useRef(new Animated.Value(0)).current;
     const [stepIndex, setStepIndex] = useState(0);
+    const [syncWarning, setSyncWarning] = useState<string | null>(null);
     const mountTime = useRef(Date.now()).current;
     const hasNavigated = useRef(false);
 
@@ -99,21 +100,21 @@ export default function RiderLoadingScreen() {
             // Step 2: Wait for GPS warmup
             setStepIndex(1);
             animateProgress(LOAD_STEPS[1].progress);
-            await waitForGpsWarmup();
+            await withTimeout(waitForGpsWarmup(), 'GPS warmup', 6000);
 
             if (cancelled) return;
 
             // Step 3: Check foreground + background permissions
             setStepIndex(2);
             animateProgress(LOAD_STEPS[2].progress);
-            await checkAllPermissions();
+            await withTimeout(checkAllPermissions(), 'Permission checks', 5000);
 
             if (cancelled) return;
 
             // Step 4: Sync dashboard data (Deliveries, Pairing, Notifs)
             setStepIndex(3);
             animateProgress(LOAD_STEPS[3].progress);
-            await syncDashboardData();
+            await withTimeout(syncDashboardData(), 'Dashboard sync', 7000);
 
             if (cancelled) return;
 
@@ -149,7 +150,7 @@ export default function RiderLoadingScreen() {
             if (!riderId) {
                  const auth = getAuth();
                  const firebaseUser = auth.currentUser;
-                 if (firebaseUser) {
+                 if (firebaseUser && supabase) {
                      try {
                          const { data: profile } = await supabase
                              .from('profiles')
@@ -171,19 +172,26 @@ export default function RiderLoadingScreen() {
 
             try {
                 // Run fetches in parallel
-                await Promise.allSettled([
-                    fetchActiveDelivery(riderId),
-                    fetchPairingState(riderId),
-                    fetchUnreadNotifications(riderId)
+                const settled = await Promise.allSettled([
+                    withTimeout(fetchActiveDelivery(riderId), 'Active delivery prefetch', 6000),
+                    withTimeout(fetchPairingState(riderId), 'Pairing prefetch', 4000),
+                    withTimeout(fetchUnreadNotifications(riderId), 'Notification prefetch', 6000)
                 ]);
+
+                const rejectedCount = settled.filter((item) => item.status === 'rejected').length;
+                if (rejectedCount > 0) {
+                    setSyncWarning('Some data is delayed. Dashboard will continue loading.');
+                }
             } catch (error) {
                 console.warn('[RiderLoading] Data sync encountered an issue:', error);
                 // We do NOT throw here. We want the rider to enter the dashboard even if sync fails,
                 // so they aren't stuck on the loading screen forever.
+                setSyncWarning('Some data is delayed. Dashboard will continue loading.');
             }
         };
 
         const fetchActiveDelivery = async (rId: string) => {
+               if (!supabase) return;
              // Replicates RiderDashboard's initial Supabase fetch
              const { error } = await supabase
                  .from('deliveries')
@@ -198,13 +206,30 @@ export default function RiderLoadingScreen() {
 
         const fetchPairingState = async (rId: string): Promise<void> => {
             return new Promise((resolve) => {
+                let resolved = false;
+                let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
+
+                const finish = () => {
+                    if (resolved) return;
+                    resolved = true;
+                    if (timeoutHandle) {
+                        clearTimeout(timeoutHandle);
+                        timeoutHandle = null;
+                    }
+                    if (pairingUnsubscribe) {
+                        pairingUnsubscribe();
+                        pairingUnsubscribe = null;
+                    }
+                    resolve();
+                };
+
                 // Subscribe momentarily just to get the initial state cached by Firebase SDK
-                pairingUnsubscribe = subscribeToRiderPairing(rId, (state) => {
-                    resolve(); // Resolve on first emission
+                pairingUnsubscribe = subscribeToRiderPairing(rId, () => {
+                    finish();
                 });
                 
                 // Fallback timeout in case Firebase is offline
-                setTimeout(resolve, 3000); 
+                timeoutHandle = setTimeout(finish, 3000);
             });
         };
 
@@ -221,7 +246,10 @@ export default function RiderLoadingScreen() {
 
         return () => { 
             cancelled = true; 
-            if (pairingUnsubscribe) pairingUnsubscribe();
+            if (pairingUnsubscribe) {
+                pairingUnsubscribe();
+                pairingUnsubscribe = null;
+            }
         };
     }, []);
 
@@ -278,9 +306,31 @@ export default function RiderLoadingScreen() {
                         {currentStep.label}
                     </Text>
                 </View>
+                {syncWarning ? (
+                    <Text style={[styles.statusText, { color: colors.textSecondary, marginTop: 8 }]}>
+                        {syncWarning}
+                    </Text>
+                ) : null}
             </View>
         </SafeAreaView>
     );
+}
+
+async function withTimeout<T>(promise: Promise<T>, label: string, timeoutMs: number): Promise<T | null> {
+    let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
+
+    const timeoutPromise = new Promise<null>((resolve) => {
+        timeoutHandle = setTimeout(() => {
+            console.warn(`[RiderLoading] ${label} timed out`);
+            resolve(null);
+        }, timeoutMs);
+    });
+
+    try {
+        return await Promise.race([promise, timeoutPromise]);
+    } finally {
+        if (timeoutHandle) clearTimeout(timeoutHandle);
+    }
 }
 
 // ==================== Module-Level Helpers ====================

@@ -148,6 +148,12 @@ export default function RoleSelectionScreen() {
         };
     }, []);
 
+    useEffect(() => {
+        if (!user || !role) {
+            navigation.replace('Login');
+        }
+    }, [navigation, role, user]);
+
     const colors = isDark ? COLORS.dark : COLORS.light;
     const isBusy = isSwitchingAccount || loadingPhase !== 'idle';
     const progressWidth = progressAnim.interpolate({

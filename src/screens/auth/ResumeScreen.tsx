@@ -19,6 +19,7 @@ import {
     Dimensions,
     Text,
 } from 'react-native';
+import NetInfo from '@react-native-community/netinfo';
 import { usePulseAnimation } from '../../hooks/useEntryAnimation';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { supabase } from '../../services/supabaseClient';
@@ -71,7 +72,9 @@ export default function ResumeScreen({ onReady }: Props) {
     const fadeAnim = useRef(new Animated.Value(1)).current;
     const [stepIndex, setStepIndex] = useState(0);
     const [softAuthWarning, setSoftAuthWarning] = useState<string | null>(null);
+    const [connectionWarning, setConnectionWarning] = useState<string | null>(null);
     const doneRef = useRef(false);
+    const offlineRef = useRef(false);
 
     const dismiss = () => {
         if (doneRef.current) return;
@@ -100,13 +103,41 @@ export default function ResumeScreen({ onReady }: Props) {
     };
 
     useEffect(() => {
+        const unsubscribe = NetInfo.addEventListener((state) => {
+            const offlineNow = !(state.isConnected && state.isInternetReachable !== false);
+            offlineRef.current = offlineNow;
+            if (offlineNow) {
+                setSoftAuthWarning('Offline mode: resuming with cached data.');
+            }
+        });
+
+        return () => unsubscribe();
+    }, []);
+
+    useEffect(() => {
         // Guarantee we always dismiss, even if something hangs
         const hardCapTimer = setTimeout(dismiss, HARD_CAP_MS);
 
         const resume = async () => {
+            const slowWarningTimer = setTimeout(() => {
+                if (!doneRef.current) {
+                    setConnectionWarning('Network is slow. Finishing resume safely.');
+                }
+            }, 900);
+
             // ── Step 0: Waking up ──────────────────────────────────────────────
             setStepIndex(0);
             animateProgress(LOAD_STEPS[0].progress);
+
+            try {
+                const netState = await NetInfo.fetch();
+                const offline = !(netState.isConnected && netState.isInternetReachable !== false);
+                if (offline) {
+                    setConnectionWarning('Offline detected. Restoring from cached state.');
+                }
+            } catch (_) {
+                setConnectionWarning('Network check delayed. Continuing resume.');
+            }
 
             // Kick off resume pipeline stages with deadlines.
             try {
@@ -116,6 +147,9 @@ export default function ResumeScreen({ onReady }: Props) {
                 ]);
             } catch (_) {
                 // Pipeline is best-effort, never block UI for it
+                if (!offlineRef.current) {
+                    setSoftAuthWarning('Resume is taking longer than usual.');
+                }
             }
 
             // ── Step 1: Checking session ───────────────────────────────────────
@@ -129,6 +163,7 @@ export default function ResumeScreen({ onReady }: Props) {
                     // Refresh token/session in background without blocking unfreeze.
                     setStepIndex(2);
                     setTimeout(() => {
+                        if (!supabase) return;
                         supabase.auth.getSession().catch(() => { });
                     }, 0);
                     clearTimeout(hardCapTimer);
@@ -139,6 +174,9 @@ export default function ResumeScreen({ onReady }: Props) {
                 // Ensure the Supabase token is fresh before returning to the app.
                 // The proactive refresh in supabaseClient.ts does the heavy lifting;
                 // this is just a quick sanity check capped at 1s.
+                if (!supabase) {
+                    throw new Error('Supabase client unavailable during resume');
+                }
                 await Promise.race([
                     supabase.auth.getSession(),
                     new Promise(resolve => setTimeout(resolve, 1000)),
@@ -150,6 +188,7 @@ export default function ResumeScreen({ onReady }: Props) {
 
             // ── Step 2: Done ───────────────────────────────────────────────────
             setStepIndex(2);
+            clearTimeout(slowWarningTimer);
             clearTimeout(hardCapTimer);
             dismiss();
         };
@@ -217,6 +256,11 @@ export default function ResumeScreen({ onReady }: Props) {
                 {softAuthWarning && (
                     <Text style={[styles.statusText, { color: colors.textSecondary, marginTop: 6 }]}>
                         {softAuthWarning}
+                    </Text>
+                )}
+                {connectionWarning && (
+                    <Text style={[styles.statusText, { color: colors.textSecondary, marginTop: 6 }]}> 
+                        {connectionWarning}
                     </Text>
                 )}
             </View>
