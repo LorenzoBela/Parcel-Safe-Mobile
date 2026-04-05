@@ -20,6 +20,7 @@ import { useExitAppConfirmation } from '../../hooks/useExitAppConfirmation';
 import ExitConfirmationModal from '../../components/modals/ExitConfirmationModal';
 import { PremiumAlert } from '../../services/PremiumAlertService';
 import NotificationBell from '../../components/NotificationBell';
+import { reportBatteryDeadIncident } from '../../services/batteryIncidentService';
 
 // ─── Dual-mode Color Palette ────────────────────────────────────────────────────
 
@@ -258,13 +259,14 @@ export default function AdminDashboard() {
 
     const handleOverrideDelivery = async () => {
         const lookupValue = selectedDelivery?.id || trackingInput.trim();
+        const trimmedReason = reasonInput.trim();
 
         if (!lookupValue) {
             PremiumAlert.alert('Error', 'Please enter a tracking number or delivery ID');
             return;
         }
-        if (!reasonInput.trim()) {
-            PremiumAlert.alert('Error', 'Please provide a reason for manual completion');
+        if (trimmedReason.length < 8) {
+            PremiumAlert.alert('Error', 'Please provide a meaningful reason (at least 8 characters)');
             return;
         }
 
@@ -285,14 +287,23 @@ export default function AdminDashboard() {
 
         PremiumAlert.alert(
             'Confirm Override',
-            `Mark delivery ${delivery.tracking_number} as COMPLETED?\n\nReason: ${reasonInput}`,
+            `Mark delivery ${delivery.tracking_number} as COMPLETED?\n\nReason: ${trimmedReason}`,
             [
                 { text: 'Cancel', style: 'cancel', onPress: () => setIsProcessing(false) },
                 {
                     text: 'Confirm',
                     style: 'destructive',
                     onPress: async () => {
-                        const success = await markDeliveryComplete(lookupValue, reasonInput.trim());
+                        if (delivery.box_id) {
+                            await reportBatteryDeadIncident({
+                                boxId: delivery.box_id,
+                                deliveryId: delivery.id,
+                                stage: 'DROPOFF',
+                                note: trimmedReason,
+                            });
+                        }
+
+                        const success = await markDeliveryComplete(lookupValue, trimmedReason);
                         setIsProcessing(false);
                         setOverrideModalVisible(false);
 
@@ -564,14 +575,21 @@ export default function AdminDashboard() {
                         textColor={c.textPrimary}
                         theme={{ colors: { onSurfaceVariant: c.textSecondary, surface: c.card2 } }}
                     />
+                    <Text style={[styles.modalHint, { color: reasonInput.trim().length >= 8 ? c.green : c.textSecondary }]}>
+                        Include root cause + customer confirmation (min 8 chars).
+                    </Text>
                     <View style={styles.modalActions}>
                         <TouchableOpacity style={[styles.modalCancelBtn, { borderColor: c.border }]} onPress={() => setOverrideModalVisible(false)}>
                             <Text style={[styles.modalCancelText, { color: c.textPrimary }]}>Cancel</Text>
                         </TouchableOpacity>
                         <TouchableOpacity
-                            style={[styles.modalConfirmBtn, { backgroundColor: c.accent }, isProcessing && { opacity: 0.5 }]}
+                            style={[
+                                styles.modalConfirmBtn,
+                                { backgroundColor: c.accent },
+                                (isProcessing || reasonInput.trim().length < 8) && { opacity: 0.5 },
+                            ]}
                             onPress={handleOverrideDelivery}
-                            disabled={isProcessing}
+                            disabled={isProcessing || reasonInput.trim().length < 8}
                         >
                             <Text style={[styles.modalConfirmText, { color: c.bg }]}>{isProcessing ? 'Processing…' : 'Complete Delivery'}</Text>
                         </TouchableOpacity>
@@ -1010,6 +1028,12 @@ const styles = StyleSheet.create({
     },
     modalInput: {
         marginBottom: 12,
+    },
+    modalHint: {
+        fontSize: 12,
+        marginTop: -4,
+        marginBottom: 10,
+        fontFamily: 'Inter_500Medium',
     },
     deliverySectionHeader: {
         flexDirection: 'row',

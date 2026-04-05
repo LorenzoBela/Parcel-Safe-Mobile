@@ -13,6 +13,11 @@ import { clearAuthSecrets, persistAuthSecrets } from './security/authSecretStore
 
 const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL || '';
 const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || '';
+const API_BASE_URL = (
+    process.env.EXPO_PUBLIC_TRACKING_WEB_BASE_URL
+    || process.env.EXPO_PUBLIC_API_URL
+    || 'https://parcel-safe.vercel.app'
+).replace(/\/+$/, '');
 
 // Create client only if credentials are provided with custom fetch options
 export const supabase: SupabaseClient | null =
@@ -361,11 +366,51 @@ export async function markDeliveryComplete(
         return false;
     }
 
+    const normalizedReason = reason.trim();
+    if (normalizedReason.length < 8) {
+        console.error('Manual completion requires a meaningful note (min 8 characters).');
+        return false;
+    }
+
+    const reasonWithMetadata = `${normalizedReason} [mode=DEGRADED|code=BATTERY_HANDOFF_INCIDENT]`;
+
+    try {
+        const {
+            data: { session },
+        } = await supabase.auth.getSession();
+
+        const token = session?.access_token;
+        if (token) {
+            const response = await fetch(`${API_BASE_URL}/api/admin/deliveries/manual-complete`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    Authorization: `Bearer ${token}`,
+                },
+                body: JSON.stringify({
+                    deliveryIdOrTracking: deliveryId,
+                    note: normalizedReason,
+                    reasonCode: 'BATTERY_HANDOFF_INCIDENT',
+                    telemetryUnavailable: true,
+                }),
+            });
+
+            if (response.ok) {
+                return true;
+            }
+
+            const errText = await response.text().catch(() => '');
+            console.warn('[AdminComplete] Server route failed, falling back to direct update:', response.status, errText);
+        }
+    } catch (routeError) {
+        console.warn('[AdminComplete] Server route call failed, falling back to direct update:', routeError);
+    }
+
     const { error } = await supabase
         .from('deliveries')
         .update({
             status: 'COMPLETED',
-            manual_completion_reason: reason,
+            manual_completion_reason: reasonWithMetadata,
             manual_completion_at: new Date().toISOString(),
         })
         .or(`id.eq.${deliveryId},tracking_number.eq.${deliveryId}`);

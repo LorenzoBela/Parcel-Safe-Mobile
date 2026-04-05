@@ -82,6 +82,7 @@ import {
 } from '../../services/firebaseClient';
 
 import { bleOtpService, BleBoxDevice } from '../../services/bleOtpService';
+import { reportBatteryDeadIncident } from '../../services/batteryIncidentService';
 
 // EC-32: Cancellation Service
 import CancellationModal from '../../components/modals/CancellationModal';
@@ -150,6 +151,8 @@ interface RouteParams {
 
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { PremiumAlert } from '../../services/PremiumAlertService';
+
+const BATTERY_HANDOFF_TIMEOUT_MS = 15 * 60 * 1000;
 
 export default function ArrivalScreen() {
     const navigation = useNavigation<any>();
@@ -259,6 +262,9 @@ export default function ArrivalScreen() {
     const [gracePeriodDisplay, setGracePeriodDisplay] = useState<string>('10:00');
     const [gracePeriodExpired, setGracePeriodExpired] = useState(false);
     const [noShowLoading, setNoShowLoading] = useState(false);
+    const [batteryIncidentReportedAt, setBatteryIncidentReportedAt] = useState<number | null>(null);
+    const [batteryTimeoutDisplay, setBatteryTimeoutDisplay] = useState('15:00');
+    const [reportingBatteryIncident, setReportingBatteryIncident] = useState(false);
 
     // EC-04: OTP Lockout State
     const [lockoutState, setLockoutState] = useState<LockoutState | null>(null);
@@ -583,8 +589,25 @@ export default function ArrivalScreen() {
             setArrivedAt(null);
             setGracePeriodDisplay('10:00');
             setGracePeriodExpired(false);
+            setBatteryIncidentReportedAt(null);
+            setBatteryTimeoutDisplay('15:00');
         }
     }, [isDropoffPhase]);
+
+    useEffect(() => {
+        if (!isDropoffPhase || deliveryStatus !== 'ARRIVED' || !batteryIncidentReportedAt) return;
+
+        const updateCountdown = () => {
+            const remaining = Math.max(0, BATTERY_HANDOFF_TIMEOUT_MS - (Date.now() - batteryIncidentReportedAt));
+            const minutes = Math.floor(remaining / 60000);
+            const seconds = Math.floor((remaining % 60000) / 1000);
+            setBatteryTimeoutDisplay(`${minutes}:${seconds.toString().padStart(2, '0')}`);
+        };
+
+        updateCountdown();
+        const interval = setInterval(updateCountdown, 1000);
+        return () => clearInterval(interval);
+    }, [isDropoffPhase, deliveryStatus, batteryIncidentReportedAt]);
 
     // ━━━ No-Show Handler ━━━
     const handleMarkNoShow = async () => {
@@ -621,6 +644,34 @@ export default function ArrivalScreen() {
                 },
             ]
         );
+    };
+
+    const handleReportBatteryIncident = async () => {
+        if (!params.boxId || !params.deliveryId || reportingBatteryIncident) return;
+
+        setReportingBatteryIncident(true);
+        const ok = await reportBatteryDeadIncident({
+            boxId: params.boxId,
+            deliveryId: params.deliveryId,
+            stage: 'DROPOFF',
+            note: `Rider reported battery handoff risk while ARRIVED at ${new Date().toISOString()}`,
+        });
+        setReportingBatteryIncident(false);
+
+        if (ok) {
+            if (!batteryIncidentReportedAt) {
+                setBatteryIncidentReportedAt(Date.now());
+            }
+            PremiumAlert.alert(
+                'Battery Incident Reported',
+                'Customer, rider, and admin have been notified. Continue manual handoff and complete within the timeout window.'
+            );
+        } else {
+            PremiumAlert.alert(
+                'Report Failed',
+                'Could not report battery incident right now. Check network and try again.'
+            );
+        }
     };
 
     // Dynamically switch geofence target when transitioning from pickup to dropoff
@@ -1591,6 +1642,39 @@ export default function ArrivalScreen() {
                     </Card>
                 )}
 
+                {isDropoffPhase && deliveryStatus === 'ARRIVED' && batteryState?.criticalBatteryWarning && (
+                    <Card style={[styles.batteryIncidentCard, { backgroundColor: c.card, borderColor: c.border }]}>
+                        <Card.Content>
+                            <View style={styles.batteryIncidentHeader}>
+                                <Text style={styles.batteryIncidentIcon}>🔋</Text>
+                                <View style={{ flex: 1 }}>
+                                    <Text style={[styles.batteryIncidentTitle, { color: c.text }]}>Battery Handoff Incident</Text>
+                                    <Text style={[styles.batteryIncidentSubtext, { color: isDarkMode ? '#a1a1aa' : '#6b7280' }]}>
+                                        Report once if handoff is blocked by power loss. Auto-cancel SLA is 15 minutes.
+                                    </Text>
+                                </View>
+                                <View style={[styles.batteryIncidentTimerBox, { backgroundColor: c.card, borderColor: c.border }]}>
+                                    <Text style={styles.batteryIncidentTimer}>{batteryIncidentReportedAt ? batteryTimeoutDisplay : '15:00'}</Text>
+                                    <Text style={styles.batteryIncidentTimerLabel}>{batteryIncidentReportedAt ? 'remaining' : 'window'}</Text>
+                                </View>
+                            </View>
+
+                            <Button
+                                mode={batteryIncidentReportedAt ? 'outlined' : 'contained'}
+                                onPress={handleReportBatteryIncident}
+                                loading={reportingBatteryIncident}
+                                disabled={reportingBatteryIncident}
+                                buttonColor={batteryIncidentReportedAt ? undefined : '#dc2626'}
+                                textColor={batteryIncidentReportedAt ? undefined : 'white'}
+                                style={{ marginTop: 12, borderRadius: 8 }}
+                                icon={batteryIncidentReportedAt ? 'check-circle' : 'alert-circle'}
+                            >
+                                {batteryIncidentReportedAt ? 'Incident Reported (Tap to Re-send)' : 'Report Battery Incident'}
+                            </Button>
+                        </Card.Content>
+                    </Card>
+                )}
+
                 {(waitTimerState.status === 'WAITING' || waitTimerState.status === 'EXPIRED') ? (
                     renderWaitingUI()
                 ) : (
@@ -2239,6 +2323,51 @@ const styles = StyleSheet.create({
         color: '#1d4ed8',
     },
     gracePeriodTimerLabel: {
+        fontSize: 9,
+        fontFamily: 'Inter_700Bold',
+        color: '#9ca3af',
+        letterSpacing: 0.5,
+        textTransform: 'uppercase',
+    },
+    batteryIncidentCard: {
+        marginBottom: 16,
+        borderRadius: 12,
+        borderWidth: 2,
+        borderColor: '#dc2626',
+        backgroundColor: '#fff7f7',
+    },
+    batteryIncidentHeader: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 12,
+    },
+    batteryIncidentIcon: {
+        fontSize: 28,
+    },
+    batteryIncidentTitle: {
+        fontSize: 14,
+        fontFamily: 'Inter_700Bold',
+        marginBottom: 2,
+    },
+    batteryIncidentSubtext: {
+        fontSize: 12,
+    },
+    batteryIncidentTimerBox: {
+        alignItems: 'center',
+        backgroundColor: 'white',
+        paddingHorizontal: 12,
+        paddingVertical: 6,
+        borderRadius: 8,
+        borderWidth: 1,
+        borderColor: '#fecaca',
+        minWidth: 70,
+    },
+    batteryIncidentTimer: {
+        fontSize: 20,
+        fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
+        color: '#dc2626',
+    },
+    batteryIncidentTimerLabel: {
         fontSize: 9,
         fontFamily: 'Inter_700Bold',
         color: '#9ca3af',
