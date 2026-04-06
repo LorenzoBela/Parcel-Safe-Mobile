@@ -8,11 +8,12 @@ import NetInfo from '@react-native-community/netinfo';
 import { getFirebaseDatabase, ref, serverTimestamp } from './firebaseClient';
 import { update } from 'firebase/database';
 import { generateQueueUuid } from './queueIdentity';
-import { NETWORK_POLICY } from './networkPolicy';
+import { NETWORK_POLICY, applyJitter } from './networkPolicy';
 import { captureHandledError, captureHandledMessage } from './observability/sentryService';
 
 const QUEUE_STORAGE_KEY = 'offline_location_queue';
 const MAX_QUEUE_SIZE = 100; // Prevent unlimited growth
+const MAX_FLUSH_CHUNK_SIZE = 20;
 
 function sanitizeBoxId(value: unknown): string | null {
     if (typeof value !== 'string') return null;
@@ -124,7 +125,7 @@ class OfflineQueueService {
         }
 
         const netState = await NetInfo.fetch();
-        const isConnected = netState.isConnected && netState.isInternetReachable;
+        const isConnected = Boolean(netState.isConnected && netState.isInternetReachable !== false);
 
         // Capture network status at the time of the location update
         let networkStatus: QueuedLocation['networkStatus'];
@@ -219,92 +220,118 @@ class OfflineQueueService {
         if (now < this.nextRetryAt) return;
 
         const netState = await NetInfo.fetch();
-        if (!netState.isConnected) return;
+        const isNetworkReady = Boolean(netState.isConnected && netState.isInternetReachable !== false);
+        if (!isNetworkReady) return;
 
         this.isSyncing = true;
         if (__DEV__) console.log(`[OfflineQueue] Processing ${this.queue.length} items...`);
 
+        let syncedCount = 0;
+
         try {
-            // We clone the queue to iterate safely
-            const batch = [...this.queue];
-            captureHandledMessage('location_queue_flush_start', {
-                queue_uuid: batch.map((item) => item.queueId || 'unknown').join(','),
-                action_type: 'location_update',
-                flush_stage: 'flush_batch',
-                idempotency_result: `batch_${batch.length}`,
-            });
             const db = getFirebaseDatabase();
+            while (this.queue.length > 0) {
+                const chunk = this.queue.slice(0, MAX_FLUSH_CHUNK_SIZE);
+                const updates: any = {};
+                const queueUuids = chunk.map((item) => item.queueId || 'unknown').join(',');
 
-            // Construct a multi-path update for atomicity (or at least efficiency)
-            const updates: any = {};
+                chunk.forEach((item) => {
+                    const sanitizedBoxId = sanitizeBoxId(item.boxId);
+                    if (!sanitizedBoxId) {
+                        return;
+                    }
 
-            batch.forEach((item) => {
-                const sanitizedBoxId = sanitizeBoxId(item.boxId);
-                if (!sanitizedBoxId) {
-                    return;
+                    updates[`/locations/${sanitizedBoxId}/phone`] = {
+                        latitude: item.latitude,
+                        longitude: item.longitude,
+                        speed: item.speed,
+                        heading: item.heading,
+                        timestamp: item.timestamp,
+                        verified_at: serverTimestamp(),
+                        source: 'phone_buffered'
+                    };
+
+                    if (item.networkStatus) {
+                        updates[`/hardware/${sanitizedBoxId}/phone_status/connection`] = item.networkStatus.connection;
+                        updates[`/hardware/${sanitizedBoxId}/phone_status/cellular_generation`] = item.networkStatus.cellular_generation;
+                        updates[`/hardware/${sanitizedBoxId}/phone_status/is_connected`] = item.networkStatus.is_connected;
+                        updates[`/hardware/${sanitizedBoxId}/phone_status/is_internet_reachable`] = item.networkStatus.is_internet_reachable;
+                        updates[`/hardware/${sanitizedBoxId}/phone_status/source`] = 'phone_buffered';
+                        updates[`/hardware/${sanitizedBoxId}/phone_status/timestamp`] = item.timestamp;
+                        updates[`/hardware/${sanitizedBoxId}/phone_status/gps_accuracy`] = null;
+                        updates[`/hardware/${sanitizedBoxId}/phone_status/gps_altitude`] = null;
+                    }
+                });
+
+                // If every item in this chunk was invalid, drop it and continue.
+                if (Object.keys(updates).length === 0) {
+                    this.queue.splice(0, chunk.length);
+                    await this.persistQueue();
+                    continue;
                 }
 
-                // We overwrite the "current" location with the LATEST one ultimately
-                // But we might want to log history points if we had a "history" path
-                // For now, let's just make sure the latest one wins in the final state
+                captureHandledMessage('location_queue_flush_start', {
+                    queue_uuid: queueUuids,
+                    action_type: 'location_update',
+                    flush_stage: 'flush_batch',
+                    idempotency_result: `chunk_${chunk.length}`,
+                });
 
-                // Using the timestamp in the path ensures we don't overwrite if we change schema
-                // But for "current location", we just want the latest.
-                // We will send them sequentially or just send the batch if your backend supports history.
-                // Assuming standard "location" node:
-                updates[`/locations/${sanitizedBoxId}/phone`] = {
-                    latitude: item.latitude,
-                    longitude: item.longitude,
-                    speed: item.speed,
-                    heading: item.heading,
-                    timestamp: item.timestamp, // Original timestamp
-                    verified_at: serverTimestamp(), // Sync timestamp
-                    source: 'phone_buffered'
-                };
+                try {
+                    await Promise.race([
+                        update(ref(db), updates),
+                        new Promise((_, reject) => setTimeout(() => reject(new Error('Firebase write timeout')), NETWORK_POLICY.TIMEOUTS_MS.FIREBASE_WRITE))
+                    ]);
 
-                // Include phone network status from the buffered data
-                if (item.networkStatus) {
-                    // Write leaf fields so we don't clobber existing data_bytes.
-                    updates[`/hardware/${sanitizedBoxId}/phone_status/connection`] = item.networkStatus.connection;
-                    updates[`/hardware/${sanitizedBoxId}/phone_status/cellular_generation`] = item.networkStatus.cellular_generation;
-                    updates[`/hardware/${sanitizedBoxId}/phone_status/is_connected`] = item.networkStatus.is_connected;
-                    updates[`/hardware/${sanitizedBoxId}/phone_status/is_internet_reachable`] = item.networkStatus.is_internet_reachable;
-                    updates[`/hardware/${sanitizedBoxId}/phone_status/source`] = 'phone_buffered';
-                    updates[`/hardware/${sanitizedBoxId}/phone_status/timestamp`] = item.timestamp;
-                    updates[`/hardware/${sanitizedBoxId}/phone_status/gps_accuracy`] = null;
-                    updates[`/hardware/${sanitizedBoxId}/phone_status/gps_altitude`] = null;
+                    // Commit progress chunk-by-chunk so a later failure does not replay everything.
+                    this.queue.splice(0, chunk.length);
+                    await this.persistQueue();
+                    syncedCount += chunk.length;
+                    this.retryBackoffMs = NETWORK_POLICY.RETRY.BASE_MS;
+                    this.nextRetryAt = 0;
+
+                    captureHandledMessage('location_queue_flush_chunk_success', {
+                        queue_uuid: queueUuids,
+                        action_type: 'location_update',
+                        flush_stage: 'flush_chunk_committed',
+                        idempotency_result: `chunk_synced_${chunk.length}`,
+                    });
+                } catch (error) {
+                    console.error('[OfflineQueue] Chunk sync failed:', error);
+                    const delayBase = this.isTimeoutError(error)
+                        ? this.retryBackoffMs
+                        : Math.max(this.retryBackoffMs, NETWORK_POLICY.RETRY.BASE_MS);
+                    const retryDelayMs = applyJitter(delayBase);
+                    this.nextRetryAt = Date.now() + retryDelayMs;
+                    this.retryBackoffMs = Math.min(delayBase * 2, 30_000);
+
+                    captureHandledError(error, {
+                        queue_uuid: queueUuids,
+                        action_type: 'location_update',
+                        flush_stage: 'flush_chunk_failed',
+                        idempotency_result: 'retry_later',
+                    });
+
+                    break;
                 }
-            });
+            }
 
-            // If we have multiple updates for the same path, the last one in the object wins
-            // which is correct for "current location". 
-            // If we wanted to keep points, we'd write to /locations/{boxId}/history/{timestamp}
+            if (syncedCount > 0) {
+                captureHandledMessage('location_queue_flush_success', {
+                    queue_uuid: 'chunked_batch',
+                    action_type: 'location_update',
+                    flush_stage: 'flush_committed',
+                    idempotency_result: `synced_${syncedCount}`,
+                });
 
-            await Promise.race([
-                update(ref(db), updates),
-                new Promise((_, reject) => setTimeout(() => reject(new Error('Firebase write timeout')), NETWORK_POLICY.TIMEOUTS_MS.FIREBASE_WRITE))
-            ]);
-
-            // Clear queue only after successful send
-            this.queue = [];
-            await this.persistQueue();
-            this.retryBackoffMs = NETWORK_POLICY.RETRY.BASE_MS;
-            this.nextRetryAt = 0;
-            captureHandledMessage('location_queue_flush_success', {
-                queue_uuid: batch.map((item) => item.queueId || 'unknown').join(','),
-                action_type: 'location_update',
-                flush_stage: 'flush_committed',
-                idempotency_result: 'all_synced',
-            });
-
-            if (__DEV__) console.log('[OfflineQueue] Sync complete');
+                if (__DEV__) console.log(`[OfflineQueue] Sync complete. Synced ${syncedCount} item(s)`);
+            }
 
         } catch (error) {
             console.error('[OfflineQueue] Sync failed:', error);
-            if (this.isTimeoutError(error)) {
-                this.nextRetryAt = Date.now() + this.retryBackoffMs;
-                this.retryBackoffMs = Math.min(this.retryBackoffMs * 2, 30_000);
-            }
+            const retryDelayMs = applyJitter(this.retryBackoffMs);
+            this.nextRetryAt = Date.now() + retryDelayMs;
+            this.retryBackoffMs = Math.min(this.retryBackoffMs * 2, 30_000);
             const queueUuids = this.queue.map((item) => item.queueId || 'unknown').join(',');
             captureHandledError(error, {
                 queue_uuid: queueUuids || 'unknown',
@@ -364,6 +391,22 @@ class OfflineQueueService {
             flush_stage: 'send_direct',
             idempotency_result: 'sent',
         });
+    }
+
+    public getDiagnosticsSnapshot(): {
+        queueDepth: number;
+        isSyncing: boolean;
+        retryBackoffMs: number;
+        nextRetryInMs: number;
+        initialized: boolean;
+    } {
+        return {
+            queueDepth: this.queue.length,
+            isSyncing: this.isSyncing,
+            retryBackoffMs: this.retryBackoffMs,
+            nextRetryInMs: Math.max(0, this.nextRetryAt - Date.now()),
+            initialized: this.isInitialized,
+        };
     }
 }
 

@@ -799,6 +799,9 @@ class BackgroundLocationManager {
     private signalRecoveryInterval: NodeJS.Timeout | null = null;
     private isSignalRecoveryInFlight = false;
     private appStateSubscription: any = null;
+    private lastKnownAppState: AppStateStatus = AppState.currentState;
+    private appActiveRecoveryTimeout: NodeJS.Timeout | null = null;
+    private isAppActiveRecoveryInFlight = false;
     private unsubscribeBoxGps: (() => void) | null = null;
     private foregroundWatchSubscription: Location.LocationSubscription | null = null;
     private foregroundHeartbeatInterval: NodeJS.Timeout | null = null;
@@ -1193,6 +1196,11 @@ class BackgroundLocationManager {
         this.stopHealthCheck();
         this.stopSignalRecoveryWatchdog();
         this.unsubscribeFromAppState();
+        if (this.appActiveRecoveryTimeout) {
+            clearTimeout(this.appActiveRecoveryTimeout);
+            this.appActiveRecoveryTimeout = null;
+        }
+        this.isAppActiveRecoveryInFlight = false;
         this.stopForegroundWatcher();
         this.stopForegroundHeartbeat();
 
@@ -1390,6 +1398,8 @@ class BackgroundLocationManager {
     }
 
     private startHealthCheck(): void {
+        if (this.healthCheckInterval) return;
+
         this.healthCheckInterval = setInterval(async () => {
             const now = Date.now();
             const lastUpdate = lastBackgroundTaskUpdateTimestamp ?? this.state.lastLocationTimestamp;
@@ -1623,6 +1633,9 @@ class BackgroundLocationManager {
     }
 
     private subscribeToAppState(): void {
+        if (this.appStateSubscription) return;
+
+        this.lastKnownAppState = AppState.currentState;
         this.appStateSubscription = AppState.addEventListener('change', this.handleAppStateChange);
     }
 
@@ -1631,9 +1644,17 @@ class BackgroundLocationManager {
             this.appStateSubscription.remove();
             this.appStateSubscription = null;
         }
+
+        this.lastKnownAppState = AppState.currentState;
     }
 
     private handleAppStateChange = async (nextAppState: AppStateStatus) => {
+        if (nextAppState === this.lastKnownAppState) {
+            return;
+        }
+
+        this.lastKnownAppState = nextAppState;
+
         if (nextAppState === 'active' && this.state.status === 'RUNNING') {
             await this.startForegroundWatcher();
             this.startForegroundHeartbeat();
@@ -1642,12 +1663,26 @@ class BackgroundLocationManager {
         if (nextAppState !== 'active') {
             this.stopForegroundWatcher();
             this.stopForegroundHeartbeat();
+            if (this.appActiveRecoveryTimeout) {
+                clearTimeout(this.appActiveRecoveryTimeout);
+                this.appActiveRecoveryTimeout = null;
+            }
         }
 
         if (nextAppState === 'active' && this.state.status === 'RUNNING') {
             // App came to foreground — verify the background task is still alive,
             // force an immediate update, and recover if the OS killed the task.
-            setTimeout(async () => {
+            if (this.appActiveRecoveryTimeout) {
+                clearTimeout(this.appActiveRecoveryTimeout);
+                this.appActiveRecoveryTimeout = null;
+            }
+
+            this.appActiveRecoveryTimeout = setTimeout(async () => {
+                this.appActiveRecoveryTimeout = null;
+                if (this.isAppActiveRecoveryInFlight) return;
+
+                this.isAppActiveRecoveryInFlight = true;
+                try {
                 // Double check if we are still active (user didn't just quickly switch away)
                 if (AppState.currentState !== 'active') return;
 
@@ -1669,6 +1704,9 @@ class BackgroundLocationManager {
                 }
 
                 await this.forceUpdate();
+                } finally {
+                    this.isAppActiveRecoveryInFlight = false;
+                }
             }, 1500);
         }
     };

@@ -114,6 +114,7 @@ let backgroundState: BackgroundState = {
 
 let eventHandlers: BackgroundEventHandler[] = [];
 let heartbeatInterval: NodeJS.Timeout | null = null;
+let networkMonitoringUnsubscribe: (() => void) | null = null;
 
 // ==================== Event System ====================
 
@@ -586,9 +587,14 @@ function setupNetworkMonitoring(): void {
         if (__DEV__) console.log('[BackgroundService] NetInfo not available, skipping network monitoring');
         return;
     }
-    NetInfo.addEventListener(state => {
+
+    if (networkMonitoringUnsubscribe) {
+        return;
+    }
+
+    networkMonitoringUnsubscribe = NetInfo.addEventListener((state: any) => {
         const wasOnline = backgroundState.networkStatus === 'online';
-        const isOnline = state.isConnected && state.isInternetReachable;
+        const isOnline = Boolean(state.isConnected && state.isInternetReachable !== false);
 
         backgroundState.networkStatus = isOnline ? 'online' : 'offline';
 
@@ -671,6 +677,11 @@ export async function stopBackgroundServices(): Promise<void> {
         // Stop background fetch
         if (BackgroundFetch) {
             await BackgroundFetch.stop();
+        }
+
+        if (networkMonitoringUnsubscribe) {
+            networkMonitoringUnsubscribe();
+            networkMonitoringUnsubscribe = null;
         }
 
         // Clear heartbeat

@@ -42,8 +42,8 @@ export const supabase: SupabaseClient | null =
 
                     if (options?.headers) {
                         if (typeof options.headers.forEach === 'function') {
-                            options.headers.forEach((value: string, key: string) => {
-                                headers[key] = value;
+                            (options.headers as any).forEach((value: unknown, key: unknown) => {
+                                headers[String(key)] = String(value);
                             });
                         } else {
                             Object.assign(headers, options.headers);
@@ -135,49 +135,72 @@ export const supabase: SupabaseClient | null =
 
 let _lastBackgroundedAt = 0;
 const MIN_BACKGROUND_FOR_REFRESH_MS = 60_000; // Only refresh if backgrounded > 1 min
+let _authStateSubscription: { unsubscribe: () => void } | null = null;
+let _appStateSubscription: { remove: () => void } | null = null;
 
 if (supabase) {
     let _prevAppState: AppStateStatus = AppState.currentState;
 
-    supabase.auth.onAuthStateChange(async (event, session) => {
-        try {
-            if ((event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') && session?.access_token && session?.refresh_token) {
-                await persistAuthSecrets({
-                    accessToken: session.access_token,
-                    refreshToken: session.refresh_token,
-                });
-            }
+    if (!_authStateSubscription) {
+        const { data } = supabase.auth.onAuthStateChange(async (event, session) => {
+            try {
+                if ((event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') && session?.access_token && session?.refresh_token) {
+                    await persistAuthSecrets({
+                        accessToken: session.access_token,
+                        refreshToken: session.refresh_token,
+                    });
+                }
 
-            if (event === 'SIGNED_OUT') {
-                await clearAuthSecrets();
+                if (event === 'SIGNED_OUT') {
+                    await clearAuthSecrets();
+                }
+            } catch (error) {
+                console.warn('[Supabase] Failed to sync auth secrets to SecureStore:', error);
             }
-        } catch (error) {
-            console.warn('[Supabase] Failed to sync auth secrets to SecureStore:', error);
-        }
-    });
+        });
 
-    AppState.addEventListener('change', (nextState: AppStateStatus) => {
-        if (nextState === 'background' || nextState === 'inactive') {
-            if (_prevAppState === 'active') {
-                _lastBackgroundedAt = Date.now();
-            }
-        } else if (nextState === 'active' && _prevAppState !== 'active') {
-            const backgroundDuration = _lastBackgroundedAt > 0
-                ? Date.now() - _lastBackgroundedAt
-                : Infinity; // First launch or unknown — always refresh
+        _authStateSubscription = data.subscription;
+    }
 
-            if (backgroundDuration >= MIN_BACKGROUND_FOR_REFRESH_MS) {
-                console.log(`[Supabase] App resumed after ${Math.round(backgroundDuration / 1000)}s — proactive session refresh`);
-                // Fire-and-forget: refresh the token in the background.
-                // This warms the HTTP connection and refreshes the JWT so
-                // subsequent API calls are instant instead of blocking.
-                supabase.auth.getSession().catch((err) => {
-                    console.warn('[Supabase] Proactive session refresh failed (non-fatal):', err?.message);
-                });
+    if (!_appStateSubscription) {
+        _appStateSubscription = AppState.addEventListener('change', (nextState: AppStateStatus) => {
+            // Only treat a true background transition as "backgrounded".
+            // "inactive" fires for transient overlays (notification shade, dialogs)
+            // and can cause unnecessary refresh bursts.
+            if (nextState === 'background') {
+                if (_prevAppState === 'active') {
+                    _lastBackgroundedAt = Date.now();
+                }
+            } else if (nextState === 'active' && _prevAppState !== 'active') {
+                const backgroundDuration = _lastBackgroundedAt > 0
+                    ? Date.now() - _lastBackgroundedAt
+                    : Infinity; // First launch or unknown — always refresh
+
+                if (backgroundDuration >= MIN_BACKGROUND_FOR_REFRESH_MS) {
+                    console.log(`[Supabase] App resumed after ${Math.round(backgroundDuration / 1000)}s — proactive session refresh`);
+                    // Fire-and-forget: refresh the token in the background.
+                    // This warms the HTTP connection and refreshes the JWT so
+                    // subsequent API calls are instant instead of blocking.
+                    supabase.auth.getSession().catch((err) => {
+                        console.warn('[Supabase] Proactive session refresh failed (non-fatal):', err?.message);
+                    });
+                }
             }
-        }
-        _prevAppState = nextState;
-    });
+            _prevAppState = nextState;
+        });
+    }
+}
+
+export function teardownSupabaseLifecycleListeners(): void {
+    if (_authStateSubscription) {
+        _authStateSubscription.unsubscribe();
+        _authStateSubscription = null;
+    }
+
+    if (_appStateSubscription) {
+        _appStateSubscription.remove();
+        _appStateSubscription = null;
+    }
 }
 
 // ==================== Types ====================

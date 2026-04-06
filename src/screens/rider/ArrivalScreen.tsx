@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { View, StyleSheet, Alert, ScrollView, Platform, Linking, Animated, ActivityIndicator } from 'react-native';
+import { View, StyleSheet, Alert, ScrollView, Platform, Linking, Animated, ActivityIndicator, AppState, AppStateStatus } from 'react-native';
 import { useEntryAnimation } from '../../hooks/useEntryAnimation';
 import { Text, Button, Card, TextInput, Portal, Modal, IconButton } from 'react-native-paper';
 import { useNavigation, useRoute } from '@react-navigation/native';
@@ -154,6 +154,13 @@ import { PremiumAlert } from '../../services/PremiumAlertService';
 
 const BATTERY_HANDOFF_TIMEOUT_MS = 15 * 60 * 1000;
 
+function formatRemainingMinutesSeconds(remainingMs: number): string {
+    const clamped = Math.max(0, remainingMs);
+    const minutes = Math.floor(clamped / 60000);
+    const seconds = Math.floor((clamped % 60000) / 1000);
+    return `${minutes}:${seconds.toString().padStart(2, '0')}`;
+}
+
 export default function ArrivalScreen() {
     const navigation = useNavigation<any>();
     const route = useRoute();
@@ -253,9 +260,12 @@ export default function ArrivalScreen() {
     const [waitTimerState, setWaitTimerState] = useState<WaitTimerState>(
         initWaitTimerState(params.deliveryId, params.boxId)
     );
+    const [timerNowMs, setTimerNowMs] = useState(() => Date.now());
     const [displayTime, setDisplayTime] = useState('5:00');
     const [arrivalPhotoUri, setArrivalPhotoUri] = useState<string | null>(null);
     const [isLoading, setIsLoading] = useState(false);
+    const timerTickTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+    const appStateRef = useRef<AppStateStatus>(AppState.currentState);
 
     // Grace Period & No-Show State
     const [arrivedAt, setArrivedAt] = useState<number | null>(null);
@@ -305,6 +315,48 @@ export default function ArrivalScreen() {
     const authedUserId = useAuthStore((state: any) => state.user?.userId) as string | undefined;
     const riderId = authedUserId;
     const [deliveryStatus, setDeliveryStatus] = useState<string>('ASSIGNED');
+
+    const scheduleNextTimerTick = useCallback(() => {
+        if (timerTickTimeoutRef.current) {
+            clearTimeout(timerTickTimeoutRef.current);
+            timerTickTimeoutRef.current = null;
+        }
+
+        const now = Date.now();
+        const delay = Math.max(250, 1000 - (now % 1000) + 10);
+
+        timerTickTimeoutRef.current = setTimeout(() => {
+            setTimerNowMs(Date.now());
+            if (appStateRef.current === 'active') {
+                scheduleNextTimerTick();
+            }
+        }, delay);
+    }, []);
+
+    // Single app-aware ticker for all countdowns; avoids multiple long-lived intervals.
+    useEffect(() => {
+        setTimerNowMs(Date.now());
+        scheduleNextTimerTick();
+
+        const appStateSub = AppState.addEventListener('change', (nextState: AppStateStatus) => {
+            appStateRef.current = nextState;
+            if (nextState === 'active') {
+                setTimerNowMs(Date.now());
+                scheduleNextTimerTick();
+            } else if (timerTickTimeoutRef.current) {
+                clearTimeout(timerTickTimeoutRef.current);
+                timerTickTimeoutRef.current = null;
+            }
+        });
+
+        return () => {
+            appStateSub.remove();
+            if (timerTickTimeoutRef.current) {
+                clearTimeout(timerTickTimeoutRef.current);
+                timerTickTimeoutRef.current = null;
+            }
+        };
+    }, [scheduleNextTimerTick]);
 
     // EC-15: Background location starts automatically when screen mounts
     useEffect(() => {
@@ -574,15 +626,14 @@ export default function ArrivalScreen() {
         import('../../services/firebaseClient').then(({ getFirebaseDatabase }) => {
             writeGracePeriodToFirebase(getFirebaseDatabase(), params.deliveryId, arrivedAt).catch(() => { });
         });
-
-        const interval = setInterval(() => {
-            const formatted = formatGracePeriodRemaining(arrivedAt);
-            setGracePeriodDisplay(formatted);
-            setGracePeriodExpired(isGracePeriodExpired(arrivedAt));
-        }, 1000);
-
-        return () => clearInterval(interval);
     }, [isDropoffPhase, isInsideGeoFence, deliveryStatus, arrivedAt, params.deliveryId]);
+
+    useEffect(() => {
+        if (!isDropoffPhase || !isInsideGeoFence || deliveryStatus !== 'ARRIVED' || !arrivedAt) return;
+
+        setGracePeriodDisplay(formatGracePeriodRemaining(arrivedAt));
+        setGracePeriodExpired(isGracePeriodExpired(arrivedAt));
+    }, [isDropoffPhase, isInsideGeoFence, deliveryStatus, arrivedAt, timerNowMs]);
 
     useEffect(() => {
         if (!isDropoffPhase) {
@@ -597,17 +648,9 @@ export default function ArrivalScreen() {
     useEffect(() => {
         if (!isDropoffPhase || deliveryStatus !== 'ARRIVED' || !batteryIncidentReportedAt) return;
 
-        const updateCountdown = () => {
-            const remaining = Math.max(0, BATTERY_HANDOFF_TIMEOUT_MS - (Date.now() - batteryIncidentReportedAt));
-            const minutes = Math.floor(remaining / 60000);
-            const seconds = Math.floor((remaining % 60000) / 1000);
-            setBatteryTimeoutDisplay(`${minutes}:${seconds.toString().padStart(2, '0')}`);
-        };
-
-        updateCountdown();
-        const interval = setInterval(updateCountdown, 1000);
-        return () => clearInterval(interval);
-    }, [isDropoffPhase, deliveryStatus, batteryIncidentReportedAt]);
+        const remaining = BATTERY_HANDOFF_TIMEOUT_MS - (timerNowMs - batteryIncidentReportedAt);
+        setBatteryTimeoutDisplay(formatRemainingMinutesSeconds(remaining));
+    }, [isDropoffPhase, deliveryStatus, batteryIncidentReportedAt, timerNowMs]);
 
     // ━━━ No-Show Handler ━━━
     const handleMarkNoShow = async () => {
@@ -1015,38 +1058,20 @@ export default function ArrivalScreen() {
             return;
         }
 
-        const updateCountdown = () => {
-            const now = Date.now();
-            const remaining = lockoutState.expires_at - now;
-            if (remaining <= 0) {
-                setLockoutCountdown('Expired');
-            } else {
-                const mins = Math.floor(remaining / 60000);
-                const secs = Math.floor((remaining % 60000) / 1000);
-                setLockoutCountdown(`${mins}:${secs.toString().padStart(2, '0')}`);
-            }
-        };
-
-        updateCountdown();
-        const interval = setInterval(updateCountdown, 1000);
-        return () => clearInterval(interval);
-    }, [lockoutState]);
+        const remaining = lockoutState.expires_at - timerNowMs;
+        setLockoutCountdown(remaining <= 0 ? 'Expired' : formatRemainingMinutesSeconds(remaining));
+    }, [lockoutState, timerNowMs]);
 
     // Timer update effect
     useEffect(() => {
         if (waitTimerState.status !== 'WAITING') return;
 
-        const interval = setInterval(() => {
-            const now = Date.now();
-            setDisplayTime(getFormattedRemainingTime(waitTimerState, now));
+        setDisplayTime(getFormattedRemainingTime(waitTimerState, timerNowMs));
 
-            if (isWaitTimerExpired(waitTimerState, now)) {
-                setWaitTimerState(prev => ({ ...prev, status: 'EXPIRED' }));
-            }
-        }, 1000);
-
-        return () => clearInterval(interval);
-    }, [waitTimerState]);
+        if (isWaitTimerExpired(waitTimerState, timerNowMs)) {
+            setWaitTimerState(prev => ({ ...prev, status: 'EXPIRED' }));
+        }
+    }, [waitTimerState, timerNowMs]);
 
     // EC-11: Start wait timer (Customer Not Home)
     const handleCustomerNotHome = async () => {
@@ -1570,7 +1595,7 @@ export default function ArrivalScreen() {
                 {lockoutState?.active && (
                     <View style={[styles.statusMessageContainer, styles.bgSubtleError, { marginTop: 16 }]}>
                         <Text style={[styles.statusMessageText, styles.textError]}>
-                            🔒 Smart Box is locked out. Wait {Math.ceil((lockoutState.expires_at - Date.now()) / 60000)} minutes.
+                            🔒 Smart Box is locked out. Wait {Math.max(0, Math.ceil((lockoutState.expires_at - timerNowMs) / 60000))} minutes.
                         </Text>
                     </View>
                 )}

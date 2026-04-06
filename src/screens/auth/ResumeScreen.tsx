@@ -24,7 +24,7 @@ import { usePulseAnimation } from '../../hooks/useEntryAnimation';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { supabase } from '../../services/supabaseClient';
 import useAuthStore from '../../store/authStore';
-import { runForegroundResumePipeline } from '../../services/foregroundResumePipelineService';
+import { triggerForegroundResumePipeline } from '../../services/foregroundResumePipelineService';
 import { useAppTheme } from '../../context/ThemeContext';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
@@ -142,7 +142,7 @@ export default function ResumeScreen({ onReady }: Props) {
             // Kick off resume pipeline stages with deadlines.
             try {
                 await Promise.race([
-                    runForegroundResumePipeline(),
+                    triggerForegroundResumePipeline('resume_screen'),
                     new Promise(resolve => setTimeout(resolve, 1200)),
                 ]);
             } catch (_) {

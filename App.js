@@ -65,6 +65,8 @@ const AppContent = () => {
   // Only trigger ResumeScreen when the app truly went to background (not just inactive).
   // inactive alone is caused by notification shade, dropdowns, system dialogs — not a real background trip.
   const wasBackgroundedRef = useRef(false);
+  const lastBackgroundEnteredAtRef = useRef(0);
+  const lastResumeTriggerAtRef = useRef(0);
 
   const navigateFromNotificationData = (data) => {
     if (!data) return;
@@ -293,11 +295,51 @@ const AppContent = () => {
       authUnsubscribe = authSub;
     }
 
+    const RESUME_TRIGGER_DEBOUNCE_MS = 4000;
+
+    const triggerResumeRecovery = (source) => {
+      const now = Date.now();
+      const backgroundDurationMs = lastBackgroundEnteredAtRef.current > 0
+        ? Math.max(0, now - lastBackgroundEnteredAtRef.current)
+        : null;
+      const delta = now - lastResumeTriggerAtRef.current;
+      if (delta < RESUME_TRIGGER_DEBOUNCE_MS) {
+        captureHandledMessage('resume_trigger_deduped', {
+          trigger_source: source,
+          dedupe_reason: 'app_level_debounce',
+          delta_ms: delta,
+          background_duration_ms: backgroundDurationMs == null ? 'unknown' : String(backgroundDurationMs),
+        });
+        return;
+      }
+
+      lastResumeTriggerAtRef.current = now;
+      setIsResuming(true);
+
+      captureHandledMessage('resume_trigger_started', {
+        trigger_source: source,
+        background_duration_ms: backgroundDurationMs == null ? 'unknown' : String(backgroundDurationMs),
+      });
+
+      try {
+        const { triggerForegroundResumePipeline } = require('./src/services/foregroundResumePipelineService');
+        triggerForegroundResumePipeline(source, {
+          appTriggerAt: now,
+          backgroundDurationMs,
+        }).catch(() => {
+          // Best-effort recovery path.
+        });
+      } catch (_) {
+        // Non-fatal if module is unavailable.
+      }
+    };
+
     // Monitor app state changes
     const subscription = AppState.addEventListener('change', nextAppState => {
       if (nextAppState === 'background') {
         // Mark that we genuinely went to background (not just inactive via notification shade)
         wasBackgroundedRef.current = true;
+        lastBackgroundEnteredAtRef.current = Date.now();
 
         // Cleanly disconnect Firebase RTDB WebSocket to prevent stale connections.
         // This avoids the 20-30s lazy reconnect delay when the app resumes.
@@ -331,7 +373,7 @@ const AppContent = () => {
         if (wasBackgroundedRef.current) {
           if (__DEV__) console.log('[App] App returned from background — showing ResumeScreen');
           wasBackgroundedRef.current = false;
-          setIsResuming(true);
+          triggerResumeRecovery('app_state_active');
         }
       }
       setAppState(nextAppState);
@@ -342,14 +384,7 @@ const AppContent = () => {
     const unsubscribeNetInfo = NetInfo.addEventListener(state => {
       const isOnline = Boolean(state.isConnected && state.isInternetReachable !== false);
       if (!wasOnline && isOnline && AppState.currentState === 'active') {
-        try {
-          const { runForegroundResumePipeline } = require('./src/services/foregroundResumePipelineService');
-          runForegroundResumePipeline().catch(() => {
-            // Best-effort recovery path.
-          });
-        } catch (_) {
-          // Non-fatal if module is unavailable.
-        }
+        triggerResumeRecovery('netinfo_restored');
       }
       wasOnline = isOnline;
     });

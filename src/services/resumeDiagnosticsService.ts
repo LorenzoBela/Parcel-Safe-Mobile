@@ -7,6 +7,8 @@ export interface ResumeDiagnosticEntry {
     at: number;
     stage: string;
     durationMs: number;
+    runId?: string;
+    source?: string;
     meta?: Record<string, unknown>;
 }
 
@@ -30,4 +32,18 @@ export async function getRecentResumeDiagnostics(limit = 20): Promise<ResumeDiag
     } catch {
         return [];
     }
+}
+
+export async function recordResumeMarker(
+    stage: string,
+    options?: { runId?: string; source?: string; meta?: Record<string, unknown> }
+): Promise<void> {
+    await recordResumeDiagnostic({
+        at: Date.now(),
+        stage,
+        durationMs: 0,
+        runId: options?.runId,
+        source: options?.source,
+        meta: options?.meta,
+    });
 }

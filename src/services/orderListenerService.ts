@@ -61,13 +61,26 @@ export interface Order {
 }
 
 export type OrderCallback = (order: Order) => void | Promise<void>;
+export type OrderListenerLifecycleState = 'idle' | 'starting' | 'running' | 'stopping';
 
 // ==================== State Management ====================
 
 let orderCallbacks: OrderCallback[] = [];
 let activeListeners: Array<() => void> = [];
 let isListening = false;
+let listeningRiderId: string | null = null;
 let offlineCheckInterval: NodeJS.Timeout | null = null;
+let lifecycleState: OrderListenerLifecycleState = 'idle';
+let lifecycleTransitionPromise: Promise<void> | null = null;
+
+async function awaitLifecycleTransition(): Promise<void> {
+    if (!lifecycleTransitionPromise) return;
+    try {
+        await lifecycleTransitionPromise;
+    } catch {
+        // Transition errors are already surfaced by caller context.
+    }
+}
 
 // ==================== Event System ====================
 
@@ -111,60 +124,82 @@ async function emitNewOrder(order: Order): Promise<void> {
  * Start listening for orders assigned to the rider
  */
 export async function startOrderListener(riderId: string): Promise<void> {
-    if (isListening) {
-        console.log('[OrderListener] Already listening');
+    await awaitLifecycleTransition();
+
+    if (lifecycleState === 'running' && listeningRiderId === riderId) {
+        console.log('[OrderListener] Already listening for rider:', riderId);
         return;
     }
 
+    if (lifecycleState === 'running' && listeningRiderId && listeningRiderId !== riderId) {
+        console.log('[OrderListener] Rider changed. Restarting listener from', listeningRiderId, 'to', riderId);
+        await stopOrderListener();
+    }
+
+    lifecycleTransitionPromise = (async () => {
+        lifecycleState = 'starting';
+
+        try {
+            console.log('[OrderListener] Starting listener for rider:', riderId);
+
+            const database = getFirebaseDatabase();
+
+            // Listen for orders assigned to this rider with status 'assigned'
+            const assignedOrdersRef = query(
+                ref(database, 'orders'),
+                orderByChild('rider_id'),
+                equalTo(riderId)
+            );
+
+            const unsubscribe = onValue(assignedOrdersRef, (snapshot) => {
+                if (snapshot.exists()) {
+                    const orders = snapshot.val();
+
+                    Object.entries(orders).forEach(([orderId, orderData]: [string, any]) => {
+                        // Only process newly assigned orders
+                        if (orderData.status === 'assigned' && !orderData.notified) {
+                            const order: Order = {
+                                id: orderId,
+                                ...orderData,
+                            };
+
+                            emitNewOrder(order);
+
+                            // Mark as notified (update in Firebase)
+                            // This prevents duplicate notifications
+                            update(ref(database, `orders/${orderId}`), {
+                                notified: true,
+                                notified_at: Date.now(),
+                            }).catch((error) => {
+                                console.error('[OrderListener] Failed to mark order as notified:', error);
+                            });
+                        }
+                    });
+                }
+            });
+
+            activeListeners.push(unsubscribe);
+            isListening = true;
+            listeningRiderId = riderId;
+
+            // Also listen for general order assignments (push notifications)
+            await startOfflineCheck(riderId);
+
+            lifecycleState = 'running';
+            console.log('[OrderListener] Listener started successfully');
+        } catch (error) {
+            isListening = false;
+            listeningRiderId = null;
+            lifecycleState = 'idle';
+            console.error('[OrderListener] Failed to start listener:', error);
+            throw error;
+        }
+    })();
+
     try {
-        console.log('[OrderListener] Starting listener for rider:', riderId);
-        
-        const database = getFirebaseDatabase();
-        
-        // Listen for orders assigned to this rider with status 'assigned'
-        const assignedOrdersRef = query(
-            ref(database, 'orders'),
-            orderByChild('rider_id'),
-            equalTo(riderId)
-        );
-        
-        const unsubscribe = onValue(assignedOrdersRef, (snapshot) => {
-            if (snapshot.exists()) {
-                const orders = snapshot.val();
-                
-                Object.entries(orders).forEach(([orderId, orderData]: [string, any]) => {
-                    // Only process newly assigned orders
-                    if (orderData.status === 'assigned' && !orderData.notified) {
-                        const order: Order = {
-                            id: orderId,
-                            ...orderData,
-                        };
-                        
-                        emitNewOrder(order);
-                        
-                        // Mark as notified (update in Firebase)
-                        // This prevents duplicate notifications
-                        update(ref(database, `orders/${orderId}`), {
-                            notified: true,
-                            notified_at: Date.now(),
-                        }).catch((error) => {
-                            console.error('[OrderListener] Failed to mark order as notified:', error);
-                        });
-                    }
-                });
-            }
-        });
-        
-        activeListeners.push(unsubscribe);
-        isListening = true;
-        
-        // Also listen for general order assignments (push notifications)
-        await startOfflineCheck(riderId);
-        
-        console.log('[OrderListener] Listener started successfully');
-    } catch (error) {
-        console.error('[OrderListener] Failed to start listener:', error);
-        throw error;
+        await lifecycleTransitionPromise;
+    } finally {
+        lifecycleTransitionPromise = null;
     }
 }
 
@@ -172,28 +207,41 @@ export async function startOrderListener(riderId: string): Promise<void> {
  * Stop listening for orders
  */
 export async function stopOrderListener(): Promise<void> {
-    if (!isListening) {
+    await awaitLifecycleTransition();
+
+    if (lifecycleState === 'idle' && !isListening) {
         return;
     }
 
-    try {
-        console.log('[OrderListener] Stopping listener');
-        
-        // Remove all Firebase listeners
-        activeListeners.forEach(unsubscribe => unsubscribe());
-        activeListeners = [];
-        
-        // Stop offline check
-        if (offlineCheckInterval) {
-            clearInterval(offlineCheckInterval);
-            offlineCheckInterval = null;
+    lifecycleTransitionPromise = (async () => {
+        lifecycleState = 'stopping';
+
+        try {
+            console.log('[OrderListener] Stopping listener');
+
+            // Remove all Firebase listeners
+            activeListeners.forEach(unsubscribe => unsubscribe());
+            activeListeners = [];
+
+            // Stop offline check
+            if (offlineCheckInterval) {
+                clearInterval(offlineCheckInterval);
+                offlineCheckInterval = null;
+            }
+        } catch (error) {
+            console.error('[OrderListener] Stop listener error:', error);
+        } finally {
+            isListening = false;
+            listeningRiderId = null;
+            lifecycleState = 'idle';
+            console.log('[OrderListener] Listener stopped');
         }
-        
-        isListening = false;
-        
-        console.log('[OrderListener] Listener stopped');
-    } catch (error) {
-        console.error('[OrderListener] Stop listener error:', error);
+    })();
+
+    try {
+        await lifecycleTransitionPromise;
+    } finally {
+        lifecycleTransitionPromise = null;
     }
 }
 
@@ -445,7 +493,25 @@ export async function initializeOrderListener(riderId: string): Promise<void> {
  * Check if listener is active
  */
 export function isOrderListenerActive(): boolean {
-    return isListening;
+    return lifecycleState === 'running' && isListening;
+}
+
+export function getOrderListenerDiagnostics(): {
+    lifecycleState: OrderListenerLifecycleState;
+    isListening: boolean;
+    listeningRiderId: string | null;
+    activeListenerCount: number;
+    callbackCount: number;
+    offlineCheckRunning: boolean;
+} {
+    return {
+        lifecycleState,
+        isListening,
+        listeningRiderId,
+        activeListenerCount: activeListeners.length,
+        callbackCount: orderCallbacks.length,
+        offlineCheckRunning: Boolean(offlineCheckInterval),
+    };
 }
 
 /**
@@ -453,7 +519,7 @@ export function isOrderListenerActive(): boolean {
  */
 export async function ensureOrderListenerHealthy(riderId?: string | null): Promise<void> {
     if (!riderId) return;
-    if (isListening) return;
+    if (lifecycleState === 'running' && listeningRiderId === riderId) return;
     await startOrderListener(riderId);
 }
 
