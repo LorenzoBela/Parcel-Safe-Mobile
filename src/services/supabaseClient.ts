@@ -270,7 +270,7 @@ export interface AdminDeliveryRecord {
     pickup_photo_url?: string | null;
     distance?: number | null;
     distance_text?: string | null;
-    profiles?: { full_name?: string | null } | null;
+    profiles?: { full_name?: string | null; email?: string | null } | null;
     rider_profile?: { full_name?: string | null } | null;
 }
 
@@ -288,6 +288,14 @@ export interface ListAdminDeliveryRecordsResult {
     hasMore: boolean;
     error?: string;
 }
+
+export interface ReceiptSendHistorySummary {
+    deliveryId: string;
+    sendCount: number;
+    lastSentAt: string;
+}
+
+const RECEIPT_SENT_AUDIT_ACTION = 'RECEIPT_EMAIL_SENT';
 
 export async function listActiveDeliveries(limit = 30): Promise<ActiveDeliverySummary[]> {
     if (!supabase) {
@@ -308,6 +316,61 @@ export async function listActiveDeliveries(limit = 30): Promise<ActiveDeliverySu
     }
 
     return data as ActiveDeliverySummary[];
+}
+
+export async function listReceiptSendHistory(
+    deliveryIds: string[]
+): Promise<Record<string, ReceiptSendHistorySummary>> {
+    if (!supabase) {
+        console.warn('Supabase not configured');
+        return {};
+    }
+
+    const uniqueIds = Array.from(new Set((deliveryIds || []).filter(Boolean)));
+    if (uniqueIds.length === 0) {
+        return {};
+    }
+
+    const { data, error } = await supabase
+        .from('audit_logs')
+        .select('delivery_id, created_at')
+        .eq('action', RECEIPT_SENT_AUDIT_ACTION)
+        .in('delivery_id', uniqueIds)
+        .order('created_at', { ascending: false })
+        .limit(5000);
+
+    if (error || !data) {
+        console.error('Failed to list receipt send history:', error?.message);
+        return {};
+    }
+
+    const historyByDeliveryId: Record<string, ReceiptSendHistorySummary> = {};
+
+    for (const row of data as Array<{ delivery_id?: string | null; created_at?: string | null }>) {
+        const deliveryId = row.delivery_id ? String(row.delivery_id) : '';
+        const createdAt = row.created_at || '';
+
+        if (!deliveryId || !createdAt) {
+            continue;
+        }
+
+        const current = historyByDeliveryId[deliveryId];
+        if (!current) {
+            historyByDeliveryId[deliveryId] = {
+                deliveryId,
+                sendCount: 1,
+                lastSentAt: createdAt,
+            };
+            continue;
+        }
+
+        current.sendCount += 1;
+        if (new Date(createdAt).getTime() > new Date(current.lastSentAt).getTime()) {
+            current.lastSentAt = createdAt;
+        }
+    }
+
+    return historyByDeliveryId;
 }
 
 export async function listAdminDeliveryRecords({
@@ -331,7 +394,7 @@ export async function listAdminDeliveryRecords({
     let query = supabase
         .from('deliveries')
         .select(
-            '*, profiles:customer_id(full_name), rider_profile:profiles!deliveries_rider_id_fkey(full_name)',
+            '*, profiles:customer_id(full_name, email), rider_profile:profiles!deliveries_rider_id_fkey(full_name)',
             { count: 'exact' }
         )
         .order('created_at', { ascending: false })

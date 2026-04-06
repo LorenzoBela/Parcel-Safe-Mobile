@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { View, StyleSheet, ScrollView, TouchableOpacity, Alert, Share, StatusBar, Animated, ActivityIndicator } from 'react-native';
+import { View, StyleSheet, ScrollView, TouchableOpacity, Alert, Share, StatusBar, Animated, ActivityIndicator, RefreshControl } from 'react-native';
 import { useEntryAnimation, useStaggerAnimation } from '../../hooks/useEntryAnimation';
 import { Text, Modal, Portal, TextInput, Chip, Divider } from 'react-native-paper';
 import { useNavigation } from '@react-navigation/native';
@@ -21,6 +21,7 @@ import ExitConfirmationModal from '../../components/modals/ExitConfirmationModal
 import { PremiumAlert } from '../../services/PremiumAlertService';
 import NotificationBell from '../../components/NotificationBell';
 import { reportBatteryDeadIncident } from '../../services/batteryIncidentService';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 // ─── Dual-mode Color Palette ────────────────────────────────────────────────────
 
@@ -99,7 +100,9 @@ export default function AdminDashboard() {
     const { showExitModal, setShowExitModal, handleExit } = useExitAppConfirmation();
     const navigation = useNavigation<any>();
     const { isDarkMode } = useAppTheme();
+    const insets = useSafeAreaInsets();
     const c = isDarkMode ? darkColors : lightColors;
+    const headerTopPadding = Math.max(insets.top + 10, 22);
 
     const [currentTime, setCurrentTime] = useState(dayjs());
     const [overrideModalVisible, setOverrideModalVisible] = useState(false);
@@ -113,6 +116,7 @@ export default function AdminDashboard() {
     const [activeDeliveries, setActiveDeliveries] = useState<ActiveDeliverySummary[]>([]);
     const [deliveriesLoading, setDeliveriesLoading] = useState(false);
     const [deliveriesError, setDeliveriesError] = useState<string | null>(null);
+    const [refreshing, setRefreshing] = useState(false);
     const [selectedDeliveryId, setSelectedDeliveryId] = useState('');
     const [pairMode, setPairMode] = useState<'ONE_TIME' | 'SESSION'>('SESSION');
     const [sessionHours, setSessionHours] = useState(24);
@@ -172,6 +176,19 @@ export default function AdminDashboard() {
             }
         }
     }, [selectedDeliveryId]);
+
+    const onRefresh = useCallback(async () => {
+        setRefreshing(true);
+        try {
+            await Promise.all([
+                loadActiveDeliveries(false),
+                listSmartBoxes().then(setAvailableBoxes).catch(() => undefined),
+            ]);
+            setCurrentTime(dayjs());
+        } finally {
+            setRefreshing(false);
+        }
+    }, [loadActiveDeliveries]);
 
     const generatePairToken = () => {
         if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
@@ -364,9 +381,15 @@ export default function AdminDashboard() {
 
     // ─── Quick Action Items ─────────────────────────────────────────────────────
     const quickActions = [
-        { icon: 'map-marker-radius', label: 'Live Map', onPress: () => navigation.navigate('GlobalMap') },
-        { icon: 'alert-octagon', label: 'Alerts', onPress: () => navigation.navigate('TamperAlerts'), badge: hardwareSummary.tamper },
-        { icon: 'file-document-outline', label: 'Records', onPress: () => navigation.navigate('AdminRecords') },
+        { icon: 'map-marker-radius', label: 'Live Map', onPress: () => navigation.navigate('AdminOperationsTab', { screen: 'OpsGlobalMap' }) },
+        { icon: 'alert-octagon', label: 'Alerts', onPress: () => navigation.navigate('AdminSecurityTab', { screen: 'SecurityAlerts' }), badge: hardwareSummary.tamper },
+        { icon: 'file-document-outline', label: 'Records', onPress: () => navigation.navigate('AdminOperationsTab', { screen: 'OpsRecords' }) },
+        { icon: 'receipt-text-outline', label: 'Receipts', onPress: () => navigation.navigate('AdminInsightsTab', { screen: 'InsightsReceipts' }) },
+        { icon: 'tools', label: 'Diagnostics', onPress: () => navigation.navigate('AdminInsightsTab', { screen: 'InsightsHardwareDiagnostics' }) },
+        { icon: 'shield-alert-outline', label: 'Stolen', onPress: () => navigation.navigate('AdminSecurityTab', { screen: 'SecurityStolenBoxes' }) },
+        { icon: 'timer-alert-outline', label: 'Edge Cases', onPress: () => navigation.navigate('AdminOperationsTab', { screen: 'OpsEdgeCases' }) },
+        { icon: 'chart-timeline-variant', label: 'Tracking', onPress: () => navigation.navigate('AdminInsightsTab', { screen: 'InsightsTrackingHistory' }) },
+        { icon: 'account-group-outline', label: 'Users', onPress: () => navigation.navigate('AdminMoreTab', { screen: 'MoreUsers' }) },
         { icon: 'lock-open-variant-outline', label: 'Unlock Box', onPress: () => navigation.navigate('AdminRemoteUnlock') },
         { icon: 'check-circle-outline', label: 'Complete Del.', onPress: () => setOverrideModalVisible(true) },
         { icon: 'qrcode-scan', label: 'Pair QR', onPress: openPairQrModal },
@@ -382,7 +405,7 @@ export default function AdminDashboard() {
             <StatusBar barStyle={c.statusBar} backgroundColor={c.bg} />
 
             {/* ── Header ─────────────────────────────────────────────────────── */}
-            <Animated.View style={[styles.header, { backgroundColor: c.bg }, headerAnim.style]}>
+            <Animated.View style={[styles.header, { backgroundColor: c.bg, paddingTop: headerTopPadding }, headerAnim.style]}>
                 <View>
                     <Text style={[styles.greeting, { color: c.textPrimary }]}>Admin Overview</Text>
                     <Text style={[styles.dateLabel, { color: c.textSecondary }]}>
@@ -400,7 +423,11 @@ export default function AdminDashboard() {
                 </View>
             </Animated.View>
 
-            <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
+            <ScrollView
+                contentContainerStyle={styles.scroll}
+                showsVerticalScrollIndicator={false}
+                refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={c.accent} />}
+            >
 
                 {/* Network banner */}
                 <NetworkStatusBanner />
@@ -418,7 +445,7 @@ export default function AdminDashboard() {
                 <View style={[styles.section, { backgroundColor: c.card, borderColor: c.border }]}>
                     <View style={styles.sectionHeader}>
                         <Text style={[styles.sectionTitle, { color: c.textPrimary, marginBottom: 0 }]}>Live Hardware</Text>
-                        <TouchableOpacity onPress={() => navigation.navigate('GlobalMap')} style={styles.sectionAction}>
+                        <TouchableOpacity onPress={() => navigation.navigate('AdminOperationsTab', { screen: 'OpsGlobalMap' })} style={styles.sectionAction}>
                             <Text style={[styles.sectionActionText, { color: c.accent }]}>Open Map</Text>
                             <MaterialCommunityIcons name="chevron-right" size={16} color={c.accent} />
                         </TouchableOpacity>
@@ -482,7 +509,7 @@ export default function AdminDashboard() {
                 {/* ── Recent Alerts ───────────────────────────────────────────── */}
                 <View style={styles.sectionHeader}>
                     <Text style={[styles.sectionTitle, { color: c.textPrimary, marginBottom: 0 }]}>Recent Alerts</Text>
-                    <TouchableOpacity onPress={() => navigation.navigate('TamperAlerts')}>
+                    <TouchableOpacity onPress={() => navigation.navigate('AdminSecurityTab', { screen: 'SecurityAlerts' })}>
                         <Text style={[styles.sectionActionText, { color: c.accent }]}>View All</Text>
                     </TouchableOpacity>
                 </View>
@@ -794,7 +821,7 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         justifyContent: 'space-between',
         alignItems: 'center',
-        paddingTop: 54,
+        paddingTop: 22,
         paddingBottom: 16,
         paddingHorizontal: 20,
     },

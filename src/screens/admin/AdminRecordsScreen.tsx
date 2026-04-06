@@ -10,6 +10,7 @@ import { normalizeDeliveryHistoryRow } from '../../utils/deliveryHistory';
 import { listAdminDeliveryRecords } from '../../services/supabaseClient';
 import DeliveryHistoryCard from '../../components/DeliveryHistoryCard';
 import { useInfiniteQuery } from '@tanstack/react-query';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const lightC = {
     bg: '#F7F7F8',
@@ -69,7 +70,9 @@ function toDateRange(filter: DateFilter): { fromDate?: string; toDate?: string }
 export default function AdminRecordsScreen() {
     const navigation = useNavigation<any>();
     const { isDarkMode } = useAppTheme();
+    const insets = useSafeAreaInsets();
     const c = isDarkMode ? darkC : lightC;
+    const headerTopPadding = Math.max(insets.top + 6, 16);
 
     const [searchQuery, setSearchQuery] = useState('');
     const [debouncedSearchQuery, setDebouncedSearchQuery] = useState('');
@@ -166,7 +169,7 @@ export default function AdminRecordsScreen() {
     return (
         <Animated.View style={[styles.container, { backgroundColor: c.bg }, screenAnim.style]}>
             <View style={[styles.header, { backgroundColor: c.card, borderBottomWidth: 1, borderBottomColor: c.border }]}>
-                <View style={styles.headerTop}>
+                <View style={[styles.headerTop, { paddingTop: headerTopPadding }]}>
                     <IconButton icon="arrow-left" iconColor={c.text} onPress={() => navigation.goBack()} />
                     <View style={{ flex: 1 }}>
                         <Text variant="headlineSmall" style={{ fontFamily: 'Inter_700Bold', color: c.text }}>All Deliveries</Text>
@@ -291,7 +294,7 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'space-between',
-        paddingTop: 40,
+        paddingTop: 16,
         paddingHorizontal: 10,
     },
     statsContainer: {

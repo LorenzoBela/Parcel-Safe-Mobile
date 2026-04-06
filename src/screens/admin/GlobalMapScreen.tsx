@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState, useRef, useCallback } from 'react';
 import {
-    View, StyleSheet, Dimensions, ScrollView, TouchableOpacity,
+    View, StyleSheet, Dimensions, RefreshControl, ScrollView, TouchableOpacity,
     Animated, TextInput as RNTextInput, Platform, Easing,
     Image, PanResponder,
 } from 'react-native';
@@ -319,6 +319,8 @@ export default function GlobalMapScreen() {
     const [locationsByBox, setLocationsByBox] = useState<LocationsByBoxId | null>(null);
     const [hardwareByBox, setHardwareByBox] = useState<HardwareByBoxId | null>(null);
     const [tamperIncidentPoints, setTamperIncidentPoints] = useState<TamperIncidentPoint[]>([]);
+    const [refreshing, setRefreshing] = useState(false);
+    const [refreshTick, setRefreshTick] = useState(0);
 
     const [selectedBoxId, setSelectedBoxId] = useState<string | null>(null);
     const [lockedBoxId, setLockedBoxId] = useState<string | null>(null);
@@ -456,7 +458,7 @@ export default function GlobalMapScreen() {
             unsubscribeLocations();
             unsubscribeHardware();
         };
-    }, []);
+    }, [refreshTick]);
 
     useEffect(() => {
         let cancelled = false;
@@ -499,6 +501,13 @@ export default function GlobalMapScreen() {
             cancelled = true;
             clearInterval(intervalId);
         };
+    }, [refreshTick]);
+
+    const onRefresh = useCallback(async () => {
+        setRefreshing(true);
+        setRefreshTick((prev) => prev + 1);
+        await new Promise((resolve) => setTimeout(resolve, 450));
+        setRefreshing(false);
     }, []);
 
     const activeBoxes = useMemo<BoxMarker[]>(() => {
@@ -1335,7 +1344,11 @@ export default function GlobalMapScreen() {
                         </View>
                     </View>
 
-                    <ScrollView style={styles.listScroll} showsVerticalScrollIndicator={false}>
+                    <ScrollView
+                        style={styles.listScroll}
+                        showsVerticalScrollIndicator={false}
+                        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={uiAccent} />}
+                    >
                         {filteredBoxes.map((box) => {
                             const isSelected = selectedBoxId === box.id;
                             const isExpanded = expandedFeedIds.has(box.id);

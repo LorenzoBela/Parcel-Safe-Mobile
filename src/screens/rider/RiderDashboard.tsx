@@ -30,6 +30,7 @@ import { offlineCache, PendingSync } from '../../services/offlineCache';
 import { NetworkStatusBanner } from '../../components';
 import { isSpeedAnomaly, isClockSyncRequired, canAddToPhotoQueue, isGpsStale, SAFETY_CONSTANTS } from '../../services/SafetyLogic';
 import RecallService from '../../services/recallService';
+import { navigateWhenReady } from '../../navigation/navigationService';
 // NetInfo - conditionally imported to prevent startup crashes
 let NetInfo: any = null;
 try {
@@ -1424,6 +1425,20 @@ export default function RiderDashboard() {
         }
     };
 
+    const navigateToPairBox = useCallback(() => {
+        navigateWhenReady('PairBox');
+    }, []);
+
+    const openBoxControls = useCallback((boxId?: string | null) => {
+        const resolvedBoxId = sanitizeBoxId(boxId) || pairedBoxId || sanitizeBoxId(boxIdForMonitoring) || trackedBoxId;
+        if (!resolvedBoxId) {
+            PremiumAlert.alert('Pair Required', 'Scan your box QR to access controls.');
+            navigateToPairBox();
+            return;
+        }
+        navigateWhenReady('BoxControls', { boxId: resolvedBoxId });
+    }, [pairedBoxId, boxIdForMonitoring, trackedBoxId, navigateToPairBox]);
+
     // Handle accepting an order
     const handleAcceptOrder = useCallback(async (requestItem: { requestId: string; data: RiderOrderRequest }, phoneOverride?: string) => {
         if (!riderId || !requestItem) return;
@@ -1433,7 +1448,7 @@ export default function RiderDashboard() {
             PremiumAlert.alert(
                 'No Box Paired',
                 'You must pair with a Smart Box before accepting orders to ensure safety and tracking.',
-                [{ text: 'OK', onPress: () => navigation.navigate('BoxPairing') }]
+                [{ text: 'OK', onPress: navigateToPairBox }]
             );
             return;
         }
@@ -1512,7 +1527,7 @@ export default function RiderDashboard() {
                 [{ text: 'OK' }]
             );
         }
-    }, [riderId, riderName, riderPhone, boxIdForMonitoring, isPaired, navigation]);
+    }, [riderId, riderName, riderPhone, boxIdForMonitoring, isPaired, navigation, navigateToPairBox]);
 
     // Handle rejecting an order
     const handleRejectOrder = useCallback(async (requestId: string) => {
@@ -2031,17 +2046,51 @@ export default function RiderDashboard() {
         return '#F44336';
     };
 
-    const QuickAction = ({ icon, label, onPress, color }: any) => {
-        const pressScale = usePressScale();
+    const navigateToRootScreen = useCallback((screen: string, params?: Record<string, any>) => {
+        try {
+            const rootNavigator = navigation.getParent?.('RootStack') || navigation.getParent?.();
+            if (rootNavigator?.navigate) {
+                rootNavigator.navigate(screen, params);
+                return;
+            }
+        } catch (error) {
+            if (__DEV__) {
+                console.warn('[RiderDashboard] Root navigation fallback engaged:', error);
+            }
+        }
+
+        navigateWhenReady(screen, params);
+    }, [navigation]);
+
+    const navigateToRiderSettings = useCallback(() => {
+        navigation.navigate('RiderSettings');
+    }, [navigation]);
+
+    const QuickAction = ({ icon, label, subtitle, onPress, color }: any) => {
         return (
-            <TouchableWithoutFeedback onPressIn={pressScale.onPressIn} onPressOut={pressScale.onPressOut} onPress={onPress}>
-                <Animated.View style={[styles.actionItem, pressScale.style]}>
+            <TouchableOpacity
+                style={[
+                    styles.actionCard,
+                    {
+                        backgroundColor: c.card,
+                        borderColor: c.border,
+                    }
+                ]}
+                activeOpacity={0.82}
+                hitSlop={8}
+                delayPressIn={0}
+                onStartShouldSetResponder={() => true}
+                onPress={onPress}
+            >
+                <View style={styles.actionTopRow}>
                     <View style={[styles.actionIcon, { backgroundColor: color + '14', borderWidth: 1, borderColor: color + '30' }]}>
-                        <MaterialCommunityIcons name={icon as any} size={22} color={color} />
+                        <MaterialCommunityIcons name={icon as any} size={20} color={color} />
                     </View>
-                    <Text style={[styles.actionLabel, { color: c.textSec }]}>{label}</Text>
-                </Animated.View>
-            </TouchableWithoutFeedback>
+                    <MaterialCommunityIcons name="chevron-right" size={18} color={c.textTer} />
+                </View>
+                <Text style={[styles.actionTitle, { color: c.text }]} numberOfLines={1}>{label}</Text>
+                <Text style={[styles.actionSubtitle, { color: c.textSec }]} numberOfLines={2}>{subtitle}</Text>
+            </TouchableOpacity>
         );
     };
 
@@ -2057,7 +2106,7 @@ export default function RiderDashboard() {
             <StatusBar style={isDarkMode ? 'light' : 'dark'} />
 
             {riderSecurityLockRequired && (
-                <View style={styles.incidentLockOverlay}>
+                <View style={styles.incidentLockOverlay} pointerEvents="box-none">
                     <Card style={[styles.incidentLockCard, { backgroundColor: c.card, borderColor: c.redText }]}> 
                         <Card.Content>
                             <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>
@@ -2071,7 +2120,7 @@ export default function RiderDashboard() {
                             </Text>
                             <Button
                                 mode="contained"
-                                onPress={() => navigation.navigate('BoxControls', { boxId: trackedBoxId, deliveryId: activeDelivery?.id })}
+                                onPress={() => navigateToRootScreen('BoxControls', { boxId: trackedBoxId, deliveryId: activeDelivery?.id })}
                                 style={{ marginBottom: 8 }}
                             >
                                 Open Incident Response
@@ -2360,12 +2409,14 @@ export default function RiderDashboard() {
                             {(lastLocation || riderLocation) && MAPBOX_TOKEN ? (
                                 <>
                                     <MapboxGL.MapView
+                                        pointerEvents="none"
                                         style={styles.map}
                                         logoEnabled={false}
                                         attributionEnabled={false}
                                         scaleBarEnabled={false}
                                         compassEnabled={false}
                                         styleURL={isDarkMode ? MapboxGL.StyleURL.Dark : MapboxGL.StyleURL.Street}
+                                        surfaceView={false}
                                         scrollEnabled={false}
                                         pitchEnabled={false}
                                         rotateEnabled={false}
@@ -2536,10 +2587,7 @@ export default function RiderDashboard() {
                                 textColor={isPaired ? c.text : c.accentText}
                                 buttonColor={isPaired ? 'transparent' : c.accent}
                                 style={{ borderColor: isPaired ? c.border : 'transparent' }}
-                                onPress={() => {
-                                    // "Manage" is for pairing/unpairing; controls are available via Box Status.
-                                    navigation.navigate('PairBox');
-                                }}
+                                onPress={navigateToPairBox}
                             >
                                 {isPaired ? 'Manage' : 'Pair Box'}
                             </Button>
@@ -2548,26 +2596,45 @@ export default function RiderDashboard() {
                 </Animated.View>
 
                 {/* Quick Actions */}
-                <Animated.View style={actionsAnim[0].style}>
+                <View style={styles.actionsSection}>
                     <View style={styles.actionsGrid}>
                         <QuickAction
                             icon="cube-outline"
                             label="Box Status"
+                            subtitle={isPaired && pairedBoxId ? `Manage box ${pairedBoxId}` : 'Pair your smart box first'}
                             onPress={() => {
                                 if (!isPaired || !pairedBoxId) {
                                     PremiumAlert.alert('Pair Required', 'Scan your box QR to access controls.');
-                                    navigation.navigate('PairBox');
+                                    navigateToPairBox();
                                     return;
                                 }
-                                navigation.navigate('BoxControls', { boxId: pairedBoxId });
+                                openBoxControls(pairedBoxId);
                             }}
                             color={c.accent}
                         />
-                        <QuickAction icon="history" label="History" onPress={() => navigation.navigate('DeliveryRecords')} color={c.accent} />
-                        <QuickAction icon="face-agent" label="Support" onPress={() => navigation.navigate('RiderSupport')} color={c.accent} />
-                        <QuickAction icon="cog" label="Settings" onPress={() => navigation.navigate('RiderSettings')} color={c.accent} />
+                        <QuickAction
+                            icon="history"
+                            label="History"
+                            subtitle="View completed and cancelled deliveries"
+                            onPress={() => navigateToRootScreen('DeliveryRecords')}
+                            color={c.accent}
+                        />
+                        <QuickAction
+                            icon="face-agent"
+                            label="Support"
+                            subtitle="Open rider help and live assistance"
+                            onPress={() => navigateToRootScreen('RiderSupport')}
+                            color={c.accent}
+                        />
+                        <QuickAction
+                            icon="cog"
+                            label="Settings"
+                            subtitle="Update app, account, and preferences"
+                            onPress={navigateToRiderSettings}
+                            color={c.accent}
+                        />
                     </View>
-                </Animated.View>
+                </View>
 
                 {availableOrdersCount > 0 && isOnline && !hasActiveDelivery && (
                     <Animated.View style={actionsAnim[0].style}>
@@ -2595,6 +2662,7 @@ export default function RiderDashboard() {
                                         logoEnabled={false}
                                         attributionEnabled={false}
                                         styleURL={isDarkMode ? MapboxGL.StyleURL.Dark : MapboxGL.StyleURL.Street}
+                                        surfaceView={false}
                                         scrollEnabled={true}
                                         pitchEnabled={true}
                                         rotateEnabled={true}
@@ -2989,7 +3057,7 @@ export default function RiderDashboard() {
                                 style={{ flex: 1 }}
                                 buttonColor={c.accent}
                                 textColor={c.accentText}
-                                onPress={() => navigation.navigate('PairBox')}
+                                onPress={navigateToPairBox}
                             >
                                 Pair Box
                             </Button>
@@ -2998,7 +3066,7 @@ export default function RiderDashboard() {
                             mode="outlined"
                             style={{ flex: 1, borderColor: c.border }}
                             textColor={c.text}
-                            onPress={() => navigation.navigate('BoxControls')}
+                            onPress={() => openBoxControls(pairedBoxId)}
                         >
                             Advanced Controls
                         </Button>
@@ -3421,17 +3489,34 @@ const styles = StyleSheet.create({
     },
     actionsGrid: {
         flexDirection: 'row',
+        flexWrap: 'wrap',
         justifyContent: 'space-between',
         marginBottom: 24,
     },
-    actionItem: {
+    actionsSection: {
+        marginBottom: 6,
+        zIndex: 8,
+        elevation: 8,
+    },
+    actionCard: {
+        width: '48.5%',
+        minHeight: 112,
+        borderRadius: 14,
+        borderWidth: 1,
+        paddingHorizontal: 12,
+        paddingVertical: 10,
+        marginBottom: 10,
+    },
+    actionTopRow: {
+        flexDirection: 'row',
         alignItems: 'center',
-        width: '22%',
+        justifyContent: 'space-between',
+        marginBottom: 10,
     },
     actionIcon: {
-        width: 50,
-        height: 50,
-        borderRadius: 16,
+        width: 36,
+        height: 36,
+        borderRadius: 12,
         justifyContent: 'center',
         alignItems: 'center',
     },
@@ -3444,9 +3529,15 @@ const styles = StyleSheet.create({
         borderBottomLeftRadius: 30,
         borderBottomRightRadius: 30,
     },
-    actionLabel: {
-        fontSize: 12,
-        marginTop: 6,
+    actionTitle: {
+        fontSize: 14,
+        fontFamily: 'Inter_700Bold',
+        marginBottom: 4,
+    },
+    actionSubtitle: {
+        fontSize: 11,
+        lineHeight: 15,
+        fontFamily: 'Inter_500Medium',
     },
     unlockContainer: {
         flexDirection: 'row',

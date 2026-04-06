@@ -141,7 +141,8 @@ describe('Admin Screens', () => {
         const { getByText } = renderWithProvider(
             <PhotoAuditScreen route={{ params: { logId: 'LOG-123' } }} />
         );
-        expect(getByText('Audit Logs for ID: LOG-123')).toBeTruthy();
+        expect(getByText('Photo Audit')).toBeTruthy();
+        expect(getByText(/Delivery ID: LOG-123/)).toBeTruthy();
     });
 
     it('renders AdminRemoteUnlockScreen', () => {

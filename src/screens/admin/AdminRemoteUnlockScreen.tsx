@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { View, Animated, StyleSheet, KeyboardAvoidingView, Platform, ScrollView, TouchableOpacity, StatusBar } from 'react-native';
+import { View, Animated, StyleSheet, KeyboardAvoidingView, Platform, RefreshControl, ScrollView, TouchableOpacity, StatusBar } from 'react-native';
 import { useEntryAnimation } from '../../hooks/useEntryAnimation';
 import { ActivityIndicator, Text, TextInput, IconButton, ProgressBar } from 'react-native-paper';
 import { useNavigation } from '@react-navigation/native';
@@ -9,6 +9,7 @@ import { getCurrentUser, listSmartBoxes, SmartBoxSummary } from '../../services/
 import { useAppTheme } from '../../context/ThemeContext';
 import { PremiumAlert } from '../../services/PremiumAlertService';
 import { authenticateBiometricForSensitiveAction } from '../../services/biometricAuthService';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const lightC = {
     bg: '#FFFFFF', card: '#F6F6F6', card2: '#EEEEEE', border: '#E5E5EA',
@@ -26,9 +27,12 @@ const darkC = {
 export default function AdminRemoteUnlockScreen() {
     const navigation = useNavigation();
     const { isDarkMode } = useAppTheme();
+    const insets = useSafeAreaInsets();
     const c = isDarkMode ? darkC : lightC;
+    const headerTopMargin = Math.max(insets.top + 6, 14);
 
     const [boxes, setBoxes] = useState<SmartBoxSummary[]>([]);
+    const [refreshing, setRefreshing] = useState(false);
     const [selectedBoxId, setSelectedBoxId] = useState('');
     const [manualBoxId, setManualBoxId] = useState('');
     const [reason, setReason] = useState('');
@@ -75,6 +79,12 @@ export default function AdminRemoteUnlockScreen() {
 
     useEffect(() => {
         fetchBoxes();
+    }, [fetchBoxes]);
+
+    const onRefresh = useCallback(async () => {
+        setRefreshing(true);
+        await fetchBoxes();
+        setRefreshing(false);
     }, [fetchBoxes]);
 
     const resetUnlockProgress = () => {
@@ -158,8 +168,11 @@ export default function AdminRemoteUnlockScreen() {
         >
             <StatusBar barStyle={isDarkMode ? 'light-content' : 'dark-content'} backgroundColor={c.bg} />
 
-            <ScrollView contentContainerStyle={styles.content}>
-                <View style={styles.header}>
+            <ScrollView
+                contentContainerStyle={styles.content}
+                refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={c.text} />}
+            >
+                <View style={[styles.header, { marginTop: headerTopMargin }]}>
                     <IconButton icon="arrow-left" iconColor={c.text} onPress={() => navigation.goBack()} />
                     <Text style={[styles.title, { color: c.text }]}>Remote Box Unlock</Text>
                 </View>
@@ -329,7 +342,7 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         alignItems: 'center',
         marginBottom: 20,
-        marginTop: 30,
+        marginTop: 14,
     },
     title: {
         fontSize: 22,

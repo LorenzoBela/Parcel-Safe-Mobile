@@ -134,9 +134,9 @@ export interface BoxState {
 
 /** Fields the firmware writes to hardware/{boxId} via REST */
 export interface HardwareDiagnostics {
-    /** Connection type: 'LTE' | 'WiFi' */
-    connection?: string;
-    /** Signal strength in dBm (e.g. -85) */
+    /** Connection type from modem/transport */
+    connection?: 'LTE' | 'WiFi' | 'UNKNOWN' | string;
+    /** Signal strength in dBm (e.g. -85, -999 = unavailable/offline) */
     rssi?: number;
     /** Raw CSQ value 0-31 (99 = unknown) */
     csq?: number;
@@ -146,27 +146,42 @@ export interface HardwareDiagnostics {
     gps_fix?: boolean;
     /** millis() timestamp of last firmware heartbeat */
     last_updated?: number;
-    /** Cumulative bytes sent to Firebase */
+    /** Firmware-formatted local timestamp string */
+    last_updated_str?: string;
+    /** Cumulative bytes sent by firmware client */
     data_bytes?: number;
+    /** Device uptime in milliseconds */
+    uptime_ms?: number;
+    /** Whether board time is synchronized */
+    time_synced?: boolean;
     /** Box state string */
-    status?: string;
+    status?: 'SLEEP' | 'STANDBY' | 'ACTIVE' | 'ARRIVED' | 'UNLOCKING' | 'LOCKED' | string;
+    /** Temperature in Celsius reported by board sensors */
+    temp?: number;
     /** Tamper sub-object */
     tamper?: {
         detected?: boolean;
         lockdown?: boolean;
     };
     /** Geofence state reported by firmware (OUTSIDE/INSIDE/DEAD_ZONE) */
-    geo_state?: string;
+    geo_state?: 'OUTSIDE' | 'INSIDE' | 'DEAD_ZONE' | 'ENTERING' | 'EXITING' | string;
     /** Distance to geofence target in meters */
     geo_dist_m?: number;
     /** Theft guard state reported by firmware */
-    theft_state?: string;
+    theft_state?: 'NORMAL' | 'SUSPICIOUS' | 'STOLEN' | 'LOCKDOWN' | 'RECOVERED' | string;
     /** Battery Percentage 0-100 */
     batt_pct?: number;
     /** Battery Voltage */
     batt_v?: number;
     /** Low battery flag */
     batt_low?: boolean;
+    /** Phone tracking sidecar diagnostics when phone GPS fallback is active */
+    phone_status?: {
+        data_bytes?: number;
+        timestamp?: number;
+        is_connected?: boolean;
+        source?: string;
+    };
 }
 
 export type HardwareByBoxId = Record<string, HardwareDiagnostics>;
@@ -476,6 +491,21 @@ export function subscribeToAllHardware(
     });
 
     return () => off(hardwareRef);
+}
+
+export type TheftState = 'NORMAL' | 'SUSPICIOUS' | 'STOLEN' | 'LOCKDOWN' | 'RECOVERED';
+
+/**
+ * Admin helper to update theft status and lockdown marker for a box.
+ */
+export async function setTheftState(boxId: string, state: TheftState): Promise<void> {
+    const db = getFirebaseDatabase();
+    const hardwareRef = ref(db, `hardware/${boxId}`);
+    await update(hardwareRef, {
+        theft_state: state,
+        'tamper/lockdown': state === 'LOCKDOWN',
+        last_updated: serverTimestamp(),
+    });
 }
 
 export async function clearTamperStatus(boxId: string): Promise<void> {
@@ -2072,8 +2102,6 @@ export async function startFaceScan(boxId: string): Promise<void> {
 }
 
 // ==================== EC-81: Theft Detection ====================
-
-export type TheftState = 'NORMAL' | 'SUSPICIOUS' | 'STOLEN' | 'LOCKDOWN' | 'RECOVERED';
 
 export interface LocationHistoryEntry {
     lat: number;

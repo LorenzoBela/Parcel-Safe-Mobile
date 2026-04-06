@@ -44,6 +44,7 @@ import AdminRecordsScreen from '../screens/admin/AdminRecordsScreen';
 import GlobalMapScreen from '../screens/admin/GlobalMapScreen';
 import TamperAlertsScreen from '../screens/admin/TamperAlertsScreen';
 import PhotoAuditScreen from '../screens/admin/PhotoAuditScreen';
+import AdminMoreScreen from '../screens/admin/AdminMoreScreen';
 
 import ProfileScreen from '../screens/common/ProfileScreen';
 import SettingsScreen from '../screens/common/SettingsScreen';
@@ -59,7 +60,56 @@ import NotificationPreferencesScreen from '../screens/common/NotificationPrefere
 
 const Stack = createStackNavigator();
 const Tab = createBottomTabNavigator();
-const NAV_STATE_STORAGE_KEY = 'nav_state_v1';
+const AdminOperationsStack = createStackNavigator();
+const AdminSecurityStack = createStackNavigator();
+const AdminInsightsStack = createStackNavigator();
+const AdminMoreStack = createStackNavigator();
+const NAV_STATE_STORAGE_KEY = 'nav_state_v4';
+
+const AdminEdgeCasesScreen = require('../screens/admin/AdminEdgeCasesScreen').default;
+const AdminStolenBoxesScreen = require('../screens/admin/AdminStolenBoxesScreen').default;
+const AdminReceiptsScreen = require('../screens/admin/AdminReceiptsScreen').default;
+const AdminHardwareDiagnosticsScreen = require('../screens/admin/AdminHardwareDiagnosticsScreen').default;
+const AdminTrackingHistoryScreen = require('../screens/admin/AdminTrackingHistoryScreen').default;
+const AdminUsersManagementScreen = require('../screens/admin/AdminUsersManagementScreen').default;
+const AdminSettingsScreen = require('../screens/admin/AdminSettingsScreen').default;
+
+function sanitizeMoreStackState(state: any) {
+    if (!state || !Array.isArray(state.routes) || state.routes.length === 0) {
+        return state;
+    }
+
+    const menuRoute = state.routes.find((route: any) => route?.name === 'MoreMenu') || state.routes[0];
+    return {
+        ...state,
+        index: 0,
+        routes: [{ ...menuRoute, params: undefined, state: undefined }],
+        history: undefined,
+    };
+}
+
+function sanitizeAdminState(state: any) {
+    if (!state || !Array.isArray(state.routes) || state.routes.length === 0) {
+        return state;
+    }
+
+    const nextRoutes = state.routes.map((route: any) => {
+        if (route?.name !== 'AdminMoreTab') {
+            return route;
+        }
+
+        return {
+            ...route,
+            state: sanitizeMoreStackState(route?.state),
+        };
+    });
+
+    return {
+        ...state,
+        routes: nextRoutes,
+        history: undefined,
+    };
+}
 
 function enforceRiderStartupGate(restoredState: any) {
     if (!restoredState || !Array.isArray(restoredState.routes) || restoredState.routes.length === 0) {
@@ -70,17 +120,36 @@ function enforceRiderStartupGate(restoredState: any) {
     const activeRoute = restoredState.routes[currentIndex];
 
     // If cold-launch restore would jump straight into Rider tabs, route through RiderLoading first.
+    if (activeRoute?.name === 'AdminApp') {
+        const sanitizedActiveRoute = {
+            ...activeRoute,
+            state: sanitizeAdminState(activeRoute?.state),
+        };
+
+        return {
+            ...restoredState,
+            index: 0,
+            routes: [sanitizedActiveRoute],
+            history: undefined,
+        };
+    }
+
     if (activeRoute?.name !== 'RiderApp') {
         return restoredState;
     }
 
-    const nextRoutes = restoredState.routes.map((route: any, index: number) =>
-        index === currentIndex ? { ...route, name: 'RiderLoading', state: undefined, params: undefined } : route
-    );
+    const riderLoadingRoute = {
+        ...activeRoute,
+        name: 'RiderLoading',
+        state: undefined,
+        params: undefined,
+    };
 
     return {
         ...restoredState,
-        routes: nextRoutes,
+        index: 0,
+        routes: [riderLoadingRoute],
+        history: undefined,
     };
 }
 
@@ -198,6 +267,40 @@ const RiderNavigator = () => {
     );
 };
 
+const AdminOperationsNavigator = () => (
+    <AdminOperationsStack.Navigator id="AdminOperationsStack" screenOptions={{ headerShown: false }}>
+        <AdminOperationsStack.Screen name="OpsRecords" component={AdminRecordsScreen} />
+        <AdminOperationsStack.Screen name="OpsGlobalMap" component={GlobalMapScreen} />
+        <AdminOperationsStack.Screen name="OpsEdgeCases" component={AdminEdgeCasesScreen} />
+    </AdminOperationsStack.Navigator>
+);
+
+const AdminSecurityNavigator = () => (
+    <AdminSecurityStack.Navigator id="AdminSecurityStack" screenOptions={{ headerShown: false }}>
+        <AdminSecurityStack.Screen name="SecurityAlerts" component={TamperAlertsScreen} />
+        <AdminSecurityStack.Screen name="SecurityStolenBoxes" component={AdminStolenBoxesScreen} />
+        <AdminSecurityStack.Screen name="SecurityPhotoAudit" component={PhotoAuditScreen} />
+    </AdminSecurityStack.Navigator>
+);
+
+const AdminInsightsNavigator = () => (
+    <AdminInsightsStack.Navigator id="AdminInsightsStack" screenOptions={{ headerShown: false }}>
+        <AdminInsightsStack.Screen name="InsightsReceipts" component={AdminReceiptsScreen} />
+        <AdminInsightsStack.Screen name="InsightsHardwareDiagnostics" component={AdminHardwareDiagnosticsScreen} />
+        <AdminInsightsStack.Screen name="InsightsTrackingHistory" component={AdminTrackingHistoryScreen} />
+    </AdminInsightsStack.Navigator>
+);
+
+const AdminMoreNavigator = () => (
+    <AdminMoreStack.Navigator id="AdminMoreStack" screenOptions={{ headerShown: false }}>
+        <AdminMoreStack.Screen name="MoreMenu" component={AdminMoreScreen} />
+        <AdminMoreStack.Screen name="MoreUsers" component={AdminUsersManagementScreen} />
+        <AdminMoreStack.Screen name="MoreCommonSettings" component={SettingsScreen} />
+        <AdminMoreStack.Screen name="MoreSettings" component={AdminSettingsScreen} />
+        <AdminMoreStack.Screen name="MoreProfile" component={ProfileScreen} />
+    </AdminMoreStack.Navigator>
+);
+
 // Admin Tabs
 const AdminNavigator = () => {
     const theme = useTheme();
@@ -210,6 +313,8 @@ const AdminNavigator = () => {
     return (
         <Tab.Navigator
             id="AdminTabs"
+            initialRouteName="AdminDashboardTab"
+            backBehavior="initialRoute"
             screenOptions={{
                 headerShown: false,
                 tabBarActiveTintColor: activeColor,
@@ -223,36 +328,36 @@ const AdminNavigator = () => {
                     paddingBottom: 6,
                 },
                 tabBarLabelStyle: {
-                    fontSize: 11,
+                    fontSize: 10,
                     fontFamily: 'Inter_600SemiBold',
                     letterSpacing: 0.1,
                 },
             }}
         >
             <Tab.Screen
-                name="Dashboard"
+                name="AdminDashboardTab"
                 component={AdminDashboard}
-                options={{ tabBarIcon: (props) => <TabIcon name="view-dashboard" {...props} /> }}
+                options={{ tabBarLabel: 'Dashboard', tabBarIcon: (props) => <TabIcon name="view-dashboard" {...props} /> }}
             />
             <Tab.Screen
-                name="Map"
-                component={GlobalMapScreen}
-                options={{ tabBarIcon: (props) => <TabIcon name="map" {...props} /> }}
+                name="AdminOperationsTab"
+                component={AdminOperationsNavigator}
+                options={{ tabBarLabel: 'Ops', tabBarIcon: (props) => <TabIcon name="clipboard-list" {...props} /> }}
             />
             <Tab.Screen
-                name="Alerts"
-                component={TamperAlertsScreen}
-                options={{ tabBarIcon: (props) => <TabIcon name="alert" {...props} /> }}
+                name="AdminSecurityTab"
+                component={AdminSecurityNavigator}
+                options={{ tabBarLabel: 'Security', tabBarIcon: (props) => <TabIcon name="shield-alert-outline" {...props} /> }}
             />
             <Tab.Screen
-                name="Settings"
-                component={SettingsScreen}
-                options={{ tabBarIcon: (props) => <TabIcon name="cog" {...props} /> }}
+                name="AdminInsightsTab"
+                component={AdminInsightsNavigator}
+                options={{ tabBarLabel: 'Insights', tabBarIcon: (props) => <TabIcon name="chart-line" {...props} /> }}
             />
             <Tab.Screen
-                name="Profile"
-                component={ProfileScreen}
-                options={{ tabBarIcon: (props) => <TabIcon name="account" {...props} /> }}
+                name="AdminMoreTab"
+                component={AdminMoreNavigator}
+                options={{ tabBarLabel: 'More', tabBarIcon: (props) => <TabIcon name="dots-horizontal-circle-outline" {...props} /> }}
             />
         </Tab.Navigator>
     );

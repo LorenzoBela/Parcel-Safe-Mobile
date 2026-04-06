@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useMemo, useRef } from 'react';
-import { View, Animated, StyleSheet, FlatList, Dimensions, TouchableOpacity, StatusBar } from 'react-native';
+import { View, Animated, StyleSheet, FlatList, Dimensions, RefreshControl, TouchableOpacity, StatusBar } from 'react-native';
 import { useEntryAnimation } from '../../hooks/useEntryAnimation';
 import { Text, ActivityIndicator } from 'react-native-paper';
 import { useNavigation } from '@react-navigation/native';
@@ -44,6 +44,8 @@ export default function TamperAlertsScreen() {
     const [locations, setLocations] = useState<LocationsByBoxId | null>(null);
     const [clearingBoxId, setClearingBoxId] = useState<string | null>(null);
     const [loading, setLoading] = useState(true);
+    const [refreshing, setRefreshing] = useState(false);
+    const [refreshTick, setRefreshTick] = useState(0);
     const [selectedBoxId, setSelectedBoxId] = useState<string | null>(null);
 
     const [cameraCenter, setCameraCenter] = useState<[number, number]>(DEFAULT_CENTER);
@@ -64,7 +66,14 @@ export default function TamperAlertsScreen() {
             setLocations(locs);
         });
         return () => { unsubHw(); unsubLoc(); };
-    }, []);
+    }, [refreshTick]);
+
+    const onRefresh = async () => {
+        setRefreshing(true);
+        setRefreshTick((prev) => prev + 1);
+        await new Promise((resolve) => setTimeout(resolve, 450));
+        setRefreshing(false);
+    };
 
     const activeBoxes = useMemo(() => {
         if (!hardware) return [];
@@ -247,6 +256,7 @@ export default function TamperAlertsScreen() {
                         data={activeBoxes}
                         renderItem={renderItem}
                         keyExtractor={item => item.id}
+                        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={c.red} />}
                         contentContainerStyle={styles.listContent}
                         ListEmptyComponent={
                             <View style={styles.emptyWrap}>
