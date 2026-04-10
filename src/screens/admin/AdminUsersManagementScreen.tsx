@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, FlatList, RefreshControl, StyleSheet, View } from 'react-native';
-import { Button, IconButton, Menu, Searchbar, SegmentedButtons, Text } from 'react-native-paper';
+import { Avatar, Button, IconButton, Menu, Searchbar, SegmentedButtons, Text } from 'react-native-paper';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
     AdminRole,
@@ -40,6 +40,11 @@ function getUserInitial(user: AdminUser): string {
     return seed.charAt(0).toUpperCase();
 }
 
+function getUserAvatarUrl(user: AdminUser): string | null {
+    const value = user.avatar_url?.trim();
+    return value ? value : null;
+}
+
 export default function AdminUsersManagementScreen() {
     const { isDarkMode } = useAppTheme();
     const insets = useSafeAreaInsets();
@@ -53,6 +58,7 @@ export default function AdminUsersManagementScreen() {
     const [search, setSearch] = useState('');
     const [busyId, setBusyId] = useState<string | null>(null);
     const [viewMode, setViewMode] = useState<'list' | 'grid'>('list');
+    const [avatarErrorIds, setAvatarErrorIds] = useState<Record<string, boolean>>({});
 
     const [activeRoleMenuUserId, setActiveRoleMenuUserId] = useState<string | null>(null);
 
@@ -61,6 +67,7 @@ export default function AdminUsersManagementScreen() {
         try {
             const data = await listAdminUsers();
             setUsers(data || []);
+            setAvatarErrorIds({});
         } catch (e: any) {
             setError(e?.message || 'Failed to load users');
         }
@@ -190,16 +197,33 @@ export default function AdminUsersManagementScreen() {
                     contentContainerStyle={{ padding: 14, paddingBottom: 28 }}
                     keyboardShouldPersistTaps="handled"
                     ListEmptyComponent={<Text style={[styles.empty, { color: c.textSec }]}>No users found.</Text>}
-                    renderItem={({ item }) => (
+                    renderItem={({ item }) => {
+                        const avatarUrl = avatarErrorIds[item.id] ? null : getUserAvatarUrl(item);
+
+                        return (
                         <View style={[
                             styles.userCard,
                             viewMode === 'grid' ? styles.userCardGrid : null,
                             { backgroundColor: c.card, borderColor: c.border },
                         ]}> 
                             <View style={[styles.userTopRow, viewMode === 'grid' ? styles.userTopRowGrid : null]}>
-                                <View style={[styles.avatar, { backgroundColor: c.avatar, borderColor: c.border }]}>
-                                    <Text style={[styles.avatarText, { color: c.text }]}>{getUserInitial(item)}</Text>
-                                </View>
+                                {avatarUrl ? (
+                                    <Avatar.Image
+                                        size={34}
+                                        source={{ uri: avatarUrl }}
+                                        style={[styles.avatarPhoto, { backgroundColor: c.avatar, borderColor: c.border }]}
+                                        onError={() => {
+                                            setAvatarErrorIds((prev) => ({
+                                                ...prev,
+                                                [item.id]: true,
+                                            }));
+                                        }}
+                                    />
+                                ) : (
+                                    <View style={[styles.avatar, { backgroundColor: c.avatar, borderColor: c.border }]}>
+                                        <Text style={[styles.avatarText, { color: c.text }]}>{getUserInitial(item)}</Text>
+                                    </View>
+                                )}
 
                                 <View style={styles.userIdentityCol}>
                                     <Text numberOfLines={1} style={[styles.name, { color: c.text }]}>{item.full_name || 'Unnamed user'}</Text>
@@ -255,7 +279,8 @@ export default function AdminUsersManagementScreen() {
                                 </Menu>
                             </View>
                         </View>
-                    )}
+                        );
+                    }}
                 />
             )}
         </View>
@@ -369,6 +394,9 @@ const styles = StyleSheet.create({
         borderRadius: 17,
         alignItems: 'center',
         justifyContent: 'center',
+        borderWidth: StyleSheet.hairlineWidth,
+    },
+    avatarPhoto: {
         borderWidth: StyleSheet.hairlineWidth,
     },
     avatarText: {

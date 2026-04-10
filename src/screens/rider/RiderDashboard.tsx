@@ -683,6 +683,7 @@ export default function RiderDashboard() {
     // EC-78: Delivery Reassignment State
     const [reassignmentState, setReassignmentState] = useState<ReassignmentState | null>(null);
     const [showReassignmentModal, setShowReassignmentModal] = useState(false);
+    const reassignmentType = riderId ? getReassignmentType(reassignmentState, riderId) : null;
 
     // EC-89: Token Refresh State
     const [tokenStatus, setTokenStatus] = useState<TokenStatus>('HEALTHY');
@@ -753,8 +754,11 @@ export default function RiderDashboard() {
                     console.log('[RiderDashboard] Session missing but Firebase auth exists. Restoring...');
                     setIsRestoringSession(true);
                     try {
+                        if (!supabase) {
+                            return;
+                        }
                         // Fetch profile from Supabase
-                        const { data: profile, error } = await supabase
+                        const { data: profile } = await supabase
                             .from('profiles')
                             .select('*')
                             .eq('id', firebaseUser.uid)
@@ -1092,7 +1096,7 @@ export default function RiderDashboard() {
         }) : () => { };
 
         // EC-18: Subscribe to tamper state
-        const unsubscribeTamper = subscribeToTamper(boxIdForMonitoring, (state) => {
+        const unsubscribeTamper = boxIdForMonitoring ? subscribeToTamper(boxIdForMonitoring, (state) => {
             setTamperState(state);
             const currentlyDetected = Boolean(state?.detected);
             const wasDetected = tamperDetectedEdgeRef.current;
@@ -1112,17 +1116,17 @@ export default function RiderDashboard() {
                     { boxId: boxIdForMonitoring || '', type: 'TAMPER_DETECTED' }
                 ).catch(() => {});
             }
-        });
+        }) : () => {};
 
         // EC-01/EC-06: Monitor network connectivity
         const unsubscribeNetInfo = NetInfo
-            ? NetInfo.addEventListener(state => {
+            ? NetInfo.addEventListener((state: any) => {
                 setIsOffline(!state.isConnected);
             })
             : null;
 
         // EC-08: Subscribe to GPS location for spoofing detection
-        const unsubscribeLocation = subscribeToLocation(boxIdForMonitoring, (location) => {
+        const unsubscribeLocation = boxIdForMonitoring ? subscribeToLocation(boxIdForMonitoring, (location) => {
             if (location && lastGpsLocationRef.current) {
                 // Calculate distance using Haversine approximation
                 const R = 6371000;
@@ -1151,10 +1155,10 @@ export default function RiderDashboard() {
             }
             setLastGpsLocation(location);
             lastGpsLocationRef.current = location;
-        });
+        }) : () => {};
 
         // EC-82: Subscribe to Keypad
-        const unsubscribeKeypad = subscribeToKeypad(boxIdForMonitoring, (state) => {
+        const unsubscribeKeypad = boxIdForMonitoring ? subscribeToKeypad(boxIdForMonitoring, (state) => {
             setKeypadState(state);
             if (state?.is_stuck) {
                 PremiumAlert.alert(
@@ -1163,10 +1167,10 @@ export default function RiderDashboard() {
                     [{ text: 'OK' }]
                 );
             }
-        });
+        }) : () => {};
 
         // EC-83: Subscribe to Hinge
-        const unsubscribeHinge = subscribeToHinge(boxIdForMonitoring, (state) => {
+        const unsubscribeHinge = boxIdForMonitoring ? subscribeToHinge(boxIdForMonitoring, (state) => {
             setHingeState(state);
             if (state?.status === 'DAMAGED') {
                 PremiumAlert.alert(
@@ -1175,7 +1179,7 @@ export default function RiderDashboard() {
                     [{ text: 'Contact Support', style: 'destructive' }]
                 );
             }
-        });
+        }) : () => {};
 
         return () => {
             unsubscribeBox();
@@ -1321,8 +1325,12 @@ export default function RiderDashboard() {
 
     // EC-78: Subscribe to Reassignment Updates
     useEffect(() => {
-        const boxId = boxIdForMonitoring;
-        const unsubscribe = subscribeToReassignment(boxId, (state) => {
+        if (!boxIdForMonitoring) {
+            setReassignmentState(null);
+            return;
+        }
+
+        const unsubscribe = subscribeToReassignment(boxIdForMonitoring, (state) => {
             setReassignmentState(state);
         });
         return unsubscribe;
@@ -1345,9 +1353,8 @@ export default function RiderDashboard() {
 
     // EC-78: Handle Reassignment Modal and Timer
     useEffect(() => {
-        if (reassignmentState && isReassignmentPending(reassignmentState)) {
-            const type = getReassignmentType(reassignmentState, riderId);
-            if (type) {
+        if (reassignmentState && reassignmentType && riderId && boxIdForMonitoring && isReassignmentPending(reassignmentState)) {
+            if (reassignmentType) {
                 setShowReassignmentModal(true);
                 // Start auto-ack timer
                 const cleanup = startAutoAckTimer(boxIdForMonitoring, riderId, reassignmentState, () => {
@@ -1359,7 +1366,7 @@ export default function RiderDashboard() {
         } else {
             setShowReassignmentModal(false);
         }
-    }, [boxIdForMonitoring, reassignmentState, riderId]);
+    }, [boxIdForMonitoring, reassignmentState, reassignmentType, riderId]);
 
     // EC-89: Token Refresh Service
     useEffect(() => {
@@ -1388,6 +1395,11 @@ export default function RiderDashboard() {
 
     // EC-90: Subscribe to Power State
     useEffect(() => {
+        if (!boxIdForMonitoring) {
+            setPowerState(null);
+            return;
+        }
+
         const unsubscribePower = subscribeToPower(boxIdForMonitoring, (state) => {
             setPowerState(state);
             if (state?.solenoid_blocked) {
@@ -1419,7 +1431,7 @@ export default function RiderDashboard() {
     }, []);
 
     const handleReassignmentAcknowledge = async () => {
-        if (reassignmentState) {
+        if (reassignmentState && boxIdForMonitoring && riderId) {
             await acknowledgeReassignment(boxIdForMonitoring, riderId);
             setShowReassignmentModal(false);
         }
@@ -1483,7 +1495,7 @@ export default function RiderDashboard() {
 
             let freshCustomerName = requestItem.data.customerName || 'Customer';
             try {
-                if (requestItem.data.customerId) {
+                if (requestItem.data.customerId && supabase) {
                     const { data: profile } = await supabase
                         .from('profiles')
                         .select('full_name, phone_number')
@@ -1531,6 +1543,8 @@ export default function RiderDashboard() {
 
     // Handle rejecting an order
     const handleRejectOrder = useCallback(async (requestId: string) => {
+        if (!riderId) return;
+
         // Find the actual order request object matching the requestId
         const requestToReject = incomingRequests.find(req => req.requestId === requestId);
         
@@ -1557,6 +1571,11 @@ export default function RiderDashboard() {
 
         if (!nextDelivery) {
             PremiumAlert.alert('Error', 'No active delivery to cancel');
+            return;
+        }
+
+        if (!boxIdForMonitoring) {
+            PremiumAlert.alert('Error', 'No paired box found for this cancellation request.');
             return;
         }
 
@@ -1706,7 +1725,7 @@ export default function RiderDashboard() {
 
                 // EC-FIX: Update estimated_dropoff_time in DB
                 // Only if we have an active delivery and it's been > 60s since last update
-                if (activeDelivery?.id && activeDelivery.status === 'IN_TRANSIT') {
+                if (supabase && activeDelivery?.id && activeDelivery.status === 'IN_TRANSIT') {
                     const now = Date.now();
                     if (now - lastEtaUpdateRef.current > 60000) { // 1 minute throttle
                         const etaTimestamp = dayjs().add(route.duration, 'second').toISOString();
@@ -1749,7 +1768,7 @@ export default function RiderDashboard() {
         }
     }, [isLocked]);
 
-    const calculateDistance = (lat1, lon1, lat2, lon2) => {
+    const calculateDistance = (lat1: number, lon1: number, lat2: number, lon2: number): string => {
         const R = 6371; // Radius of the earth in km
         const dLat = deg2rad(lat2 - lat1);
         const dLon = deg2rad(lon2 - lon1);
@@ -1762,7 +1781,7 @@ export default function RiderDashboard() {
         return d.toFixed(2);
     };
 
-    const deg2rad = (deg) => {
+    const deg2rad = (deg: number): number => {
         return deg * (Math.PI / 180);
     };
 
@@ -2010,6 +2029,178 @@ export default function RiderDashboard() {
     // Live weather state
     const [weather, setWeather] = useState<WeatherData | null>(null);
 
+    // At-a-glance telemetry state
+    const [onlineSessionStartedAt, setOnlineSessionStartedAt] = useState<number | null>(null);
+    const [distanceTravelledKm, setDistanceTravelledKm] = useState(0);
+    const [batteryEtaLabel, setBatteryEtaLabel] = useState('Learning...');
+    const distanceCursorRef = useRef<{ latitude: number; longitude: number; timestamp: number } | null>(null);
+    const batteryTrendRef = useRef<{ startPct: number; startTs: number; latestPct: number; latestTs: number } | null>(null);
+
+    const metersBetween = useCallback((lat1: number, lon1: number, lat2: number, lon2: number): number => {
+        const R = 6371000;
+        const dLat = (lat2 - lat1) * Math.PI / 180;
+        const dLon = (lon2 - lon1) * Math.PI / 180;
+        const a = Math.sin(dLat / 2) ** 2
+            + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLon / 2) ** 2;
+        return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    }, []);
+
+    const formatCompactDuration = (ms: number): string => {
+        const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+        const hours = Math.floor(totalSeconds / 3600);
+        const minutes = Math.floor((totalSeconds % 3600) / 60);
+        if (hours === 0) return `${minutes}m`;
+        return `${hours}h ${minutes}m`;
+    };
+
+    const formatBatteryEta = (hours: number): string => {
+        if (!Number.isFinite(hours) || hours <= 0) return '<1h';
+        if (hours > 72) return '>72h';
+        const h = Math.floor(hours);
+        const m = Math.round((hours - h) * 60);
+        if (h === 0) return `${m}m`;
+        return `${h}h ${m}m`;
+    };
+
+    useEffect(() => {
+        if (isOnline) {
+            setOnlineSessionStartedAt((prev) => prev ?? Date.now());
+            return;
+        }
+
+        setOnlineSessionStartedAt(null);
+        setDistanceTravelledKm(0);
+        distanceCursorRef.current = null;
+    }, [isOnline]);
+
+    useEffect(() => {
+        if (!isOnline || !riderLocation) {
+            return;
+        }
+
+        const { latitude, longitude, accuracy } = riderLocation.coords;
+        if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+            return;
+        }
+
+        if ((accuracy ?? 0) > 80) {
+            return;
+        }
+
+        const pointTimestamp = typeof riderLocation.timestamp === 'number' ? riderLocation.timestamp : Date.now();
+        const previous = distanceCursorRef.current;
+
+        if (!previous) {
+            distanceCursorRef.current = { latitude, longitude, timestamp: pointTimestamp };
+            return;
+        }
+
+        const segmentMeters = metersBetween(previous.latitude, previous.longitude, latitude, longitude);
+        const deltaSeconds = Math.max(1, (pointTimestamp - previous.timestamp) / 1000);
+        const estimatedSpeedMps = segmentMeters / deltaSeconds;
+
+        // Filter out spikes from temporary GPS jumps while still advancing the cursor.
+        if (segmentMeters <= 300 && estimatedSpeedMps <= 45 && segmentMeters >= 2) {
+            setDistanceTravelledKm((prevKm) => prevKm + (segmentMeters / 1000));
+        }
+
+        distanceCursorRef.current = { latitude, longitude, timestamp: pointTimestamp };
+    }, [isOnline, riderLocation, metersBetween]);
+
+    useEffect(() => {
+        const pct = batteryState?.percentage;
+
+        if (pct == null) {
+            setBatteryEtaLabel('No Data');
+            batteryTrendRef.current = null;
+            return;
+        }
+
+        const now = Date.now();
+        const trend = batteryTrendRef.current;
+
+        if (!trend) {
+            batteryTrendRef.current = {
+                startPct: pct,
+                startTs: now,
+                latestPct: pct,
+                latestTs: now,
+            };
+            setBatteryEtaLabel('Learning...');
+            return;
+        }
+
+        // If battery climbs significantly, assume charging/recovery and restart trend.
+        if (pct > trend.latestPct + 2) {
+            batteryTrendRef.current = {
+                startPct: pct,
+                startTs: now,
+                latestPct: pct,
+                latestTs: now,
+            };
+            setBatteryEtaLabel('Charging');
+            return;
+        }
+
+        if (pct <= trend.latestPct) {
+            trend.latestPct = pct;
+            trend.latestTs = now;
+        }
+
+        const consumedPct = trend.startPct - trend.latestPct;
+        const elapsedHours = (trend.latestTs - trend.startTs) / 3600000;
+
+        if (consumedPct < 2 || elapsedHours < 0.25) {
+            setBatteryEtaLabel('Learning...');
+            return;
+        }
+
+        const drainPerHour = consumedPct / elapsedHours;
+        if (!Number.isFinite(drainPerHour) || drainPerHour <= 0) {
+            setBatteryEtaLabel('Stable');
+            return;
+        }
+
+        const reservePct = 10;
+        const remainingPct = Math.max(0, pct - reservePct);
+        const hoursToReserve = remainingPct / drainPerHour;
+        setBatteryEtaLabel(formatBatteryEta(hoursToReserve));
+    }, [batteryState?.percentage]);
+
+    const onlineSessionMs = onlineSessionStartedAt ? Math.max(0, currentTime.valueOf() - onlineSessionStartedAt) : 0;
+    const onlineSessionLabel = isOnline && onlineSessionStartedAt
+        ? formatCompactDuration(onlineSessionMs)
+        : 'Offline';
+    const travelledLabel = `${distanceTravelledKm.toFixed(distanceTravelledKm >= 10 ? 0 : 1)} km`;
+
+    const nearbyDemandMetric = (() => {
+        if (!isOnline) {
+            return {
+                value: 'Offline',
+                hint: 'Go online to view nearby demand',
+            };
+        }
+
+        if (hasActiveDelivery) {
+            return {
+                value: 'Busy',
+                hint: 'Demand list pauses during active trips',
+            };
+        }
+
+        if (availableOrdersCount <= 0) {
+            return {
+                value: '0 Nearby',
+                hint: 'No open orders within 5 km',
+            };
+        }
+
+        return {
+            value: `${availableOrdersCount} Nearby`,
+            hint: 'Open requests in your area',
+        };
+    })();
+
 
 
     const boxStatus = {
@@ -2048,7 +2239,7 @@ export default function RiderDashboard() {
 
     const navigateToRootScreen = useCallback((screen: string, params?: Record<string, any>) => {
         try {
-            const rootNavigator = navigation.getParent?.('RootStack') || navigation.getParent?.();
+            const rootNavigator = navigation.getParent?.('RootStack');
             if (rootNavigator?.navigate) {
                 rootNavigator.navigate(screen, params);
                 return;
@@ -2061,38 +2252,6 @@ export default function RiderDashboard() {
 
         navigateWhenReady(screen, params);
     }, [navigation]);
-
-    const navigateToRiderSettings = useCallback(() => {
-        navigation.navigate('RiderSettings');
-    }, [navigation]);
-
-    const QuickAction = ({ icon, label, subtitle, onPress, color }: any) => {
-        return (
-            <TouchableOpacity
-                style={[
-                    styles.actionCard,
-                    {
-                        backgroundColor: c.card,
-                        borderColor: c.border,
-                    }
-                ]}
-                activeOpacity={0.82}
-                hitSlop={8}
-                delayPressIn={0}
-                onStartShouldSetResponder={() => true}
-                onPress={onPress}
-            >
-                <View style={styles.actionTopRow}>
-                    <View style={[styles.actionIcon, { backgroundColor: color + '14', borderWidth: 1, borderColor: color + '30' }]}>
-                        <MaterialCommunityIcons name={icon as any} size={20} color={color} />
-                    </View>
-                    <MaterialCommunityIcons name="chevron-right" size={18} color={c.textTer} />
-                </View>
-                <Text style={[styles.actionTitle, { color: c.text }]} numberOfLines={1}>{label}</Text>
-                <Text style={[styles.actionSubtitle, { color: c.textSec }]} numberOfLines={2}>{subtitle}</Text>
-            </TouchableOpacity>
-        );
-    };
 
     const statusToggleAnim = useEntryAnimation(0);
     const gpsCardAnim = useEntryAnimation(55);
@@ -2168,7 +2327,7 @@ export default function RiderDashboard() {
             <ReassignmentAlertModal
                 visible={showReassignmentModal}
                 state={reassignmentState}
-                type={getReassignmentType(reassignmentState, riderId)}
+                type={reassignmentType}
                 onAcknowledge={handleReassignmentAcknowledge}
             />
 
@@ -2222,13 +2381,13 @@ export default function RiderDashboard() {
                 {reassignmentState && isReassignmentPending(reassignmentState) && !showReassignmentModal && (
                     <View style={[styles.warningBanner, { backgroundColor: c.orangeBg, borderWidth: 1, borderColor: c.orangeText, marginBottom: 16 }]}>
                         <MaterialCommunityIcons
-                            name={getReassignmentType(reassignmentState, riderId) === 'outgoing' ? "swap-horizontal" : "account-switch"}
+                            name={reassignmentType === 'outgoing' ? "swap-horizontal" : "account-switch"}
                             size={24}
                             color={c.orangeText}
                         />
                         <View style={{ flex: 1, marginLeft: 12 }}>
                             <Text style={[styles.bannerTitle, { color: c.orangeText }]}>
-                                {getReassignmentType(reassignmentState, riderId) === 'outgoing' ? 'REASSIGNMENT PENDING' : 'NEW ASSIGNMENT'}
+                                {reassignmentType === 'outgoing' ? 'REASSIGNMENT PENDING' : 'NEW ASSIGNMENT'}
                             </Text>
                             <Text style={[styles.bannerText, { color: c.orangeText }]}>
                                 Action required for delivery update.
@@ -2434,7 +2593,7 @@ export default function RiderDashboard() {
                                         <AnimatedRiderMarker
                                             latitude={lastLocation ? lastLocation.latitude : riderLocation!.coords.latitude}
                                             longitude={lastLocation ? lastLocation.longitude : riderLocation!.coords.longitude}
-                                            rotation={headingSmoother.smooth(riderLocation?.coords.heading ?? -1, lastLocation?.speed ?? riderLocation?.coords.speed, localPhoneHeading)}
+                                            rotation={headingSmoother.smooth(riderLocation?.coords.heading ?? -1, (lastLocation?.speed ?? riderLocation?.coords.speed) ?? undefined, localPhoneHeading ?? undefined)}
                                             speed={lastLocation?.speed ?? riderLocation?.coords.speed ?? undefined}
                                         />
                                     </MapboxGL.MapView>
@@ -2595,44 +2754,63 @@ export default function RiderDashboard() {
                     </View>
                 </Animated.View>
 
-                {/* Quick Actions */}
-                <View style={styles.actionsSection}>
-                    <View style={styles.actionsGrid}>
-                        <QuickAction
-                            icon="cube-outline"
-                            label="Box Status"
-                            subtitle={isPaired && pairedBoxId ? `Manage box ${pairedBoxId}` : 'Pair your smart box first'}
-                            onPress={() => {
-                                if (!isPaired || !pairedBoxId) {
-                                    PremiumAlert.alert('Pair Required', 'Scan your box QR to access controls.');
-                                    navigateToPairBox();
-                                    return;
-                                }
-                                openBoxControls(pairedBoxId);
-                            }}
-                            color={c.accent}
-                        />
-                        <QuickAction
-                            icon="history"
-                            label="History"
-                            subtitle="View completed and cancelled deliveries"
-                            onPress={() => navigateToRootScreen('DeliveryRecords')}
-                            color={c.accent}
-                        />
-                        <QuickAction
-                            icon="face-agent"
-                            label="Support"
-                            subtitle="Open rider help and live assistance"
-                            onPress={() => navigateToRootScreen('RiderSupport')}
-                            color={c.accent}
-                        />
-                        <QuickAction
-                            icon="cog"
-                            label="Settings"
-                            subtitle="Update app, account, and preferences"
-                            onPress={navigateToRiderSettings}
-                            color={c.accent}
-                        />
+                {/* At-a-Glance Metrics */}
+                <View style={styles.metricsSection}>
+                    <Text variant="titleMedium" style={[styles.sectionTitle, { color: c.text }]}>At a Glance</Text>
+                    <View style={styles.metricsGrid}>
+                        <Animated.View style={[styles.metricCard, actionsAnim[0].style, { backgroundColor: c.card, borderColor: c.border }]}>
+                            <View style={styles.metricHeader}>
+                                <Text numberOfLines={1} style={[styles.metricLabel, { color: c.textSec }]}>Battery ETA</Text>
+                                <MaterialCommunityIcons name={getBatteryIcon() as any} size={18} color={c.textSec} />
+                            </View>
+                            <Text style={[styles.metricValue, { color: c.text }]}>
+                                {batteryEtaLabel}
+                            </Text>
+                            <Text style={[styles.metricHint, { color: c.textSec }]}>
+                                {batteryState?.percentage != null
+                                    ? `${batteryState.percentage}% remaining (to 10%)`
+                                    : 'Waiting for live battery data'}
+                            </Text>
+                        </Animated.View>
+
+                        <Animated.View style={[styles.metricCard, actionsAnim[1].style, { backgroundColor: c.card, borderColor: c.border }]}>
+                            <View style={styles.metricHeader}>
+                                <Text numberOfLines={1} style={[styles.metricLabel, { color: c.textSec }]}>Online Time</Text>
+                                <MaterialCommunityIcons name="timer-outline" size={18} color={c.textSec} />
+                            </View>
+                            <Text style={[styles.metricValue, { color: c.text }]} numberOfLines={1}>
+                                {onlineSessionLabel}
+                            </Text>
+                            <Text style={[styles.metricHint, { color: c.textSec }]} numberOfLines={1}>
+                                {isOnline ? 'Current online session' : 'Go online to start timer'}
+                            </Text>
+                        </Animated.View>
+
+                        <Animated.View style={[styles.metricCard, actionsAnim[2].style, { backgroundColor: c.card, borderColor: c.border }]}>
+                            <View style={styles.metricHeader}>
+                                <Text numberOfLines={1} style={[styles.metricLabel, { color: c.textSec }]}>Distance</Text>
+                                <MaterialCommunityIcons name="map-marker-distance" size={18} color={c.textSec} />
+                            </View>
+                            <Text style={[styles.metricValue, { color: c.text }]}>
+                                {travelledLabel}
+                            </Text>
+                            <Text style={[styles.metricHint, { color: c.textSec }]} numberOfLines={1}>
+                                {isOnline ? 'Accumulated this session' : 'Resets when offline'}
+                            </Text>
+                        </Animated.View>
+
+                        <Animated.View style={[styles.metricCard, actionsAnim[3].style, { backgroundColor: c.card, borderColor: c.border }]}>
+                            <View style={styles.metricHeader}>
+                                <Text numberOfLines={1} style={[styles.metricLabel, { color: c.textSec }]}>Nearby Demand</Text>
+                                <MaterialCommunityIcons name="radar" size={18} color={c.textSec} />
+                            </View>
+                            <Text style={[styles.metricValue, { color: c.text }]}>
+                                {nearbyDemandMetric.value}
+                            </Text>
+                            <Text style={[styles.metricHint, { color: c.textSec }]}>
+                                {nearbyDemandMetric.hint}
+                            </Text>
+                        </Animated.View>
                     </View>
                 </View>
 
@@ -2691,7 +2869,7 @@ export default function RiderDashboard() {
                                         <AnimatedRiderMarker
                                             latitude={lastLocation ? lastLocation.latitude : riderLocation!.coords.latitude}
                                             longitude={lastLocation ? lastLocation.longitude : riderLocation!.coords.longitude}
-                                            rotation={headingSmoother.smooth(riderLocation?.coords.heading ?? -1, lastLocation?.speed ?? riderLocation?.coords.speed, localPhoneHeading)}
+                                            rotation={headingSmoother.smooth(riderLocation?.coords.heading ?? -1, (lastLocation?.speed ?? riderLocation?.coords.speed) ?? undefined, localPhoneHeading ?? undefined)}
                                             speed={lastLocation?.speed ?? riderLocation?.coords.speed ?? undefined}
                                         />
 
@@ -3487,38 +3665,43 @@ const styles = StyleSheet.create({
         height: 1,
         marginVertical: 8,
     },
-    actionsGrid: {
+    metricsSection: {
+        marginBottom: 8,
+    },
+    metricsGrid: {
         flexDirection: 'row',
         flexWrap: 'wrap',
         justifyContent: 'space-between',
-        marginBottom: 24,
     },
-    actionsSection: {
-        marginBottom: 6,
-        zIndex: 8,
-        elevation: 8,
-    },
-    actionCard: {
+    metricCard: {
         width: '48.5%',
-        minHeight: 112,
         borderRadius: 14,
         borderWidth: 1,
         paddingHorizontal: 12,
         paddingVertical: 10,
         marginBottom: 10,
     },
-    actionTopRow: {
+    metricHeader: {
         flexDirection: 'row',
         alignItems: 'center',
-        justifyContent: 'space-between',
-        marginBottom: 10,
+        marginBottom: 8,
     },
-    actionIcon: {
-        width: 36,
-        height: 36,
-        borderRadius: 12,
-        justifyContent: 'center',
-        alignItems: 'center',
+    metricLabel: {
+        fontSize: 11,
+        fontFamily: 'Inter_500Medium',
+        textTransform: 'uppercase',
+        letterSpacing: 0.5,
+        flexShrink: 1,
+        marginRight: 8,
+    },
+    metricValue: {
+        fontSize: 16,
+        fontFamily: 'Inter_700Bold',
+        marginBottom: 4,
+    },
+    metricHint: {
+        fontSize: 11,
+        fontFamily: 'Inter_500Medium',
     },
     header: {
         flexDirection: 'row',
@@ -3528,16 +3711,6 @@ const styles = StyleSheet.create({
         paddingBottom: 20,
         borderBottomLeftRadius: 30,
         borderBottomRightRadius: 30,
-    },
-    actionTitle: {
-        fontSize: 14,
-        fontFamily: 'Inter_700Bold',
-        marginBottom: 4,
-    },
-    actionSubtitle: {
-        fontSize: 11,
-        lineHeight: 15,
-        fontFamily: 'Inter_500Medium',
     },
     unlockContainer: {
         flexDirection: 'row',

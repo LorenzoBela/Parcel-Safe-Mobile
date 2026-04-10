@@ -8,11 +8,17 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 const lightC = {
     bg: '#F3F3F0',
     card: '#FFFFFF',
+    surfaceSoft: '#F8F8F5',
     border: '#DEDED8',
     text: '#121212',
     textSec: '#64645F',
     accent: '#121212',
     accentText: '#FFFFFF',
+    inputBg: '#FBFBF9',
+    inputBorder: '#D7D7D1',
+    inputActive: '#121212',
+    inputMuted: '#8A8A84',
+    shadow: '#000000',
     chipBg: '#ECECE8',
     success: '#2E7D32',
     danger: '#D32F2F',
@@ -21,11 +27,17 @@ const lightC = {
 const darkC = {
     bg: '#090909',
     card: '#121212',
+    surfaceSoft: '#171717',
     border: '#2A2A2A',
     text: '#F4F4F4',
     textSec: '#B2B2B2',
     accent: '#FFFFFF',
     accentText: '#000000',
+    inputBg: '#151515',
+    inputBorder: '#2C2C2C',
+    inputActive: '#F4F4F4',
+    inputMuted: '#878787',
+    shadow: '#000000',
     chipBg: '#171717',
     success: '#8DD5A0',
     danger: '#FF7C7C',
@@ -77,6 +89,7 @@ export default function AdminSettingsScreen() {
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
     const [saving, setSaving] = useState(false);
+    const [activeInput, setActiveInput] = useState<NumericSettingKey | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [notice, setNotice] = useState<string | null>(null);
 
@@ -129,6 +142,63 @@ export default function AdminSettingsScreen() {
             ...prev,
             [key]: value,
         }));
+    };
+
+    const renderNumericField = (
+        key: NumericSettingKey,
+        label: string,
+        hint: string,
+        unit?: string,
+    ) => {
+        const isFocused = activeInput === key;
+
+        return (
+            <View
+                style={[
+                    styles.inputShell,
+                    {
+                        backgroundColor: c.inputBg,
+                        borderColor: isFocused ? c.inputActive : c.inputBorder,
+                        shadowColor: c.shadow,
+                    },
+                ]}
+            >
+                <View style={styles.inputTopRow}>
+                    <Text style={[styles.inputMeta, { color: c.textSec }]}>{label}</Text>
+                </View>
+
+                <TextInput
+                    mode="outlined"
+                    dense
+                    keyboardType="numeric"
+                    value={numericDraft[key]}
+                    onFocus={() => setActiveInput(key)}
+                    onBlur={() => setActiveInput((prev) => (prev === key ? null : prev))}
+                    onChangeText={(v) => updateNumber(key, v)}
+                    placeholder="Type a number"
+                    placeholderTextColor={c.inputMuted}
+                    style={[styles.premiumInput, { backgroundColor: c.inputBg }]}
+                    contentStyle={styles.premiumInputContent}
+                    outlineColor="transparent"
+                    activeOutlineColor="transparent"
+                    textColor={c.text}
+                    selectionColor={c.accent}
+                    theme={{
+                        roundness: 14,
+                        colors: {
+                            background: c.inputBg,
+                            onSurfaceVariant: c.inputMuted,
+                            primary: c.inputActive,
+                        },
+                    }}
+                    right={
+                        unit ? <TextInput.Affix text={unit} textStyle={styles.inputAffix} /> : undefined
+                    }
+                />
+
+                <Text style={[styles.inputHint, { color: c.textSec }]}>{hint}</Text>
+            </View>
+        );
     };
 
     const summary = useMemo(() => {
@@ -236,17 +306,17 @@ export default function AdminSettingsScreen() {
                 >
                     <View style={styles.summaryRow}>
                         <View style={[styles.summaryCard, { backgroundColor: c.card, borderColor: c.border }]}>
-                            <Text style={[styles.summaryLabel, { color: c.textSec }]}>MAINTENANCE</Text>
+                            <Text numberOfLines={1} style={[styles.summaryLabel, { color: c.textSec }]}>MAINT.</Text>
                             <Text style={[styles.summaryValue, { color: c.text }]}>{summary.maintenance}</Text>
                         </View>
 
                         <View style={[styles.summaryCard, { backgroundColor: c.card, borderColor: c.border }]}>
-                            <Text style={[styles.summaryLabel, { color: c.textSec }]}>MAX OTP</Text>
+                            <Text numberOfLines={1} style={[styles.summaryLabel, { color: c.textSec }]}>MAX OTP</Text>
                             <Text style={[styles.summaryValue, { color: c.text }]}>{summary.otp}</Text>
                         </View>
 
                         <View style={[styles.summaryCard, { backgroundColor: c.card, borderColor: c.border }]}>
-                            <Text style={[styles.summaryLabel, { color: c.textSec }]}>GEOFENCE</Text>
+                            <Text numberOfLines={1} style={[styles.summaryLabel, { color: c.textSec }]}>GEOFENCE</Text>
                             <Text style={[styles.summaryValue, { color: c.text }]}>{summary.radius}</Text>
                         </View>
                     </View>
@@ -273,51 +343,41 @@ export default function AdminSettingsScreen() {
                     <View style={[styles.card, { backgroundColor: c.card, borderColor: c.border }]}> 
                         <Text style={[styles.sectionTitle, { color: c.text }]}>OTP Security</Text>
 
-                        <TextInput
-                            mode="outlined"
-                            label="Max OTP Attempts"
-                            keyboardType="numeric"
-                            value={numericDraft.max_otp_attempts}
-                            onChangeText={(v) => updateNumber('max_otp_attempts', v)}
-                            style={styles.input}
-                        />
-                        <TextInput
-                            mode="outlined"
-                            label="OTP Validity (minutes)"
-                            keyboardType="numeric"
-                            value={numericDraft.otp_validity_minutes}
-                            onChangeText={(v) => updateNumber('otp_validity_minutes', v)}
-                            style={styles.input}
-                        />
+                        {renderNumericField(
+                            'max_otp_attempts',
+                            'Max OTP Attempts',
+                            'Maximum retries before lockout is enforced.',
+                            'tries',
+                        )}
+                        {renderNumericField(
+                            'otp_validity_minutes',
+                            'OTP Validity',
+                            'How long each OTP remains valid.',
+                            'min',
+                        )}
                     </View>
 
                     <View style={[styles.card, { backgroundColor: c.card, borderColor: c.border }]}> 
                         <Text style={[styles.sectionTitle, { color: c.text }]}>Geo & Battery</Text>
 
-                        <TextInput
-                            mode="outlined"
-                            label="Geofence Radius (meters)"
-                            keyboardType="numeric"
-                            value={numericDraft.geofence_radius}
-                            onChangeText={(v) => updateNumber('geofence_radius', v)}
-                            style={styles.input}
-                        />
-                        <TextInput
-                            mode="outlined"
-                            label="Battery Warning Threshold (%)"
-                            keyboardType="numeric"
-                            value={numericDraft.battery_warning_threshold}
-                            onChangeText={(v) => updateNumber('battery_warning_threshold', v)}
-                            style={styles.input}
-                        />
-                        <TextInput
-                            mode="outlined"
-                            label="Battery Critical Threshold (%)"
-                            keyboardType="numeric"
-                            value={numericDraft.battery_critical_threshold}
-                            onChangeText={(v) => updateNumber('battery_critical_threshold', v)}
-                            style={styles.input}
-                        />
+                        {renderNumericField(
+                            'geofence_radius',
+                            'Geofence Radius',
+                            'Distance from the box before out-of-zone events trigger.',
+                            'm',
+                        )}
+                        {renderNumericField(
+                            'battery_warning_threshold',
+                            'Battery Warning Threshold',
+                            'Warning signal threshold for operators and users.',
+                            '%',
+                        )}
+                        {renderNumericField(
+                            'battery_critical_threshold',
+                            'Battery Critical Threshold',
+                            'Critical signal threshold for urgent handling.',
+                            '%',
+                        )}
 
                         <View style={[styles.infoStrip, { backgroundColor: c.chipBg, borderColor: c.border }]}> 
                             <Text style={[styles.infoStripText, { color: c.textSec }]}>Critical threshold should stay lower than warning threshold.</Text>
@@ -384,9 +444,10 @@ const styles = StyleSheet.create({
         marginBottom: 10,
     },
     sectionTitle: {
-        fontSize: 14,
+        fontSize: 15,
         fontFamily: 'Inter_700Bold',
-        marginBottom: 8,
+        marginBottom: 10,
+        letterSpacing: 0.2,
     },
     switchRow: {
         flexDirection: 'row',
@@ -395,7 +456,47 @@ const styles = StyleSheet.create({
     },
     fieldLabel: { fontSize: 14, fontFamily: 'Inter_600SemiBold' },
     help: { fontSize: 12, marginTop: 2 },
-    input: { marginBottom: 8 },
+    inputShell: {
+        borderWidth: 1,
+        borderRadius: 16,
+        paddingHorizontal: 10,
+        paddingTop: 10,
+        paddingBottom: 10,
+        marginBottom: 10,
+        shadowOffset: { width: 0, height: 6 },
+        shadowOpacity: 0.08,
+        shadowRadius: 10,
+        elevation: 1,
+    },
+    inputTopRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        marginBottom: 4,
+    },
+    inputMeta: {
+        fontSize: 11,
+        fontFamily: 'Inter_600SemiBold',
+        letterSpacing: 0.7,
+        textTransform: 'uppercase',
+    },
+    premiumInput: {
+        height: 46,
+        marginBottom: 5,
+    },
+    premiumInputContent: {
+        fontSize: 16,
+        fontFamily: 'Inter_600SemiBold',
+        paddingHorizontal: 4,
+    },
+    inputAffix: {
+        fontSize: 12,
+        fontFamily: 'Inter_500Medium',
+        opacity: 0.8,
+    },
+    inputHint: {
+        fontSize: 12,
+        fontFamily: 'Inter_500Medium',
+    },
     infoStrip: {
         borderWidth: StyleSheet.hairlineWidth,
         borderRadius: 10,

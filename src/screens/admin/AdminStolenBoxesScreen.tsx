@@ -22,6 +22,7 @@ type StolenRow = {
     boxId: string;
     state: string;
     locked: boolean;
+    tampered: boolean;
     lat?: number;
     lng?: number;
     updatedAt?: number;
@@ -130,19 +131,22 @@ export default function AdminStolenBoxesScreen() {
         const source = hardware || {};
         return Object.entries(source)
             .map(([boxId, hw]) => {
-                const state = String(hw.theft_state || 'NORMAL').toUpperCase();
+                const theftState = String(hw.theft_state || 'NORMAL').toUpperCase();
                 const locked = Boolean(hw.tamper?.lockdown);
+                const tampered = Boolean(hw.tamper?.detected);
+                const state = theftState === 'NORMAL' && tampered ? 'TAMPER' : theftState;
                 const loc = locations?.[boxId];
                 return {
                     boxId,
                     state,
                     locked,
+                    tampered,
                     lat: loc?.latitude,
                     lng: loc?.longitude,
                     updatedAt: typeof loc?.timestamp === 'number' ? loc.timestamp : hw.last_updated,
                 };
             })
-            .filter((item) => ALERT_STATES.has(item.state) || item.locked)
+            .filter((item) => ALERT_STATES.has(item.state) || item.locked || item.tampered)
             .sort((a, b) => a.boxId.localeCompare(b.boxId));
     }, [hardware, locations]);
 
@@ -209,6 +213,7 @@ export default function AdminStolenBoxesScreen() {
             properties: {
                 id: item.boxId,
                 selected: item.boxId === selectedBoxId,
+                state: item.state,
             },
             geometry: {
                 type: 'Point',
@@ -258,7 +263,7 @@ export default function AdminStolenBoxesScreen() {
         if (state === 'LOCKDOWN' || state === 'STOLEN') {
             return { bg: c.badgeDanger, text: c.badgeDangerText };
         }
-        if (state === 'SUSPICIOUS') {
+        if (state === 'SUSPICIOUS' || state === 'TAMPER') {
             return { bg: c.badgeWarn, text: c.badgeWarnText };
         }
         return { bg: c.badgeNeutral, text: c.badgeNeutralText };
@@ -288,9 +293,10 @@ export default function AdminStolenBoxesScreen() {
 
                 <View style={[styles.mapFrame, { borderColor: c.border }]}> 
                     {MAPBOX_TOKEN ? (
-                        mapRows.length > 0 ? (
+                        <View style={styles.mapLayerWrap}>
                             <MapboxGL.MapView
                                 style={StyleSheet.absoluteFillObject}
+                                styleURL={isDarkMode ? MapboxGL.StyleURL.Dark : MapboxGL.StyleURL.Street}
                                 logoEnabled={false}
                                 attributionEnabled={false}
                             >
@@ -313,43 +319,57 @@ export default function AdminStolenBoxesScreen() {
                                     </MapboxGL.ShapeSource>
                                 ) : null}
 
-                                <MapboxGL.ShapeSource
-                                    id="stolen-markers-source"
-                                    shape={markerFeatureCollection as any}
-                                    onPress={(event: any) => {
-                                        const feature = event?.features?.[0];
-                                        const id = feature?.properties?.id;
-                                        if (typeof id === 'string' && id.length > 0) {
-                                            focusOnBox(id, false);
-                                        }
-                                    }}
-                                >
-                                    <MapboxGL.CircleLayer
-                                        id="stolen-markers-layer"
-                                        style={{
-                                            circleColor: [
-                                                'case',
-                                                ['==', ['get', 'id'], selectedBoxId || ''],
-                                                c.danger,
-                                                c.warn,
-                                            ],
-                                            circleRadius: [
-                                                'case',
-                                                ['==', ['get', 'id'], selectedBoxId || ''],
-                                                10,
-                                                7,
-                                            ],
-                                            circleStrokeWidth: 2,
-                                            circleStrokeColor: isDarkMode ? '#000000' : '#FFFFFF',
-                                        } as any}
-                                    />
-                                </MapboxGL.ShapeSource>
+                                {mapRows.length > 0 ? (
+                                    <MapboxGL.ShapeSource
+                                        id="stolen-markers-source"
+                                        shape={markerFeatureCollection as any}
+                                        onPress={(event: any) => {
+                                            const feature = event?.features?.[0];
+                                            const id = feature?.properties?.id;
+                                            if (typeof id === 'string' && id.length > 0) {
+                                                focusOnBox(id, false);
+                                            }
+                                        }}
+                                    >
+                                        <MapboxGL.CircleLayer
+                                            id="stolen-markers-layer"
+                                            style={{
+                                                circleColor: [
+                                                    'case',
+                                                    ['==', ['get', 'id'], selectedBoxId || ''],
+                                                    c.danger,
+                                                    ['==', ['get', 'state'], 'LOCKDOWN'],
+                                                    c.danger,
+                                                    ['==', ['get', 'state'], 'STOLEN'],
+                                                    c.danger,
+                                                    c.warn,
+                                                ],
+                                                circleRadius: [
+                                                    'case',
+                                                    ['==', ['get', 'id'], selectedBoxId || ''],
+                                                    10,
+                                                    7,
+                                                ],
+                                                circleStrokeWidth: 2,
+                                                circleStrokeColor: isDarkMode ? '#000000' : '#FFFFFF',
+                                            } as any}
+                                        />
+                                    </MapboxGL.ShapeSource>
+                                ) : null}
                             </MapboxGL.MapView>
-                        ) : (
-                            <View style={[styles.mapFallback, { backgroundColor: c.mapFallback }]}>
-                                <Text style={[styles.mapFallbackText, { color: c.textSec }]}>No live coordinates available yet.</Text>
-                            </View>
-                        )
+
+                            {mapRows.length === 0 ? (
+                                <View
+                                    pointerEvents="none"
+                                    style={[
+                                        styles.mapEmptyOverlay,
+                                        { backgroundColor: isDarkMode ? 'rgba(9,9,9,0.72)' : 'rgba(243,243,240,0.76)' },
+                                    ]}
+                                >
+                                    <Text style={[styles.mapFallbackText, { color: c.textSec }]}>No live coordinates available yet.</Text>
+                                </View>
+                            ) : null}
+                        </View>
                     ) : (
                         <View style={[styles.mapFallback, { backgroundColor: c.mapFallback }]}>
                             <Text style={[styles.mapFallbackText, { color: c.textSec }]}>Map unavailable: set EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN.</Text>
@@ -483,6 +503,15 @@ const styles = StyleSheet.create({
     },
     mapFallback: {
         flex: 1,
+        justifyContent: 'center',
+        alignItems: 'center',
+        paddingHorizontal: 16,
+    },
+    mapLayerWrap: {
+        flex: 1,
+    },
+    mapEmptyOverlay: {
+        ...StyleSheet.absoluteFillObject,
         justifyContent: 'center',
         alignItems: 'center',
         paddingHorizontal: 16,

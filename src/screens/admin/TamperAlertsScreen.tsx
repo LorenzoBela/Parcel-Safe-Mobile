@@ -200,6 +200,7 @@ export default function TamperAlertsScreen() {
                 {MAPBOX_TOKEN ? (
                     <MapboxGL.MapView
                         style={StyleSheet.absoluteFillObject}
+                        styleURL={isDarkMode ? MapboxGL.StyleURL.Dark : MapboxGL.StyleURL.Street}
                         logoEnabled={false}
                         attributionEnabled={false}
                         onPress={() => setSelectedBoxId(null)}

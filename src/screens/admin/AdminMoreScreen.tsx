@@ -150,6 +150,13 @@ export default function AdminMoreScreen() {
             icon: 'chart-timeline-variant',
             onPress: () => navigation.navigate('AdminInsightsTab', { screen: 'InsightsTrackingHistory' }),
         },
+        {
+            key: 'reports',
+            title: 'Reports & Analytics',
+            subtitle: 'Review KPI trends, status mix, and rider leaderboard',
+            icon: 'chart-box-outline',
+            onPress: () => navigation.navigate('AdminInsightsTab', { screen: 'InsightsReportsAnalytics' }),
+        },
     ];
 
     return (

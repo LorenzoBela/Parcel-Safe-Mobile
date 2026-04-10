@@ -22,9 +22,10 @@ function buildGeofenceCircleGeoJSON(
 }
 import { View, Animated, StyleSheet, ScrollView, Image, Dimensions, Linking } from 'react-native';
 import { useEntryAnimation } from '../../hooks/useEntryAnimation';
-import { Text, Card, Button, useTheme, Chip, Surface, IconButton } from 'react-native-paper';
+import { Text, Card, Button, Chip, Surface, IconButton } from 'react-native-paper';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import MapboxGL, { isMapboxNativeAvailable, MapFallback } from '../../components/map/MapboxWrapper';
 import { supabase } from '../../services/supabaseClient';
 import { subscribeToDeliveryProof, subscribeToPhotoAuditLog } from '../../services/firebaseClient';
@@ -57,13 +58,30 @@ const deg2rad = (deg: number) => {
 export default function DeliveryDetailScreen() {
     const navigation = useNavigation<any>();
     const route = useRoute<any>();
-    const theme = useTheme();
+    const insets = useSafeAreaInsets();
     const { isDarkMode } = useAppTheme();
     const c = {
-        background: isDarkMode ? '#121212' : '#F7F9FC',
-        text: isDarkMode ? '#ffffff' : '#1a1a1a',
-        card: isDarkMode ? '#1e1e1e' : '#ffffff',
-        border: isDarkMode ? '#27272a' : '#e5e7eb',
+        background: isDarkMode ? '#0B0B0B' : '#F3F3F0',
+        text: isDarkMode ? '#F2F2F2' : '#111111',
+        textSec: isDarkMode ? '#A5A5A5' : '#666661',
+        card: isDarkMode ? '#151515' : '#FFFFFF',
+        border: isDarkMode ? '#2A2A2A' : '#D8D8D2',
+        routeLine: isDarkMode ? '#D6D6D6' : '#2B2B2B',
+        markerPickup: isDarkMode ? '#6E6E6E' : '#616161',
+        markerDropoff: isDarkMode ? '#D0D0D0' : '#1C1C1C',
+        markerIcon: isDarkMode ? '#0D0D0D' : '#FFFFFF',
+        pickupFenceFill: isDarkMode ? '#8A8A8A' : '#878787',
+        pickupFenceLine: isDarkMode ? '#B4B4B4' : '#666666',
+        dropoffFenceFill: isDarkMode ? '#5A5A5A' : '#585858',
+        dropoffFenceLine: isDarkMode ? '#8E8E8E' : '#373737',
+        chipText: isDarkMode ? '#101010' : '#FFFFFF',
+        noteBg: isDarkMode ? '#1C1C1C' : '#F0F0EB',
+        alertBg: '#1E1E1E',
+        alertText: '#F2F2F2',
+        buttonBg: isDarkMode ? '#EAEAEA' : '#141414',
+        buttonText: isDarkMode ? '#111111' : '#FFFFFF',
+        icon: isDarkMode ? '#D0D0D0' : '#2C2C2C',
+        iconButtonBg: isDarkMode ? '#232323' : '#ECECE7',
     };
     const { delivery } = route.params;
     console.log('[DeliveryDetail] Received delivery params:', JSON.stringify(delivery, null, 2));
@@ -249,25 +267,53 @@ export default function DeliveryDetailScreen() {
         longitudeDelta: 0.01,
     };
 
-    const getStatusColor = (status) => {
-        switch (status) {
-            case 'Delivered': return '#4CAF50';
-            case 'In Transit': return '#2196F3';
-            case 'Cancelled': return '#9E9E9E';
-            case 'Tampered': return '#D32F2F';
-            default: return '#9E9E9E';
+    const getStatusTone = (status: string) => {
+        const normalized = String(status || '').toLowerCase().replace(/_/g, ' ');
+
+        if (normalized.includes('delivered') || normalized.includes('completed')) {
+            return {
+                bg: isDarkMode ? '#2F2F2F' : '#1E1E1E',
+                fg: '#F3F3F3',
+            };
         }
+
+        if (normalized.includes('in transit')) {
+            return {
+                bg: isDarkMode ? '#3A3A3A' : '#2A2A2A',
+                fg: '#F3F3F3',
+            };
+        }
+
+        if (normalized.includes('cancel')) {
+            return {
+                bg: isDarkMode ? '#444444' : '#353535',
+                fg: '#F3F3F3',
+            };
+        }
+
+        if (normalized.includes('tamper')) {
+            return {
+                bg: isDarkMode ? '#505050' : '#404040',
+                fg: '#F3F3F3',
+            };
+        }
+
+        return {
+            bg: isDarkMode ? '#3C3C3C' : '#2F2F2F',
+            fg: '#F3F3F3',
+        };
     };
 
-    const getStatusIcon = (status) => {
-        switch (status) {
-            case 'Delivered': return 'check-circle';
-            case 'In Transit': return 'truck-delivery';
-            case 'Cancelled': return 'close-circle';
-            case 'Tampered': return 'alert-circle';
-            default: return 'help-circle';
-        }
+    const getStatusIcon = (status: string) => {
+        const normalized = String(status || '').toLowerCase().replace(/_/g, ' ');
+        if (normalized.includes('delivered') || normalized.includes('completed')) return 'check-circle';
+        if (normalized.includes('in transit')) return 'truck-delivery';
+        if (normalized.includes('cancel')) return 'close-circle';
+        if (normalized.includes('tamper')) return 'alert-circle';
+        return 'help-circle';
     };
+
+    const statusTone = useMemo(() => getStatusTone(deliveryData.status), [deliveryData.status, isDarkMode]);
 
     const formatStatus = (status: string) => {
         if (!status) return 'N/A';
@@ -345,7 +391,7 @@ export default function DeliveryDetailScreen() {
 
     return (
         <Animated.View style={[styles.container, screenAnim.style, { backgroundColor: c.background }]}>
-            <View style={[styles.header, { backgroundColor: c.card }]}>
+            <View style={[styles.header, { backgroundColor: c.card, paddingTop: Math.max(insets.top, 8) }]}>
                 <IconButton icon="arrow-left" onPress={() => navigation.goBack()} iconColor={c.text} />
                 <Text variant="titleLarge" style={[styles.headerTitle, { color: c.text }]}>Delivery Details</Text>
                 <View style={{ width: 48 }} />
@@ -357,7 +403,7 @@ export default function DeliveryDetailScreen() {
             >
                 {/* Map Section */}
                 <View
-                    style={styles.mapContainer}
+                    style={[styles.mapContainer, { backgroundColor: c.card, borderColor: c.border }]}
                     onTouchStart={() => setScrollEnabled(false)}
                     onTouchEnd={() => setScrollEnabled(true)}
                 >
@@ -394,7 +440,7 @@ export default function DeliveryDetailScreen() {
                                         <MapboxGL.LineLayer
                                             id="delivery-route-line"
                                             style={{
-                                                lineColor: theme.colors.primary,
+                                                lineColor: c.routeLine,
                                                 lineWidth: 4,
                                                 lineOpacity: 0.8,
                                             }}
@@ -413,13 +459,13 @@ export default function DeliveryDetailScreen() {
                                             width: 24,
                                             height: 24,
                                             borderRadius: 12,
-                                            backgroundColor: '#4CAF50',
+                                            backgroundColor: c.markerDropoff,
                                             borderWidth: 2,
-                                            borderColor: 'white',
+                                            borderColor: c.card,
                                             alignItems: 'center',
                                             justifyContent: 'center'
                                         }}>
-                                            <MaterialCommunityIcons name="flag-checkered" size={14} color="white" />
+                                            <MaterialCommunityIcons name="flag-checkered" size={14} color={c.markerIcon} />
                                         </View>
                                     </MapboxGL.PointAnnotation>
                                 )}
@@ -435,13 +481,13 @@ export default function DeliveryDetailScreen() {
                                             width: 24,
                                             height: 24,
                                             borderRadius: 12,
-                                            backgroundColor: '#2196F3',
+                                            backgroundColor: c.markerPickup,
                                             borderWidth: 2,
-                                            borderColor: 'white',
+                                            borderColor: c.card,
                                             alignItems: 'center',
                                             justifyContent: 'center'
                                         }}>
-                                            <MaterialCommunityIcons name="package-variant" size={14} color="white" />
+                                            <MaterialCommunityIcons name="package-variant" size={14} color={c.markerIcon} />
                                         </View>
                                     </MapboxGL.PointAnnotation>
                                 )}
@@ -453,14 +499,14 @@ export default function DeliveryDetailScreen() {
                                         <MapboxGL.FillLayer
                                             id="pickup-fence-fill"
                                             style={{
-                                                fillColor: '#2196F3', // Solid blue
+                                                fillColor: c.pickupFenceFill,
                                                 fillOpacity: 0.2, // 20% opacity
                                             }}
                                         />
                                         <MapboxGL.LineLayer
                                             id="pickup-fence-outline"
                                             style={{
-                                                lineColor: '#2196F3',
+                                                lineColor: c.pickupFenceLine,
                                                 lineWidth: 2,
                                                 lineOpacity: 0.8,
                                             }}
@@ -474,14 +520,14 @@ export default function DeliveryDetailScreen() {
                                         <MapboxGL.FillLayer
                                             id="dropoff-fence-fill"
                                             style={{
-                                                fillColor: '#4CAF50',
+                                                fillColor: c.dropoffFenceFill,
                                                 fillOpacity: 0.2,
                                             }}
                                         />
                                         <MapboxGL.LineLayer
                                             id="dropoff-fence-outline"
                                             style={{
-                                                lineColor: '#4CAF50',
+                                                lineColor: c.dropoffFenceLine,
                                                 lineWidth: 2,
                                                 lineOpacity: 0.8,
                                             }}
@@ -492,10 +538,11 @@ export default function DeliveryDetailScreen() {
                             </MapboxGL.MapView>
 
                             {/* Recenter Button */}
-                            <Surface style={styles.recenterButton} elevation={4}>
+                            <Surface style={[styles.recenterButton, { backgroundColor: c.card, borderColor: c.border }]} elevation={4}>
                                 <IconButton
                                     icon="crosshairs-gps"
                                     size={24}
+                                    iconColor={c.text}
                                     onPress={() => {
                                         if (cameraRef.current) {
                                             const pLat = Number(pickupLat);
@@ -530,8 +577,8 @@ export default function DeliveryDetailScreen() {
                             </Surface>
                         </View>
                     ) : (
-                        <View style={[styles.map, styles.mapFallback, isDarkMode && { backgroundColor: '#1e1e1e' }]}>
-                            <Text style={{ color: theme.colors.onSurfaceVariant }}>
+                        <View style={[styles.map, styles.mapFallback, { backgroundColor: c.card }]}>
+                            <Text style={{ color: c.textSec }}>
                                 Map unavailable: set EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN in .env
                             </Text>
                         </View>
@@ -542,30 +589,36 @@ export default function DeliveryDetailScreen() {
                 <Surface style={[styles.statusCard, { backgroundColor: c.card }]} elevation={2}>
                     <View style={styles.statusHeader}>
                         <View style={{ flex: 1, marginRight: 10 }}>
-                            <Text variant="labelSmall" style={{ color: '#888' }}>Tracking Number</Text>
+                            <Text variant="labelSmall" style={{ color: c.textSec }}>Tracking Number</Text>
                             <Text variant="titleMedium" style={{ fontFamily: 'Inter_700Bold', color: c.text }} numberOfLines={1} ellipsizeMode="middle">{deliveryData.trk || deliveryData.tracking_number || deliveryData.id}</Text>
                         </View>
                         <Chip
-                            icon={getStatusIcon(deliveryData.status)}
-                            textStyle={{ color: 'white', fontFamily: 'Inter_700Bold' }}
-                            style={{ backgroundColor: getStatusColor(deliveryData.status) }}
+                            icon={({ size }) => (
+                                <MaterialCommunityIcons
+                                    name={getStatusIcon(deliveryData.status)}
+                                    size={size}
+                                    color={statusTone.fg}
+                                />
+                            )}
+                            textStyle={{ color: statusTone.fg, fontFamily: 'Inter_700Bold' }}
+                            style={{ backgroundColor: statusTone.bg }}
                         >
                             {formatStatus(deliveryData.status)}
                         </Chip>
                     </View>
-                    <View style={styles.divider} />
+                    <View style={[styles.divider, { backgroundColor: c.border }]} />
                     <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 8 }}>
                         <View>
-                            <Text variant="labelSmall" style={{ color: '#888' }}>Date</Text>
+                            <Text variant="labelSmall" style={{ color: c.textSec }}>Date</Text>
                             <Text variant="bodyMedium" style={{ fontFamily: 'Inter_500Medium', color: c.text }}>{deliveryData.date || deliveryData.time || 'N/A'}</Text>
                         </View>
                         <View>
-                            <Text variant="labelSmall" style={{ color: '#888' }}>Distance</Text>
+                            <Text variant="labelSmall" style={{ color: c.textSec }}>Distance</Text>
                             <Text variant="bodyMedium" style={{ fontFamily: 'Inter_500Medium', color: c.text }}>{displayDistance}</Text>
                         </View>
                         <View>
-                            <Text variant="labelSmall" style={{ color: '#888' }}>Fare</Text>
-                            <Text variant="bodyMedium" style={{ fontFamily: 'Inter_500Medium', color: theme.colors.primary }}>
+                            <Text variant="labelSmall" style={{ color: c.textSec }}>Fare</Text>
+                            <Text variant="bodyMedium" style={{ fontFamily: 'Inter_500Medium', color: c.text }}>
                                 {(() => {
                                     const fare = deliveryData.fare || deliveryData.estimated_fare || deliveryData.price;
                                     if (!fare || fare === 'N/A' || fare === '--') return 'N/A';
@@ -585,57 +638,57 @@ export default function DeliveryDetailScreen() {
                         <Text variant="titleMedium" style={[styles.sectionTitle, { color: c.text }]}>Item Details</Text>
 
                         <View style={styles.detailRow}>
-                            <MaterialCommunityIcons name="account" size={24} color={theme.colors.primary} />
+                            <MaterialCommunityIcons name="account" size={24} color={c.icon} />
                             <View style={styles.detailTextContainer}>
                                 <Text variant="bodyLarge" style={[styles.detailLabel, { color: c.text }]}>Customer Name</Text>
-                                <Text variant="bodyMedium" style={[styles.detailValue, isDarkMode && { color: '#a1a1aa' }]}>{deliveryData.customer || deliveryData.customerName || 'N/A'}</Text>
+                                <Text variant="bodyMedium" style={[styles.detailValue, { color: c.textSec }]}>{deliveryData.customer || deliveryData.customerName || 'N/A'}</Text>
                             </View>
                         </View>
 
                         {/* Sender Contact */}
                         <View style={styles.detailRow}>
-                            <MaterialCommunityIcons name="account-arrow-right" size={24} color="#2196F3" />
+                            <MaterialCommunityIcons name="account-arrow-right" size={24} color={c.icon} />
                             <View style={[styles.detailTextContainer, { flex: 1 }]}>
                                 <Text variant="bodyLarge" style={[styles.detailLabel, { color: c.text }]}>Sender</Text>
-                                <Text variant="bodyMedium" style={[styles.detailValue, isDarkMode && { color: '#a1a1aa' }]}>{deliveryData.sender_name || deliveryData.senderName || deliveryData.profiles?.full_name || 'Unknown Sender'}</Text>
+                                <Text variant="bodyMedium" style={[styles.detailValue, { color: c.textSec }]}>{deliveryData.sender_name || deliveryData.senderName || deliveryData.profiles?.full_name || 'Unknown Sender'}</Text>
                             </View>
                             {(deliveryData.sender_phone || deliveryData.senderPhone) ? (
                                 <View style={{ flexDirection: 'row' }}>
-                                    <IconButton icon="phone" size={18} mode="contained-tonal" iconColor="#1976D2" onPress={() => Linking.openURL(`tel:${deliveryData.sender_phone || deliveryData.senderPhone}`)} style={{ margin: 0, marginRight: 4 }} />
-                                    <IconButton icon="message-text" size={18} mode="contained-tonal" iconColor="#1976D2" onPress={() => Linking.openURL(`sms:${deliveryData.sender_phone || deliveryData.senderPhone}`)} style={{ margin: 0 }} />
+                                    <IconButton icon="phone" size={18} mode="contained" containerColor={c.iconButtonBg} iconColor={c.icon} onPress={() => Linking.openURL(`tel:${deliveryData.sender_phone || deliveryData.senderPhone}`)} style={{ margin: 0, marginRight: 4 }} />
+                                    <IconButton icon="message-text" size={18} mode="contained" containerColor={c.iconButtonBg} iconColor={c.icon} onPress={() => Linking.openURL(`sms:${deliveryData.sender_phone || deliveryData.senderPhone}`)} style={{ margin: 0 }} />
                                 </View>
                             ) : null}
                         </View>
 
                         {/* Recipient Contact */}
                         <View style={styles.detailRow}>
-                            <MaterialCommunityIcons name="account-arrow-left" size={24} color="#4CAF50" />
+                            <MaterialCommunityIcons name="account-arrow-left" size={24} color={c.icon} />
                             <View style={[styles.detailTextContainer, { flex: 1 }]}>
                                 <Text variant="bodyLarge" style={[styles.detailLabel, { color: c.text }]}>Recipient</Text>
-                                <Text variant="bodyMedium" style={[styles.detailValue, isDarkMode && { color: '#a1a1aa' }]}>{deliveryData.recipient_name || deliveryData.recipientName || deliveryData.customer || deliveryData.customerName || 'Unknown Recipient'}</Text>
+                                <Text variant="bodyMedium" style={[styles.detailValue, { color: c.textSec }]}>{deliveryData.recipient_name || deliveryData.recipientName || deliveryData.customer || deliveryData.customerName || 'Unknown Recipient'}</Text>
                             </View>
                             {(deliveryData.recipient_phone || deliveryData.recipientPhone || deliveryData.profiles?.phone_number) ? (
                                 <View style={{ flexDirection: 'row' }}>
-                                    <IconButton icon="phone" size={18} mode="contained-tonal" iconColor="#1976D2" onPress={() => Linking.openURL(`tel:${deliveryData.recipient_phone || deliveryData.recipientPhone || deliveryData.profiles?.phone_number}`)} style={{ margin: 0, marginRight: 4 }} />
-                                    <IconButton icon="message-text" size={18} mode="contained-tonal" iconColor="#1976D2" onPress={() => Linking.openURL(`sms:${deliveryData.recipient_phone || deliveryData.recipientPhone || deliveryData.profiles?.phone_number}`)} style={{ margin: 0 }} />
+                                    <IconButton icon="phone" size={18} mode="contained" containerColor={c.iconButtonBg} iconColor={c.icon} onPress={() => Linking.openURL(`tel:${deliveryData.recipient_phone || deliveryData.recipientPhone || deliveryData.profiles?.phone_number}`)} style={{ margin: 0, marginRight: 4 }} />
+                                    <IconButton icon="message-text" size={18} mode="contained" containerColor={c.iconButtonBg} iconColor={c.icon} onPress={() => Linking.openURL(`sms:${deliveryData.recipient_phone || deliveryData.recipientPhone || deliveryData.profiles?.phone_number}`)} style={{ margin: 0 }} />
                                 </View>
                             ) : null}
                         </View>
 
                         <View style={styles.detailRow}>
-                            <MaterialCommunityIcons name="map-marker-outline" size={24} color={theme.colors.primary} />
+                            <MaterialCommunityIcons name="map-marker-outline" size={24} color={c.icon} />
                             <View style={[styles.detailTextContainer, { flex: 1 }]}>
                                 <Text variant="bodyLarge" style={[styles.detailLabel, { color: c.text }]}>Pickup Address</Text>
-                                <Text variant="bodyMedium" style={[styles.detailValue, isDarkMode && { color: '#a1a1aa' }]}>{deliveryData.pickupAddress || deliveryData.pickup_address || 'N/A'}</Text>
+                                <Text variant="bodyMedium" style={[styles.detailValue, { color: c.textSec }]}>{deliveryData.pickupAddress || deliveryData.pickup_address || 'N/A'}</Text>
                             </View>
                         </View>
                         <View style={styles.detailRow}>
-                            <MaterialCommunityIcons name="map-marker" size={24} color={theme.colors.primary} />
+                            <MaterialCommunityIcons name="map-marker" size={24} color={c.icon} />
                             <View style={[styles.detailTextContainer, { flex: 1 }]}>
                                 <Text variant="bodyLarge" style={[styles.detailLabel, { color: c.text }]}>
                                     {deliveryData.status === 'Cancelled' ? 'Return Destination (Pickup Point)' : 'Dropoff Address'}
                                 </Text>
-                                <Text variant="bodyMedium" style={[styles.detailValue, isDarkMode && { color: '#a1a1aa' }]}>
+                                <Text variant="bodyMedium" style={[styles.detailValue, { color: c.textSec }]}>
                                     {deliveryData.status === 'Cancelled'
                                         ? (deliveryData.pickupAddress || deliveryData.pickup_address || 'N/A')
                                         : (deliveryData.dropoffAddress || deliveryData.dropoff_address || deliveryData.address || 'N/A')}
@@ -645,9 +698,9 @@ export default function DeliveryDetailScreen() {
 
                         {/* Delivery Notes */}
                         {(deliveryData.delivery_notes || deliveryData.deliveryNotes) ? (
-                            <View style={{ marginTop: 4, padding: 12, backgroundColor: '#f1f5f9', borderRadius: 8 }}>
-                                <Text variant="labelMedium" style={{ color: '#475569', marginBottom: 4 }}>Delivery Notes</Text>
-                                <Text variant="bodyMedium" style={{ color: '#334155' }}>{deliveryData.delivery_notes || deliveryData.deliveryNotes}</Text>
+                            <View style={{ marginTop: 4, padding: 12, backgroundColor: c.noteBg, borderRadius: 8, borderWidth: StyleSheet.hairlineWidth, borderColor: c.border }}>
+                                <Text variant="labelMedium" style={{ color: c.textSec, marginBottom: 4 }}>Delivery Notes</Text>
+                                <Text variant="bodyMedium" style={{ color: c.text }}>{deliveryData.delivery_notes || deliveryData.deliveryNotes}</Text>
                             </View>
                         ) : null}
                     </Card.Content>
@@ -660,13 +713,13 @@ export default function DeliveryDetailScreen() {
                         <Card style={styles.imageCard} mode="elevated">
                             <Image source={{ uri: pickupImageUri }} style={styles.proofImage} resizeMode="cover" />
                             {deliveryData.picked_up_at && (
-                                <Text style={{ padding: 10, textAlign: 'center', color: '#666', fontSize: 12 }}>
+                                <Text style={{ padding: 10, textAlign: 'center', color: c.textSec, fontSize: 12 }}>
                                     Taken on {dayjs.utc(parseUTCString(deliveryData.picked_up_at)).add(8, 'hour').format('MMM D, YYYY h:mm A')}
                                 </Text>
                             )}
                         </Card>
                     ) : (
-                        <Text style={{ color: '#888', fontStyle: 'italic', marginBottom: 20 }}>No pickup photo available.</Text>
+                        <Text style={{ color: c.textSec, fontStyle: 'italic', marginBottom: 20 }}>No pickup photo available.</Text>
                     )
                 }
 
@@ -679,23 +732,23 @@ export default function DeliveryDetailScreen() {
                         <Card style={styles.imageCard} mode="elevated">
                             <Image source={{ uri: returnImageUri || proofImageUri }} style={styles.proofImage} resizeMode="cover" />
                             {deliveryData.delivered_at && (
-                                <Text style={{ padding: 10, textAlign: 'center', color: '#666', fontSize: 12 }}>
+                                <Text style={{ padding: 10, textAlign: 'center', color: c.textSec, fontSize: 12 }}>
                                     Taken on {dayjs.utc(parseUTCString(deliveryData.delivered_at)).add(8, 'hour').format('MMM D, YYYY h:mm A')}
                                 </Text>
                             )}
                         </Card>
                     ) : (
-                        <Text style={{ color: '#888', fontStyle: 'italic', marginBottom: 20 }}>No proof of delivery image available.</Text>
+                        <Text style={{ color: c.textSec, fontStyle: 'italic', marginBottom: 20 }}>No proof of delivery image available.</Text>
                     )
                 }
 
                 {
                     deliveryData.status === 'Tampered' && (
-                        <Surface style={styles.tamperAlert} elevation={2}>
-                            <MaterialCommunityIcons name="alert-circle" size={30} color="white" />
+                        <Surface style={[styles.tamperAlert, { backgroundColor: c.alertBg, borderColor: c.border }]} elevation={2}>
+                            <MaterialCommunityIcons name="alert-circle" size={30} color={c.alertText} />
                             <View style={{ marginLeft: 12, flex: 1 }}>
-                                <Text variant="titleMedium" style={{ color: 'white', fontFamily: 'Inter_700Bold' }}>Tampering Detected</Text>
-                                <Text variant="bodySmall" style={{ color: 'white' }}>
+                                <Text variant="titleMedium" style={{ color: c.alertText, fontFamily: 'Inter_700Bold' }}>Tampering Detected</Text>
+                                <Text variant="bodySmall" style={{ color: c.alertText }}>
                                     This package showed signs of unauthorized access. Please contact support immediately.
                                 </Text>
                             </View>
@@ -703,7 +756,7 @@ export default function DeliveryDetailScreen() {
                     )
                 }
 
-                <Button mode="contained" style={styles.supportButton} onPress={() => console.log('Contact Support')}>
+                <Button mode="contained" style={styles.supportButton} buttonColor={c.buttonBg} textColor={c.buttonText} onPress={() => console.log('Contact Support')}>
                     Contact Support
                 </Button>
             </ScrollView >
@@ -720,7 +773,6 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'space-between',
-        paddingTop: 40,
         paddingBottom: 10,
         paddingHorizontal: 10,
         backgroundColor: 'white',
@@ -740,6 +792,7 @@ const styles = StyleSheet.create({
         marginBottom: 20,
         elevation: 3,
         backgroundColor: 'white',
+        borderWidth: StyleSheet.hairlineWidth,
     },
     map: {
         ...StyleSheet.absoluteFillObject,
@@ -816,12 +869,12 @@ const styles = StyleSheet.create({
         height: 250,
     },
     tamperAlert: {
-        backgroundColor: '#D32F2F',
         padding: 16,
         borderRadius: 12,
         flexDirection: 'row',
         alignItems: 'center',
         marginBottom: 20,
+        borderWidth: StyleSheet.hairlineWidth,
     },
     supportButton: {
         marginTop: 10,
@@ -836,6 +889,7 @@ const styles = StyleSheet.create({
         right: 16,
         bottom: 16,
         backgroundColor: 'white',
+        borderWidth: StyleSheet.hairlineWidth,
         borderRadius: 24,
         width: 48,
         height: 48,

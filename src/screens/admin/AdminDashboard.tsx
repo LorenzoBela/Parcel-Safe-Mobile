@@ -389,6 +389,7 @@ export default function AdminDashboard() {
         { icon: 'shield-alert-outline', label: 'Stolen', onPress: () => navigation.navigate('AdminSecurityTab', { screen: 'SecurityStolenBoxes' }) },
         { icon: 'timer-alert-outline', label: 'Edge Cases', onPress: () => navigation.navigate('AdminOperationsTab', { screen: 'OpsEdgeCases' }) },
         { icon: 'chart-timeline-variant', label: 'Tracking', onPress: () => navigation.navigate('AdminInsightsTab', { screen: 'InsightsTrackingHistory' }) },
+        { icon: 'chart-box-outline', label: 'Reports', onPress: () => navigation.navigate('AdminInsightsTab', { screen: 'InsightsReportsAnalytics' }) },
         { icon: 'account-group-outline', label: 'Users', onPress: () => navigation.navigate('AdminMoreTab', { screen: 'MoreUsers' }) },
         { icon: 'lock-open-variant-outline', label: 'Unlock Box', onPress: () => navigation.navigate('AdminRemoteUnlock') },
         { icon: 'check-circle-outline', label: 'Complete Del.', onPress: () => setOverrideModalVisible(true) },

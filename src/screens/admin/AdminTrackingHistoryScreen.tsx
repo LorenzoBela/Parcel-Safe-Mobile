@@ -3,13 +3,15 @@ import {
     ActivityIndicator,
     FlatList,
     Modal,
+    Platform,
     RefreshControl,
     ScrollView,
     StyleSheet,
     TouchableOpacity,
     View,
 } from 'react-native';
-import { Chip, Searchbar, Text } from 'react-native-paper';
+import { Searchbar, Text } from 'react-native-paper';
+import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import { listTrackingHistorySessions, TrackingHistorySession } from '../../services/adminApiService';
 import { useAppTheme } from '../../context/ThemeContext';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -24,6 +26,25 @@ const lightC = {
     textSec: '#64645F',
     chipBg: '#ECECE8',
     chipBorder: '#D9D9D2',
+    filterPanel: '#F8F8F5',
+    rangeRail: '#EEEEE9',
+    rangeRailBorder: '#DCDCD5',
+    rangePill: '#F7F7F3',
+    rangePillBorder: '#D5D5CE',
+    rangePillActive: '#121212',
+    rangePillActiveText: '#FFFFFF',
+    rangePillText: '#4D4D47',
+    searchBg: '#F8F8F4',
+    searchBorder: '#D9D9D2',
+    boxPill: '#F2F2ED',
+    boxPillBorder: '#D7D7D0',
+    boxPillActive: '#151515',
+    boxPillActiveText: '#FFFFFF',
+    boxPillText: '#44443F',
+    countBadgeBg: '#E9E9E3',
+    countBadgeText: '#34342F',
+    resetBg: '#ECECE8',
+    resetText: '#2F2F2A',
     routeCombined: '#1E6FDB',
     routeBox: '#2E7D32',
     routePhone: '#FB8C00',
@@ -40,6 +61,25 @@ const darkC = {
     textSec: '#B2B2B2',
     chipBg: '#171717',
     chipBorder: '#2A2A2A',
+    filterPanel: '#151515',
+    rangeRail: '#1F1F1F',
+    rangeRailBorder: '#303030',
+    rangePill: '#232323',
+    rangePillBorder: '#353535',
+    rangePillActive: '#F0F0F0',
+    rangePillActiveText: '#111111',
+    rangePillText: '#CBCBCB',
+    searchBg: '#1B1B1B',
+    searchBorder: '#303030',
+    boxPill: '#202020',
+    boxPillBorder: '#323232',
+    boxPillActive: '#E9E9E9',
+    boxPillActiveText: '#101010',
+    boxPillText: '#C8C8C8',
+    countBadgeBg: '#222222',
+    countBadgeText: '#D6D6D6',
+    resetBg: '#1F1F1F',
+    resetText: '#D0D0D0',
     routeCombined: '#6BA3FF',
     routeBox: '#7FCB86',
     routePhone: '#FFB55F',
@@ -51,6 +91,7 @@ const darkC = {
 const DAY_PRESETS = [7, 14, 30, 90] as const;
 const DEFAULT_CENTER: [number, number] = [121.0244, 14.5547];
 const MAPBOX_TOKEN = process.env.EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN;
+const PAGE_SIZE = 8;
 
 type RoutePoint = [number, number];
 
@@ -186,6 +227,33 @@ function getSessionBoxLabel(session: TrackingHistorySession): string {
     return 'Unknown Box';
 }
 
+function parseSessionDate(session: TrackingHistorySession): Date | null {
+    if (session.date) {
+        const fromDate = new Date(`${session.date}T00:00:00+08:00`);
+        if (!Number.isNaN(fromDate.getTime())) {
+            return fromDate;
+        }
+    }
+
+    if (session.updatedAt) {
+        const fromUpdated = new Date(session.updatedAt);
+        if (!Number.isNaN(fromUpdated.getTime())) {
+            return fromUpdated;
+        }
+    }
+
+    return null;
+}
+
+function formatFilterDateLabel(value: Date | null): string {
+    if (!value) return 'Any date';
+    return value.toLocaleDateString('en-US', {
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric',
+    });
+}
+
 export default function AdminTrackingHistoryScreen() {
     const { isDarkMode } = useAppTheme();
     const insets = useSafeAreaInsets();
@@ -199,6 +267,12 @@ export default function AdminTrackingHistoryScreen() {
     const [error, setError] = useState<string | null>(null);
     const [boxFilter, setBoxFilter] = useState<string>('ALL');
     const [boxSearch, setBoxSearch] = useState('');
+    const [startDate, setStartDate] = useState<Date | null>(null);
+    const [endDate, setEndDate] = useState<Date | null>(null);
+    const [showDatePicker, setShowDatePicker] = useState(false);
+    const [datePickerMode, setDatePickerMode] = useState<'start' | 'end'>('start');
+    const [filtersExpanded, setFiltersExpanded] = useState(true);
+    const [page, setPage] = useState(1);
     const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
     const [cameraCenter, setCameraCenter] = useState<[number, number]>(DEFAULT_CENTER);
     const [cameraZoom, setCameraZoom] = useState(12);
@@ -274,13 +348,104 @@ export default function AdminTrackingHistoryScreen() {
     const filteredSessions = useMemo(() => {
         const term = boxSearch.trim().toLowerCase();
 
+        const from = startDate ? new Date(startDate) : null;
+        const to = endDate ? new Date(endDate) : null;
+        if (from) from.setHours(0, 0, 0, 0);
+        if (to) to.setHours(23, 59, 59, 999);
+
         return validSessions.filter((session) => {
             const boxLabel = getSessionBoxLabel(session);
             const matchesFilter = boxFilter === 'ALL' || boxLabel === boxFilter;
             const matchesSearch = !term || boxLabel.toLowerCase().includes(term);
-            return matchesFilter && matchesSearch;
+
+            let matchesDate = true;
+            if (from || to) {
+                const sessionDate = parseSessionDate(session);
+                if (!sessionDate) {
+                    matchesDate = false;
+                } else {
+                    if (from && sessionDate < from) matchesDate = false;
+                    if (to && sessionDate > to) matchesDate = false;
+                }
+            }
+
+            return matchesFilter && matchesSearch && matchesDate;
         });
-    }, [validSessions, boxFilter, boxSearch]);
+    }, [validSessions, boxFilter, boxSearch, startDate, endDate]);
+
+    useEffect(() => {
+        setPage(1);
+    }, [days, boxFilter, boxSearch, startDate, endDate]);
+
+    const totalPages = useMemo(
+        () => Math.max(1, Math.ceil(filteredSessions.length / PAGE_SIZE)),
+        [filteredSessions.length]
+    );
+
+    useEffect(() => {
+        if (page > totalPages) {
+            setPage(totalPages);
+        }
+    }, [page, totalPages]);
+
+    const paginatedSessions = useMemo(() => {
+        const startIndex = (page - 1) * PAGE_SIZE;
+        return filteredSessions.slice(startIndex, startIndex + PAGE_SIZE);
+    }, [filteredSessions, page]);
+
+    const pageRangeLabel = useMemo(() => {
+        if (filteredSessions.length === 0) return '0-0';
+        const from = (page - 1) * PAGE_SIZE + 1;
+        const to = Math.min(page * PAGE_SIZE, filteredSessions.length);
+        return `${from}-${to}`;
+    }, [filteredSessions.length, page]);
+
+    const collapsedFilterSummary = useMemo(() => {
+        const summary = [`Window: ${days}D`];
+
+        if (boxFilter !== 'ALL') {
+            summary.push(`Box: ${boxFilter}`);
+        }
+
+        if (startDate || endDate) {
+            summary.push(`Dates: ${formatFilterDateLabel(startDate)} - ${formatFilterDateLabel(endDate)}`);
+        }
+
+        const term = boxSearch.trim();
+        if (term.length > 0) {
+            summary.push(`Search: ${term}`);
+        }
+
+        return summary.join(' • ');
+    }, [days, boxFilter, startDate, endDate, boxSearch]);
+
+    const showDateMode = (mode: 'start' | 'end') => {
+        setDatePickerMode(mode);
+        setShowDatePicker(true);
+    };
+
+    const onDateChange = (event: DateTimePickerEvent, selectedDate?: Date) => {
+        if (Platform.OS !== 'ios') {
+            setShowDatePicker(false);
+        }
+
+        if (event.type === 'dismissed' || !selectedDate) {
+            return;
+        }
+
+        if (datePickerMode === 'start') {
+            setStartDate(selectedDate);
+            if (endDate && selectedDate > endDate) {
+                setEndDate(selectedDate);
+            }
+            return;
+        }
+
+        setEndDate(selectedDate);
+        if (startDate && selectedDate < startDate) {
+            setStartDate(selectedDate);
+        }
+    };
 
     useEffect(() => {
         if (boxFilter === 'ALL') {
@@ -400,47 +565,161 @@ export default function AdminTrackingHistoryScreen() {
             <View style={[styles.header, { backgroundColor: c.card, borderBottomColor: c.border, paddingTop: headerTopPadding }]}> 
                 <Text style={[styles.title, { color: c.text }]}>Tracking History</Text>
                 <Text style={[styles.subtitle, { color: c.textSec }]}>Historical route/session tracking from backend archives.</Text>
-                <View style={styles.chipRow}>
-                    {DAY_PRESETS.map((preset) => (
-                        <Chip
-                            key={preset}
-                            selected={days === preset}
-                            onPress={() => setDays(preset)}
-                            style={styles.chip}
-                        >
-                            {preset}d
-                        </Chip>
-                    ))}
+
+                <View style={[styles.filterPanel, { backgroundColor: c.filterPanel, borderColor: c.border }]}>
+                    <View style={styles.filterHeaderRow}>
+                        <View style={{ flex: 1 }}>
+                            <Text style={[styles.filterSectionLabel, { color: c.textSec }]}>Session Window</Text>
+                            <Text style={[styles.filterSectionTitle, { color: c.text }]}>Range and Box Filters</Text>
+                        </View>
+
+                        <View style={styles.filterHeaderActions}>
+                            <View style={[styles.resultsBadge, { backgroundColor: c.countBadgeBg, borderColor: c.border }]}>
+                                <Text style={[styles.resultsBadgeText, { color: c.countBadgeText }]}>{filteredSessions.length}</Text>
+                            </View>
+
+                            <TouchableOpacity
+                                activeOpacity={0.85}
+                                onPress={() => {
+                                    setFiltersExpanded((prev) => {
+                                        const next = !prev;
+                                        if (!next) {
+                                            setShowDatePicker(false);
+                                        }
+                                        return next;
+                                    });
+                                }}
+                                style={[styles.filterToggleBtn, { backgroundColor: c.searchBg, borderColor: c.searchBorder }]}
+                            >
+                                <MaterialCommunityIcons
+                                    name={filtersExpanded ? 'chevron-up' : 'chevron-down'}
+                                    size={18}
+                                    color={c.textSec}
+                                />
+                            </TouchableOpacity>
+                        </View>
+                    </View>
+
+                    {filtersExpanded ? (
+                        <>
+                            <View style={[styles.rangeRail, { backgroundColor: c.rangeRail, borderColor: c.rangeRailBorder }]}>
+                                {DAY_PRESETS.map((preset) => {
+                                    const active = days === preset;
+                                    return (
+                                        <TouchableOpacity
+                                            key={preset}
+                                            activeOpacity={0.9}
+                                            onPress={() => setDays(preset)}
+                                            style={[
+                                                styles.rangePill,
+                                                {
+                                                    backgroundColor: active ? c.rangePillActive : c.rangePill,
+                                                    borderColor: active ? c.rangePillActive : c.rangePillBorder,
+                                                },
+                                            ]}
+                                        >
+                                            <Text style={[styles.rangePillText, { color: active ? c.rangePillActiveText : c.rangePillText }]}>
+                                                {preset}D
+                                            </Text>
+                                        </TouchableOpacity>
+                                    );
+                                })}
+                            </View>
+
+                            <Searchbar
+                                value={boxSearch}
+                                onChangeText={setBoxSearch}
+                                placeholder="Search box ID or hardware MAC"
+                                style={[styles.search, { backgroundColor: c.searchBg, borderColor: c.searchBorder }]}
+                                inputStyle={[styles.searchInput, { color: c.text }]}
+                                iconColor={c.textSec}
+                                placeholderTextColor={c.textSec}
+                            />
+
+                            <View style={styles.dateFilterRow}>
+                                <TouchableOpacity
+                                    activeOpacity={0.9}
+                                    onPress={() => showDateMode('start')}
+                                    style={[styles.datePill, { backgroundColor: c.boxPill, borderColor: c.boxPillBorder }]}
+                                >
+                                    <Text style={[styles.datePillLabel, { color: c.textSec }]}>Start</Text>
+                                    <Text style={[styles.datePillValue, { color: c.text }]}>{formatFilterDateLabel(startDate)}</Text>
+                                </TouchableOpacity>
+
+                                <TouchableOpacity
+                                    activeOpacity={0.9}
+                                    onPress={() => showDateMode('end')}
+                                    style={[styles.datePill, { backgroundColor: c.boxPill, borderColor: c.boxPillBorder }]}
+                                >
+                                    <Text style={[styles.datePillLabel, { color: c.textSec }]}>End</Text>
+                                    <Text style={[styles.datePillValue, { color: c.text }]}>{formatFilterDateLabel(endDate)}</Text>
+                                </TouchableOpacity>
+                            </View>
+
+                            <ScrollView
+                                horizontal
+                                showsHorizontalScrollIndicator={false}
+                                contentContainerStyle={styles.filterPillRow}
+                            >
+                                {searchedBoxOptions.map((box) => {
+                                    const active = boxFilter === box;
+
+                                    return (
+                                        <TouchableOpacity
+                                            key={box}
+                                            activeOpacity={0.9}
+                                            onPress={() => setBoxFilter(box)}
+                                            style={[
+                                                styles.boxPill,
+                                                {
+                                                    backgroundColor: active ? c.boxPillActive : c.boxPill,
+                                                    borderColor: active ? c.boxPillActive : c.boxPillBorder,
+                                                },
+                                            ]}
+                                        >
+                                            <Text
+                                                numberOfLines={1}
+                                                style={[styles.boxPillText, { color: active ? c.boxPillActiveText : c.boxPillText }]}
+                                            >
+                                                {box === 'ALL' ? 'All Boxes' : box}
+                                            </Text>
+                                        </TouchableOpacity>
+                                    );
+                                })}
+                            </ScrollView>
+
+                            <View style={styles.filterFooterRow}>
+                                <Text style={[styles.filterMeta, { color: c.textSec }]}>Showing {filteredSessions.length} of {validSessions.length} sessions</Text>
+                                {(boxFilter !== 'ALL' || boxSearch.trim().length > 0 || startDate || endDate) ? (
+                                    <TouchableOpacity
+                                        activeOpacity={0.85}
+                                        onPress={() => {
+                                            setBoxFilter('ALL');
+                                            setBoxSearch('');
+                                            setStartDate(null);
+                                            setEndDate(null);
+                                        }}
+                                        style={[styles.resetPill, { backgroundColor: c.resetBg, borderColor: c.searchBorder }]}
+                                    >
+                                        <Text style={[styles.resetPillText, { color: c.resetText }]}>Reset</Text>
+                                    </TouchableOpacity>
+                                ) : null}
+                            </View>
+                        </>
+                    ) : (
+                        <Text style={[styles.collapsedSummary, { color: c.textSec }]}>{collapsedFilterSummary}</Text>
+                    )}
                 </View>
 
-                <Searchbar
-                    value={boxSearch}
-                    onChangeText={setBoxSearch}
-                    placeholder="Filter by box ID or hardware MAC"
-                    style={[styles.search, { backgroundColor: c.chipBg, borderColor: c.border }]}
-                    inputStyle={[styles.searchInput, { color: c.text }]}
-                    iconColor={c.textSec}
-                    placeholderTextColor={c.textSec}
-                />
-
-                <ScrollView
-                    horizontal
-                    showsHorizontalScrollIndicator={false}
-                    contentContainerStyle={styles.filterRow}
-                >
-                    {searchedBoxOptions.map((box) => (
-                        <Chip
-                            key={box}
-                            selected={boxFilter === box}
-                            onPress={() => setBoxFilter(box)}
-                            style={styles.filterChip}
-                        >
-                            {box === 'ALL' ? 'All Boxes' : box}
-                        </Chip>
-                    ))}
-                </ScrollView>
-
-                <Text style={[styles.filterMeta, { color: c.textSec }]}>Showing {filteredSessions.length} of {validSessions.length} sessions</Text>
+                {showDatePicker && filtersExpanded ? (
+                    <DateTimePicker
+                        value={datePickerMode === 'start' ? (startDate || new Date()) : (endDate || startDate || new Date())}
+                        mode="date"
+                        is24Hour
+                        display="default"
+                        onChange={onDateChange}
+                    />
+                ) : null}
             </View>
 
             {loading ? (
@@ -451,7 +730,7 @@ export default function AdminTrackingHistoryScreen() {
                 <Text style={styles.error}>{error}</Text>
             ) : (
                 <FlatList
-                    data={filteredSessions}
+                    data={paginatedSessions}
                     keyExtractor={(item, index) => String(item.id || index)}
                     refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={c.text} />}
                     contentContainerStyle={styles.listContent}
@@ -495,6 +774,46 @@ export default function AdminTrackingHistoryScreen() {
                     )}
                 />
             )}
+
+            {!loading && !error && filteredSessions.length > 0 ? (
+                <View style={[styles.paginationBar, { backgroundColor: c.card, borderTopColor: c.border }]}>
+                    <TouchableOpacity
+                        activeOpacity={0.85}
+                        onPress={() => setPage((prev) => Math.max(1, prev - 1))}
+                        disabled={page <= 1}
+                        style={[
+                            styles.paginationBtn,
+                            {
+                                backgroundColor: c.boxPill,
+                                borderColor: c.boxPillBorder,
+                                opacity: page <= 1 ? 0.45 : 1,
+                            },
+                        ]}
+                    >
+                        <Text style={[styles.paginationBtnText, { color: c.text }]}>Prev</Text>
+                    </TouchableOpacity>
+
+                    <Text style={[styles.paginationMeta, { color: c.textSec }]}>
+                        Page {page} / {totalPages} • {pageRangeLabel} of {filteredSessions.length}
+                    </Text>
+
+                    <TouchableOpacity
+                        activeOpacity={0.85}
+                        onPress={() => setPage((prev) => Math.min(totalPages, prev + 1))}
+                        disabled={page >= totalPages}
+                        style={[
+                            styles.paginationBtn,
+                            {
+                                backgroundColor: c.boxPill,
+                                borderColor: c.boxPillBorder,
+                                opacity: page >= totalPages ? 0.45 : 1,
+                            },
+                        ]}
+                    >
+                        <Text style={[styles.paginationBtnText, { color: c.text }]}>Next</Text>
+                    </TouchableOpacity>
+                </View>
+            ) : null}
 
             <Modal
                 visible={Boolean(selectedSession)}
@@ -676,33 +995,148 @@ const styles = StyleSheet.create({
     },
     title: { fontSize: 24, fontFamily: 'Inter_700Bold' },
     subtitle: { marginTop: 4, fontSize: 13, fontFamily: 'Inter_500Medium' },
-    chipRow: {
-        marginTop: 10,
-        flexDirection: 'row',
-        gap: 8,
+    filterPanel: {
+        marginTop: 12,
+        borderWidth: StyleSheet.hairlineWidth,
+        borderRadius: 14,
+        padding: 10,
     },
-    chip: { marginRight: 8, borderWidth: StyleSheet.hairlineWidth },
+    filterHeaderRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: 8,
+        marginBottom: 8,
+    },
+    filterHeaderActions: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+    },
+    filterSectionLabel: {
+        fontSize: 11,
+        letterSpacing: 0.8,
+        textTransform: 'uppercase',
+        fontFamily: 'Inter_600SemiBold',
+    },
+    filterSectionTitle: {
+        marginTop: 2,
+        fontSize: 14,
+        fontFamily: 'Inter_700Bold',
+    },
+    resultsBadge: {
+        minWidth: 34,
+        height: 28,
+        paddingHorizontal: 8,
+        borderRadius: 14,
+        borderWidth: StyleSheet.hairlineWidth,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    resultsBadgeText: {
+        fontSize: 12,
+        fontFamily: 'Inter_700Bold',
+    },
+    filterToggleBtn: {
+        width: 30,
+        height: 30,
+        borderRadius: 15,
+        borderWidth: StyleSheet.hairlineWidth,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    rangeRail: {
+        borderWidth: StyleSheet.hairlineWidth,
+        borderRadius: 999,
+        padding: 4,
+        flexDirection: 'row',
+        gap: 6,
+    },
+    rangePill: {
+        flex: 1,
+        borderWidth: StyleSheet.hairlineWidth,
+        borderRadius: 999,
+        paddingVertical: 7,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    rangePillText: {
+        fontSize: 12,
+        fontFamily: 'Inter_700Bold',
+        letterSpacing: 0.5,
+    },
     search: {
         marginTop: 10,
         borderWidth: StyleSheet.hairlineWidth,
         elevation: 0,
-        borderRadius: 12,
+        borderRadius: 14,
         minHeight: 44,
     },
     searchInput: {
         fontFamily: 'Inter_500Medium',
         fontSize: 14,
     },
-    filterRow: {
+    dateFilterRow: {
+        marginTop: 8,
+        flexDirection: 'row',
+        gap: 8,
+    },
+    datePill: {
+        flex: 1,
+        borderWidth: StyleSheet.hairlineWidth,
+        borderRadius: 12,
+        paddingHorizontal: 10,
+        paddingVertical: 8,
+    },
+    datePillLabel: {
+        fontSize: 11,
+        fontFamily: 'Inter_600SemiBold',
+    },
+    datePillValue: {
+        marginTop: 2,
+        fontSize: 13,
+        fontFamily: 'Inter_600SemiBold',
+    },
+    filterPillRow: {
         marginTop: 8,
         paddingRight: 6,
         gap: 8,
     },
-    filterChip: {
+    boxPill: {
+        maxWidth: 220,
         borderWidth: StyleSheet.hairlineWidth,
+        borderRadius: 999,
+        paddingVertical: 7,
+        paddingHorizontal: 11,
+    },
+    boxPillText: {
+        fontSize: 12,
+        fontFamily: 'Inter_600SemiBold',
+    },
+    filterFooterRow: {
+        marginTop: 8,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: 8,
+    },
+    collapsedSummary: {
+        fontSize: 12,
+        fontFamily: 'Inter_500Medium',
+        lineHeight: 18,
+    },
+    resetPill: {
+        borderWidth: StyleSheet.hairlineWidth,
+        borderRadius: 999,
+        paddingHorizontal: 10,
+        paddingVertical: 5,
+    },
+    resetPillText: {
+        fontSize: 11,
+        fontFamily: 'Inter_600SemiBold',
     },
     filterMeta: {
-        marginTop: 8,
+        flex: 1,
         fontSize: 12,
         fontFamily: 'Inter_500Medium',
     },
@@ -717,7 +1151,34 @@ const styles = StyleSheet.create({
     empty: { textAlign: 'center', marginTop: 36, fontSize: 13, fontFamily: 'Inter_500Medium' },
     listContent: {
         padding: 14,
-        paddingBottom: 28,
+        paddingBottom: 16,
+    },
+    paginationBar: {
+        borderTopWidth: StyleSheet.hairlineWidth,
+        paddingHorizontal: 14,
+        paddingVertical: 10,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: 8,
+    },
+    paginationBtn: {
+        borderWidth: StyleSheet.hairlineWidth,
+        borderRadius: 10,
+        paddingHorizontal: 12,
+        paddingVertical: 7,
+        minWidth: 64,
+        alignItems: 'center',
+    },
+    paginationBtnText: {
+        fontSize: 12,
+        fontFamily: 'Inter_700Bold',
+    },
+    paginationMeta: {
+        flex: 1,
+        textAlign: 'center',
+        fontSize: 12,
+        fontFamily: 'Inter_500Medium',
     },
     card: {
         borderWidth: StyleSheet.hairlineWidth,

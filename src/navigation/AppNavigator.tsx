@@ -71,6 +71,7 @@ const AdminStolenBoxesScreen = require('../screens/admin/AdminStolenBoxesScreen'
 const AdminReceiptsScreen = require('../screens/admin/AdminReceiptsScreen').default;
 const AdminHardwareDiagnosticsScreen = require('../screens/admin/AdminHardwareDiagnosticsScreen').default;
 const AdminTrackingHistoryScreen = require('../screens/admin/AdminTrackingHistoryScreen').default;
+const AdminReportsAnalyticsScreen = require('../screens/admin/AdminReportsAnalyticsScreen').default;
 const AdminUsersManagementScreen = require('../screens/admin/AdminUsersManagementScreen').default;
 const AdminSettingsScreen = require('../screens/admin/AdminSettingsScreen').default;
 
@@ -288,6 +289,7 @@ const AdminInsightsNavigator = () => (
         <AdminInsightsStack.Screen name="InsightsReceipts" component={AdminReceiptsScreen} />
         <AdminInsightsStack.Screen name="InsightsHardwareDiagnostics" component={AdminHardwareDiagnosticsScreen} />
         <AdminInsightsStack.Screen name="InsightsTrackingHistory" component={AdminTrackingHistoryScreen} />
+        <AdminInsightsStack.Screen name="InsightsReportsAnalytics" component={AdminReportsAnalyticsScreen} />
     </AdminInsightsStack.Navigator>
 );
 
