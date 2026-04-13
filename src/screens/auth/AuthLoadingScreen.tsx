@@ -25,32 +25,28 @@ const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
 const COLORS = {
     light: {
-        background: '#FFFFFF',
-        surface: '#F6F6F6',
-        panel: '#FCFCFC',
-        text: '#000000',
-        textSecondary: '#6B6B6B',
-        border: '#E8E8E8',
-        progressBg: '#E8E8E8',
-        progressFill: '#000000',
-        adBg: '#F6F6F6',
-        adBorder: '#E8E8E8',
-        orbOne: 'rgba(0,0,0,0.05)',
-        orbTwo: 'rgba(0,0,0,0.03)',
+        background: '#FAFAFA', // Soft minimalist background
+        surface: '#FFFFFF',
+        panel: '#FFFFFF',
+        text: '#171717', // Neutral 800
+        textSecondary: '#737373', // Neutral 500
+        border: '#E5E5E5',
+        progressBg: '#EEEEEE',
+        progressFill: '#171717',
+        adBg: '#FAFAFA',
+        adBorder: '#E5E5E5',
     },
     dark: {
-        background: '#000000',
-        surface: '#1C1C1E',
-        panel: '#121214',
-        text: '#FFFFFF',
-        textSecondary: '#8E8E93',
-        border: '#2C2C2E',
-        progressBg: '#2C2C2E',
-        progressFill: '#FFFFFF',
-        adBg: '#1C1C1E',
-        adBorder: '#2C2C2E',
-        orbOne: 'rgba(255,255,255,0.09)',
-        orbTwo: 'rgba(255,255,255,0.05)',
+        background: '#0A0A0A', // Deep pure dark
+        surface: '#171717',
+        panel: '#0A0A0A',
+        text: '#FAFAFA',
+        textSecondary: '#A3A3A3',
+        border: '#262626',
+        progressBg: '#262626',
+        progressFill: '#FAFAFA',
+        adBg: '#171717',
+        adBorder: '#262626',
     }
 };
 
@@ -108,7 +104,6 @@ export default function AuthLoadingScreen() {
     // Ad carousel
     const [adIndex, setAdIndex] = useState(0);
     const adOpacity = useRef(new Animated.Value(1)).current;
-    const floatAnim = useRef(new Animated.Value(0)).current;
 
     // Animate progress through load steps
     useEffect(() => {
@@ -171,26 +166,6 @@ export default function AuthLoadingScreen() {
         return () => clearInterval(interval);
     }, []);
 
-    // Ambient floating background motion
-    useEffect(() => {
-        const loop = Animated.loop(
-            Animated.sequence([
-                Animated.timing(floatAnim, {
-                    toValue: 1,
-                    duration: 3000,
-                    useNativeDriver: true,
-                }),
-                Animated.timing(floatAnim, {
-                    toValue: 0,
-                    duration: 3000,
-                    useNativeDriver: true,
-                }),
-            ])
-        );
-
-        loop.start();
-        return () => loop.stop();
-    }, [floatAnim]);
 
     const safeReplace = (route: 'Login' | 'RoleSelection') => {
         if (didNavigateRef.current) return;
@@ -406,14 +381,6 @@ export default function AuthLoadingScreen() {
     });
 
     const currentAd = ADS[adIndex];
-    const orbOneTranslateY = floatAnim.interpolate({
-        inputRange: [0, 1],
-        outputRange: [0, -14],
-    });
-    const orbTwoTranslateY = floatAnim.interpolate({
-        inputRange: [0, 1],
-        outputRange: [0, 10],
-    });
 
     return (
         <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
@@ -422,28 +389,7 @@ export default function AuthLoadingScreen() {
                 backgroundColor={colors.background}
             />
 
-            <Animated.View
-                pointerEvents="none"
-                style={[
-                    styles.backgroundOrb,
-                    styles.orbOne,
-                    {
-                        backgroundColor: colors.orbOne,
-                        transform: [{ translateY: orbOneTranslateY }],
-                    },
-                ]}
-            />
-            <Animated.View
-                pointerEvents="none"
-                style={[
-                    styles.backgroundOrb,
-                    styles.orbTwo,
-                    {
-                        backgroundColor: colors.orbTwo,
-                        transform: [{ translateY: orbTwoTranslateY }],
-                    },
-                ]}
-            />
+
 
             <View style={[styles.mainCard, { backgroundColor: colors.panel, borderColor: colors.border }]}>
 
@@ -565,25 +511,14 @@ const styles = StyleSheet.create({
     mainCard: {
         width: '100%',
         borderWidth: 1,
-        borderRadius: 24,
-        paddingHorizontal: 20,
-        paddingVertical: 28,
-    },
-    backgroundOrb: {
-        position: 'absolute',
-        borderRadius: 999,
-    },
-    orbOne: {
-        width: 240,
-        height: 240,
-        top: 80,
-        right: -70,
-    },
-    orbTwo: {
-        width: 180,
-        height: 180,
-        bottom: 110,
-        left: -55,
+        borderRadius: 32,
+        paddingHorizontal: 24,
+        paddingVertical: 32,
+        shadowColor: '#000000',
+        shadowOffset: { width: 0, height: 12 },
+        shadowOpacity: 0.06,
+        shadowRadius: 32,
+        elevation: 4,
     },
 
     // Brand
@@ -619,7 +554,7 @@ const styles = StyleSheet.create({
         borderWidth: 1,
         padding: 16,
         flexDirection: 'row',
-        alignItems: 'flex-start',
+        alignItems: 'center',
         gap: 12,
         marginBottom: 12,
         minHeight: 82,
@@ -635,6 +570,7 @@ const styles = StyleSheet.create({
     },
     adTextWrap: {
         flex: 1,
+        justifyContent: 'center',
     },
     adTitle: {
         fontSize: 13,
@@ -652,6 +588,8 @@ const styles = StyleSheet.create({
     adDots: {
         flexDirection: 'row',
         alignItems: 'center',
+        justifyContent: 'center',
+        width: '100%',
         gap: 5,
         marginBottom: 28,
     },

@@ -236,12 +236,13 @@ describe('Delivery State Machine', () => {
             expect(next).toHaveLength(3);
         });
 
-        test('ARRIVED has 3 next states', () => {
+        test('ARRIVED has 4 next states', () => {
             const next = getNextStates('ARRIVED');
             expect(next).toContain('COMPLETED');
             expect(next).toContain('RETURNED');
             expect(next).toContain('ATTEMPTED');
-            expect(next).toHaveLength(3);
+            expect(next).toContain('CANCELLED');
+            expect(next).toHaveLength(4);
         });
     });
 });
