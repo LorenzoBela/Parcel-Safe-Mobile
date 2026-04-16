@@ -81,10 +81,15 @@ function isTruthyFlag(value: unknown): boolean {
  * Check if notifications are available (lazy detection)
  */
 function checkNotificationsAvailable(): boolean {
+    const hasAndroidNotifee =
+        Platform.OS === 'android'
+        && !!notifee
+        && typeof (notifee as any).displayNotification === 'function';
+
     // If Notifications module failed to load, notifications are not available
     if (!Notifications) {
-        nativeNotificationsAvailable = false;
-        return false;
+        nativeNotificationsAvailable = hasAndroidNotifee;
+        return nativeNotificationsAvailable;
     }
 
     if (nativeNotificationsAvailable !== null) {
@@ -96,8 +101,12 @@ function checkNotificationsAvailable(): boolean {
         Notifications.getPermissionsAsync();
         nativeNotificationsAvailable = true;
     } catch (error) {
-        console.warn('Push notifications not available (requires development build)');
-        nativeNotificationsAvailable = false;
+        if (hasAndroidNotifee) {
+            nativeNotificationsAvailable = true;
+        } else {
+            console.warn('Push notifications not available (requires development build)');
+            nativeNotificationsAvailable = false;
+        }
     }
 
     return nativeNotificationsAvailable;
