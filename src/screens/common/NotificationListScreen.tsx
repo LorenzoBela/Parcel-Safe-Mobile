@@ -33,11 +33,7 @@ import {
     markNotificationsRead,
     clearNotifications,
 } from '../../services/notificationService';
-import {
-    markPromoHistoryItemRead,
-    removePromoHistoryItem,
-    clearPromoHistory,
-} from '../../services/scheduledPromoService';
+
 
 dayjs.extend(relativeTime);
 
@@ -233,11 +229,7 @@ export default function NotificationListScreen() {
         setNotifications((prev) => prev.map((n) => (n.id === notifId ? { ...n, read: true } : n)));
 
         try {
-            if (target.source === 'local-promo') {
-                await markPromoHistoryItemRead(notifId);
-            } else {
-                await markNotificationsRead({ notificationId: notifId });
-            }
+            await markNotificationsRead({ notificationId: notifId });
         } catch (error) {
             console.warn('[NotificationList] markRead error:', error);
             // Revert on failure.
@@ -249,16 +241,11 @@ export default function NotificationListScreen() {
         if (!userId) return;
         try {
             await markNotificationsRead({ userId, all: true });
-            await Promise.all(
-                notifications
-                    .filter((notification) => notification.source === 'local-promo' && !notification.read)
-                    .map((notification) => markPromoHistoryItemRead(notification.id)),
-            );
             setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
         } catch (error) {
             console.warn('[NotificationList] markAllRead error:', error);
         }
-    }, [userId, notifications]);
+    }, [userId]);
 
     const handleClear = useCallback(async (notifId: string) => {
         // Optimistic UI update
@@ -266,12 +253,7 @@ export default function NotificationListScreen() {
         setNotifications((prev) => prev.filter((n) => n.id !== notifId));
 
         try {
-            const target = previousNotifications.find((notification) => notification.id === notifId);
-            if (target?.source === 'local-promo') {
-                await removePromoHistoryItem(notifId);
-            } else {
-                await clearNotifications({ notificationId: notifId });
-            }
+            await clearNotifications({ notificationId: notifId });
         } catch (error) {
             console.warn('[NotificationList] clear error:', error);
             // Revert UI on failure
@@ -288,10 +270,7 @@ export default function NotificationListScreen() {
         setNotifications([]);
 
         try {
-            await Promise.all([
-                clearNotifications({ userId, all: true }),
-                clearPromoHistory(),
-            ]);
+            await clearNotifications({ userId, all: true });
         } catch (error) {
             console.warn('[NotificationList] clearAll error:', error);
             // Revert UI on failure

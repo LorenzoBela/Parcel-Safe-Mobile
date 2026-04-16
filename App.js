@@ -44,7 +44,6 @@ let setupNotificationChannels = null;
 let registerForPushNotifications = null;
 let onTokenRefresh = null;
 let setupFCMForegroundHandler = null;
-let initializeScheduledPromos = null;
 let recordPromoHistoryItem = null;
 let supabase = null;
 
@@ -133,7 +132,6 @@ const AppContent = () => {
         registerForPushNotifications = notifService.registerForPushNotifications;
         onTokenRefresh = notifService.onTokenRefresh;
         setupFCMForegroundHandler = notifService.setupFCMForegroundHandler;
-        initializeScheduledPromos = promoService.initializeScheduledPromos;
         recordPromoHistoryItem = promoService.recordPromoHistoryItem;
         supabase = supabaseModule.supabase;
       } catch (error) {
@@ -151,10 +149,8 @@ const AppContent = () => {
         }
       }
 
-      // Start 2-hourly on-device promo ads (6 AM – midnight, no server needed)
-      if (initializeScheduledPromos) {
-        initializeScheduledPromos().catch(console.error);
-      }
+      // Promo ads are server-driven via centralized backend scheduling.
+      // Do not initialize on-device recurring promo scheduler here.
 
       if (!initializeBackgroundServices) {
         if (__DEV__) console.log('[App] Background services not available - requires dev build');

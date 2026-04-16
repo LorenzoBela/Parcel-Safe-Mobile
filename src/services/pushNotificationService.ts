@@ -11,7 +11,7 @@
  * In Expo Go, notifications will be simulated with console logs.
  */
 
-import { Platform } from 'react-native';
+import { Platform, PermissionsAndroid } from 'react-native';
 import notifee, { AndroidImportance, AndroidVisibility } from '@notifee/react-native';
 import { supabase } from './supabaseClient';
 
@@ -23,6 +23,7 @@ const NOTIFEE_INCOMING_ORDER_CHANNEL = 'incoming-order-notifee';
 const NOTIFEE_DELIVERY_STATUS_CHANNEL = 'delivery-status-notifee';
 const NOTIFEE_SECURITY_ALERTS_CHANNEL = 'security-alerts-notifee';
 const NOTIFEE_CANCELLATION_CHANNEL = 'cancellation-notifee';
+const NOTIFEE_PROMOTIONS_CHANNEL = 'promotions-notifee';
 
 // Maps every channelId the server might send → the matching notifee-registered channel.
 // This handles both the current v2 IDs and any legacy IDs still in flight.
@@ -35,6 +36,8 @@ const CHANNEL_TO_NOTIFEE: Record<string, string> = {
     'security-alerts': NOTIFEE_SECURITY_ALERTS_CHANNEL,
     'cancellation-v2': NOTIFEE_CANCELLATION_CHANNEL,
     'cancellation': NOTIFEE_CANCELLATION_CHANNEL,
+    'promotions-v2': NOTIFEE_PROMOTIONS_CHANNEL,
+    'promotions': NOTIFEE_PROMOTIONS_CHANNEL,
 };
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { shouldProcessNotification } from './notificationDedupService';
@@ -63,6 +66,16 @@ try {
 // Flag to track if native notifications are available (lazy detection)
 let nativeNotificationsAvailable: boolean | null = null;
 let notificationHandlerSet = false;
+
+function isTruthyFlag(value: unknown): boolean {
+    if (typeof value === 'boolean') return value;
+    if (typeof value === 'number') return value === 1;
+    if (typeof value === 'string') {
+        const normalized = value.trim().toLowerCase();
+        return normalized === '1' || normalized === 'true' || normalized === 'yes';
+    }
+    return false;
+}
 
 /**
  * Check if notifications are available (lazy detection)
@@ -193,6 +206,16 @@ export async function setupNotificationChannels(): Promise<void> {
                 visibility: AndroidVisibility.PUBLIC,
                 bypassDnd: true,
             });
+            await notifee.createChannel({
+                id: NOTIFEE_PROMOTIONS_CHANNEL,
+                name: 'Promotions & Offers',
+                importance: AndroidImportance.HIGH,
+                vibration: true,
+                vibrationPattern: [0, 250],
+                sound: 'default',
+                visibility: AndroidVisibility.PUBLIC,
+                bypassDnd: false,
+            });
         } catch { /* ignore on non-Android or if already exists */ }
 
         // expo-notifications channel kept for fallback / non-Android platforms.
@@ -316,6 +339,31 @@ export async function registerForPushNotifications(): Promise<string | null> {
             return null;
         }
 
+        // Android 13+ requires explicit runtime POST_NOTIFICATIONS permission.
+        if (Platform.OS === 'android' && PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS) {
+            const hasPostNotifications = await PermissionsAndroid.check(
+                PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS
+            );
+
+            if (!hasPostNotifications) {
+                const result = await PermissionsAndroid.request(
+                    PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS,
+                    {
+                        title: 'Allow Notifications',
+                        message: 'Parcel Safe needs notification permission for order and delivery alerts.',
+                        buttonNeutral: 'Ask Me Later',
+                        buttonNegative: 'Cancel',
+                        buttonPositive: 'OK',
+                    }
+                );
+
+                if (result !== PermissionsAndroid.RESULTS.GRANTED) {
+                    console.warn('POST_NOTIFICATIONS permission not granted');
+                    return null;
+                }
+            }
+        }
+
         // Get the FCM token
         const fcmToken = await messaging().getToken();
         console.log('FCM Push token:', fcmToken);
@@ -338,9 +386,6 @@ export async function registerForPushNotifications(): Promise<string | null> {
             console.log('Expo push token not available:', expoError);
         }
 
-        // Setup FCM background message handler
-        setupFCMBackgroundHandler();
-
         return fcmToken;
     } catch (error) {
         console.warn('Failed to register for push notifications:', error);
@@ -354,6 +399,11 @@ export async function registerForPushNotifications(): Promise<string | null> {
  * This enables the server to send push notifications to this device.
  */
 async function registerTokenWithServer(fcmToken: string): Promise<void> {
+    if (!supabase) {
+        console.warn('[FCM] Supabase client unavailable, skipping server registration');
+        return;
+    }
+
     try {
         const { data: { user } } = await supabase.auth.getUser();
         if (!user) {
@@ -396,49 +446,6 @@ async function registerTokenWithServer(fcmToken: string): Promise<void> {
         }
     } catch (error) {
         console.warn('[FCM] Failed to register token with server:', error);
-    }
-}
-
-/**
- * Setup FCM background message handler.
- * Fires when a data message arrives while the app is in background/killed.
- */
-function setupFCMBackgroundHandler(): void {
-    if (!messaging) return;
-
-    try {
-        messaging().setBackgroundMessageHandler(async (remoteMessage: any) => {
-            console.log('[FCM] Background message:', remoteMessage);
-
-            const shouldProcess = await shouldProcessNotification(remoteMessage);
-            if (!shouldProcess) {
-                console.log('[FCM] Skipping duplicate background message');
-                return;
-            }
-
-            // FCM data messages need to be shown as local notifications
-            const data = remoteMessage.data || {};
-            const title = remoteMessage.notification?.title || data.title || 'Parcel Safe';
-            const body = remoteMessage.notification?.body || data.body || 'You have a new notification.';
-            const channelId = data.channelId || NOTIFICATION_CHANNELS.DELIVERY_STATUS;
-
-            // EC-FIX: Ignore stale background messages queued up by FCM
-            // If the device was offline when the push was sent, FCM will hold it and deliver
-            // it all at once when connecting. We ignore messages older than 5 minutes.
-            if (remoteMessage.sentTime) {
-                const ageMs = Date.now() - remoteMessage.sentTime;
-                if (ageMs > 5 * 60 * 1000) { // 5 minutes
-                    console.log(`[FCM] Ignoring stale background message (age: ${Math.round(ageMs / 1000)}s):`, title);
-                    return;
-                }
-            }
-
-            if (checkNotificationsAvailable()) {
-                await scheduleWakingNotification(title, body, data, channelId);
-            }
-        });
-    } catch (error) {
-        console.warn('[FCM] Failed to set background handler:', error);
     }
 }
 
@@ -569,6 +576,8 @@ async function scheduleWakingNotification(title: string, body: string, data: any
             // Always use a notifee-registered channel so fullScreenAction (screen wake)
             // is guaranteed. Fall back to delivery-status if the ID is unrecognised.
             const notifeeChannelId = CHANNEL_TO_NOTIFEE[channelId] ?? NOTIFEE_DELIVERY_STATUS_CHANNEL;
+            const forceWake = isTruthyFlag(data?.forceWake);
+            const shouldWakeScreen = forceWake || notifeeChannelId !== NOTIFEE_PROMOTIONS_CHANNEL;
             await notifee.displayNotification({
                 title,
                 body,
@@ -577,9 +586,13 @@ async function scheduleWakingNotification(title: string, body: string, data: any
                     channelId: notifeeChannelId,
                     importance: AndroidImportance.HIGH,
                     pressAction: { id: 'default' },
-                    // fullScreenAction turns the screen on from the lock screen.
-                    // Requires USE_FULL_SCREEN_INTENT permission (declared in app.json).
-                    fullScreenAction: { id: 'default' },
+                    ...(shouldWakeScreen
+                        ? {
+                            // fullScreenAction turns the screen on from the lock screen.
+                            // Requires USE_FULL_SCREEN_INTENT permission (declared in app.json).
+                            fullScreenAction: { id: 'default' },
+                        }
+                        : {}),
                     showTimestamp: true,
                 },
             });
@@ -675,15 +688,21 @@ export async function showIncomingOrderNotification(
 export async function showStatusNotification(
     title: string,
     body: string,
-    data?: Record<string, any>
+    data?: Record<string, any>,
+    channelId: string = NOTIFICATION_CHANNELS.DELIVERY_STATUS
 ): Promise<string> {
+    const categoryPreference = channelId === NOTIFICATION_CHANNELS.PROMOTIONS
+        ? 'promotions'
+        : 'delivery_updates';
+    const forceDisplay = isTruthyFlag(data?.forceDisplay);
+
     // Gate behind user preference
-    if (!(await isNotificationCategoryEnabled('delivery_updates'))) {
-        console.log('[NotifPrefs] delivery_updates disabled, skipping status notification');
+    if (!forceDisplay && !(await isNotificationCategoryEnabled(categoryPreference))) {
+        console.log(`[NotifPrefs] ${categoryPreference} disabled, skipping notification`);
         return 'PREF_DISABLED';
     }
 
-    if (!nativeNotificationsAvailable) {
+    if (!checkNotificationsAvailable()) {
         console.log(`[DEV NOTIFICATION] ${title}: ${body}`);
         return 'SIMULATED_NOTIF_ID';
     }
@@ -692,8 +711,8 @@ export async function showStatusNotification(
         const notificationId = await scheduleWakingNotification(
             title,
             body,
-            { ...data, type: 'STATUS_UPDATE' },
-            NOTIFICATION_CHANNELS.DELIVERY_STATUS
+            { ...data, type: data?.type || 'STATUS_UPDATE' },
+            channelId
         );
         return notificationId;
     } catch (error) {
@@ -711,7 +730,7 @@ export async function showSecurityNotification(
     body: string,
     data?: Record<string, any>
 ): Promise<string> {
-    if (!nativeNotificationsAvailable) {
+    if (!checkNotificationsAvailable()) {
         console.log(`[DEV SECURITY NOTIFICATION] ${title}: ${body}`);
         return 'SIMULATED_NOTIF_ID';
     }
@@ -743,7 +762,7 @@ export async function startOngoingNotification(
 ): Promise<string> {
     const { title, body } = getStatusContent(initialStatus);
 
-    if (!nativeNotificationsAvailable) {
+    if (!checkNotificationsAvailable()) {
         console.log(`[DEV ONGOING NOTIFICATION] ${title}: ${body}`);
         ongoingNotificationId = 'SIMULATED_ONGOING_ID';
         return ongoingNotificationId;
@@ -760,7 +779,7 @@ export async function startOngoingNotification(
             },
             trigger: null,
         });
-        return ongoingNotificationId;
+        return ongoingNotificationId || 'FAILED_ONGOING_ID';
     } catch (error) {
         console.warn('Failed to start ongoing notification:', error);
         ongoingNotificationId = 'FAILED_ONGOING_ID';
@@ -1012,6 +1031,10 @@ const PREFS_CACHE_KEY = '@notification_preferences';
  * Load notification preferences (local cache → Supabase fallback).
  */
 export async function loadNotificationPreferences(): Promise<NotificationPreferences> {
+    if (!supabase) {
+        return DEFAULT_NOTIFICATION_PREFS;
+    }
+
     try {
         // Try local cache first for speed
         const cached = await AsyncStorage.getItem(PREFS_CACHE_KEY);
@@ -1059,6 +1082,10 @@ export async function updateNotificationPreference(
 ): Promise<boolean> {
     // Security cannot be disabled
     if (category === 'security' && !enabled) return false;
+
+    if (!supabase) {
+        return false;
+    }
 
     try {
         const { data: { user } } = await supabase.auth.getUser();

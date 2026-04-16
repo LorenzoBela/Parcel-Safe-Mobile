@@ -7,7 +7,7 @@
  *   POST /api/notifications/clear  – Delete one/all notifications
  */
 
-import { getPromoHistory } from './scheduledPromoService';
+
 import { supabase } from './supabaseClient';
 
 const API_BASE_URL =
@@ -25,7 +25,7 @@ export interface AppNotification {
     read: boolean;
     createdAt: string;
     deliveryId?: string | null;
-    source?: 'server' | 'local-promo';
+    source?: 'server';
 }
 
 export type NotificationCategory = 'ORDER_UPDATES' | 'ADS' | 'OTHER';
@@ -83,13 +83,7 @@ function normalizeNotification(raw: RawNotification): AppNotification {
     };
 }
 
-function mergeAndSortNotifications(serverNotifs: AppNotification[], localPromoNotifs: AppNotification[]): AppNotification[] {
-    const merged = [...serverNotifs, ...localPromoNotifs];
 
-    merged.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-
-    return merged;
-}
 
 // ── Fetch helpers ──────────────────────────────────────────────────────────────
 
@@ -160,27 +154,10 @@ export async function fetchNotifications(
         unreadCount: number;
     };
 
-    const serverNotifications = (data.notifications || []).map(normalizeNotification);
-
-    const promoHistory = await getPromoHistory(limit);
-    const localPromoNotifications: AppNotification[] = promoHistory.map((promo) => ({
-        id: promo.id,
-        userId,
-        title: promo.title,
-        message: promo.body,
-        type: 'PROMO',
-        category: 'ADS',
-        read: Boolean(promo.read),
-        createdAt: promo.createdAt,
-        deliveryId: null,
-        source: 'local-promo',
-    }));
-
-    const notifications = mergeAndSortNotifications(serverNotifications, localPromoNotifications);
-    const unreadCount = notifications.filter((notification) => !notification.read).length;
+    const notifications = (data.notifications || []).map(normalizeNotification);
 
     return {
-        unreadCount,
+        unreadCount: data.unreadCount ?? 0,
         notifications,
     };
 }

@@ -289,17 +289,57 @@ const SECURITY_TYPES = new Set([
     'SECURITY_HOLD',
 ]);
 
+const CANCELLATION_TYPES = new Set([
+    'ORDER_CANCELLED_BY_CUSTOMER',
+    'ORDER_CANCELLED_BY_RIDER',
+    'DELIVERY_CANCELLED_REFUND_PROCESSING',
+    'DELIVERY_AUTO_CANCELLED_BATTERY',
+]);
+
+const PROMO_TYPES = new Set([
+    'PROMO',
+    'PROMO_SCHEDULED',
+]);
+
 async function showPushDataLocally(data: Record<string, any>): Promise<void> {
     const type = String(data.type || '').toUpperCase();
     const title = String(data.title || 'Parcel Safe');
     const body = String(data.body || 'You have a new notification.');
+    const channelFromPayload = typeof data.channelId === 'string' && data.channelId.trim()
+        ? data.channelId
+        : null;
 
     if (SECURITY_TYPES.has(type)) {
         await showSecurityNotification(title, body, data);
         return;
     }
 
-    await showStatusNotification(title, body, data);
+    if (CANCELLATION_TYPES.has(type)) {
+        await showStatusNotification(
+            title,
+            body,
+            data,
+            channelFromPayload || NOTIFICATION_CHANNELS.CANCELLATION
+        );
+        return;
+    }
+
+    if (PROMO_TYPES.has(type)) {
+        await showStatusNotification(
+            title,
+            body,
+            data,
+            channelFromPayload || NOTIFICATION_CHANNELS.PROMOTIONS
+        );
+        return;
+    }
+
+    await showStatusNotification(
+        title,
+        body,
+        data,
+        channelFromPayload || NOTIFICATION_CHANNELS.DELIVERY_STATUS
+    );
 }
 
 // ==================== Notification Display ====================
