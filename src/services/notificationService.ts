@@ -8,6 +8,7 @@
  */
 
 import { getPromoHistory } from './scheduledPromoService';
+import { supabase } from './supabaseClient';
 
 const API_BASE_URL =
     process.env.EXPO_PUBLIC_TRACKING_WEB_BASE_URL || 'https://parcel-safe.vercel.app';
@@ -93,9 +94,10 @@ function mergeAndSortNotifications(serverNotifs: AppNotification[], localPromoNo
 // ── Fetch helpers ──────────────────────────────────────────────────────────────
 
 async function jsonPost<T>(path: string, body: Record<string, unknown>): Promise<T> {
+    const headers = await getAuthHeaders(true);
     const response = await fetch(`${API_BASE_URL}${path}`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify(body),
     });
 
@@ -105,6 +107,35 @@ async function jsonPost<T>(path: string, body: Record<string, unknown>): Promise
     }
 
     return response.json() as Promise<T>;
+}
+
+async function getAccessToken(): Promise<string> {
+    if (!supabase) {
+        throw new Error('[NotificationService] Supabase client is unavailable.');
+    }
+
+    const {
+        data: { session },
+        error,
+    } = await supabase.auth.getSession();
+
+    if (error || !session?.access_token) {
+        throw new Error('[NotificationService] Not authenticated.');
+    }
+
+    return session.access_token;
+}
+
+async function getAuthHeaders(withJsonContentType: boolean): Promise<Record<string, string>> {
+    const token = await getAccessToken();
+    return withJsonContentType
+        ? {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+        }
+        : {
+            Authorization: `Bearer ${token}`,
+        };
 }
 
 // ── Public API ─────────────────────────────────────────────────────────────────
@@ -117,7 +148,8 @@ export async function fetchNotifications(
     limit = 30,
 ): Promise<NotificationListResponse> {
     const url = `${API_BASE_URL}/api/notifications/list?userId=${encodeURIComponent(userId)}&limit=${limit}`;
-    const response = await fetch(url);
+    const headers = await getAuthHeaders(false);
+    const response = await fetch(url, { headers });
 
     if (!response.ok) {
         throw new Error(`[NotificationService] list failed (${response.status})`);

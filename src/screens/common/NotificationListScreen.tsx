@@ -83,6 +83,9 @@ function isNotificationVisibleForRole(notification: AppNotification, role?: stri
         return false;
     }
 
+    // Admins see everything regardless of type
+    if (normalizedRole === 'admin') return true;
+
     const allowedRoles = TYPE_ALLOWED_ROLES[notification.type];
     if (!allowedRoles) return true;
 

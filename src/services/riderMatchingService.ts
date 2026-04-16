@@ -25,6 +25,24 @@ const STATUS_TO_NOTIFICATION_TYPE: Record<string, string> = {
     CANCELLED: 'ORDER_CANCELLED_BY_RIDER',
 };
 
+async function getNotificationAuthHeaders(): Promise<Record<string, string>> {
+    const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+    };
+
+    try {
+        const { data: { session } } = await supabase.auth.getSession();
+        const token = session?.access_token;
+        if (token) {
+            headers.Authorization = `Bearer ${token}`;
+        }
+    } catch {
+        // Best effort only; backend may still allow internal routes.
+    }
+
+    return headers;
+}
+
 /**
  * Fire-and-forget: tell the server to send an FCM push notification
  * to the relevant delivery parties via Firebase Admin SDK.
@@ -38,9 +56,10 @@ async function dispatchStatusNotification(
     const type = STATUS_TO_NOTIFICATION_TYPE[status];
     if (!type) return; // no notification for this status
     try {
+        const headers = await getNotificationAuthHeaders();
         await fetch(`${API_BASE_URL}/api/notifications/send`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers,
             body: JSON.stringify({
                 type,
                 deliveryId,
@@ -66,9 +85,10 @@ export async function dispatchSecurityNotification(
 ): Promise<void> {
     try {
         const hasExplicitTarget = Boolean(deliveryId || targetUserId);
+        const headers = await getNotificationAuthHeaders();
         await fetch(`${API_BASE_URL}/api/notifications/send`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers,
             body: JSON.stringify({
                 type,
                 ...(deliveryId ? { deliveryId, includeCustomer: true, includeRider: true } : {}),

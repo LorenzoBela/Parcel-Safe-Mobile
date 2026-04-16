@@ -361,6 +361,16 @@ async function registerTokenWithServer(fcmToken: string): Promise<void> {
             return;
         }
 
+        const {
+            data: { session },
+        } = await supabase.auth.getSession();
+        const accessToken = session?.access_token;
+
+        if (!accessToken) {
+            console.warn('[FCM] Missing access token, skipping server registration');
+            return;
+        }
+
         // Get the API base URL from environment (hardcoded fallback matches production URL)
         const apiBaseUrl = process.env.EXPO_PUBLIC_TRACKING_WEB_BASE_URL
             || process.env.EXPO_PUBLIC_API_URL
@@ -368,7 +378,10 @@ async function registerTokenWithServer(fcmToken: string): Promise<void> {
 
         const response = await fetch(`${apiBaseUrl}/api/notifications/register`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: {
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${accessToken}`,
+            },
             body: JSON.stringify({
                 userId: user.id,
                 fcmToken,
