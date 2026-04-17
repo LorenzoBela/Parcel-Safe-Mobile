@@ -280,36 +280,33 @@ export async function requestCancellation(
       });
     }
 
-    // 4. Centralized status transition via server API (handles dual write + notifications + audit)
-    try {
-      const token = await getAccessToken();
-      const response = await fetch(`${API_BASE_URL}/api/deliveries/transition`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          deliveryId: request.deliveryId,
-          toStatus: newStatus,
-          cancellationReason: formatCancellationReason(request.reason),
-          metadata: { reasonDetails: request.reasonDetails, returnOtp },
-        }),
-      });
+    // 4. Centralized status transition via server API (handles dual write +
+    // notifications + audit). No direct-write fallback — if the API rejects
+    // the transition it would be wrong to forge a partial update that leaves
+    // Supabase drifted. The outer catch handles transient errors and surfaces
+    // them to the rider so they can retry.
+    const token = await getAccessToken();
+    const response = await fetch(`${API_BASE_URL}/api/deliveries/transition`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        deliveryId: request.deliveryId,
+        toStatus: newStatus,
+        cancellationReason: formatCancellationReason(request.reason),
+        metadata: { reasonDetails: request.reasonDetails, returnOtp },
+      }),
+    });
 
-      if (!response.ok) {
-        const errText = await response.text().catch(() => '');
-        console.warn('[EC-32] Transition API returned non-OK:', response.status, errText);
-      }
-    } catch (transitionError) {
-      console.warn('[EC-32] Transition API call failed, falling back to direct writes:', transitionError);
-      // Fallback: direct Firebase write so the delivery isn't stuck
-      const deliveryRef = ref(database, `deliveries/${request.deliveryId}`);
-      await update(deliveryRef, {
-        status: newStatus,
-        cancelled_by: 'rider',
-        cancellation_reason: formatCancellationReason(request.reason),
-      });
+    if (!response.ok) {
+      const errText = await response.text().catch(() => '');
+      console.error('[EC-32] Transition API rejected cancellation:', response.status, errText);
+      return {
+        success: false,
+        error: errText || `Cancellation rejected by server (${response.status}).`,
+      };
     }
 
     return {
@@ -348,73 +345,54 @@ export function subscribeToCancellation(
 }
 
 /**
- * Mark package as retrieved (sender picked up)
- * Accepts an optional returnPhotoUrl that was uploaded before calling this.
+ * Mark package as retrieved (sender picked up).
+ *
+ * Thin wrapper around `POST /api/deliveries/{id}/mark-retrieved`. The server
+ * owns the RETURNED transition (Supabase + Firebase + notification + audit),
+ * the `/cancellations/{id}` write, and the box / hardware cleanup. See
+ * `web/src/app/api/deliveries/[id]/mark-retrieved/route.ts`.
  */
 export async function markPackageRetrieved(
   deliveryId: string,
   boxId: string,
   returnPhotoUrl?: string,
 ): Promise<boolean> {
-  const database = getFirebaseDatabase();
+  if (!supabase) {
+    console.error('[EC-32] markPackageRetrieved: supabase not configured (cannot auth).');
+    return false;
+  }
 
   try {
-    const cancellationRef = ref(database, `cancellations/${deliveryId}`);
-    await set(cancellationRef, {
-      packageRetrieved: true,
-      retrievedAt: serverTimestamp(),
-      ...(returnPhotoUrl ? { returnPhotoUrl } : {}),
-    });
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
 
-    // Clear box state
-    const boxRef = ref(database, `boxes/${boxId}/delivery_context`);
-    await set(boxRef, null);
-
-    // EC-32 Bridge: clear return state on /hardware/{boxId}
-    // Keep other hardware telemetry intact by using update().
-    await update(ref(database, `hardware/${boxId}`), {
-      return_otp: null,
-      return_active: false,
-      otp_code: null,
-      delivery_id: null,
-    });
-
-    // Update status to RETURNED in Firebase
-    const deliveryRef = ref(database, `deliveries/${deliveryId}/status`);
-    await set(deliveryRef, 'RETURNED');
-
-    if (returnPhotoUrl) {
-      await update(ref(database, `deliveries/${deliveryId}`), {
-        return_photo_url: returnPhotoUrl,
-        return_photo_uploaded_at: Date.now(),
-      });
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (session?.access_token) {
+      headers.Authorization = `Bearer ${session.access_token}`;
     }
 
-    // Update status to RETURNED in Supabase
-    if (supabase) {
-      const updatePayload: Record<string, string> = {
-        status: 'RETURNED',
-        updated_at: new Date().toISOString(),
-      };
-      if (returnPhotoUrl) {
-        updatePayload['return_photo_url'] = returnPhotoUrl;
-      }
+    const response = await fetch(
+      `${API_BASE_URL}/api/deliveries/${encodeURIComponent(deliveryId)}/mark-retrieved`,
+      {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          boxId,
+          returnPhotoUrl,
+        }),
+      },
+    );
 
-      const { error } = await supabase
-        .from('deliveries')
-        .update(updatePayload)
-        .eq('id', deliveryId);
-
-      if (error) {
-        console.error('[EC-32] Failed to sync RETURNED to Supabase:', error);
-      } else {
-        console.log('[EC-32] Synced RETURNED to Supabase:', deliveryId);
-      }
+    if (!response.ok) {
+      const errText = await response.text().catch(() => '');
+      console.error('[EC-32] mark-retrieved server error:', response.status, errText);
+      return false;
     }
 
     return true;
   } catch (error) {
-    console.error('[EC-32] Mark retrieved failed:', error);
+    console.error('[EC-32] Mark retrieved network error:', error);
     return false;
   }
 }
@@ -607,40 +585,37 @@ export async function requestCustomerCancellation(
       ...(request.clientRequestId ? { client_request_id: request.clientRequestId } : {}),
     });
 
-    // 2. Centralized status transition via server API (handles dual write + notifications + audit + refund queue + pending booking cleanup)
-    try {
-      const token = await getAccessToken();
-      const response = await fetch(`${API_BASE_URL}/api/deliveries/transition`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
+    // 2. Centralized status transition via server API (handles dual write +
+    // notifications + audit + refund queue + pending booking cleanup). No
+    // direct-write fallback — if the API rejects the cancellation we surface
+    // that to the UI; the customer_cancellation RTDB flag above still records
+    // the intent so a subsequent retry can complete it.
+    const token = await getAccessToken();
+    const response = await fetch(`${API_BASE_URL}/api/deliveries/transition`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        deliveryId: request.deliveryId,
+        toStatus: 'CANCELLED',
+        cancellationReason: formatCustomerCancellationReason(request.reason),
+        metadata: {
+          reasonDetails: request.reasonDetails,
+          clientRequestId: request.clientRequestId,
+          customerName: request.customerName,
         },
-        body: JSON.stringify({
-          deliveryId: request.deliveryId,
-          toStatus: 'CANCELLED',
-          cancellationReason: formatCustomerCancellationReason(request.reason),
-          metadata: {
-            reasonDetails: request.reasonDetails,
-            clientRequestId: request.clientRequestId,
-            customerName: request.customerName,
-          },
-        }),
-      });
+      }),
+    });
 
-      if (!response.ok) {
-        const errText = await response.text().catch(() => '');
-        console.warn('[Cancellation] Transition API returned non-OK:', response.status, errText);
-      }
-    } catch (transitionError) {
-      console.warn('[Cancellation] Transition API call failed, falling back to direct writes:', transitionError);
-      // Fallback: direct Firebase write so the delivery isn't stuck
-      const deliveryRef = ref(database, `deliveries/${request.deliveryId}`);
-      await update(deliveryRef, {
-        status: DeliveryStatus.CANCELLED,
-        cancelled_by: 'customer',
-        cancellation_reason: formatCustomerCancellationReason(request.reason),
-      });
+    if (!response.ok) {
+      const errText = await response.text().catch(() => '');
+      console.error('[Cancellation] Transition API rejected customer cancel:', response.status, errText);
+      return {
+        success: false,
+        error: errText || `Cancellation rejected by server (${response.status}).`,
+      };
     }
 
     // Route-specific: notify rider via RTDB ping (hardware-level, not delivery lifecycle)

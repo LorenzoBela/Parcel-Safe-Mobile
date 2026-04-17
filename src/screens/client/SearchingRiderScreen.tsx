@@ -314,9 +314,23 @@ export default function SearchingRiderScreen() {
     };
 
     const contentAnim = useEntryAnimation(0);
+    const uiColors = {
+        container: theme.colors.background,
+        surface: theme.colors.surface,
+        accent: theme.dark ? '#F5F5F5' : '#111111',
+        accentInverse: theme.dark ? '#111111' : '#FFFFFF',
+        secondaryText: theme.dark ? '#A7A7A7' : '#616161',
+        mutedIcon: theme.dark ? '#989898' : '#686868',
+        divider: theme.dark ? '#343434' : '#D9D9D9',
+        locationCard: theme.dark ? '#171717' : '#F6F6F6',
+        failureBg: theme.dark ? '#1A1A1A' : '#F2F2F2',
+        failureBorder: theme.dark ? '#383838' : '#D2D2D2',
+        centerIconFailureBg: theme.dark ? '#202020' : '#ECECEC',
+        actionBorder: theme.dark ? '#4A4A4A' : '#CFCFCF',
+    };
 
     return (
-        <View style={styles.container}>
+        <View style={[styles.container, { backgroundColor: uiColors.container }]}>
             <Animated.View style={[styles.content, contentAnim.style]}>
 
                 {/* Radar/Pulse Animation Container */}
@@ -339,7 +353,7 @@ export default function SearchingRiderScreen() {
                                 style={[
                                     styles.pulseCircle,
                                     {
-                                        borderColor: theme.colors.primary,
+                                        borderColor: uiColors.accent,
                                         opacity,
                                         transform: [{ scale }],
                                     },
@@ -348,19 +362,28 @@ export default function SearchingRiderScreen() {
                         );
                     })}
 
-                    <Surface style={[styles.centerIcon, searchFailed && { backgroundColor: '#fff0f0' }]} elevation={4}>
+                    <Surface
+                        style={[
+                            styles.centerIcon,
+                            {
+                                backgroundColor: searchFailed ? uiColors.centerIconFailureBg : uiColors.surface,
+                                borderColor: theme.colors.outline,
+                            },
+                        ]}
+                        elevation={4}
+                    >
                         <MaterialCommunityIcons
                             name={searchFailed ? "moped-outline" : "moped"}
                             size={40}
-                            color={searchFailed ? theme.colors.error : theme.colors.primary}
+                            color={searchFailed ? uiColors.mutedIcon : uiColors.accent}
                         />
                     </Surface>
                 </View>
 
-                <Text variant="headlineSmall" style={[styles.statusTitle, { color: searchFailed ? theme.colors.error : theme.colors.primary }]}>
+                <Text variant="headlineSmall" style={[styles.statusTitle, { color: uiColors.accent }]}>
                     {searchFailed ? 'No Riders Available' : 'Searching for Riders'}
                 </Text>
-                <Text variant="bodyMedium" style={styles.statusSubtitle}>
+                <Text variant="bodyMedium" style={[styles.statusSubtitle, { color: uiColors.secondaryText }]}>
                     {statusText}
                 </Text>
 
@@ -369,10 +392,10 @@ export default function SearchingRiderScreen() {
                     <View style={styles.progressContainer}>
                         <ProgressBar
                             progress={progress}
-                            color={theme.colors.primary}
+                            color={uiColors.accent}
                             style={styles.progressBar}
                         />
-                        <Text variant="bodySmall" style={styles.progressHint}>
+                        <Text variant="bodySmall" style={[styles.progressHint, { color: uiColors.secondaryText }]}>
                             Searching in your area...
                         </Text>
                     </View>
@@ -380,22 +403,30 @@ export default function SearchingRiderScreen() {
 
                 {/* Failure message with helpful info */}
                 {searchFailed && (
-                    <View style={styles.failureMessage}>
-                        <Text variant="bodyMedium" style={styles.failureText}>
+                    <View style={[styles.failureMessage, { backgroundColor: uiColors.failureBg, borderColor: uiColors.failureBorder }]}>
+                        <Text variant="bodyMedium" style={[styles.failureText, { color: uiColors.secondaryText }]}>
                             All riders in your area are currently busy. Please try again in a few moments.
                         </Text>
                     </View>
                 )}
 
-                <View style={styles.locationSummary}>
+                <View
+                    style={[
+                        styles.locationSummary,
+                        {
+                            backgroundColor: uiColors.locationCard,
+                            borderColor: uiColors.actionBorder,
+                        },
+                    ]}
+                >
                     <View style={styles.row}>
-                        <MaterialCommunityIcons name="circle-slice-8" size={16} color="green" />
-                        <Text style={styles.locationText} numberOfLines={1}>{pickup || 'Pickup Location'}</Text>
+                        <MaterialCommunityIcons name="circle-slice-8" size={16} color={uiColors.accent} />
+                        <Text style={[styles.locationText, { color: theme.colors.onSurface }]} numberOfLines={1}>{pickup || 'Pickup Location'}</Text>
                     </View>
-                    <View style={[styles.verticalLine, { backgroundColor: '#ddd' }]} />
+                    <View style={[styles.verticalLine, { backgroundColor: uiColors.divider }]} />
                     <View style={styles.row}>
-                        <MaterialCommunityIcons name="map-marker" size={16} color="red" />
-                        <Text style={styles.locationText} numberOfLines={1}>{dropoff || 'Dropoff Location'}</Text>
+                        <MaterialCommunityIcons name="map-marker" size={16} color={uiColors.mutedIcon} />
+                        <Text style={[styles.locationText, { color: theme.colors.onSurface }]} numberOfLines={1}>{dropoff || 'Dropoff Location'}</Text>
                     </View>
                 </View>
 
@@ -407,6 +438,8 @@ export default function SearchingRiderScreen() {
                         <Button
                             mode="contained"
                             onPress={handleRetry}
+                            buttonColor={uiColors.accent}
+                            textColor={uiColors.accentInverse}
                             style={styles.retryButton}
                         >
                             Try Again
@@ -414,18 +447,18 @@ export default function SearchingRiderScreen() {
                         <Button
                             mode="outlined"
                             onPress={() => navigation.goBack()}
-                            textColor={theme.colors.onSurface}
-                            style={styles.goBackButton}
+                            textColor={uiColors.accent}
+                            style={[styles.goBackButton, { borderColor: uiColors.actionBorder }]}
                         >
                             Go Back
                         </Button>
                     </View>
                 ) : (
                     <Button
-                        mode="contained-tonal"
+                        mode="outlined"
                         onPress={handleCancel}
-                        textColor={theme.colors.error}
-                        style={styles.cancelButton}
+                        textColor={uiColors.accent}
+                        style={[styles.cancelButton, { borderColor: uiColors.actionBorder }]}
                     >
                         Cancel Search
                     </Button>
@@ -438,7 +471,6 @@ export default function SearchingRiderScreen() {
 const styles = StyleSheet.create({
     container: {
         flex: 1,
-        backgroundColor: '#fff',
     },
     content: {
         flex: 1,
@@ -466,7 +498,7 @@ const styles = StyleSheet.create({
         borderRadius: 40,
         justifyContent: 'center',
         alignItems: 'center',
-        backgroundColor: 'white',
+        borderWidth: 1,
         zIndex: 10,
     },
     statusTitle: {
@@ -475,7 +507,6 @@ const styles = StyleSheet.create({
         textAlign: 'center',
     },
     statusSubtitle: {
-        color: '#666',
         marginBottom: 24,
         textAlign: 'center',
     },
@@ -490,26 +521,22 @@ const styles = StyleSheet.create({
     },
     progressHint: {
         textAlign: 'center',
-        color: '#888',
         marginTop: 8,
     },
     failureMessage: {
         width: '100%',
         padding: 16,
-        backgroundColor: '#fff5f5',
         borderRadius: 12,
         marginBottom: 16,
         borderWidth: 1,
-        borderColor: '#ffdddd',
     },
     failureText: {
         textAlign: 'center',
-        color: '#666',
     },
     locationSummary: {
         width: '100%',
         padding: 16,
-        backgroundColor: '#f9f9f9',
+        borderWidth: 1,
         borderRadius: 12,
     },
     row: {
@@ -519,7 +546,6 @@ const styles = StyleSheet.create({
     },
     locationText: {
         marginLeft: 12,
-        color: '#444',
         flex: 1,
     },
     verticalLine: {
@@ -538,10 +564,6 @@ const styles = StyleSheet.create({
     retryButton: {
         marginBottom: 0,
     },
-    goBackButton: {
-        borderColor: '#ddd',
-    },
-    cancelButton: {
-        borderColor: '#ffdddd',
-    },
+    goBackButton: {},
+    cancelButton: {},
 });

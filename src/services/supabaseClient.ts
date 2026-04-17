@@ -458,55 +458,42 @@ export async function markDeliveryComplete(
         return false;
     }
 
-    const reasonWithMetadata = `${normalizedReason} [mode=DEGRADED|code=BATTERY_HANDOFF_INCIDENT]`;
-
     try {
         const {
             data: { session },
         } = await supabase.auth.getSession();
 
         const token = session?.access_token;
-        if (token) {
-            const response = await fetch(`${API_BASE_URL}/api/admin/deliveries/manual-complete`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    Authorization: `Bearer ${token}`,
-                },
-                body: JSON.stringify({
-                    deliveryIdOrTracking: deliveryId,
-                    note: normalizedReason,
-                    reasonCode: 'BATTERY_HANDOFF_INCIDENT',
-                    telemetryUnavailable: true,
-                }),
-            });
-
-            if (response.ok) {
-                return true;
-            }
-
-            const errText = await response.text().catch(() => '');
-            console.warn('[AdminComplete] Server route failed, falling back to direct update:', response.status, errText);
+        if (!token) {
+            console.error('[AdminComplete] No session token — cannot call admin endpoint.');
+            return false;
         }
+
+        const response = await fetch(`${API_BASE_URL}/api/admin/deliveries/manual-complete`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify({
+                deliveryIdOrTracking: deliveryId,
+                note: normalizedReason,
+                reasonCode: 'BATTERY_HANDOFF_INCIDENT',
+                telemetryUnavailable: true,
+            }),
+        });
+
+        if (response.ok) {
+            return true;
+        }
+
+        const errText = await response.text().catch(() => '');
+        console.error('[AdminComplete] Server rejected manual-complete:', response.status, errText);
+        return false;
     } catch (routeError) {
-        console.warn('[AdminComplete] Server route call failed, falling back to direct update:', routeError);
-    }
-
-    const { error } = await supabase
-        .from('deliveries')
-        .update({
-            status: 'COMPLETED',
-            manual_completion_reason: reasonWithMetadata,
-            manual_completion_at: new Date().toISOString(),
-        })
-        .or(`id.eq.${deliveryId},tracking_number.eq.${deliveryId}`);
-
-    if (error) {
-        console.error('Failed to mark delivery complete:', error.message);
+        console.error('[AdminComplete] Network error calling manual-complete:', routeError);
         return false;
     }
-
-    return true;
 }
 
 /**

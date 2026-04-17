@@ -36,6 +36,7 @@ const INITIAL_REGION = {
 // Start of EC-Update: Imports for persistence
 import { checkActiveBookings } from '../../services/riderMatchingService';
 import useAuthStore from '../../store/authStore';
+import { calculateFare } from '../../services/pricingService';
 // End of EC-Update
 
 type MapboxSuggestion = {
@@ -886,16 +887,14 @@ export default function BookServiceScreen() {
                 const distanceKm = route.distance / 1000;
                 const durationMin = route.duration / 60;
 
-                // Calculate cost: Base fare + per km + per minute
-                const baseFare = 50;
-                const perKm = 15;
-                const perMin = 2;
-                const cost = baseFare + (distanceKm * perKm) + (durationMin * perMin);
+                // Canonical fare — shared with web/book, /api/pricing/quote
+                // and the rates screens. Formula lives in pricingService.ts.
+                const cost = calculateFare(distanceKm, durationMin).total;
 
                 setRouteData({
                     distance: distanceKm,
                     duration: durationMin,
-                    cost: Math.round(cost),
+                    cost,
                     route: route.geometry,
                     snappedPickupCoords: data.waypoints?.[0]?.location,
                     snappedDropoffCoords: data.waypoints?.[1]?.location,
@@ -974,16 +973,8 @@ export default function BookServiceScreen() {
             return;
         }
 
-        // Block new bookings if there is already an active one
-        if (hasActiveBooking) {
-            PremiumAlert.alert(
-                'Active Delivery Exists',
-                'You already have an active delivery in progress. Please wait for it to complete before creating a new booking.'
-            );
-            return;
-        }
-
-        // Double-check with a fresh query to prevent race conditions
+        // Always use a fresh query first to avoid stale UI state blocking bookings
+        // after cancellation/recovery races.
         if (userId) {
             const activeBooking = await checkActiveBookings(userId);
             if (activeBooking) {
@@ -994,6 +985,17 @@ export default function BookServiceScreen() {
                 );
                 return;
             }
+
+            // Clear any stale local guard when canonical check says no active booking.
+            if (hasActiveBooking) {
+                setHasActiveBooking(false);
+            }
+        } else if (hasActiveBooking) {
+            PremiumAlert.alert(
+                'Active Delivery Exists',
+                'You already have an active delivery in progress. Please wait for it to complete before creating a new booking.'
+            );
+            return;
         }
 
         console.log('[BookService] Confirmed Booking - Route Data:', routeData);

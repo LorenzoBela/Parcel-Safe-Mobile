@@ -8,8 +8,9 @@
  */
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { ref, update, serverTimestamp } from 'firebase/database';
-import { getFirebaseDatabase } from './firebaseClient';
+// Firebase RTDB is no longer written directly from this service — every
+// status change now flows through the centralized transition API. Imports
+// removed intentionally.
 import { supabase } from './supabaseClient';
 import { generateQueueUuid } from './queueIdentity';
 import { getExponentialBackoffDelayMs, NETWORK_POLICY } from './networkPolicy';
@@ -204,7 +205,6 @@ class StatusUpdateService {
         try {
             const queue = await this.getQueue();
             const currentTime = Date.now();
-            const database = getFirebaseDatabase();
 
             for (const entry of queue) {
                 if (entry.synced) continue;
@@ -249,15 +249,11 @@ class StatusUpdateService {
                     }
 
                     if (!transitionOk) {
-                        // Fallback: direct Firebase write to unblock hardware
-                        const deliveryRef = ref(database, `deliveries/${entry.deliveryId}`);
-                        await update(deliveryRef, {
-                            status: entry.status,
-                            updated_at: serverTimestamp(),
-                            status_retry_source: 'mobile_retry',
-                            status_retry_box_id: entry.boxId,
-                            status_retry_queue_id: entry.queueId || null,
-                        });
+                        // The API was unreachable or rejected the retry. Keep the
+                        // entry queued so the next connectivity-restored flush
+                        // can try again — do NOT force a direct Firebase write,
+                        // which would drift Supabase out of sync.
+                        throw new Error('transition-api-unreachable');
                     }
 
                     entry.synced = true;
@@ -346,15 +342,13 @@ class StatusUpdateService {
             }
 
             if (!transitionOk) {
-                // Fallback: direct Firebase write to unblock hardware
-                const database = getFirebaseDatabase();
-                await update(ref(database, `deliveries/${deliveryId}`), {
-                    status: 'COMPLETED',
-                    updated_at: serverTimestamp(),
-                    status_retry_source: 'manual_fallback',
-                    manual_override: true,
-                    status_retry_box_id: boxId,
-                });
+                // The centralized transition API is the only path that can
+                // safely flip a delivery to COMPLETED — it owns the audit log
+                // and notification fan-out. If it is unreachable we surface
+                // the failure to the UI instead of forging a direct Firebase
+                // write that would leave Supabase drifted.
+                console.error('[EC35] markCompleteManually: transition API unreachable or rejected; aborting.');
+                return false;
             }
 
             // Box status sync (hardware-specific, stays mobile-side)

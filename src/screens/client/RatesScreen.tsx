@@ -1,10 +1,16 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { View, StyleSheet, ScrollView, TouchableOpacity, StatusBar } from 'react-native';
 import { Text } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAppTheme } from '../../context/ThemeContext';
+import { PRICING, RateInfo, fetchRates } from '../../services/pricingService';
+
+const API_BASE_URL =
+    process.env.EXPO_PUBLIC_TRACKING_WEB_BASE_URL
+    || process.env.EXPO_PUBLIC_API_URL
+    || 'https://parcel-safe.vercel.app';
 
 // ─── Colors ─────────────────────────────────────────────────────────────────────
 const light = {
@@ -44,6 +50,24 @@ export default function RatesScreen() {
     const navigation = useNavigation();
     const insets = useSafeAreaInsets();
 
+    // Pull canonical rates from /api/pricing/rates at mount. The local
+    // constants are used as an offline fallback so the screen never shows
+    // blank placeholders. The previous hard-coded ₱49/₱10 copy was WRONG —
+    // the real formula is base ₱50 + ₱15/km + ₱2/min.
+    const [rates, setRates] = useState<RateInfo>({
+        baseFare: PRICING.BASE_FARE,
+        perKm: PRICING.PER_KM,
+        perMin: PRICING.PER_MIN,
+        currency: PRICING.CURRENCY,
+        formula: 'round(base + km * perKm + min * perMin)',
+    });
+
+    useEffect(() => {
+        const controller = new AbortController();
+        fetchRates(API_BASE_URL, controller.signal).then(setRates).catch(() => { });
+        return () => controller.abort();
+    }, []);
+
     return (
         <ScrollView
             style={[styles.container, { backgroundColor: c.bg }]}
@@ -70,12 +94,16 @@ export default function RatesScreen() {
                 </Text>
                 <View style={[styles.priceCard, { backgroundColor: c.bg, borderColor: c.border }]}>
                     <View style={styles.priceMainRow}>
-                        <Text style={[styles.priceMain, { color: c.text }]}>₱49.00</Text>
+                        <Text style={[styles.priceMain, { color: c.text }]}>₱{rates.baseFare.toFixed(2)}</Text>
                         <Text style={[styles.priceUnit, { color: c.textTer }]}>base fare</Text>
                     </View>
                     <View style={styles.priceMainRow}>
-                        <Text style={[styles.priceAdd, { color: c.text }]}>+ ₱10.00</Text>
-                        <Text style={[styles.priceUnit, { color: c.textTer }]}>per km after 1st km</Text>
+                        <Text style={[styles.priceAdd, { color: c.text }]}>+ ₱{rates.perKm.toFixed(2)}</Text>
+                        <Text style={[styles.priceUnit, { color: c.textTer }]}>per km</Text>
+                    </View>
+                    <View style={styles.priceMainRow}>
+                        <Text style={[styles.priceAdd, { color: c.text }]}>+ ₱{rates.perMin.toFixed(2)}</Text>
+                        <Text style={[styles.priceUnit, { color: c.textTer }]}>per minute</Text>
                     </View>
                 </View>
             </View>

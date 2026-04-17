@@ -1419,11 +1419,11 @@ export default function RiderDashboard() {
         // Run sweep every 5 seconds to ensure queue moves quickly
         const sweeper = setInterval(() => {
             if (isOnline) {
-                runTimeoutSweep().catch(console.error);
+                runTimeoutSweep(authedUserId).catch(console.error);
             }
         }, 5000);
         return () => clearInterval(sweeper);
-    }, [isOnline]);
+    }, [isOnline, authedUserId]);
 
     // EC-35: Try to flush any queued status updates while rider is active
     useEffect(() => {

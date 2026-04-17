@@ -12,8 +12,20 @@
  */
 
 import { NETWORK_POLICY } from './networkPolicy';
+import { Platform } from 'react-native';
 
-const SYNC_ENDPOINT = `${process.env.EXPO_PUBLIC_TRACKING_WEB_BASE_URL || 'https://parcel-safe.vercel.app'}/api/sync-deliveries`;
+const DEFAULT_LOCAL_API_BASE = Platform.OS === 'android'
+    ? 'http://10.0.2.2:3000'
+    : 'http://localhost:3000';
+
+const SYNC_API_BASE = (
+    process.env.EXPO_PUBLIC_TRACKING_WEB_BASE_URL
+    || process.env.EXPO_PUBLIC_API_URL
+    || process.env.EXPO_PUBLIC_LOCAL_API_URL
+    || (__DEV__ ? DEFAULT_LOCAL_API_BASE : 'https://parcel-safe.vercel.app')
+).replace(/\/+$/, '');
+
+const SYNC_ENDPOINT = `${SYNC_API_BASE}/api/sync-deliveries`;
 
 // Throttle: don't sync more than once per 30 seconds
 let lastSyncTime = 0;

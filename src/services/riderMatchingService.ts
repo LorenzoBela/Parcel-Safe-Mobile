@@ -10,13 +10,40 @@ import { ref, get, set, update, remove, onValue, off, onDisconnect, runTransacti
 import { showIncomingOrderNotification, cancelDeliveryReminderNotification } from './pushNotificationService';
 import statusUpdateService from './statusUpdateService';
 import { supabase } from './supabaseClient';
+import { Platform } from 'react-native';
 
 import { generateShareToken, generateOTP } from '../utils/tokenUtils';
 
 /** Base URL for the Parcel Safe web API (used to dispatch server-side FCM notifications) */
-const API_BASE_URL = process.env.EXPO_PUBLIC_TRACKING_WEB_BASE_URL || 'https://parcel-safe.vercel.app';
+const DEFAULT_LOCAL_API_BASE = Platform.OS === 'android'
+    ? 'http://10.0.2.2:3000'
+    : 'http://localhost:3000';
 
-/** Map a delivery status to the NotificationType expected by /api/notifications/send */
+const API_BASE_URL = (
+    process.env.EXPO_PUBLIC_TRACKING_WEB_BASE_URL
+    || process.env.EXPO_PUBLIC_API_URL
+    || process.env.EXPO_PUBLIC_LOCAL_API_URL
+    || (__DEV__ ? DEFAULT_LOCAL_API_BASE : 'https://parcel-safe.vercel.app')
+).replace(/\/+$/, '');
+
+function isSupabaseRlsDenied(error: unknown): boolean {
+    const code = (error as { code?: unknown } | null)?.code;
+    return code === '42501';
+}
+
+/**
+ * Map a delivery status to the NotificationType expected by
+ * /api/notifications/send.
+ *
+ * @deprecated The authoritative copy now lives in
+ * `web/src/lib/deliveryLifecycleService.ts` (`resolveNotificationType`) and
+ * fires automatically inside `transitionDeliveryStatus`. This local map and
+ * the `dispatchStatusNotification` helper below are retained only for the
+ * one remaining bypass in `acceptOrder`, which the lifecycle-accept
+ * migration will replace with a call to `POST /api/deliveries/[id]/accept`.
+ * New callers should never import this map — go through the transition
+ * endpoint and let the server fan out notifications.
+ */
 const STATUS_TO_NOTIFICATION_TYPE: Record<string, string> = {
     ASSIGNED: 'ORDER_ACCEPTED',
     IN_TRANSIT: 'PARCEL_PICKED_UP',
@@ -29,6 +56,10 @@ async function getNotificationAuthHeaders(): Promise<Record<string, string>> {
     const headers: Record<string, string> = {
         'Content-Type': 'application/json',
     };
+
+    if (!supabase) {
+        return headers;
+    }
 
     try {
         const { data: { session } } = await supabase.auth.getSession();
@@ -411,7 +442,13 @@ export function isWithinRadius(
 }
 
 /**
- * Find all online riders within the search radius
+ * Find all online riders within the search radius.
+ *
+ * @deprecated Kept for a single internal fallback (the legacy dispatch body)
+ *   and for local debugging screens that want to visualise nearby riders. All
+ *   production rider-matching is owned by the server
+ *   (`web/src/lib/dispatchService.ts` via POST /api/dispatch/match); do not
+ *   call this from new code.
  */
 export async function findNearbyRiders(
     pickupLat: number,
@@ -485,13 +522,28 @@ export async function findNearbyRiders(
 }
 
 /**
- * Create a pending booking in Firebase
+ * Create a pending booking.
+ *
+ * Since the lifecycle-create migration, this is a thin wrapper around
+ * `POST /api/deliveries/create`, which owns the dual-write (Supabase
+ * `deliveries` insert + RTDB `/pending_bookings` set + `/share_tokens`).
+ *
+ * Mutating the `request` argument with the server-assigned share token is
+ * kept for backwards compatibility — legacy call sites reuse the request
+ * object to pass the token into `notifyNearbyRiders`.
  */
-export async function createPendingBooking(request: BookingRequest): Promise<boolean> {
+async function _createPendingBookingLegacyClientSide(request: BookingRequest): Promise<boolean> {
     try {
         const db = getFirebaseDatabase();
+        const createdAtMs = request.createdAt || Date.now();
+        const createdAtIso = new Date(createdAtMs).toISOString();
         const shareToken = request.shareToken || generateShareToken();
+        const otpCode = generateOTP();
+
         await set(ref(db, `/pending_bookings/${request.bookingId}`), {
+            booking_id: request.bookingId,
+            tracking_number: request.bookingId,
+            otp_code: otpCode,
             customer_id: request.customerId,
             pickup_lat: request.pickupLat,
             pickup_lng: request.pickupLng,
@@ -499,106 +551,176 @@ export async function createPendingBooking(request: BookingRequest): Promise<boo
             dropoff_lat: request.dropoffLat,
             dropoff_lng: request.dropoffLng,
             dropoff_address: request.dropoffAddress,
-            estimated_fare: request.estimatedFare,
+            sender_name: request.senderName || null,
+            sender_phone: request.senderPhone || null,
+            recipient_name: request.recipientName || null,
+            recipient_phone: request.recipientPhone || null,
+            delivery_notes: request.deliveryNotes || null,
+            estimated_fare: Math.round(Number(request.estimatedFare || 0)),
+            distance: request.distance ?? null,
+            duration: request.duration ?? null,
+            customerName: request.customerName || null,
             status: 'SEARCHING',
-            accepted_by: null,
-            created_at: request.createdAt,
             share_token: shareToken,
-            customer_name: request.customerName, // EC-Fix: Store for good measure, though mostly passed via request
-            sender_name: request.senderName,
-            sender_phone: request.senderPhone,
-            recipient_name: request.recipientName,
-            recipient_phone: request.recipientPhone,
-            delivery_notes: request.deliveryNotes,
-            snapped_pickup_lat: request.snappedPickupLat || null,
-            snapped_pickup_lng: request.snappedPickupLng || null,
-            snapped_dropoff_lat: request.snappedDropoffLat || null,
-            snapped_dropoff_lng: request.snappedDropoffLng || null,
+            created_at: createdAtMs,
+            customer_notified_riders: {},
+            snapped_pickup_lat: request.snappedPickupLat ?? null,
+            snapped_pickup_lng: request.snappedPickupLng ?? null,
+            snapped_dropoff_lat: request.snappedDropoffLat ?? null,
+            snapped_dropoff_lng: request.snappedDropoffLng ?? null,
         });
-        console.log(`[Booking] Created pending booking in Firebase: ${request.bookingId}`);
 
         await set(ref(db, `/share_tokens/${shareToken}`), {
             delivery_id: request.bookingId,
-            created_at: request.createdAt,
+            created_at: createdAtMs,
         });
 
-        // Sync to Supabase (Source of Truth)
+        // Keep request object in sync for downstream dispatch/track calls.
+        request.shareToken = shareToken;
+
+        // Best-effort Supabase mirror so admin views can still recover the
+        // record even when centralized create route is unavailable.
         if (supabase) {
-            try {
-                const otpCode = generateOTP();
+            await ensureProfileExists(request.customerId);
 
-                // Ensure customer profile exists (FK constraint)
-                await ensureProfileExists(request.customerId);
+            const { error } = await supabase
+                .from('deliveries')
+                .upsert({
+                    id: request.bookingId,
+                    tracking_number: request.bookingId,
+                    otp_code: otpCode,
+                    share_token: shareToken,
+                    customer_id: request.customerId,
+                    pickup_address: request.pickupAddress,
+                    pickup_lat: request.pickupLat,
+                    pickup_lng: request.pickupLng,
+                    dropoff_address: request.dropoffAddress,
+                    dropoff_lat: request.dropoffLat,
+                    dropoff_lng: request.dropoffLng,
+                    sender_name: request.senderName || null,
+                    sender_phone: request.senderPhone || null,
+                    recipient_name: request.recipientName || null,
+                    recipient_phone: request.recipientPhone || null,
+                    delivery_notes: request.deliveryNotes || null,
+                    status: 'PENDING',
+                    estimated_fare: Math.round(Number(request.estimatedFare || 0)),
+                    distance: request.distance != null ? Math.round(request.distance) : null,
+                    duration: request.duration != null ? Math.round(request.duration) : null,
+                    created_at: createdAtIso,
+                    updated_at: new Date().toISOString(),
+                }, { onConflict: 'id' });
 
-                // Check if delivery already exists in Supabase (e.g., created by web booking)
-                // If so, DON'T overwrite the existing OTP
-                const { data: existing } = await supabase
-                    .from('deliveries')
-                    .select('id, otp_code')
-                    .eq('id', request.bookingId)
-                    .maybeSingle();
-
-                const finalOtp = existing?.otp_code || otpCode;
-
-                const { error } = await supabase
-                    .from('deliveries')
-                    .upsert({
-                        id: request.bookingId,
-                        tracking_number: request.bookingId,
-                        customer_id: request.customerId,
-                        pickup_lat: request.pickupLat,
-                        pickup_lng: request.pickupLng,
-                        pickup_address: request.pickupAddress,
-                        dropoff_lat: request.dropoffLat,
-                        dropoff_lng: request.dropoffLng,
-                        dropoff_address: request.dropoffAddress,
-                        estimated_fare: Math.round(request.estimatedFare),
-                        distance: request.distance ? Math.round(request.distance) : null, // Persist distance (rounded)
-                        duration: request.duration ? Math.round(request.duration) : null, // Persist duration (rounded)
-                        share_token: shareToken,
-                        sender_name: request.senderName,
-                        sender_phone: request.senderPhone,
-                        recipient_name: request.recipientName,
-                        recipient_phone: request.recipientPhone,
-                        delivery_notes: request.deliveryNotes,
-                        otp_code: finalOtp,
-                        status: 'PENDING',
-                        created_at: new Date(request.createdAt).toISOString(),
-                        updated_at: new Date(request.createdAt).toISOString(),
-                        // EC-Fix: Remove snapped_ coordinates as they might not exist in Supabase schema
-                        // snapped_pickup_lat: request.snappedPickupLat || null,
-                        // snapped_pickup_lng: request.snappedPickupLng || null,
-                        // snapped_dropoff_lat: request.snappedDropoffLat || null,
-                        // snapped_dropoff_lng: request.snappedDropoffLng || null,
-                    }, { onConflict: 'id' });
-
-                if (error) {
-                    console.error('[RiderMatching] Supabase delivery upsert failed:', {
-                        message: error.message,
-                        code: error.code,
-                        details: error.details,
-                        hint: error.hint,
-                    });
-                    // Queue for retry
-                    await statusUpdateService.queueStatusUpdate(request.bookingId, 'UNKNOWN_BOX', 'PENDING');
-                    return false; // EC-Fix: Reject creation to prevent inconsistent state
-                } else {
-                    console.log(`[Booking] Synced booking to Supabase: ${request.bookingId}`);
-                }
-            } catch (sbError) {
-                console.error('[RiderMatching] Supabase sync exception:', sbError);
+            if (error) {
+                console.warn('[Booking] Legacy create Supabase upsert failed (non-fatal):', {
+                    message: error.message,
+                    code: error.code,
+                });
+                await statusUpdateService.queueStatusUpdate(request.bookingId, 'UNKNOWN_BOX', 'PENDING');
             }
         }
 
+        console.warn(`[Booking] Legacy create fallback succeeded for ${request.bookingId}`);
         return true;
     } catch (error) {
-        console.error(`[Booking] Error creating pending booking: ${error}`);
+        console.error('[Booking] Legacy create fallback failed:', error);
         return false;
     }
 }
 
+export async function createPendingBooking(request: BookingRequest): Promise<boolean> {
+    try {
+        const headers = await getNotificationAuthHeaders();
+        const response = await fetch(`${API_BASE_URL}/api/deliveries/create`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({
+                deliveryId: request.bookingId,
+                customerId: request.customerId,
+                customerName: request.customerName,
+                pickup: {
+                    lat: request.pickupLat,
+                    lng: request.pickupLng,
+                    address: request.pickupAddress,
+                },
+                dropoff: {
+                    lat: request.dropoffLat,
+                    lng: request.dropoffLng,
+                    address: request.dropoffAddress,
+                },
+                senderName: request.senderName,
+                senderPhone: request.senderPhone,
+                recipientName: request.recipientName,
+                recipientPhone: request.recipientPhone,
+                deliveryNotes: request.deliveryNotes,
+                estimatedFare: request.estimatedFare,
+                distance: request.distance,
+                duration: request.duration,
+                snappedPickupLat: request.snappedPickupLat ?? null,
+                snappedPickupLng: request.snappedPickupLng ?? null,
+                snappedDropoffLat: request.snappedDropoffLat ?? null,
+                snappedDropoffLng: request.snappedDropoffLng ?? null,
+                shareToken: request.shareToken,
+            }),
+        });
+
+        if (!response.ok) {
+            const body = await response.text().catch(() => '');
+            console.error(
+                `[Booking] /api/deliveries/create failed: ${response.status} ${response.statusText} ${body}`,
+            );
+
+            // Idempotent retry path: booking already exists server-side.
+            if (response.status === 409) {
+                console.warn(`[Booking] create returned 409 conflict for ${request.bookingId}; treating as already created.`);
+                return true;
+            }
+
+            // Compatibility fallback for auth/route/version mismatches and transient
+            // server outages.
+            if (response.status === 401 || response.status === 403 || response.status === 404 || response.status >= 500) {
+                return _createPendingBookingLegacyClientSide(request);
+            }
+
+            await statusUpdateService.queueStatusUpdate(request.bookingId, 'UNKNOWN_BOX', 'PENDING');
+            return false;
+        }
+
+        const json = (await response.json().catch(() => ({}))) as {
+            success?: boolean;
+            deliveryId?: string;
+            shareToken?: string;
+            errorCode?: string;
+        };
+        if (!json.success) {
+            if (String(json.errorCode || '').toUpperCase() === 'CONFLICT') {
+                console.warn(`[Booking] create returned conflict payload for ${request.bookingId}; treating as already created.`);
+                return true;
+            }
+            console.error('[Booking] /api/deliveries/create returned non-success:', json);
+            return false;
+        }
+
+        // Back-propagate the server-assigned share token so downstream
+        // callers (notifyNearbyRiders, subscribeToBookingStatus) see a
+        // consistent value without re-reading Supabase.
+        if (json.shareToken && !request.shareToken) {
+            request.shareToken = json.shareToken;
+        }
+        console.log(`[Booking] Created pending booking via API: ${json.deliveryId}`);
+        return true;
+    } catch (error) {
+        console.error(`[Booking] Error creating pending booking: ${error}`);
+        return _createPendingBookingLegacyClientSide(request);
+    }
+}
+
 /**
- * Send order request to a specific rider
+ * Send order request to a specific rider.
+ *
+ * @deprecated Owned by `web/src/lib/dispatchService.ts` (server-side) now.
+ *   Retained only because the deprecated `_notifyNearbyRidersLegacyClientSide`
+ *   and `passOrderToNextCandidate` fallbacks still reference it. Do not call
+ *   from new code — the server writes this RTDB node during dispatch.
  */
 export async function sendOrderRequestToRider(
     riderId: string,
@@ -640,7 +762,11 @@ export async function sendOrderRequestToRider(
 
 /**
  * Evaluate and rank nearby riders to form a candidate queue.
- * Prioritizes based on distance to pickup and idle time (time since last assigned order).
+ * Prioritizes based on distance to pickup and idle time.
+ *
+ * @deprecated Owned by `web/src/lib/dispatchService.ts` (server-side) now.
+ *   Only referenced by the deprecated legacy dispatch body; real matching
+ *   runs through POST /api/dispatch/match.
  */
 export async function rankRidersForBooking(
     booking: BookingRequest,
@@ -690,10 +816,83 @@ export async function rankRidersForBooking(
 }
 
 /**
- * Notify all nearby riders about a new booking (Sequential Cascading version)
- * This finds nearby riders, ranks them, stores the candidate queue, and actively pings *only* the best candidate.
+ * Notify all nearby riders about a new booking.
+ *
+ * Since the dispatcher centralization, this is a thin HTTP wrapper around
+ * `POST /api/dispatch/match`. The server owns the full find → rank → notify
+ * pipeline (candidate_queue + exclusive offer + tray push) so the mobile
+ * client and web client share one canonical implementation.
+ *
+ * @deprecated The in-body fallback below (findNearbyRiders + rank + direct
+ *   RTDB writes) is retained temporarily for offline parity but will be
+ *   removed in the dispatch-cleanup step.
  */
 export async function notifyNearbyRiders(
+    booking: BookingRequest
+): Promise<{ notifiedCount: number; riders: string[] }> {
+    try {
+        const headers = await getNotificationAuthHeaders();
+        const response = await fetch(`${API_BASE_URL}/api/dispatch/match`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({
+                bookingId: booking.bookingId,
+                customerId: booking.customerId,
+                customerName: booking.customerName,
+                pickup: {
+                    lat: booking.pickupLat,
+                    lng: booking.pickupLng,
+                    address: booking.pickupAddress,
+                },
+                dropoff: {
+                    lat: booking.dropoffLat,
+                    lng: booking.dropoffLng,
+                    address: booking.dropoffAddress,
+                },
+                estimatedFare: booking.estimatedFare,
+                distance: booking.distance,
+                duration: booking.duration,
+                senderName: booking.senderName,
+                senderPhone: booking.senderPhone,
+                recipientName: booking.recipientName,
+                recipientPhone: booking.recipientPhone,
+                deliveryNotes: booking.deliveryNotes,
+            }),
+        });
+
+        if (response.ok) {
+            const json = await response.json().catch(() => ({}));
+            return {
+                notifiedCount: Number(json?.notifiedCount ?? 0),
+                riders: Array.isArray(json?.candidateQueue) ? json.candidateQueue : [],
+            };
+        }
+
+        const errText = await response.text().catch(() => '');
+        console.warn(`[RiderMatching] dispatch/match returned ${response.status}: ${errText}`);
+
+        if (response.status === 401 || response.status === 403 || response.status === 404 || response.status >= 500) {
+            console.warn('[RiderMatching] Falling back to legacy local notifyNearbyRiders logic.');
+            return _notifyNearbyRidersLegacyClientSide(booking);
+        }
+    } catch (err) {
+        console.warn('[RiderMatching] dispatch/match API call failed — booking will rely on open-pool fallback:', err);
+        return _notifyNearbyRidersLegacyClientSide(booking);
+    }
+
+    // Hard fallback: return zero so the caller can show "no riders nearby" UX.
+    // We deliberately do not run the legacy client-side dispatch here anymore
+    // — that would reintroduce the duplicated rank/notify path we just moved
+    // server-side. The pool-broadcast heads-up still happens on the server
+    // whenever the candidate queue exhausts.
+    return { notifiedCount: 0, riders: [] };
+}
+
+// ---------------------------------------------------------------------------
+// Legacy client-side notifyNearbyRiders body — kept as _notifyNearbyRidersLegacy
+// for reference during the migration window. Unused at runtime.
+// ---------------------------------------------------------------------------
+async function _notifyNearbyRidersLegacyClientSide(
     booking: BookingRequest
 ): Promise<{ notifiedCount: number; riders: string[] }> {
     const nearbyRiders = await findNearbyRiders(
@@ -811,14 +1010,111 @@ export async function notifyNearbyRiders(
 }
 
 /**
- * Accept an order as a rider (atomic via runTransaction to prevent race conditions)
+ * Accept an order as a rider.
  *
- * Uses Firebase runTransaction() on /pending_bookings/{bookingId} to guarantee
- * that only one rider can accept a booking even if multiple riders tap "Accept"
- * simultaneously. The losing rider(s) receive `false` so the UI can show
- * "This delivery was already accepted by another rider."
+ * Thin wrapper around `POST /api/deliveries/{id}/accept`. The server owns the
+ * atomic RTDB transaction, OTP resolution, hardware node writes, losing-rider
+ * DISPATCH_CANCEL fan-out, and the ORDER_ACCEPTED push. See
+ * `web/src/lib/deliveryLifecycleService.ts` `acceptDelivery` for the full flow.
+ *
+ * Guardrails for `missing_box` and `missing_phone` are applied locally first
+ * so we never hit the network for a trivial client-side mistake.
  */
 export async function acceptOrder(
+    riderId: string,
+    bookingId: string,
+    requestId: string,
+    metadata?: {
+        riderName?: string;
+        riderPhone?: string;
+        boxId?: string;
+    }
+): Promise<AcceptOrderResult> {
+    const normalizedBoxId = typeof metadata?.boxId === 'string' ? metadata.boxId.trim() : '';
+    const hasValidBoxId = Boolean(
+        normalizedBoxId
+        && normalizedBoxId.toLowerCase() !== 'null'
+        && normalizedBoxId.toLowerCase() !== 'undefined'
+        && normalizedBoxId.toLowerCase() !== 'unknown_box',
+    );
+
+    if (!hasValidBoxId) {
+        return {
+            success: false,
+            reason: 'missing_box',
+            message: 'Pair a Smart Box first to accept deliveries.',
+        };
+    }
+
+    if (!metadata?.riderPhone) {
+        return {
+            success: false,
+            reason: 'missing_phone',
+            message: 'Add a contact number to your profile to accept deliveries.',
+        };
+    }
+
+    try {
+        const headers = await getNotificationAuthHeaders();
+        const response = await fetch(`${API_BASE_URL}/api/deliveries/${encodeURIComponent(bookingId)}/accept`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({
+                riderId,
+                requestId,
+                riderName: metadata?.riderName,
+                riderPhone: metadata?.riderPhone,
+                boxId: normalizedBoxId,
+            }),
+        });
+
+        const rawBody = await response.text().catch(() => '');
+        const json = (() => {
+            if (!rawBody) return {} as any;
+            try {
+                return JSON.parse(rawBody) as any;
+            } catch {
+                return {} as any;
+            }
+        })();
+
+        if (!response.ok || !json?.success) {
+            if (response.status === 401 || response.status === 403 || response.status === 404 || response.status >= 500) {
+                console.warn(
+                    `[Booking] acceptOrder API unavailable (${response.status}) on ${API_BASE_URL}; falling back to legacy client-side claim path.`,
+                );
+                return _acceptOrderLegacyClientSide(riderId, bookingId, requestId, metadata);
+            }
+
+            const reason = (json?.reason as AcceptOrderReason) || 'error';
+            console.warn(`[Booking] acceptOrder API rejected bookingId=${bookingId} reason=${reason}`);
+            return {
+                success: false,
+                reason,
+                message: json?.message || 'Could not claim this delivery. Please try again.',
+                ...(typeof json?.retryAfterMs === 'number' ? { retryAfterMs: json.retryAfterMs } : {}),
+            };
+        }
+
+        console.log(`[Booking] Rider ${riderId} successfully accepted booking ${bookingId} via API`);
+        return { success: true, reason: 'success' };
+    } catch (error) {
+        console.error(`[Booking] acceptOrder API call failed for ${bookingId}:`, error);
+        console.warn('[Booking] acceptOrder API call failed; falling back to legacy client-side claim path.');
+        return _acceptOrderLegacyClientSide(riderId, bookingId, requestId, metadata);
+    }
+}
+
+/**
+ * @deprecated Legacy client-side acceptOrder implementation. Kept temporarily
+ * behind `_acceptOrderLegacyClientSide` in case the API path must be rolled back.
+ * Scheduled for deletion once lifecycle-delete-fallbacks lands.
+ *
+ * DO NOT call this directly — it performs unmediated Firebase+Supabase writes
+ * that bypass the centralized notification/audit pipeline.
+ */
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+async function _acceptOrderLegacyClientSide(
     riderId: string,
     bookingId: string,
     requestId: string,
@@ -915,7 +1211,7 @@ export async function acceptOrder(
 
         if (!txResult.committed) {
             console.log(`[Booking] Accept transaction not committed for ${bookingId} (reason=${abortReason || 'transaction_failed'})`);
-            const reason: AcceptOrderReason = abortReason || 'transaction_failed';
+            const reason = (abortReason || 'transaction_failed') as AcceptOrderReason;
             const messages: Record<AcceptOrderReason, string> = {
                 already_accepted: 'Another rider just claimed this delivery.',
                 reserved_for_other: `This delivery is currently being offered to another rider. It will return to the open pool in about ${Math.ceil(reservedRetryAfterMs / 1000)}s if they don't accept.`,
@@ -930,7 +1226,7 @@ export async function acceptOrder(
                 success: false,
                 reason,
                 message: messages[reason],
-                ...(reason === 'reserved_for_other' ? { retryAfterMs: reservedRetryAfterMs } : {}),
+                ...(abortReason === 'reserved_for_other' ? { retryAfterMs: reservedRetryAfterMs } : {}),
             };
         }
 
@@ -1099,19 +1395,34 @@ export async function acceptOrder(
                     .upsert(upsertData, { onConflict: 'id' });
 
                 if (error) {
-                    console.error('[RiderMatching] Supabase accept upsert failed:', {
-                        message: error.message,
-                        code: error.code,
-                        details: error.details,
-                        hint: error.hint,
-                    });
-                    // Note: We don't return false because Firebase already committed the claim.
-                    // The subsequent forceDeliverySync() will attempt self-healing.
+                    if (isSupabaseRlsDenied(error)) {
+                        console.warn(
+                            '[RiderMatching] Supabase accept upsert blocked by RLS (code 42501). ' +
+                            'Firebase claim already committed; triggering background sync-heal.',
+                        );
+                        void forceDeliverySync();
+                    } else {
+                        console.error('[RiderMatching] Supabase accept upsert failed:', {
+                            message: error.message,
+                            code: error.code,
+                            details: error.details,
+                            hint: error.hint,
+                        });
+                        // Note: We don't return false because Firebase already committed the claim.
+                        // The subsequent forceDeliverySync() will attempt self-healing.
+                    }
                 } else {
                     console.log('[RiderMatching] Upserted Supabase delivery on accept:', bookingId);
                 }
             } catch (sbError) {
-                console.error('[RiderMatching] Supabase accept sync exception:', sbError);
+                if (isSupabaseRlsDenied(sbError)) {
+                    console.warn(
+                        '[RiderMatching] Supabase accept sync denied by RLS during legacy fallback; triggering background sync-heal.',
+                    );
+                    void forceDeliverySync();
+                } else {
+                    console.error('[RiderMatching] Supabase accept sync exception:', sbError);
+                }
             }
         }
 
@@ -1190,7 +1501,13 @@ export async function markRiderAvailable(riderId: string): Promise<boolean> {
 }
 
 /**
- * Pass an order to the next candidate in the queue
+ * Pass an order to the next candidate in the queue.
+ *
+ * @deprecated Superseded by POST /api/dispatch/pass (see rejectOrder and
+ *   runTimeoutSweep below — both now call the API). This function is kept
+ *   only for a brief backwards-compat window while older app builds are
+ *   still in the field; once OTA has flushed the user base we can delete it
+ *   along with `sendOrderRequestToRider` and the legacy body.
  */
 export async function passOrderToNextCandidate(
     bookingId: string,
@@ -1341,23 +1658,51 @@ export async function passOrderToNextCandidate(
 }
 
 /**
- * Handle order rejection and pass it to the next candidate
+ * Handle order rejection and pass it to the next candidate.
+ *
+ * The candidate-queue handoff has been centralized — we no longer call
+ * passOrderToNextCandidate directly. Instead we:
+ *   1. Mark the local rider_request node as REJECTED so the modal UI closes.
+ *   2. Fire POST /api/dispatch/pass which runs the atomic transaction on the
+ *      server (admin credentials, single source of truth).
  */
 export async function rejectOrder(
     riderId: string,
     requestId: string,
-    bookingId?: string // Now necessary to advance the queue
+    bookingId?: string
 ): Promise<boolean> {
     try {
         const db = getFirebaseDatabase();
-        // Mark the local request as rejected
         await update(ref(db, `/rider_requests/${riderId}/${requestId}`), {
             status: 'REJECTED',
         });
 
         if (bookingId) {
-            // Trigger cascading queue logic
-            await passOrderToNextCandidate(bookingId, riderId);
+            try {
+                const headers = await getNotificationAuthHeaders();
+                const response = await fetch(`${API_BASE_URL}/api/dispatch/pass`, {
+                    method: 'POST',
+                    headers,
+                    body: JSON.stringify({
+                        bookingId,
+                        rejectingRiderId: riderId,
+                        reason: 'REJECTED',
+                    }),
+                });
+                if (!response.ok) {
+                    const errText = await response.text().catch(() => '');
+                    console.warn('[RiderMatching] dispatch/pass returned non-OK:', response.status, errText);
+
+                    // Compatibility fallback for environments running an older
+                    // web deployment that does not yet expose /api/dispatch/pass.
+                    if (response.status === 404) {
+                        console.warn('[RiderMatching] Falling back to legacy local passOrderToNextCandidate logic (rejectOrder).');
+                        await passOrderToNextCandidate(bookingId, riderId);
+                    }
+                }
+            } catch (apiErr) {
+                console.warn('[RiderMatching] dispatch/pass API call failed:', apiErr);
+            }
         }
 
         return true;
@@ -1439,25 +1784,57 @@ export function subscribeToBookingStatus(
  * This is a "cron-like" function that should ideally run on a trusted backend (e.g., Firebase Cloud Functions or an Admin Node script).
  * Running it from multiple clients is not ideal but possible with careful transaction usage.
  */
-export async function runTimeoutSweep(): Promise<void> {
+export async function runTimeoutSweep(selfRiderId?: string): Promise<void> {
     try {
         const db = getFirebaseDatabase();
         const pendingRef = ref(db, `/pending_bookings`);
         
-        // We do a get() to find searching bookings, then process expirations.
-        // Doing this strictly via REST/Admin SDK is better, but here's the client-side approximation
+        // Client-side fast-path sweep (≈5 s cadence in the rider dashboard).
+        // We still *read* RTDB from the client to detect expiry — this avoids
+        // a full sweep-API round trip when nothing has expired — but the
+        // actual candidate-queue mutation is delegated to POST /api/dispatch/pass
+        // so the transaction always runs with admin credentials.
+        //
+        // Authorization note: non-admin riders can only pass their own expired
+        // offers (enforced by /api/dispatch/pass). When `selfRiderId` is
+        // provided we pre-filter to avoid noisy 403s — other riders' expired
+        // offers are handled by the server-side pg_cron backstop (1 min).
         const snapshot = await get(pendingRef);
         if (!snapshot.exists()) return;
 
         const bookings = snapshot.val();
         const now = Date.now();
+        const headers = await getNotificationAuthHeaders();
 
         for (const [bookingId, data] of Object.entries<any>(bookings)) {
             if (data.status === 'SEARCHING' && data.current_candidate && data.offer_expires_at) {
+                if (selfRiderId && data.current_candidate !== selfRiderId) continue;
                 if (now > data.offer_expires_at) {
                     console.log(`[RiderMatching] Sweeper detected expired offer for order ${bookingId} (candidate: ${data.current_candidate})`);
-                    // The candidate missed the window. Force a rejection to pop the queue.
-                    await passOrderToNextCandidate(bookingId, data.current_candidate);
+                    try {
+                        const response = await fetch(`${API_BASE_URL}/api/dispatch/pass`, {
+                            method: 'POST',
+                            headers,
+                            body: JSON.stringify({
+                                bookingId,
+                                rejectingRiderId: data.current_candidate,
+                                reason: 'EXPIRED',
+                            }),
+                        });
+                        if (!response.ok) {
+                            const errText = await response.text().catch(() => '');
+                            console.warn('[RiderMatching] sweep dispatch/pass non-OK:', response.status, errText);
+
+                            // Compatibility fallback for environments where
+                            // /api/dispatch/pass is not deployed yet.
+                            if (response.status === 404) {
+                                console.warn(`[RiderMatching] Falling back to legacy local passOrderToNextCandidate for ${bookingId}.`);
+                                await passOrderToNextCandidate(bookingId, data.current_candidate);
+                            }
+                        }
+                    } catch (apiErr) {
+                        console.warn(`[RiderMatching] sweep dispatch/pass failed for ${bookingId} (cron will backstop):`, apiErr);
+                    }
                 }
             }
         }
@@ -1646,7 +2023,12 @@ export async function updateDeliveryStatus(
             }
         }
 
-        // Centralized status transition via server API (handles dual write + notifications + audit)
+        // Centralized status transition via server API (handles dual write +
+        // notifications + audit). No direct-write fallback — transient network
+        // failures are captured by the EC-35 retry queue in the catch branch
+        // below, and legitimate server rejections (state-machine / 4xx) MUST
+        // surface to the UI so the rider gets a real error, not a silent write
+        // that leaves Supabase + Firebase out of sync.
         const headers = await getNotificationAuthHeaders();
         const response = await fetch(`${API_BASE_URL}/api/deliveries/transition`, {
             method: 'POST',
@@ -1660,13 +2042,8 @@ export async function updateDeliveryStatus(
 
         if (!response.ok) {
             const errText = await response.text().catch(() => '');
-            console.warn('[updateDeliveryStatus] Transition API returned non-OK:', response.status, errText);
-            // Fallback: direct Firebase write so hardware is unblocked
-            await update(ref(db, `/deliveries/${deliveryId}`), {
-                status,
-                updated_at: Date.now(),
-                ...(additionalFields || {}),
-            });
+            console.error('[updateDeliveryStatus] Transition API rejected:', response.status, errText);
+            return false;
         }
 
         // Box status sync (hardware-specific, stays mobile-side)
@@ -1932,6 +2309,17 @@ export async function getRiderProfile(riderId: string): Promise<RiderProfile | n
  */
 export async function checkActiveBookings(userId: string): Promise<any | null> {
     try {
+        const toEpochMs = (value: unknown): number => {
+            if (typeof value === 'number' && Number.isFinite(value)) return value;
+            if (typeof value === 'string') {
+                const numeric = Number(value);
+                if (Number.isFinite(numeric)) return numeric;
+                const parsed = Date.parse(value);
+                if (Number.isFinite(parsed)) return parsed;
+            }
+            return 0;
+        };
+
         // 1. Check for Pending Bookings (in Firebase)
         // These are bookings that are "Searching for Riders"
         const db = getFirebaseDatabase();
@@ -1944,40 +2332,63 @@ export async function checkActiveBookings(userId: string): Promise<any | null> {
             for (const key in bookings) {
                 const b = bookings[key];
                 if (b.customer_id === userId && (b.status === 'SEARCHING' || b.status === 'ACCEPTED')) {
-                    // Check if it's not stale (e.g. older than 10 mins for SEARCHING)
-                    const createdAt = b.created_at;
                     const now = Date.now();
-                    if (b.status === 'ACCEPTED' || (now - createdAt < 10 * 60 * 1000)) {
-                        const candidate = {
-                            bookingId: key,
-                            customerId: b.customer_id,
-                            pickupAddress: b.pickup_address,
-                            dropoffAddress: b.dropoff_address,
-                            pickupLat: b.pickup_lat,
-                            pickupLng: b.pickup_lng,
-                            dropoffLat: b.dropoff_lat,
-                            dropoffLng: b.dropoff_lng,
-                            estimatedFare: b.estimated_fare,
-                            shareToken: b.share_token,
-                            riderId: b.accepted_by || null,
-                            status: b.status === 'SEARCHING' ? 'PENDING' : b.status,
-                        };
+                    const createdAt = toEpochMs(b.created_at);
+                    const acceptedAt = toEpochMs(b.accepted_at ?? b.updated_at ?? b.created_at);
+                    const isSearchingFresh = b.status === 'SEARCHING'
+                        && createdAt > 0
+                        && now - createdAt < 10 * 60 * 1000;
+                    const isAcceptedRecent = b.status === 'ACCEPTED'
+                        && acceptedAt > 0
+                        && now - acceptedAt < 60 * 60 * 1000;
 
-                        // EC-FIX: Double check with Supabase to ensure it's not a "Zombie" booking
-                        // that was cancelled but failed to update Firebase.
-                        if (supabase) {
-                            const { data: sbData } = await supabase
-                                .from('deliveries')
-                                .select('status')
-                                .eq('id', key)
-                                .maybeSingle();
+                    if (!isSearchingFresh && !isAcceptedRecent) {
+                        continue;
+                    }
 
-                            if (sbData && (sbData.status === 'CANCELLED' || sbData.status === 'COMPLETED')) {
-                                console.log('[checkActiveBookings] Ignoring zombie booking:', key);
-                                continue;
-                            }
+                    const candidate = {
+                        bookingId: key,
+                        customerId: b.customer_id,
+                        pickupAddress: b.pickup_address,
+                        dropoffAddress: b.dropoff_address,
+                        pickupLat: b.pickup_lat,
+                        pickupLng: b.pickup_lng,
+                        dropoffLat: b.dropoff_lat,
+                        dropoffLng: b.dropoff_lng,
+                        estimatedFare: b.estimated_fare,
+                        shareToken: b.share_token,
+                        riderId: b.accepted_by || null,
+                        status: b.status === 'SEARCHING' ? 'PENDING' : 'ASSIGNED',
+                    };
+
+                    // Use Supabase as canonical lifecycle state when available.
+                    if (supabase) {
+                        const { data: sbData } = await supabase
+                            .from('deliveries')
+                            .select('status')
+                            .eq('id', key)
+                            .maybeSingle();
+
+                        const sbStatus = String(sbData?.status ?? '').toUpperCase();
+                        if (['CANCELLED', 'COMPLETED', 'RETURNED', 'TAMPERED', 'EXPIRED'].includes(sbStatus)) {
+                            console.log('[checkActiveBookings] Ignoring non-active booking:', key, sbStatus);
+                            continue;
                         }
 
+                        if (['PENDING', 'ASSIGNED', 'IN_TRANSIT', 'ARRIVED'].includes(sbStatus)) {
+                            candidate.status = sbStatus;
+                            return candidate;
+                        }
+
+                        // If a canonical status exists but isn't active, don't block new booking.
+                        if (sbStatus) {
+                            continue;
+                        }
+                    }
+
+                    // SEARCHING can be considered active without Supabase confirmation.
+                    // ACCEPTED without canonical active status is typically stale state.
+                    if (b.status === 'SEARCHING') {
                         return candidate;
                     }
                 }
@@ -2000,27 +2411,44 @@ export async function checkActiveBookings(userId: string): Promise<any | null> {
                 const delivery = data[0];
 
                 // EC-FIX: Auto-heal "PENDING" zombies
-                // If status is PENDING in Supabase, valid bookings MUST exist in Firebase pending_bookings and NOT be cancelled.
+                // If status is PENDING in Supabase, a valid booking MUST exist in Firebase
+                // /pending_bookings AND not be CANCELLED. When the Firebase side disagrees
+                // we route the heal through the centralized transition endpoint so the
+                // Supabase + Firebase + notification + audit writes all stay in lockstep.
                 if (delivery.status === 'PENDING') {
                     try {
                         const db = getFirebaseDatabase();
                         const pendingSnapshot = await get(ref(db, `pending_bookings/${delivery.id}`));
 
                         if (!pendingSnapshot.exists() || pendingSnapshot.val().status === 'CANCELLED') {
-                            console.log('[checkActiveBookings] Found zombie PENDING booking in Supabase. Auto-correcting...', delivery.id);
+                            console.log('[checkActiveBookings] Found zombie PENDING booking in Supabase. Auto-correcting via API...', delivery.id);
 
-                            // Auto-heal: data is inconsistent, so we fix the source of truth to match reality (it's gone)
-                            await supabase.from('deliveries').update({
-                                status: 'CANCELLED',
-                                updated_at: new Date().toISOString()
-                            }).eq('id', delivery.id);
+                            try {
+                                const headers = await getNotificationAuthHeaders();
+                                await fetch(`${API_BASE_URL}/api/deliveries/transition`, {
+                                    method: 'POST',
+                                    headers,
+                                    body: JSON.stringify({
+                                        deliveryId: delivery.id,
+                                        toStatus: 'CANCELLED',
+                                        initiatedBy: 'SYSTEM',
+                                        reason: 'ZOMBIE_PENDING_AUTO_HEAL',
+                                        cancellationReason: 'ZOMBIE_PENDING_AUTO_HEAL',
+                                        // Keep the heal silent — the customer already moved on,
+                                        // no need to surface a "cancelled" toast.
+                                        skipNotification: true,
+                                    }),
+                                });
+                            } catch (healErr) {
+                                console.warn('[checkActiveBookings] Zombie-heal API call failed:', healErr);
+                            }
 
                             // Skip this one, it's not active
                             return null;
                         }
                     } catch (e) {
                         console.error('[checkActiveBookings] Error verifying pending booking:', e);
-                        // Fallback: If we can't verify, we might assume it's valid to be safe, or just return it.
+                        // Fallback: If we can't verify, assume it's valid to be safe.
                     }
                 }
 
