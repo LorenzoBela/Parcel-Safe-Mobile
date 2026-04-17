@@ -44,6 +44,37 @@ const initializeNativeHandlers = () => {
             });
         }
 
+        // ==================== Notifee Background Event Handler ====================
+        // Notifee fires its own events when the user taps a notifee-generated
+        // notification (e.g. the wake-screen incoming order banner). Must be
+        // registered at module level so the JS runtime wakes up and routes the
+        // tap even when the app was previously killed.
+        try {
+            const notifee = require('@notifee/react-native').default;
+            const { EventType } = require('@notifee/react-native');
+            if (notifee && typeof notifee.onBackgroundEvent === 'function') {
+                notifee.onBackgroundEvent(async ({ type, detail }) => {
+                    if (type !== EventType.PRESS && type !== EventType.ACTION_PRESS) return;
+                    try {
+                        const AsyncStorage = require('@react-native-async-storage/async-storage').default;
+                        const data = detail?.notification?.data || {};
+                        // Stash the tap for the App component to consume once
+                        // navigation is ready (cold-start deep-link recovery).
+                        if (AsyncStorage) {
+                            await AsyncStorage.setItem(
+                                '@pending_notification_tap',
+                                JSON.stringify(data),
+                            );
+                        }
+                    } catch (err) {
+                        if (__DEV__) console.warn('[Notifee BG] tap persist failed:', err);
+                    }
+                });
+            }
+        } catch (notifeeError) {
+            if (__DEV__) console.log('[Index] notifee not available:', notifeeError?.message);
+        }
+
         // ==================== Background Fetch Handler (Android Headless) ====================
         // This runs when the app is terminated and background fetch triggers
 

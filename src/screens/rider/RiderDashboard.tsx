@@ -1476,7 +1476,7 @@ export default function RiderDashboard() {
         }
 
         console.log(`[ACCEPT] boxIdForMonitoring='${boxIdForMonitoring}' isPaired=${isPaired}`);
-        const success = await acceptOrder(
+        const acceptResult = await acceptOrder(
             riderId,
             requestItem.data.bookingId,
             requestItem.requestId,
@@ -1487,7 +1487,7 @@ export default function RiderDashboard() {
             }
         );
 
-        if (success) {
+        if (acceptResult.success) {
             setShowOrderModal(false);
             setIncomingRequests([]); // Clear requests optimistically
             setHasActiveDelivery(true); // Stop listening for new requests immediately
@@ -1532,11 +1532,27 @@ export default function RiderDashboard() {
             setAcceptedTripDetails(tripDetails);
             setShowTripPreview(true);
         } else {
-            // Booking was already accepted by another rider (race condition handled)
+            // Map the specific failure reason to a clear, distinct alert.
+            const titleByReason: Record<string, string> = {
+                missing_box: 'Pair a Smart Box',
+                missing_phone: 'Missing Contact Number',
+                booking_missing: 'Delivery No Longer Available',
+                already_accepted: 'Already Taken',
+                reserved_for_other: 'Reserved for Another Rider',
+                transaction_failed: 'Could Not Accept Order',
+                error: 'Something Went Wrong',
+            };
+            const title = titleByReason[acceptResult.reason] || 'Order Unavailable';
+            const body =
+                acceptResult.message
+                || 'We could not assign this delivery to you. Please try another order.';
+
             PremiumAlert.alert(
-                'Order Unavailable',
-                'This delivery was already accepted by another rider.',
-                [{ text: 'OK' }]
+                title,
+                body,
+                acceptResult.reason === 'missing_box'
+                    ? [{ text: 'Pair Box', onPress: navigateToPairBox }, { text: 'Cancel', style: 'cancel' }]
+                    : [{ text: 'OK' }]
             );
         }
     }, [riderId, riderName, riderPhone, boxIdForMonitoring, isPaired, navigation, navigateToPairBox]);
@@ -3429,6 +3445,7 @@ export default function RiderDashboard() {
                 visible={showAvailableOrders}
                 riderLat={riderLocation?.coords.latitude || localPhoneLocation?.coords.latitude || null}
                 riderLng={riderLocation?.coords.longitude || localPhoneLocation?.coords.longitude || null}
+                riderId={riderId}
                 onClose={() => setShowAvailableOrders(false)}
                 onAccept={async (request) => {
                     setShowAvailableOrders(false);

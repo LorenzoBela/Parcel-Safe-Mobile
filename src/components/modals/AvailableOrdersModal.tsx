@@ -8,6 +8,8 @@ interface AvailableOrdersModalProps {
     visible: boolean;
     riderLat: number | null;
     riderLng: number | null;
+    /** Current rider ID so orders reserved *for this rider* still appear in the pool. */
+    riderId?: string | null;
     onClose: () => void;
     onAccept: (request: RiderOrderRequest) => void;
 }
@@ -16,6 +18,7 @@ export default function AvailableOrdersModal({
     visible,
     riderLat,
     riderLng,
+    riderId,
     onClose,
     onAccept,
 }: AvailableOrdersModalProps) {
@@ -40,27 +43,38 @@ export default function AvailableOrdersModal({
     useEffect(() => {
         if (!visible || riderLat === null || riderLng === null) return;
 
-        const unsubscribe = subscribeToAvailableOrders(riderLat, riderLng, SEARCH_RADIUS_KM, (updatedOrders) => {
-            setOrders(updatedOrders);
-            setIsLoading(false); // Data arrived, hide skeleton
-        });
+        const unsubscribe = subscribeToAvailableOrders(
+            riderLat,
+            riderLng,
+            SEARCH_RADIUS_KM,
+            (updatedOrders) => {
+                setOrders(updatedOrders);
+                setIsLoading(false);
+            },
+            riderId ?? undefined
+        );
 
         return unsubscribe;
-    }, [visible, riderLat, riderLng]);
+    }, [visible, riderLat, riderLng, riderId]);
 
     // Manual refresh
     const onRefresh = useCallback(async () => {
         if (riderLat === null || riderLng === null) return;
         setRefreshing(true);
         try {
-            const fetchedOrders = await fetchAvailableOrders(riderLat, riderLng, SEARCH_RADIUS_KM);
+            const fetchedOrders = await fetchAvailableOrders(
+                riderLat,
+                riderLng,
+                SEARCH_RADIUS_KM,
+                riderId ?? undefined
+            );
             setOrders(fetchedOrders);
         } catch (error) {
             console.error('Failed to format fetched orders', error);
         } finally {
             setRefreshing(false);
         }
-    }, [riderLat, riderLng]);
+    }, [riderLat, riderLng, riderId]);
 
     const formatCurrency = (amount: number) => `₱${amount.toFixed(2)}`;
 

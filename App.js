@@ -74,7 +74,25 @@ const AppContent = () => {
     const deliveryId = data.deliveryId || data.delivery_id || data.orderId || data.bookingId;
     const boxId = data.boxId || data.box_id;
 
-    if (type === 'ORDER' || type === 'INCOMING_ORDER' || type === 'NEW_ORDER' || type === 'ORDER_ACCEPTED') {
+    // Rider-facing dispatch taps: always land on the rider Dashboard so that
+    // the live `IncomingOrderModal` (driven by subscribeToRiderRequests) can
+    // auto-present the offer even if the app was launched from a cold tap.
+    //
+    // The Dashboard screen is nested inside the `RiderApp` tab navigator, so
+    // we target it via the nested `{ screen: 'Dashboard' }` payload. This
+    // also works for admin accounts (admins can act as riders via the
+    // RoleSelectionScreen) — the target route is mounted the moment the
+    // RiderApp stack is entered.
+    if (type === 'INCOMING_ORDER' || type === 'ORDER_REASSIGNED' || type === 'NEW_POOL_ORDER') {
+      const dashboardParams = deliveryId ? { pendingBookingId: deliveryId } : undefined;
+      navigateWhenReady('RiderApp', {
+        screen: 'Dashboard',
+        params: dashboardParams,
+      });
+      return;
+    }
+
+    if (type === 'ORDER' || type === 'NEW_ORDER' || type === 'ORDER_ACCEPTED') {
       if (deliveryId) {
         navigateWhenReady('TrackOrder', { bookingId: deliveryId });
       } else {
@@ -241,6 +259,43 @@ const AppContent = () => {
           .catch(() => {
             // Best-effort cold-start deep-link recovery only.
           });
+
+        // Consume any notifee background tap stashed by index.js before JS woke up.
+        try {
+          const AsyncStorage = require('@react-native-async-storage/async-storage').default;
+          AsyncStorage.getItem('@pending_notification_tap')
+            .then((raw) => {
+              if (!raw) return;
+              AsyncStorage.removeItem('@pending_notification_tap').catch(() => { });
+              try {
+                navigateFromNotificationData(JSON.parse(raw));
+              } catch (parseError) {
+                if (__DEV__) console.warn('[App] pending notif parse failed:', parseError);
+              }
+            })
+            .catch(() => { });
+        } catch {
+          // AsyncStorage not available in some runtimes; ignore.
+        }
+
+        // Foreground notifee taps (full-screen wake banner) — route the same
+        // way as the expo-notifications tap listener above.
+        try {
+          const notifee = require('@notifee/react-native').default;
+          const { EventType } = require('@notifee/react-native');
+          if (notifee && typeof notifee.onForegroundEvent === 'function') {
+            const unsubscribeNotifee = notifee.onForegroundEvent(({ type, detail }) => {
+              if (type === EventType.PRESS || type === EventType.ACTION_PRESS) {
+                navigateFromNotificationData(detail?.notification?.data || {});
+              }
+            });
+            if (typeof unsubscribeNotifee === 'function') {
+              cleanupFunctions.push(unsubscribeNotifee);
+            }
+          }
+        } catch {
+          // notifee not installed / not a dev build
+        }
 
         // FCM foreground handler — shows heads-up notification when app is open
         if (setupFCMForegroundHandler) {

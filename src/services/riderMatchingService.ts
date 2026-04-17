@@ -74,6 +74,38 @@ async function dispatchStatusNotification(
 }
 
 /**
+ * Fire-and-forget: dispatch an `INCOMING_ORDER`, `ORDER_REASSIGNED`, or
+ * `NEW_POOL_ORDER` tray notification via the centralized server FCM API.
+ *
+ * This complements the in-app Firebase listener (`subscribeToRiderRequests`),
+ * ensuring riders still see the order in their system tray even when the app
+ * is killed or the OS has suspended its background connection. Non-fatal.
+ */
+export async function dispatchRiderOrderNotification(
+    type: 'INCOMING_ORDER' | 'ORDER_REASSIGNED' | 'NEW_POOL_ORDER',
+    targetUserId: string,
+    context: Record<string, string>,
+): Promise<void> {
+    try {
+        const headers = await getNotificationAuthHeaders();
+        await fetch(`${API_BASE_URL}/api/notifications/send`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({
+                type,
+                targetUserId,
+                context: {
+                    deepLink: 'parcelsafe://rider/dashboard',
+                    ...context,
+                },
+            }),
+        });
+    } catch (err) {
+        console.warn(`[Notification] dispatchRiderOrderNotification(${type}) failed (non-fatal):`, err);
+    }
+}
+
+/**
  * Fire-and-forget: dispatch a security/tamper notification via the server FCM API.
  * Sends to delivery parties, the rider, and all admins.
  */
@@ -248,6 +280,28 @@ async function ensureProfileExists(userId: string): Promise<void> {
 }
 
 /**
+ * Possible outcomes of acceptOrder() so the UI can show a precise message
+ * instead of a generic "already accepted" alert.
+ */
+export type AcceptOrderReason =
+    | 'success'
+    | 'missing_box'        // rider has no paired box
+    | 'missing_phone'      // rider has no contact number on profile
+    | 'booking_missing'    // pending_bookings/{id} no longer exists
+    | 'already_accepted'   // another rider already claimed it (status !== SEARCHING or accepted_by set)
+    | 'reserved_for_other' // booking is still in another rider's exclusive offer window
+    | 'transaction_failed' // Firebase transaction did not commit for unknown reason
+    | 'error';             // unexpected exception
+
+export interface AcceptOrderResult {
+    success: boolean;
+    reason: AcceptOrderReason;
+    message?: string;
+    /** When `reason === 'reserved_for_other'`, ms until the exclusive window expires. */
+    retryAfterMs?: number;
+}
+
+/**
  * Rider order request structure (sent to rider)
  */
 export interface RiderOrderRequest {
@@ -330,7 +384,14 @@ export function isWithinRadius(
 export async function findNearbyRiders(
     pickupLat: number,
     pickupLng: number,
-    radiusKm: number = SEARCH_RADIUS_KM
+    radiusKm: number = SEARCH_RADIUS_KM,
+    /**
+     * Widen the search ring if *no* rider is found inside the primary radius.
+     * Prevents a lone online rider who happens to be just outside the 3 km ring
+     * from being silently skipped (the booking would otherwise fall straight
+     * to the open pool with no candidate set and no tray notification).
+     */
+    fallbackRadiusKm: number = 10,
 ): Promise<RiderLocation[]> {
     try {
         const db = getFirebaseDatabase();
@@ -343,39 +404,48 @@ export async function findNearbyRiders(
         const ridersData = snapshot.val();
 
         console.log(`[Booking] Found ${Object.keys(ridersData).length} total riders in /online_riders`);
-        const nearbyRiders: RiderLocation[] = [];
+        const primary: RiderLocation[] = [];
+        const fallback: RiderLocation[] = [];
 
         for (const [riderId, data] of Object.entries(ridersData)) {
             const riderData = data as any;
 
-            // Debug Log for every rider
             console.log(`[Booking] Checking Rider ${riderId}: Available=${riderData.is_available}, Lat=${riderData.lat}, Lng=${riderData.lng}, LastUpdated=${riderData.last_updated}`);
 
-            // Skip unavailable riders
             if (!riderData.is_available) {
                 console.log(`[Booking] Skipping Rider ${riderId} - Not Available`);
                 continue;
             }
+            if (typeof riderData.lat !== 'number' || typeof riderData.lng !== 'number') {
+                console.log(`[Booking] Skipping Rider ${riderId} - Missing coordinates`);
+                continue;
+            }
 
-            // Check if within radius
-            const isInside = isWithinRadius(riderData.lat, riderData.lng, pickupLat, pickupLng, radiusKm);
+            const entry: RiderLocation = {
+                riderId,
+                lat: riderData.lat,
+                lng: riderData.lng,
+                pushToken: riderData.push_token || null,
+                isAvailable: riderData.is_available,
+                lastUpdated: riderData.last_updated || Date.now(),
+            };
 
-            console.log(`[Booking] Rider ${riderId} isInside=${isInside}`);
-
-            if (isInside) {
-                nearbyRiders.push({
-                    riderId,
-                    lat: riderData.lat,
-                    lng: riderData.lng,
-                    pushToken: riderData.push_token || null,
-                    isAvailable: riderData.is_available,
-                    lastUpdated: riderData.last_updated || Date.now(),
-                });
+            if (isWithinRadius(riderData.lat, riderData.lng, pickupLat, pickupLng, radiusKm)) {
+                primary.push(entry);
+            } else if (isWithinRadius(riderData.lat, riderData.lng, pickupLat, pickupLng, fallbackRadiusKm)) {
+                fallback.push(entry);
             }
         }
 
-        console.log(`[Booking] findNearbyRiders returning ${nearbyRiders.length} riders`);
-        return nearbyRiders;
+        if (primary.length > 0) {
+            console.log(`[Booking] findNearbyRiders returning ${primary.length} rider(s) inside ${radiusKm}km`);
+            return primary;
+        }
+        if (fallback.length > 0) {
+            console.log(`[Booking] No riders within ${radiusKm}km; falling back to ${fallbackRadiusKm}km (${fallback.length} rider(s))`);
+            return fallback;
+        }
+        return [];
     } catch (error) {
         console.error('Error finding nearby riders:', error);
         return [];
@@ -675,6 +745,16 @@ export async function notifyNearbyRiders(
             if (success) {
                 notifiedRiders.push(topCandidateId);
                 console.log(`[RiderMatching] Sent exclusive offer to candidate ${topCandidateId} for booking ${booking.bookingId}`);
+
+                // Fire the centralized tray push so the notification still reaches
+                // the rider when the app is killed / backgrounded / offline-return.
+                void dispatchRiderOrderNotification('INCOMING_ORDER', topCandidateId, {
+                    bookingId: booking.bookingId,
+                    pickupAddress: booking.pickupAddress || '',
+                    dropoffAddress: booking.dropoffAddress || '',
+                    estimatedFare: String(booking.estimatedFare ?? 0),
+                    distanceKm: distanceToPickup.toFixed(2),
+                });
             }
         }
     }
@@ -715,7 +795,7 @@ export async function acceptOrder(
         riderPhone?: string;
         boxId?: string;
     }
-): Promise<boolean> {
+): Promise<AcceptOrderResult> {
     try {
         const db = getFirebaseDatabase();
         const bookingRef = ref(db, `/pending_bookings/${bookingId}`);
@@ -733,24 +813,27 @@ export async function acceptOrder(
         // GUARDRAIL: Box ID is required for delivery security
         if (!hasValidBoxId) {
             console.warn('[RiderMatching] Attempted to accept order without paired boxId');
-            return false;
+            return { success: false, reason: 'missing_box', message: 'Pair a Smart Box first to accept deliveries.' };
         }
 
         // GUARDRAIL: Rider Phone is required
         if (!metadata?.riderPhone) {
             console.warn('[RiderMatching] Attempted to accept order without riderPhone');
-            return false;
+            return { success: false, reason: 'missing_phone', message: 'Add a contact number to your profile to accept deliveries.' };
         }
-
-        // console.log(`[RiderMatching] acceptOrder called by ${riderId} for booking ${bookingId}`);
 
         // EC-FIX: Pre-fetch data to populate local cache.
         // runTransaction passes null initially if data isn't cached, causing us to abort prematurely.
         const snapshot = await get(bookingRef);
         if (!snapshot.exists()) {
             console.log(`[Booking] Accept failed - Booking ${bookingId} does not exist`);
-            return false;
+            return { success: false, reason: 'booking_missing', message: 'This delivery is no longer available.' };
         }
+
+        // Track *why* the transaction handler aborted so the outer code can
+        // surface a precise message ("already accepted" vs "still reserved").
+        let abortReason: AcceptOrderReason | null = null;
+        let reservedRetryAfterMs = 0;
 
         // --- Atomic claim via runTransaction ---
         // If two riders call this at the same time, Firebase will retry the
@@ -762,14 +845,15 @@ export async function acceptOrder(
             const dataToProcess = currentData || snapshot.val();
 
             if (!dataToProcess) {
-                // Booking truly believes it doesn't exist?
                 console.log('[Booking] Transaction aborted: Booking data is null/missing.');
+                abortReason = 'booking_missing';
                 return undefined;
             }
 
             if (dataToProcess.status !== 'SEARCHING' || dataToProcess.accepted_by) {
                 // Already accepted by another rider — abort
                 console.log(`[Booking] Accept aborted - Booking ${bookingId} status is ${dataToProcess.status}, accepted by ${dataToProcess.accepted_by}`);
+                abortReason = 'already_accepted';
                 return undefined;
             }
 
@@ -777,13 +861,13 @@ export async function acceptOrder(
             // If it's still in the exclusive phase, verify candidate and timer
             if (dataToProcess.current_candidate && dataToProcess.offer_expires_at) {
                 const now = Date.now();
-                
-                // If the offer hasn't expired, ONLY the current candidate can accept it.
-                // We leave a 2-second grace period for network drift before enforcing expiration.
+                // 2-second grace for network drift.
                 if (now <= dataToProcess.offer_expires_at + 2000) {
                     if (dataToProcess.current_candidate !== riderId) {
                         console.warn(`[RiderMatching] Rider ${riderId} attempted to accept, but current candidate is ${dataToProcess.current_candidate}`);
-                        return undefined; // Abort transaction
+                        abortReason = 'reserved_for_other';
+                        reservedRetryAfterMs = Math.max(0, (dataToProcess.offer_expires_at + 2000) - now);
+                        return undefined;
                     }
                 }
             }
@@ -798,9 +882,24 @@ export async function acceptOrder(
         });
 
         if (!txResult.committed) {
-            // Transaction aborted — booking was already taken or missing
-            console.log(`[Booking] Accept transaction not committed for ${bookingId}`);
-            return false;
+            console.log(`[Booking] Accept transaction not committed for ${bookingId} (reason=${abortReason || 'transaction_failed'})`);
+            const reason: AcceptOrderReason = abortReason || 'transaction_failed';
+            const messages: Record<AcceptOrderReason, string> = {
+                already_accepted: 'Another rider just claimed this delivery.',
+                reserved_for_other: `This delivery is currently being offered to another rider. It will return to the open pool in about ${Math.ceil(reservedRetryAfterMs / 1000)}s if they don't accept.`,
+                booking_missing: 'This delivery is no longer available.',
+                transaction_failed: 'Could not claim this delivery. Please try again.',
+                missing_box: '',
+                missing_phone: '',
+                error: '',
+                success: '',
+            };
+            return {
+                success: false,
+                reason,
+                message: messages[reason],
+                ...(reason === 'reserved_for_other' ? { retryAfterMs: reservedRetryAfterMs } : {}),
+            };
         }
 
         console.log(`[Booking] Rider ${riderId} successfully accepted booking ${bookingId}`);
@@ -989,10 +1088,14 @@ export async function acceptOrder(
             riderName: metadata?.riderName || 'Your rider',
         });
 
-        return true;
+        return { success: true, reason: 'success' };
     } catch (error) {
         console.error(`[Booking] Error accepting order ${bookingId}:`, error);
-        return false;
+        return {
+            success: false,
+            reason: 'error',
+            message: error instanceof Error ? error.message : 'Unexpected error while accepting this delivery.',
+        };
     }
 }
 
@@ -1143,7 +1246,7 @@ export async function passOrderToNextCandidate(
                     };
 
                     await sendOrderRequestToRider(nextCandidateId, orderRequest);
-                    
+
                     // Add the new rider to notified_riders array
                     const notified = updatedBooking.notified_riders || [];
                     if (!notified.includes(nextCandidateId)) {
@@ -1151,9 +1254,42 @@ export async function passOrderToNextCandidate(
                             notified_riders: [...notified, nextCandidateId]
                         });
                     }
+
+                    // Fire centralized tray push for the reassignment.
+                    void dispatchRiderOrderNotification('ORDER_REASSIGNED', nextCandidateId, {
+                        bookingId,
+                        pickupAddress: updatedBooking.pickup_address || '',
+                        dropoffAddress: updatedBooking.dropoff_address || '',
+                        estimatedFare: String(updatedBooking.estimated_fare ?? 0),
+                        distanceKm: distanceToPickup.toFixed(2),
+                    });
                 }
             } else if (updatedBooking.status === 'SEARCHING' && !updatedBooking.current_candidate) {
                 console.log(`[RiderMatching] Order ${bookingId} queue exhausted. Unlocked to open market.`);
+
+                // Broadcast a low-priority NEW_POOL_ORDER heads-up to every
+                // online rider within the primary radius so they can open
+                // AvailableOrdersModal and claim it. This runs fire-and-forget.
+                try {
+                    const poolCandidates = await findNearbyRiders(
+                        updatedBooking.pickup_lat,
+                        updatedBooking.pickup_lng,
+                        SEARCH_RADIUS_KM,
+                    );
+                    const alreadyNotified = new Set<string>(updatedBooking.notified_riders || []);
+                    for (const rider of poolCandidates) {
+                        // Avoid re-pinging people who already received the exclusive offer.
+                        if (alreadyNotified.has(rider.riderId)) continue;
+                        void dispatchRiderOrderNotification('NEW_POOL_ORDER', rider.riderId, {
+                            bookingId,
+                            pickupAddress: updatedBooking.pickup_address || '',
+                            dropoffAddress: updatedBooking.dropoff_address || '',
+                            estimatedFare: String(updatedBooking.estimated_fare ?? 0),
+                        });
+                    }
+                } catch (broadcastError) {
+                    console.warn('[RiderMatching] NEW_POOL_ORDER broadcast failed:', broadcastError);
+                }
             }
         }
     } catch (error) {
@@ -1868,12 +2004,28 @@ export async function checkActiveBookings(userId: string): Promise<any | null> {
 }
 
 /**
+ * Returns true when the booking is "openly claimable" — either no exclusive
+ * offer exists, the offer has expired, or the offer is reserved for the given rider.
+ *
+ * Used by both the pool subscription and one-shot fetch so the rider never sees
+ * an order in the pool that `acceptOrder` would reject with `reserved_for_other`.
+ */
+function isBookingClaimable(booking: any, currentRiderId?: string): boolean {
+    if (!booking.current_candidate || !booking.offer_expires_at) return true;
+    const now = Date.now();
+    // Grace window keeps parity with acceptOrder's 2s drift tolerance.
+    if (now > booking.offer_expires_at + 2000) return true;
+    return Boolean(currentRiderId && booking.current_candidate === currentRiderId);
+}
+
+/**
  * Fetch available orders manually (one-time fetch)
  */
 export async function fetchAvailableOrders(
     riderLat: number,
     riderLng: number,
-    radiusKm: number = SEARCH_RADIUS_KM
+    radiusKm: number = SEARCH_RADIUS_KM,
+    currentRiderId?: string
 ): Promise<RiderOrderRequest[]> {
     try {
         const db = getFirebaseDatabase();
@@ -1887,7 +2039,11 @@ export async function fetchAvailableOrders(
 
         for (const [bookingId, b] of Object.entries(data)) {
             const booking = b as any;
-            if (booking.status === 'SEARCHING' && !booking.accepted_by) {
+            if (
+                booking.status === 'SEARCHING'
+                && !booking.accepted_by
+                && isBookingClaimable(booking, currentRiderId)
+            ) {
                 // Check distance
                 const distance = calculateHaversineDistance(
                     riderLat,
@@ -1937,7 +2093,8 @@ export function subscribeToAvailableOrders(
     riderLat: number,
     riderLng: number,
     radiusKm: number,
-    callback: (orders: RiderOrderRequest[]) => void
+    callback: (orders: RiderOrderRequest[]) => void,
+    currentRiderId?: string
 ): () => void {
     const db = getFirebaseDatabase();
     const pendingRef = ref(db, '/pending_bookings');
@@ -1953,7 +2110,11 @@ export function subscribeToAvailableOrders(
 
         for (const [bookingId, b] of Object.entries(data)) {
             const booking = b as any;
-            if (booking.status === 'SEARCHING' && !booking.accepted_by) {
+            if (
+                booking.status === 'SEARCHING'
+                && !booking.accepted_by
+                && isBookingClaimable(booking, currentRiderId)
+            ) {
                 const distance = calculateHaversineDistance(
                     riderLat,
                     riderLng,
