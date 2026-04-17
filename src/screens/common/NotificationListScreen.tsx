@@ -70,6 +70,12 @@ const TYPE_ALLOWED_ROLES: Record<string, Array<'admin' | 'customer' | 'rider'>> 
     LOW_BATTERY: ['admin'],
     GEOFENCE_BREACH: ['admin'],
     PROMO: ['customer', 'rider', 'admin'],
+    // Rider dispatch tray notifications (server-side types) — mirror the
+    // server `TYPE_ALLOWED_ROLES` so a customer who briefly acted as a rider
+    // doesn't see stale dispatch entries in their "Order Updates" feed.
+    INCOMING_ORDER: ['rider', 'admin'],
+    ORDER_REASSIGNED: ['rider', 'admin'],
+    NEW_POOL_ORDER: ['rider', 'admin'],
 };
 
 function isNotificationVisibleForRole(notification: AppNotification, role?: string): boolean {
@@ -110,6 +116,9 @@ function notificationIcon(type: string): string {
         case 'PROMO': return 'bullhorn-outline';
         case 'DELIVERY_STATUS': return 'truck-delivery';
         case 'SYSTEM': return 'information-outline';
+        case 'INCOMING_ORDER': return 'rocket-launch-outline';
+        case 'ORDER_REASSIGNED': return 'backup-restore';
+        case 'NEW_POOL_ORDER': return 'package-variant';
         default: return 'bell-outline';
     }
 }
@@ -122,6 +131,9 @@ function notificationColor(type: string, colors: { green: string; red: string; o
         case 'RIDER_ARRIVED':
         case 'DELIVERY_COMPLETED':
         case 'DELIVERY_RESUMED_AFTER_REVIEW':
+        case 'INCOMING_ORDER':
+        case 'ORDER_REASSIGNED':
+        case 'NEW_POOL_ORDER':
             return colors.green;
         case 'ORDER_CANCELLED_BY_CUSTOMER':
         case 'ORDER_CANCELLED_BY_RIDER':

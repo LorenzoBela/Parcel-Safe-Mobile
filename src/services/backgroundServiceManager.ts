@@ -263,7 +263,15 @@ export async function handleBackgroundMessage(remoteMessage: any): Promise<void>
     const data = remoteMessage.data || {};
     const type = String(data.type || '').toUpperCase();
 
-    if (type === 'ORDER' || type === 'INCOMING_ORDER') {
+    if (type === 'DISPATCH_CANCEL') {
+        // Silent control signal — dismiss any stale incoming-order banner
+        // for this bookingId. No UI update, no event emission. This is the
+        // entire purpose of the message.
+        await cancelStaleDispatchNotification(data);
+        return;
+    }
+
+    if (type === 'ORDER' || type === 'INCOMING_ORDER' || type === 'ORDER_REASSIGNED') {
         // Process order even when app is in background/killed
         await emitEvent('order_received', data);
         await showOrderNotification(data);
@@ -344,6 +352,64 @@ async function showPushDataLocally(data: Record<string, any>): Promise<void> {
 }
 
 // ==================== Notification Display ====================
+
+/**
+ * Dismiss a stale incoming-order tray banner when the server fires a
+ * DISPATCH_CANCEL for a booking the rider can no longer claim (either
+ * another rider won the race or the exclusive window has expired and the
+ * order reassigned). Cancels by both notifee id and Android tag to cover
+ * the notifee-rendered banner *and* any system-rendered FCM fallback.
+ */
+async function cancelStaleDispatchNotification(data: Record<string, any>): Promise<void> {
+    try {
+        const notifeeId = typeof data.notifeeId === 'string' && data.notifeeId.trim()
+            ? data.notifeeId.trim()
+            : (data.bookingId ? `dispatch-${data.bookingId}` : null);
+        const tag = typeof data.notificationTag === 'string' && data.notificationTag.trim()
+            ? data.notificationTag.trim()
+            : notifeeId;
+
+        if (!notifeeId && !tag) return;
+
+        // notifee is the primary renderer for INCOMING_ORDER / ORDER_REASSIGNED
+        // (see showIncomingOrderNotification). cancelDisplayedNotification(id)
+        // removes it even when the app is in the killed state — the handler
+        // is running because the FCM message woke JS up.
+        try {
+            const notifee = require('@notifee/react-native').default;
+            if (notifee && typeof notifee.cancelDisplayedNotification === 'function') {
+                if (notifeeId) {
+                    await notifee.cancelDisplayedNotification(notifeeId);
+                }
+                // Second arg is the Android tag used by system-rendered FCM
+                // notifications; safe to call even if no such entry exists.
+                if (tag && tag !== notifeeId) {
+                    await notifee.cancelDisplayedNotification(tag);
+                }
+            }
+        } catch (notifeeError) {
+            if (__DEV__) console.log('[DispatchCancel] notifee unavailable:', notifeeError);
+        }
+
+        // Belt-and-suspenders: also ask expo-notifications to drop anything
+        // matching the same identifier, in case an earlier fallback path
+        // displayed the banner via expo instead of notifee.
+        try {
+            const Notifications = require('expo-notifications');
+            if (notifeeId && typeof Notifications.dismissNotificationAsync === 'function') {
+                await Notifications.dismissNotificationAsync(notifeeId).catch(() => {});
+            }
+        } catch {
+            // expo-notifications not available in this build — ignore.
+        }
+
+        if (__DEV__) {
+            console.log(`[DispatchCancel] Dismissed stale banner for bookingId=${data.bookingId}`);
+        }
+    } catch (error) {
+        if (__DEV__) console.warn('[DispatchCancel] Failed to cancel:', error);
+    }
+}
 
 /**
  * Show notification for incoming order

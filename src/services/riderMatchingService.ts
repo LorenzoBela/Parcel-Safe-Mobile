@@ -106,6 +106,38 @@ export async function dispatchRiderOrderNotification(
 }
 
 /**
+ * Fire-and-forget: dispatch a silent DISPATCH_CANCEL to a single rider so
+ * their device can dismiss a stale incoming-order tray banner for the given
+ * bookingId. Called when:
+ *   - another rider wins the accept race (cancelOtherRiderRequests),
+ *   - the exclusive offer window expires and the order reassigns,
+ *   - the customer cancels before any rider accepts.
+ * Non-fatal — never throws.
+ */
+export async function dispatchDispatchCancel(
+    targetUserId: string,
+    bookingId: string,
+): Promise<void> {
+    if (!targetUserId || !bookingId) return;
+    try {
+        const headers = await getNotificationAuthHeaders();
+        await fetch(`${API_BASE_URL}/api/notifications/send`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({
+                type: 'DISPATCH_CANCEL',
+                targetUserId,
+                context: {
+                    bookingId,
+                },
+            }),
+        });
+    } catch (err) {
+        console.warn('[Notification] dispatchDispatchCancel failed (non-fatal):', err);
+    }
+}
+
+/**
  * Fire-and-forget: dispatch a security/tamper notification via the server FCM API.
  * Sends to delivery parties, the rider, and all admins.
  */
@@ -1128,6 +1160,11 @@ async function cancelOtherRiderRequests(
                     });
                 }
             }
+
+            // Also dismiss any stale tray banner on the losing rider's device.
+            // Fire-and-forget — RTDB state (TAKEN) already drives the in-app
+            // modal dismissal; this just cleans up the system-tray entry.
+            void dispatchDispatchCancel(riderId, bookingId);
         } catch (err) {
             console.error(`[RiderMatching] Failed to cancel request for rider ${riderId}:`, err);
             // Non-critical — continue with other riders
@@ -1163,6 +1200,12 @@ export async function passOrderToNextCandidate(
     const bookingRef = ref(db, `/pending_bookings/${bookingId}`);
 
     try {
+        // Dismiss the stale tray banner on the rejecting rider's device the
+        // moment we start the handoff. If the rejection was triggered by an
+        // explicit "Decline" tap the modal is already gone, but for timeout-
+        // driven handoffs (runTimeoutSweep) the banner may still be on screen.
+        void dispatchDispatchCancel(rejectingRiderId, bookingId);
+
         await runTransaction(bookingRef, (booking) => {
             if (!booking || booking.status !== 'SEARCHING') return undefined;
 

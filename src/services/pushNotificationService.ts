@@ -644,14 +644,20 @@ export async function showIncomingOrderNotification(
         return 'SIMULATED_NOTIF_ID';
     }
 
+    // Use a deterministic id keyed by bookingId so DISPATCH_CANCEL pushes
+    // (emitted when another rider wins or the offer expires) can dismiss this
+    // banner reliably via notifee.cancelDisplayedNotification.
+    const notifeeId = `dispatch-${bookingId}`;
+
     // Use notifee on Android for fullScreenAction — this is the ONLY way to wake
     // the screen from a locked state. expo-notifications does not support this.
     if (Platform.OS === 'android') {
         try {
             await notifee.displayNotification({
+                id: notifeeId,
                 title: '🚀 New Order Request!',
                 body: `Pickup: ${pickupAddress}\nDropoff: ${dropoffAddress}\nFare: ₱${estimatedFare.toFixed(2)}`,
-                data: { bookingId, type: 'INCOMING_ORDER' },
+                data: { bookingId, type: 'INCOMING_ORDER', notifeeId },
                 android: {
                     channelId: NOTIFEE_INCOMING_ORDER_CHANNEL,
                     importance: AndroidImportance.HIGH,
@@ -661,9 +667,10 @@ export async function showIncomingOrderNotification(
                     // Requires USE_FULL_SCREEN_INTENT permission in app.json.
                     fullScreenAction: { id: 'default' },
                     pressAction: { id: 'default' },
+                    tag: notifeeId,
                 },
             });
-            return 'NOTIFEE_NOTIF';
+            return notifeeId;
         } catch (error) {
             console.warn('[showIncomingOrderNotification] notifee failed, falling back to expo:', error);
         }
@@ -672,10 +679,11 @@ export async function showIncomingOrderNotification(
     // iOS / fallback for Android if notifee fails
     try {
         const notificationId = await Notifications.scheduleNotificationAsync({
+            identifier: notifeeId,
             content: {
                 title: '🚀 New Order Request!',
                 body: `Pickup: ${pickupAddress}\nDropoff: ${dropoffAddress}\nFare: ₱${estimatedFare.toFixed(2)}`,
-                data: { bookingId, type: 'INCOMING_ORDER' },
+                data: { bookingId, type: 'INCOMING_ORDER', notifeeId },
                 sound: 'default',
                 priority: Notifications.AndroidNotificationPriority.MAX,
                 vibrate: [0, 400, 200, 400, 200, 400],
