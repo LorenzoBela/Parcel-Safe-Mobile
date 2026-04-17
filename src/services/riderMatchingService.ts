@@ -1195,25 +1195,36 @@ export async function cancelBooking(bookingId: string): Promise<boolean> {
     try {
         const db = getFirebaseDatabase();
         console.log('[Booking] Cancelling booking:', bookingId);
+
+        // Clean up the pending_bookings node (Firebase-specific, not a status transition)
         await update(ref(db, `/pending_bookings/${bookingId}`), {
             status: 'CANCELLED',
             cancelled_at: Date.now(),
         });
 
-        // Sync to Supabase
-        if (supabase) {
-            const { error } = await supabase
-                .from('deliveries')
-                .update({
-                    status: 'CANCELLED',
-                    updated_at: new Date().toISOString()
-                })
-                .eq('id', bookingId);
+        // Centralized status transition via server API (handles dual write + notifications + audit)
+        try {
+            const headers = await getNotificationAuthHeaders();
+            const response = await fetch(`${API_BASE_URL}/api/deliveries/transition`, {
+                method: 'POST',
+                headers,
+                body: JSON.stringify({
+                    deliveryId: bookingId,
+                    toStatus: 'CANCELLED',
+                    reason: 'Booking cancelled by rider',
+                }),
+            });
 
-            if (error) {
-                console.error('[Booking] Failed to cancel in Supabase:', error);
-            } else {
-                console.log('[Booking] Cancelled booking in Supabase:', bookingId);
+            if (!response.ok) {
+                console.warn('[Booking] Transition API returned non-OK:', response.status);
+            }
+        } catch (transitionError) {
+            console.warn('[Booking] Transition API call failed, falling back to Supabase direct:', transitionError);
+            if (supabase) {
+                await supabase
+                    .from('deliveries')
+                    .update({ status: 'CANCELLED', updated_at: new Date().toISOString() })
+                    .eq('id', bookingId);
             }
         }
 
@@ -1432,21 +1443,12 @@ export async function updateDeliveryStatus(
 ): Promise<boolean> {
     try {
         const db = getFirebaseDatabase();
-        await update(ref(db, `/deliveries/${deliveryId}`), {
-            status,
-            updated_at: Date.now(),
-            ...(additionalFields || {}),
-        });
-
-        // Fire FCM push notification for key status transitions (non-blocking)
-        dispatchStatusNotification(deliveryId, status).catch(() => { /* ignore */ });
 
         // Cancel 2-hour reminder when delivery finalizes
         if (status === 'COMPLETED' || status === 'CANCELLED') {
             cancelDeliveryReminderNotification().catch(() => { /* ignore */ });
 
-            // Clear the hardware node's delivery context so the box stops
-            // treating this as an active delivery (box will return to STANDBY)
+            // Clear the hardware node's delivery context (box → STANDBY)
             try {
                 const deliverySnap = await get(ref(db, `/deliveries/${deliveryId}`));
                 const deliveryData = deliverySnap.exists() ? deliverySnap.val() : null;
@@ -1465,68 +1467,48 @@ export async function updateDeliveryStatus(
             }
         }
 
-        // Sync status to Supabase (Source of Truth)
+        // Centralized status transition via server API (handles dual write + notifications + audit)
+        const headers = await getNotificationAuthHeaders();
+        const response = await fetch(`${API_BASE_URL}/api/deliveries/transition`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({
+                deliveryId,
+                toStatus: status,
+                metadata: additionalFields || {},
+            }),
+        });
+
+        if (!response.ok) {
+            const errText = await response.text().catch(() => '');
+            console.warn('[updateDeliveryStatus] Transition API returned non-OK:', response.status, errText);
+            // Fallback: direct Firebase write so hardware is unblocked
+            await update(ref(db, `/deliveries/${deliveryId}`), {
+                status,
+                updated_at: Date.now(),
+                ...(additionalFields || {}),
+            });
+        }
+
+        // Box status sync (hardware-specific, stays mobile-side)
         if (supabase) {
-            try {
-                const supabaseUpdates: Record<string, any> = {
-                    status,
-                    updated_at: new Date().toISOString(),
-                };
-                if (additionalFields?.picked_up_at) {
-                    supabaseUpdates.picked_up_at = new Date(additionalFields.picked_up_at as number).toISOString();
+            const boxId = additionalFields?.boxId as string | undefined;
+            if (boxId) {
+                let boxStatus: 'IDLE' | 'IN_TRANSIT' | null = null;
+                if (status === 'IN_TRANSIT' || status === 'ARRIVED') {
+                    boxStatus = 'IN_TRANSIT';
+                } else if (status === 'COMPLETED' || status === 'CANCELLED' || status === 'TAMPERED') {
+                    boxStatus = 'IDLE';
                 }
-                if (additionalFields?.arrived_at) {
-                    supabaseUpdates.arrived_at = new Date(additionalFields.arrived_at as number).toISOString();
-                }
-                if (additionalFields?.completed_at) {
-                    supabaseUpdates.delivered_at = new Date(additionalFields.completed_at as number).toISOString();
-                }
-                if (additionalFields?.proof_photo_url) {
-                    supabaseUpdates.proof_photo_url = additionalFields.proof_photo_url;
-                }
-                if (additionalFields?.pickup_photo_url) {
-                    supabaseUpdates.pickup_photo_url = additionalFields.pickup_photo_url;
-                }
-                const { error: sbError } = await supabase
-                    .from('deliveries')
-                    .update(supabaseUpdates)
-                    .eq('id', deliveryId);
-                if (sbError) {
-                    console.error('[updateDeliveryStatus] Supabase sync failed:', {
-                        message: sbError.message,
-                        code: sbError.code,
-                        details: sbError.details,
-                        hint: sbError.hint,
-                        deliveryId,
-                        status,
-                    });
-                } else {
-                    // Update the smart box status if boxId is provided
-                    const boxId = additionalFields?.boxId as string | undefined;
-                    if (boxId) {
-                        let boxStatus: 'IDLE' | 'IN_TRANSIT' | null = null;
-
-                        // Map delivery status to box physical status
-                        if (status === 'IN_TRANSIT' || status === 'ARRIVED') {
-                            boxStatus = 'IN_TRANSIT';
-                        } else if (status === 'COMPLETED' || status === 'CANCELLED' || status === 'TAMPERED') {
-                            boxStatus = 'IDLE';
-                        }
-
-                        if (boxStatus) {
-                            const { error: boxError } = await supabase
-                                .from('smart_boxes')
-                                .update({ status: boxStatus })
-                                .eq('id', boxId);
-
-                            if (boxError) {
-                                console.error('[updateDeliveryStatus] Failed to update smart_boxes status:', boxError);
-                            }
-                        }
+                if (boxStatus) {
+                    const { error: boxError } = await supabase
+                        .from('smart_boxes')
+                        .update({ status: boxStatus })
+                        .eq('id', boxId);
+                    if (boxError) {
+                        console.error('[updateDeliveryStatus] Failed to update smart_boxes status:', boxError);
                     }
                 }
-            } catch (sbException) {
-                console.error('[updateDeliveryStatus] Supabase sync exception:', sbException);
             }
         }
 

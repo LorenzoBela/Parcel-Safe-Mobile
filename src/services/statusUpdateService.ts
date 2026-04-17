@@ -15,6 +15,22 @@ import { generateQueueUuid } from './queueIdentity';
 import { getExponentialBackoffDelayMs, NETWORK_POLICY } from './networkPolicy';
 import { captureHandledError, captureHandledMessage } from './observability/sentryService';
 
+const API_BASE_URL = (
+    process.env.EXPO_PUBLIC_TRACKING_WEB_BASE_URL
+    || process.env.EXPO_PUBLIC_API_URL
+    || 'https://parcel-safe.vercel.app'
+).replace(/\/+$/, '');
+
+async function getAccessToken(): Promise<string | null> {
+    if (!supabase) return null;
+    try {
+        const { data: { session } } = await supabase.auth.getSession();
+        return session?.access_token || null;
+    } catch {
+        return null;
+    }
+}
+
 
 // Storage keys
 const STORAGE_KEYS = {
@@ -205,38 +221,43 @@ class StatusUpdateService {
                 }
 
                 try {
-                    // Attempt to sync to Firebase (match current delivery record schema)
-                    const deliveryRef = ref(database, `deliveries/${entry.deliveryId}`);
-                    await update(deliveryRef, {
-                        status: entry.status,
-                        updated_at: serverTimestamp(),
-                        status_retry_source: 'mobile_retry',
-                        status_retry_box_id: entry.boxId,
-                        status_retry_queue_id: entry.queueId || null,
-                    });
-
-                    // Sync to Supabase (Source of Truth)
-                    if (supabase) {
+                    // Attempt sync via centralized transition API (handles dual write)
+                    let transitionOk = false;
+                    const token = await getAccessToken();
+                    if (token) {
                         try {
-                            const { error: sbError } = await supabase
-                                .from('deliveries')
-                                .update({
-                                    status: entry.status,
-                                    updated_at: new Date().toISOString(),
-                                })
-                                .eq('id', entry.deliveryId);
-
-                            if (sbError) {
-                                console.error('[EC35] Supabase sync failed during retry:', sbError.message);
-                                // Note: We don't fail the entry if Supabase fails but Firebase succeeded,
-                                // because the hardware relies on Firebase. The next retry might fix it 
-                                // if we logic it that way, but for now we prioritize Firebase success.
-                            } else {
-                                console.log('[EC35] Supabase synced during retry:', entry.deliveryId);
-                            }
-                        } catch (sbException) {
-                            console.error('[EC35] Supabase sync exception:', sbException);
+                            const response = await fetch(`${API_BASE_URL}/api/deliveries/transition`, {
+                                method: 'POST',
+                                headers: {
+                                    'Content-Type': 'application/json',
+                                    Authorization: `Bearer ${token}`,
+                                },
+                                body: JSON.stringify({
+                                    deliveryId: entry.deliveryId,
+                                    toStatus: entry.status,
+                                    metadata: {
+                                        retrySource: 'mobile_retry',
+                                        boxId: entry.boxId,
+                                        queueId: entry.queueId,
+                                    },
+                                }),
+                            });
+                            transitionOk = response.ok;
+                        } catch {
+                            // API unreachable, fall through to direct write
                         }
+                    }
+
+                    if (!transitionOk) {
+                        // Fallback: direct Firebase write to unblock hardware
+                        const deliveryRef = ref(database, `deliveries/${entry.deliveryId}`);
+                        await update(deliveryRef, {
+                            status: entry.status,
+                            updated_at: serverTimestamp(),
+                            status_retry_source: 'mobile_retry',
+                            status_retry_box_id: entry.boxId,
+                            status_retry_queue_id: entry.queueId || null,
+                        });
                     }
 
                     entry.synced = true;
@@ -300,38 +321,51 @@ class StatusUpdateService {
      */
     async markCompleteManually(deliveryId: string, boxId: string): Promise<boolean> {
         try {
-            const database = getFirebaseDatabase();
-            const deliveryRef = ref(database, `deliveries/${deliveryId}`);
+            // Attempt centralized transition API first
+            let transitionOk = false;
+            const token = await getAccessToken();
+            if (token) {
+                try {
+                    const response = await fetch(`${API_BASE_URL}/api/deliveries/transition`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            Authorization: `Bearer ${token}`,
+                        },
+                        body: JSON.stringify({
+                            deliveryId,
+                            toStatus: 'COMPLETED',
+                            reason: 'manual_fallback',
+                            metadata: { boxId, manualOverride: true },
+                        }),
+                    });
+                    transitionOk = response.ok;
+                } catch {
+                    // API unreachable, fall through to direct write
+                }
+            }
 
-            await update(deliveryRef, {
-                status: 'COMPLETED',
-                updated_at: serverTimestamp(),
-                status_retry_source: 'manual_fallback',
-                manual_override: true,
-                status_retry_box_id: boxId,
-            });
+            if (!transitionOk) {
+                // Fallback: direct Firebase write to unblock hardware
+                const database = getFirebaseDatabase();
+                await update(ref(database, `deliveries/${deliveryId}`), {
+                    status: 'COMPLETED',
+                    updated_at: serverTimestamp(),
+                    status_retry_source: 'manual_fallback',
+                    manual_override: true,
+                    status_retry_box_id: boxId,
+                });
+            }
 
-            // Sync to Supabase
-            if (supabase) {
+            // Box status sync (hardware-specific, stays mobile-side)
+            if (supabase && boxId && boxId !== 'UNKNOWN_BOX') {
                 try {
                     await supabase
-                        .from('deliveries')
-                        .update({
-                            status: 'COMPLETED',
-                            updated_at: new Date().toISOString()
-                        })
-                        .eq('id', deliveryId);
-
-                    if (boxId && boxId !== 'UNKNOWN_BOX') {
-                        await supabase
-                            .from('smart_boxes')
-                            .update({ status: 'IDLE' })
-                            .eq('id', boxId);
-                    }
-
-                    console.log('[EC35] Manually marked complete in Supabase:', deliveryId);
+                        .from('smart_boxes')
+                        .update({ status: 'IDLE' })
+                        .eq('id', boxId);
                 } catch (e) {
-                    console.error('[EC35] Failed to sync manual completion to Supabase:', e);
+                    console.error('[EC35] Failed to update box status:', e);
                 }
             }
 

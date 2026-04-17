@@ -270,51 +270,47 @@ export async function requestCancellation(
       await update(hardwareRef, {
         return_otp: returnOtp,
         return_active: true,
-        // Ensure normal delivery OTP isn't used during returns
         otp_code: null,
         delivery_id: request.deliveryId,
       });
     } else {
-      // If the delivery was never picked up, clear return mode.
       await update(hardwareRef, {
         return_otp: null,
         return_active: false,
       });
     }
 
-    // 4. Update delivery status and cancellation context (Firebase)
-    // IMPORTANT: If picked up, it goes to RETURNING. Otherwise, CANCELLED.
-    const deliveryRef = ref(database, `deliveries/${request.deliveryId}`);
-    await update(deliveryRef, {
-      status: newStatus,
-      cancelled_by: 'rider',
-      cancellation_reason: formatCancellationReason(request.reason),
-    });
+    // 4. Centralized status transition via server API (handles dual write + notifications + audit)
+    try {
+      const token = await getAccessToken();
+      const response = await fetch(`${API_BASE_URL}/api/deliveries/transition`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          deliveryId: request.deliveryId,
+          toStatus: newStatus,
+          cancellationReason: formatCancellationReason(request.reason),
+          metadata: { reasonDetails: request.reasonDetails, returnOtp },
+        }),
+      });
 
-    // 5. Sync to Supabase
-    if (supabase) {
-      const { error } = await supabase
-        .from('deliveries')
-        .update({
-          status: newStatus,
-          cancelled_by: 'rider',
-          cancellation_reason: formatCancellationReason(request.reason),
-          updated_at: new Date().toISOString()
-        })
-        .eq('id', request.deliveryId);
-
-      if (error) {
-        console.error(`[EC-32] Failed to sync ${newStatus} to Supabase:`, error);
-      } else {
-        console.log(`[EC-32] Synced ${newStatus} to Supabase:`, request.deliveryId);
+      if (!response.ok) {
+        const errText = await response.text().catch(() => '');
+        console.warn('[EC-32] Transition API returned non-OK:', response.status, errText);
       }
+    } catch (transitionError) {
+      console.warn('[EC-32] Transition API call failed, falling back to direct writes:', transitionError);
+      // Fallback: direct Firebase write so the delivery isn't stuck
+      const deliveryRef = ref(database, `deliveries/${request.deliveryId}`);
+      await update(deliveryRef, {
+        status: newStatus,
+        cancelled_by: 'rider',
+        cancellation_reason: formatCancellationReason(request.reason),
+      });
     }
-
-    await dispatchImmediateCancellationNotification(
-      request.deliveryId,
-      'rider',
-      formatCancellationReason(request.reason)
-    );
 
     return {
       success: true,
@@ -611,45 +607,43 @@ export async function requestCustomerCancellation(
       ...(request.clientRequestId ? { client_request_id: request.clientRequestId } : {}),
     });
 
-    // 2. Update delivery status and cancellation context
-    const deliveryRef = ref(database, `deliveries/${request.deliveryId}`);
-    await update(deliveryRef, {
-      status: DeliveryStatus.CANCELLED,
-      cancelled_by: 'customer',
-      cancellation_reason: formatCustomerCancellationReason(request.reason),
-    });
-
-    // 2.1 Update pending_bookings status if it exists (for rider matching)
-    const pendingRef = ref(database, `pending_bookings/${request.deliveryId}`);
+    // 2. Centralized status transition via server API (handles dual write + notifications + audit + refund queue + pending booking cleanup)
     try {
-      await update(pendingRef, {
-        status: 'CANCELLED',
-        cancelled_at: serverTimestamp(),
+      const token = await getAccessToken();
+      const response = await fetch(`${API_BASE_URL}/api/deliveries/transition`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          deliveryId: request.deliveryId,
+          toStatus: 'CANCELLED',
+          cancellationReason: formatCustomerCancellationReason(request.reason),
+          metadata: {
+            reasonDetails: request.reasonDetails,
+            clientRequestId: request.clientRequestId,
+            customerName: request.customerName,
+          },
+        }),
       });
-    } catch (e) {
-      console.log('[Cancellation] Pending booking not found or update failed (non-critical):', e);
-    }
 
-    // 2.2 Sync to Supabase
-    if (supabase) {
-      const { error } = await supabase
-        .from('deliveries')
-        .update({
-          status: 'CANCELLED',
-          cancelled_by: 'customer',
-          cancellation_reason: formatCustomerCancellationReason(request.reason),
-          updated_at: new Date().toISOString()
-        })
-        .eq('id', request.deliveryId);
-
-      if (error) {
-        console.error('[Cancellation] Failed to sync to Supabase:', error);
-      } else {
-        console.log('[Cancellation] Synced cancellation to Supabase:', request.deliveryId);
+      if (!response.ok) {
+        const errText = await response.text().catch(() => '');
+        console.warn('[Cancellation] Transition API returned non-OK:', response.status, errText);
       }
+    } catch (transitionError) {
+      console.warn('[Cancellation] Transition API call failed, falling back to direct writes:', transitionError);
+      // Fallback: direct Firebase write so the delivery isn't stuck
+      const deliveryRef = ref(database, `deliveries/${request.deliveryId}`);
+      await update(deliveryRef, {
+        status: DeliveryStatus.CANCELLED,
+        cancelled_by: 'customer',
+        cancellation_reason: formatCustomerCancellationReason(request.reason),
+      });
     }
 
-    // 3. Notify rider if one was assigned
+    // Route-specific: notify rider via RTDB ping (hardware-level, not delivery lifecycle)
     if (assignedRiderId) {
       const riderNotificationRef = ref(database, `notifications/riders/${assignedRiderId}/${request.deliveryId}`);
       await set(riderNotificationRef, {
@@ -661,25 +655,8 @@ export async function requestCustomerCancellation(
         ...(request.clientRequestId ? { client_request_id: request.clientRequestId } : {}),
       });
 
-      // Update cancellation state to reflect rider was notified
       await set(ref(database, `customer_cancellations/${request.deliveryId}/riderNotified`), true);
     }
-
-    // 4. Queue refund processing
-    const refundRef = ref(database, `refunds/pending/${request.deliveryId}`);
-    await set(refundRef, {
-      deliveryId: request.deliveryId,
-      customerId: request.customerId,
-      status: 'PENDING',
-      createdAt: serverTimestamp(),
-      ...(request.clientRequestId ? { client_request_id: request.clientRequestId } : {}),
-    });
-
-    await dispatchImmediateCancellationNotification(
-      request.deliveryId,
-      'customer',
-      formatCustomerCancellationReason(request.reason)
-    );
 
     return {
       success: true,
