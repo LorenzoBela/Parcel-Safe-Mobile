@@ -48,12 +48,29 @@ function statusColor(s: string): string {
     }
 }
 
-const getDistanceFromLatLonInKm = (lat1: number, lon1: number, lat2: number, lon2: number) => {
-    const R = 6371;
-    const dLat = (lat2 - lat1) * (Math.PI / 180);
-    const dLon = (lon2 - lon1) * (Math.PI / 180);
-    const a = Math.sin(dLat / 2) ** 2 + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLon / 2) ** 2;
-    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+const toFiniteNumber = (value: unknown): number | null => {
+    const parsed = typeof value === 'number' ? value : Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+};
+
+const formatRouteDistance = (delivery: any): string => {
+    const distanceText = typeof delivery.distance_text === 'string' ? delivery.distance_text.trim() : '';
+    if (distanceText && distanceText.toUpperCase() !== 'N/A') {
+        return /km/i.test(distanceText) ? distanceText : `${distanceText} km`;
+    }
+
+    const distanceKm = toFiniteNumber(delivery.distance) ?? toFiniteNumber(delivery.distance_km);
+    if (distanceKm != null && distanceKm >= 0) {
+        return `${distanceKm.toFixed(1)} km`;
+    }
+
+    const distanceMeters = toFiniteNumber(delivery.distance_meters);
+    if (distanceMeters != null && distanceMeters >= 0) {
+        return `${(distanceMeters / 1000).toFixed(1)} km`;
+    }
+
+    // Avoid straight-line fallback here because it drifts from booked route distance.
+    return 'N/A';
 };
 
 const FILTERS: { key: string; icon: string; color: string }[] = [
@@ -107,8 +124,7 @@ export default function DeliveryLogScreen() {
                 price: d.estimated_fare != null ? `₱${Number(d.estimated_fare).toFixed(2)}` : '—',
                 pickupAddress: d.pickup_address || 'No pickup address',
                 dropoffAddress: d.dropoff_address || 'No dropoff address',
-                distance: d.pickup_lat && d.pickup_lng && d.dropoff_lat && d.dropoff_lng
-                    ? `${getDistanceFromLatLonInKm(d.pickup_lat, d.pickup_lng, d.dropoff_lat, d.dropoff_lng).toFixed(1)} km` : 'N/A',
+                distance: formatRouteDistance(d),
             }));
         },
     });
@@ -193,7 +209,6 @@ export default function DeliveryLogScreen() {
     };
 
     const headerAnim = useEntryAnimation(0);
-    const listAnim = useEntryAnimation(60);
 
     return (
         <View style={[styles.container, { backgroundColor: c.bg }]}>

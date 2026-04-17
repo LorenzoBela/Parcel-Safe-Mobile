@@ -78,6 +78,16 @@ export default function BookServiceScreen() {
     const navigation = useNavigation<any>();
     const theme = useTheme();
     const insets = useSafeAreaInsets();
+    const mono = {
+        accent: theme.dark ? '#F2F2F2' : '#111111',
+        accentInverse: theme.dark ? '#111111' : '#FFFFFF',
+        pickup: theme.dark ? '#E4E4E7' : '#2E2E2E',
+        dropoff: theme.dark ? '#A1A1AA' : '#585858',
+        warning: theme.dark ? '#D4D4D8' : '#686868',
+        disabled: theme.dark ? '#3F3F46' : '#BDBDBD',
+        panelSoft: theme.dark ? '#27272A' : '#EFEFEF',
+        route: theme.dark ? '#E4E4E7' : '#2E2E2E',
+    };
     // EC-Update: Get userId and name for persistence check and booking
     const userId = useAuthStore((state: any) => state.user?.userId);
     const userFullName = useAuthStore((state: any) => {
@@ -1164,42 +1174,42 @@ export default function BookServiceScreen() {
                         )}
 
                         <View style={styles.formSection}>
-                            <Text variant="titleSmall" style={styles.sectionTitle}>Pickup Contact</Text>
+                            <Text variant="titleSmall" style={[styles.sectionTitle, { color: theme.colors.onSurface }]}>Pickup Contact</Text>
                             <View style={styles.inputRow}>
-                                <TextInput mode="flat" placeholder="Sender Name" value={senderName} onChangeText={setSenderName} style={styles.modernInput} activeUnderlineColor={theme.colors.primary} underlineColor={theme.colors.outlineVariant} />
-                                <TextInput mode="flat" placeholder="09XX XXX XXXX" value={senderPhone} onChangeText={(text) => setSenderPhone(normalizePhoneInput(text))} keyboardType="phone-pad" maxLength={11} style={styles.modernInput} activeUnderlineColor={theme.colors.primary} underlineColor={theme.colors.outlineVariant} />
+                                <TextInput mode="flat" placeholder="Sender Name" value={senderName} onChangeText={setSenderName} style={styles.modernInput} activeUnderlineColor={mono.accent} underlineColor={theme.colors.outlineVariant} />
+                                <TextInput mode="flat" placeholder="09XX XXX XXXX" value={senderPhone} onChangeText={(text) => setSenderPhone(normalizePhoneInput(text))} keyboardType="phone-pad" maxLength={11} style={styles.modernInput} activeUnderlineColor={mono.accent} underlineColor={theme.colors.outlineVariant} />
                             </View>
                             {senderName.trim() && senderPhone.length === 11 && !savedContacts.some(c => c.name === senderName.trim() && c.phone === senderPhone.trim()) && (
                                 <TouchableOpacity
                                     onPress={() => handleQuickSaveContact(senderName, senderPhone)}
                                     style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 4 }}
                                 >
-                                    <MaterialCommunityIcons name="content-save-outline" size={14} color={theme.colors.primary} />
-                                    <Text style={{ fontSize: 11, color: theme.colors.primary, fontFamily: 'Inter_600SemiBold' }}>Save sender to contacts</Text>
+                                    <MaterialCommunityIcons name="content-save-outline" size={14} color={mono.accent} />
+                                    <Text style={{ fontSize: 11, color: mono.accent, fontFamily: 'Inter_600SemiBold' }}>Save sender to contacts</Text>
                                 </TouchableOpacity>
                             )}
                         </View>
 
                         <View style={styles.formSection}>
-                            <Text variant="titleSmall" style={styles.sectionTitle}>Drop-off Contact</Text>
+                            <Text variant="titleSmall" style={[styles.sectionTitle, { color: theme.colors.onSurface }]}>Drop-off Contact</Text>
                             <View style={styles.inputRow}>
-                                <TextInput mode="flat" placeholder="Recipient Name" value={recipientName} onChangeText={setRecipientName} style={styles.modernInput} activeUnderlineColor={theme.colors.primary} underlineColor={theme.colors.outlineVariant} />
-                                <TextInput mode="flat" placeholder="09XX XXX XXXX" value={recipientPhone} onChangeText={(text) => setRecipientPhone(normalizePhoneInput(text))} keyboardType="phone-pad" maxLength={11} style={styles.modernInput} activeUnderlineColor={theme.colors.primary} underlineColor={theme.colors.outlineVariant} />
+                                <TextInput mode="flat" placeholder="Recipient Name" value={recipientName} onChangeText={setRecipientName} style={styles.modernInput} activeUnderlineColor={mono.accent} underlineColor={theme.colors.outlineVariant} />
+                                <TextInput mode="flat" placeholder="09XX XXX XXXX" value={recipientPhone} onChangeText={(text) => setRecipientPhone(normalizePhoneInput(text))} keyboardType="phone-pad" maxLength={11} style={styles.modernInput} activeUnderlineColor={mono.accent} underlineColor={theme.colors.outlineVariant} />
                             </View>
                             {recipientName.trim() && recipientPhone.length === 11 && !savedContacts.some(c => c.name === recipientName.trim() && c.phone === recipientPhone.trim()) && (
                                 <TouchableOpacity
                                     onPress={() => handleQuickSaveContact(recipientName, recipientPhone)}
                                     style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 4 }}
                                 >
-                                    <MaterialCommunityIcons name="content-save-outline" size={14} color={theme.colors.error} />
-                                    <Text style={{ fontSize: 11, color: theme.colors.error, fontFamily: 'Inter_600SemiBold' }}>Save receiver to contacts</Text>
+                                    <MaterialCommunityIcons name="content-save-outline" size={14} color={mono.accent} />
+                                    <Text style={{ fontSize: 11, color: mono.accent, fontFamily: 'Inter_600SemiBold' }}>Save receiver to contacts</Text>
                                 </TouchableOpacity>
                             )}
                         </View>
 
                         <View style={styles.formSection}>
-                            <Text variant="titleSmall" style={styles.sectionTitle}>Delivery Notes (Optional)</Text>
-                            <TextInput mode="flat" placeholder="E.g. Call upon arrival" value={deliveryNotes} onChangeText={setDeliveryNotes} style={[styles.modernInput, { marginBottom: 24 }]} multiline numberOfLines={2} activeUnderlineColor={theme.colors.primary} underlineColor={theme.colors.outlineVariant} />
+                            <Text variant="titleSmall" style={[styles.sectionTitle, { color: theme.colors.onSurface }]}>Delivery Notes (Optional)</Text>
+                            <TextInput mode="flat" placeholder="E.g. Call upon arrival" value={deliveryNotes} onChangeText={setDeliveryNotes} style={[styles.modernInput, { marginBottom: 24 }]} multiline numberOfLines={2} activeUnderlineColor={mono.accent} underlineColor={theme.colors.outlineVariant} />
                         </View>
 
                         <View style={styles.previewHeader}>
@@ -1270,7 +1280,7 @@ export default function BookServiceScreen() {
                                     title="Pickup"
                                 >
                                     <View style={styles.markerContainer}>
-                                        <MaterialCommunityIcons name="map-marker" size={40} color="green" />
+                                        <MaterialCommunityIcons name="map-marker" size={40} color={mono.pickup} />
                                     </View>
                                 </MapboxGL.PointAnnotation>
                             )}
@@ -1284,7 +1294,7 @@ export default function BookServiceScreen() {
                                     title="Dropoff"
                                 >
                                     <View style={styles.markerContainer}>
-                                        <MaterialCommunityIcons name="map-marker" size={40} color="red" />
+                                        <MaterialCommunityIcons name="map-marker" size={40} color={mono.dropoff} />
                                     </View>
                                 </MapboxGL.PointAnnotation>
                             )}
@@ -1294,7 +1304,7 @@ export default function BookServiceScreen() {
                                     <MapboxGL.LineLayer
                                         id="route-layer"
                                         style={{
-                                            lineColor: theme.colors.primary,
+                                            lineColor: mono.route,
                                             lineWidth: 4,
                                             lineOpacity: 0.8,
                                             lineCap: 'round',
@@ -1318,7 +1328,7 @@ export default function BookServiceScreen() {
                             <MaterialCommunityIcons
                                 name="map-marker"
                                 size={40}
-                                color={activeField === 'pickup' ? "green" : "red"}
+                                color={activeField === 'pickup' ? mono.pickup : mono.dropoff}
                             />
                         </View>
                     )}
@@ -1332,7 +1342,7 @@ export default function BookServiceScreen() {
                             style={[styles.backButton, { backgroundColor: theme.colors.surface }]}
                             onPress={handleRecenter}
                         >
-                            <MaterialCommunityIcons name="crosshairs-gps" size={24} color={theme.colors.primary} />
+                            <MaterialCommunityIcons name="crosshairs-gps" size={24} color={mono.accent} />
                         </TouchableOpacity>
                     </View>
 
@@ -1347,7 +1357,7 @@ export default function BookServiceScreen() {
 
                                     {/* Pickup row */}
                                     <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
-                                        <MaterialCommunityIcons name="map-marker" size={18} color="#10b981" style={{ width: 24 }} />
+                                        <MaterialCommunityIcons name="map-marker" size={18} color={mono.pickup} style={{ width: 24 }} />
                                         <Text numberOfLines={1} style={{ flex: 1, color: theme.colors.onSurface, fontSize: 13 }}>{pickupText || 'Pickup'}</Text>
                                     </View>
 
@@ -1356,7 +1366,7 @@ export default function BookServiceScreen() {
 
                                     {/* Dropoff row */}
                                     <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 14 }}>
-                                        <MaterialCommunityIcons name="map-marker" size={18} color="#f43f5e" style={{ width: 24 }} />
+                                        <MaterialCommunityIcons name="map-marker" size={18} color={mono.dropoff} style={{ width: 24 }} />
                                         <Text numberOfLines={1} style={{ flex: 1, color: theme.colors.onSurface, fontSize: 13 }}>{dropoffText || 'Dropoff'}</Text>
                                     </View>
 
@@ -1382,7 +1392,7 @@ export default function BookServiceScreen() {
                                     {/* Row 1: per-pin edit buttons */}
                                     <View style={{ flexDirection: 'row', gap: 8, marginBottom: 8 }}>
                                         <TouchableOpacity
-                                            style={{ flex: 1, borderRadius: 8, borderWidth: 1.5, borderColor: '#10b981', paddingVertical: 9, alignItems: 'center', flexDirection: 'row', justifyContent: 'center', gap: 4 }}
+                                            style={{ flex: 1, borderRadius: 8, borderWidth: 1.5, borderColor: mono.pickup, paddingVertical: 9, alignItems: 'center', flexDirection: 'row', justifyContent: 'center', gap: 4 }}
                                             onPress={() => {
                                                 setActiveField('pickup');
                                                 setRouteData(null); // immediately restore crosshair + single-pin panel
@@ -1398,11 +1408,11 @@ export default function BookServiceScreen() {
                                                 }
                                             }}
                                         >
-                                            <MaterialCommunityIcons name="map-marker" size={15} color="#10b981" />
-                                            <Text style={{ color: '#10b981', fontFamily: 'Inter_700Bold', fontSize: 13 }}>Edit Pickup</Text>
+                                            <MaterialCommunityIcons name="map-marker" size={15} color={mono.pickup} />
+                                            <Text style={{ color: mono.pickup, fontFamily: 'Inter_700Bold', fontSize: 13 }}>Edit Pickup</Text>
                                         </TouchableOpacity>
                                         <TouchableOpacity
-                                            style={{ flex: 1, borderRadius: 8, borderWidth: 1.5, borderColor: '#f43f5e', paddingVertical: 9, alignItems: 'center', flexDirection: 'row', justifyContent: 'center', gap: 4 }}
+                                            style={{ flex: 1, borderRadius: 8, borderWidth: 1.5, borderColor: mono.dropoff, paddingVertical: 9, alignItems: 'center', flexDirection: 'row', justifyContent: 'center', gap: 4 }}
                                             onPress={() => {
                                                 setActiveField('dropoff');
                                                 setRouteData(null); // immediately restore crosshair + single-pin panel
@@ -1418,8 +1428,8 @@ export default function BookServiceScreen() {
                                                 }
                                             }}
                                         >
-                                            <MaterialCommunityIcons name="map-marker" size={15} color="#f43f5e" />
-                                            <Text style={{ color: '#f43f5e', fontFamily: 'Inter_700Bold', fontSize: 13 }}>Edit Dropoff</Text>
+                                            <MaterialCommunityIcons name="map-marker" size={15} color={mono.dropoff} />
+                                            <Text style={{ color: mono.dropoff, fontFamily: 'Inter_700Bold', fontSize: 13 }}>Edit Dropoff</Text>
                                         </TouchableOpacity>
                                     </View>
                                     {/* Row 2: confirm */}
@@ -1447,7 +1457,7 @@ export default function BookServiceScreen() {
                                 <Text variant="labelMedium" style={{ color: theme.colors.onSurfaceVariant, marginBottom: 4 }}>
                                     {activeField === 'pickup' ? 'SELECT PICKUP LOCATION' : 'SELECT DROPOFF LOCATION'}
                                 </Text>
-                                <Text variant="titleMedium" style={{ fontFamily: 'Inter_700Bold', color: pendingCoords ? '#212121' : '#9e9e9e' }} numberOfLines={2}>
+                                <Text variant="titleMedium" style={{ fontFamily: 'Inter_700Bold', color: pendingCoords ? theme.colors.onSurface : theme.colors.onSurfaceVariant }} numberOfLines={2}>
                                     {pendingCoords
                                         ? (pendingAddress || 'Locating...')
                                         : (activeField === 'pickup' ? (pickupText || 'Pan or tap to select') : (dropoffText || 'Pan or tap to select'))}
@@ -1455,8 +1465,8 @@ export default function BookServiceScreen() {
                                 {/* Warn the user when they are about to replace an already-confirmed pin */}
                                 {pendingCoords && ((activeField === 'pickup' && !!pickupCoords) || (activeField === 'dropoff' && !!dropoffCoords)) && (
                                     <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 8, gap: 4 }}>
-                                        <MaterialCommunityIcons name="alert-circle-outline" size={14} color="#f59e0b" />
-                                        <Text style={{ fontSize: 11, color: '#f59e0b', fontFamily: 'Inter_600SemiBold' }}>
+                                        <MaterialCommunityIcons name="alert-circle-outline" size={14} color={mono.warning} />
+                                        <Text style={{ fontSize: 11, color: mono.warning, fontFamily: 'Inter_600SemiBold' }}>
                                             This will replace your current {activeField} location
                                         </Text>
                                     </View>
@@ -1477,8 +1487,8 @@ export default function BookServiceScreen() {
                                 mode="contained"
                                 onPress={handleConfirmPendingLocation}
                                 disabled={!pendingCoords || pendingAddress === 'Locating...'}
-                                style={{ borderRadius: 8, backgroundColor: (!pendingCoords || pendingAddress === 'Locating...') ? '#bdbdbd' : theme.colors.onSurface }}
-                                textColor={theme.colors.surface}
+                                style={{ borderRadius: 8, backgroundColor: (!pendingCoords || pendingAddress === 'Locating...') ? mono.disabled : mono.accent }}
+                                textColor={mono.accentInverse}
                                 contentStyle={{ paddingVertical: 8 }}
                             >
                                 {pendingAddress === 'Locating...' ? 'Locating…' : 'Confirm Location'}
@@ -1514,7 +1524,7 @@ export default function BookServiceScreen() {
                                         underlineColor="transparent"
                                         activeUnderlineColor="transparent"
                                         onFocus={() => { setActiveField('pickup'); setFocusedField('pickup'); }}
-                                        left={<TextInput.Icon icon="map-marker" size={16} color="green" />}
+                                        left={<TextInput.Icon icon="map-marker" size={16} color={mono.pickup} />}
                                         right={
                                             activeField === 'pickup' && pickupText.length === 0 ? (
                                                 <TextInput.Icon icon="crosshairs-gps" size={18} color={theme.colors.onSurface} onPress={handleSetPickupToCurrent} />
@@ -1549,7 +1559,7 @@ export default function BookServiceScreen() {
                                         underlineColor="transparent"
                                         activeUnderlineColor="transparent"
                                         onFocus={() => { setActiveField('dropoff'); setFocusedField('dropoff'); }}
-                                        left={<TextInput.Icon icon="map-marker" size={16} color="#ffb300" />}
+                                        left={<TextInput.Icon icon="map-marker" size={16} color={mono.dropoff} />}
                                         right={dropoffText.length > 0 ? <TextInput.Icon icon="close-circle" size={16} onPress={() => { setDropoffText(''); setDropoffCoords(null); setRouteData(null); }} /> : null}
                                         selection={focusedField === 'dropoff' ? undefined : { start: 0, end: 0 }}
                                         onBlur={() => setFocusedField(null)}
@@ -1582,9 +1592,9 @@ export default function BookServiceScreen() {
                                         <Button
                                             mode="contained"
                                             onPress={() => setBookingStep('contacts')}
-                                            style={{ marginTop: 12, borderRadius: 8, backgroundColor: theme.colors.primary }}
+                                            style={{ marginTop: 12, borderRadius: 8, backgroundColor: mono.accent }}
                                             contentStyle={{ paddingVertical: 6 }}
-                                            textColor={theme.colors.onPrimary}
+                                            textColor={mono.accentInverse}
                                         >
                                             Proceed to Contact Details
                                         </Button>
@@ -1596,7 +1606,7 @@ export default function BookServiceScreen() {
                                 <Card style={{ backgroundColor: theme.colors.surface, borderRadius: 16 }} elevation={2}>
                                     <Card.Content>
                                         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 12 }}>
-                                            <ActivityIndicator size="small" color={theme.colors.primary} />
+                                            <ActivityIndicator size="small" color={mono.accent} />
                                             <Text variant="bodyMedium" style={{ marginLeft: 10, color: theme.colors.onSurfaceVariant }}>Calculating fare...</Text>
                                         </View>
                                     </Card.Content>
@@ -1653,7 +1663,7 @@ export default function BookServiceScreen() {
                                             <MaterialCommunityIcons
                                                 name={addr.label?.toLowerCase().includes('home') ? 'home' : addr.label?.toLowerCase().includes('office') ? 'office-building' : 'map-marker-outline'}
                                                 size={20}
-                                                color={'#757575'}
+                                                color={theme.colors.onSurfaceVariant}
                                             />
                                         </View>
                                         <View style={{ marginLeft: 12, flex: 1 }}>
@@ -1672,7 +1682,7 @@ export default function BookServiceScreen() {
 
                         {isSearching && (
                             <View style={styles.suggestionLoading}>
-                                <ActivityIndicator size="small" color={theme.colors.primary} />
+                                <ActivityIndicator size="small" color={mono.accent} />
                                 <Text variant="bodySmall" style={{ marginLeft: 8 }}>Searching nearby places...</Text>
                             </View>
                         )}
@@ -1707,11 +1717,11 @@ export default function BookServiceScreen() {
 
                     <View style={[styles.fixedBottomButtonContainer, { backgroundColor: theme.colors.surface, borderTopColor: theme.colors.outlineVariant }]}>
                         <TouchableOpacity
-                            style={[styles.setOnMapBtn, { backgroundColor: theme.colors.surfaceVariant }]}
+                            style={[styles.setOnMapBtn, { backgroundColor: mono.panelSoft, borderColor: theme.colors.outlineVariant, borderWidth: 1 }]}
                             onPress={() => setIsMapVisible(true)}
                         >
-                            <MaterialCommunityIcons name="map-outline" size={20} color={theme.colors.primary} style={{ marginRight: 8 }} />
-                            <Text variant="bodyMedium" style={{ fontFamily: 'Inter_700Bold', color: theme.colors.primary }}>
+                            <MaterialCommunityIcons name="map-outline" size={20} color={mono.accent} style={{ marginRight: 8 }} />
+                            <Text variant="bodyMedium" style={{ fontFamily: 'Inter_700Bold', color: mono.accent }}>
                                 Set on map
                             </Text>
                         </TouchableOpacity>
@@ -1930,7 +1940,7 @@ const styles = StyleSheet.create({
         width: 6,
         height: 6,
         borderRadius: 3,
-        backgroundColor: '#4A90E2', // Subtle blue inner dot
+        backgroundColor: '#5A5A5A',
     },
     bottomMapActionPanel: {
         position: 'absolute',
@@ -1995,7 +2005,6 @@ const styles = StyleSheet.create({
     },
     sectionTitle: {
         marginBottom: 8,
-        color: '#424242',
         fontFamily: 'Inter_600SemiBold',
     },
     inputRow: {

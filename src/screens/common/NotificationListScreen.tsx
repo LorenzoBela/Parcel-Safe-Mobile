@@ -8,7 +8,7 @@
  * - Relative timestamps
  */
 
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useMemo, useRef, useState } from 'react';
 import {
     View,
     FlatList,
@@ -17,11 +17,15 @@ import {
     RefreshControl,
     StatusBar,
     ScrollView,
+    PanResponder,
+    Animated,
+    Easing,
 } from 'react-native';
 import { Text } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import * as Haptics from 'expo-haptics';
 import dayjs from 'dayjs';
 import relativeTime from 'dayjs/plugin/relativeTime';
 import { PremiumAlert } from '../../services/PremiumAlertService';
@@ -45,13 +49,17 @@ const TAB_LABELS: Record<NotificationTab, string> = {
     OTHER: 'Other',
 };
 
-const TAB_ICONS: Record<NotificationTab, string> = {
-    ORDER_UPDATES: 'truck-fast-outline',
-    ADS: 'bullhorn-outline',
-    OTHER: 'dots-horizontal-circle-outline',
-};
+const TAB_ORDER: NotificationTab[] = ['ORDER_UPDATES', 'ADS', 'OTHER'];
 
-const TYPE_ALLOWED_ROLES: Record<string, Array<'admin' | 'customer' | 'rider'>> = {
+const SWIPE_DRAG_MAX = 76;
+const SWIPE_SWITCH_DISTANCE = 58;
+const SWIPE_SWITCH_VELOCITY = 0.32;
+const SWIPE_EXIT_OFFSET = 104;
+const SWIPE_ENTER_OFFSET = 78;
+
+type AllowedRole = 'admin' | 'customer' | 'rider';
+
+const TYPE_ALLOWED_ROLES: Record<string, AllowedRole[]> = {
     ORDER_ACCEPTED: ['customer'],
     PARCEL_PICKED_UP: ['customer'],
     RIDER_EN_ROUTE: ['customer'],
@@ -91,7 +99,7 @@ function isNotificationVisibleForRole(notification: AppNotification, role?: stri
     const allowedRoles = TYPE_ALLOWED_ROLES[notification.type];
     if (!allowedRoles) return true;
 
-    return allowedRoles.includes(normalizedRole as 'admin' | 'customer' | 'rider');
+    return allowedRoles.includes(normalizedRole as AllowedRole);
 }
 
 // ── Icon mapping ───────────────────────────────────────────────────────────────
@@ -180,6 +188,121 @@ export default function NotificationListScreen() {
     const [activeTab, setActiveTab] = useState<NotificationTab>('ORDER_UPDATES');
     const [refreshing, setRefreshing] = useState(false);
     const [loading, setLoading] = useState(true);
+    const listTranslateX = useRef(new Animated.Value(0)).current;
+    const swipeAnimatingRef = useRef(false);
+
+    const resetListPosition = useCallback(() => {
+        Animated.spring(listTranslateX, {
+            toValue: 0,
+            speed: 30,
+            bounciness: 0,
+            useNativeDriver: true,
+        }).start();
+    }, [listTranslateX]);
+
+    const switchTabByOffset = useCallback((offset: -1 | 1) => {
+        if (swipeAnimatingRef.current) return;
+
+        const currentIndex = TAB_ORDER.indexOf(activeTab);
+        const nextIndex = Math.max(0, Math.min(TAB_ORDER.length - 1, currentIndex + offset));
+        if (nextIndex === currentIndex) {
+            resetListPosition();
+            return;
+        }
+
+        swipeAnimatingRef.current = true;
+        const exitTarget = offset === 1 ? -SWIPE_EXIT_OFFSET : SWIPE_EXIT_OFFSET;
+        const enterStart = offset === 1 ? SWIPE_ENTER_OFFSET : -SWIPE_ENTER_OFFSET;
+
+        Haptics.selectionAsync().catch(() => { });
+
+        Animated.timing(listTranslateX, {
+            toValue: exitTarget,
+            duration: 140,
+            easing: Easing.out(Easing.cubic),
+            useNativeDriver: true,
+        }).start(() => {
+            setActiveTab(TAB_ORDER[nextIndex]);
+            listTranslateX.setValue(enterStart);
+
+            Animated.timing(listTranslateX, {
+                toValue: 0,
+                duration: 200,
+                easing: Easing.out(Easing.cubic),
+                useNativeDriver: true,
+            }).start(() => {
+                swipeAnimatingRef.current = false;
+            });
+        });
+    }, [activeTab, listTranslateX, resetListPosition]);
+
+    const listOpacity = useMemo(
+        () => listTranslateX.interpolate({
+            inputRange: [-SWIPE_EXIT_OFFSET, 0, SWIPE_EXIT_OFFSET],
+            outputRange: [0.84, 1, 0.84],
+            extrapolate: 'clamp',
+        }),
+        [listTranslateX],
+    );
+
+    const listScale = useMemo(
+        () => listTranslateX.interpolate({
+            inputRange: [-SWIPE_EXIT_OFFSET, 0, SWIPE_EXIT_OFFSET],
+            outputRange: [0.985, 1, 0.985],
+            extrapolate: 'clamp',
+        }),
+        [listTranslateX],
+    );
+
+    const tabSwipeResponder = useMemo(
+        () => PanResponder.create({
+            onMoveShouldSetPanResponder: (_, gestureState) => {
+                if (swipeAnimatingRef.current) return false;
+                const horizontalDistance = Math.abs(gestureState.dx);
+                const verticalDistance = Math.abs(gestureState.dy);
+                return horizontalDistance > 18 && horizontalDistance > verticalDistance + 8;
+            },
+            onPanResponderMove: (_, gestureState) => {
+                if (swipeAnimatingRef.current) return;
+
+                const activeIndex = TAB_ORDER.indexOf(activeTab);
+                const swipingBeyondBounds =
+                    (activeIndex === 0 && gestureState.dx > 0)
+                    || (activeIndex === TAB_ORDER.length - 1 && gestureState.dx < 0);
+
+                const resistance = swipingBeyondBounds ? 0.35 : 1;
+                const translated = Math.max(
+                    -SWIPE_DRAG_MAX,
+                    Math.min(SWIPE_DRAG_MAX, gestureState.dx * resistance),
+                );
+                listTranslateX.setValue(translated);
+            },
+            onPanResponderRelease: (_, gestureState) => {
+                if (swipeAnimatingRef.current) return;
+
+                const absDx = Math.abs(gestureState.dx);
+                const absVx = Math.abs(gestureState.vx);
+                const isSwipe = absDx > SWIPE_SWITCH_DISTANCE || (absDx > 28 && absVx > SWIPE_SWITCH_VELOCITY);
+
+                if (!isSwipe) {
+                    resetListPosition();
+                    return;
+                }
+
+                if (gestureState.dx < 0) {
+                    switchTabByOffset(1);
+                } else if (gestureState.dx > 0) {
+                    switchTabByOffset(-1);
+                } else {
+                    resetListPosition();
+                }
+            },
+            onPanResponderTerminate: () => {
+                resetListPosition();
+            },
+        }),
+        [activeTab, listTranslateX, resetListPosition, switchTabByOffset],
+    );
 
     // ── Fetch ──────────────────────────────────────────────────────────────────
 
@@ -448,18 +571,29 @@ export default function NotificationListScreen() {
                 </ScrollView>
             </View>
 
+            <View style={styles.swipeHintWrap}>
+                <View style={[styles.swipeHintPill, { backgroundColor: c.card, borderColor: c.border }]}> 
+                    <MaterialCommunityIcons name="gesture-swipe-horizontal" size={14} color={c.textTer} />
+                    <Text style={[styles.swipeHintText, { color: c.textTer }]}>Swipe left or right to switch tabs</Text>
+                </View>
+            </View>
+
             {/* ── List ────────────────────────────────────────────────────── */}
-            <FlatList
-                data={tabNotifications}
-                keyExtractor={(item) => item.id}
-                renderItem={renderItem}
-                ListEmptyComponent={!loading ? EmptyState : null}
-                refreshControl={
-                    <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
-                }
-                contentContainerStyle={tabNotifications.length === 0 ? styles.emptyList : undefined}
-                showsVerticalScrollIndicator={false}
-            />
+            <View style={styles.listGestureArea} {...tabSwipeResponder.panHandlers}>
+                <Animated.View style={[styles.listAnimatedLayer, { opacity: listOpacity, transform: [{ translateX: listTranslateX }, { scale: listScale }] }]}> 
+                    <FlatList
+                        data={tabNotifications}
+                        keyExtractor={(item) => item.id}
+                        renderItem={renderItem}
+                        ListEmptyComponent={!loading ? EmptyState : null}
+                        refreshControl={
+                            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+                        }
+                        contentContainerStyle={tabNotifications.length === 0 ? styles.emptyList : undefined}
+                        showsVerticalScrollIndicator={false}
+                    />
+                </Animated.View>
+            </View>
         </View>
     );
 }
@@ -515,6 +649,33 @@ const styles = StyleSheet.create({
     tabCountText: {
         fontSize: 11,
         fontFamily: 'Inter_700Bold',
+    },
+
+    swipeHintWrap: {
+        paddingHorizontal: 16,
+        paddingTop: 8,
+        paddingBottom: 4,
+    },
+    swipeHintPill: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        alignSelf: 'flex-start',
+        borderWidth: StyleSheet.hairlineWidth,
+        borderRadius: 999,
+        paddingHorizontal: 10,
+        paddingVertical: 6,
+        gap: 6,
+    },
+    swipeHintText: {
+        fontSize: 12,
+        fontFamily: 'Inter_500Medium',
+    },
+
+    listGestureArea: {
+        flex: 1,
+    },
+    listAnimatedLayer: {
+        flex: 1,
     },
 
     // ── List item ──
