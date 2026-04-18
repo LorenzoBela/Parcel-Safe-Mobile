@@ -13,6 +13,14 @@
 export interface WeatherData {
     /** Formatted temperature string, e.g. "28°C" */
     temp: string;
+    /** Formatted heat index string, e.g. "32°C" */
+    heatIndex?: string;
+    /** Formatted rain chance string, e.g. "60%" */
+    rainChance?: string;
+    /** Formatted daily low temperature string, e.g. "7°C" */
+    lowTemp?: string;
+    /** Formatted daily high temperature string, e.g. "23°C" */
+    highTemp?: string;
     /** Human-readable condition: Sunny, Cloudy, Rainy, etc. */
     condition: string;
     /** MaterialCommunityIcons name for the condition */
@@ -22,7 +30,13 @@ export interface WeatherData {
 interface OpenMeteoResponse {
     current: {
         temperature_2m: number;
+        apparent_temperature?: number;
         weather_code: number;
+    };
+    daily?: {
+        temperature_2m_max?: number[];
+        temperature_2m_min?: number[];
+        precipitation_probability_max?: number[];
     };
 }
 
@@ -97,7 +111,9 @@ export async function fetchWeather(
             `https://api.open-meteo.com/v1/forecast` +
             `?latitude=${latitude}` +
             `&longitude=${longitude}` +
-            `&current=temperature_2m,weather_code` +
+            `&current=temperature_2m,apparent_temperature,weather_code` +
+            `&daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max` +
+            `&forecast_days=1` +
             `&timezone=auto`;
 
         const response = await fetch(url);
@@ -107,11 +123,18 @@ export async function fetchWeather(
         }
 
         const data: OpenMeteoResponse = await response.json();
-        const { temperature_2m, weather_code } = data.current;
+        const { temperature_2m, apparent_temperature, weather_code } = data.current;
         const { condition, icon } = mapWmoCode(weather_code);
+        const maxTemp = data.daily?.temperature_2m_max?.[0];
+        const minTemp = data.daily?.temperature_2m_min?.[0];
+        const precipitationProbabilityMax = data.daily?.precipitation_probability_max?.[0];
 
         const weather: WeatherData = {
             temp: `${Math.round(temperature_2m)}°C`,
+            heatIndex: typeof apparent_temperature === 'number' ? `${Math.round(apparent_temperature)}°C` : undefined,
+            rainChance: typeof precipitationProbabilityMax === 'number' ? `${Math.round(precipitationProbabilityMax)}%` : undefined,
+            lowTemp: typeof minTemp === 'number' ? `${Math.round(minTemp)}°C` : undefined,
+            highTemp: typeof maxTemp === 'number' ? `${Math.round(maxTemp)}°C` : undefined,
             condition,
             icon,
         };

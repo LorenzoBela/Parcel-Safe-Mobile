@@ -22,6 +22,7 @@ import { PremiumAlert } from '../../services/PremiumAlertService';
 import NotificationBell from '../../components/NotificationBell';
 import { reportBatteryDeadIncident } from '../../services/batteryIncidentService';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import LottieView from 'lottie-react-native';
 
 // ─── Dual-mode Color Palette ────────────────────────────────────────────────────
 
@@ -74,6 +75,113 @@ const darkColors: ColorPalette = {
     qrBg: '#FFFFFF',
 };
 
+const WEATHER_ANIMATIONS: Record<string, any> = {
+    Sunny: require('../../../assets/weather/sunny.json'),
+    Cloudy: require('../../../assets/weather/cloudy.json'),
+    Rainy: require('../../../assets/weather/rainy.json'),
+    Thunder: require('../../../assets/weather/thunder.json'),
+    Foggy: require('../../../assets/weather/foggy.json'),
+    Snowy: require('../../../assets/weather/snowy.json'),
+    ClearNight: require('../../../assets/weather/clear_night.json'),
+    CloudyNight: require('../../../assets/weather/cloudy_night.json'),
+    RainyNight: require('../../../assets/weather/rainy_night.json'),
+    SnowyNight: require('../../../assets/weather/snowy_night.json'),
+};
+
+const WEATHER_NIGHT_VARIANTS: Record<string, { key: string; label: string }> = {
+    Sunny: { key: 'ClearNight', label: 'Clear Night' },
+    Cloudy: { key: 'CloudyNight', label: 'Cloudy Night' },
+    Rainy: { key: 'RainyNight', label: 'Rainy Night' },
+    Snowy: { key: 'SnowyNight', label: 'Snowy Night' },
+};
+
+type WeatherAtmosphere = {
+    base: string;
+    panel: string;
+    chip: string;
+    lineSoft: string;
+    lineStrong: string;
+    sparkle: string;
+    accent: string;
+};
+
+const WEATHER_STRIPE_POSITIONS = [10, 22, 34, 46, 58, 70, 82];
+
+const WEATHER_SPARKLE_POINTS = [
+    { top: 22, left: 18 },
+    { top: 36, left: 28 },
+    { top: 26, left: 72 },
+    { top: 44, left: 80 },
+    { top: 64, left: 24 },
+    { top: 74, left: 66 },
+];
+
+const WEATHER_ATMOSPHERE: Record<string, WeatherAtmosphere> = {
+    Sunny: {
+        base: '#132844',
+        panel: 'rgba(10, 24, 39, 0.9)',
+        chip: 'rgba(255, 255, 255, 0.18)',
+        lineSoft: 'rgba(255, 232, 173, 0.14)',
+        lineStrong: 'rgba(255, 217, 131, 0.34)',
+        sparkle: 'rgba(255, 222, 145, 0.42)',
+        accent: '#FFD06B',
+    },
+    Cloudy: {
+        base: '#172C41',
+        panel: 'rgba(12, 24, 39, 0.9)',
+        chip: 'rgba(255, 255, 255, 0.16)',
+        lineSoft: 'rgba(185, 211, 238, 0.13)',
+        lineStrong: 'rgba(165, 198, 232, 0.32)',
+        sparkle: 'rgba(198, 224, 249, 0.35)',
+        accent: '#A7D2FF',
+    },
+    Rainy: {
+        base: '#10263B',
+        panel: 'rgba(8, 20, 33, 0.9)',
+        chip: 'rgba(255, 255, 255, 0.14)',
+        lineSoft: 'rgba(132, 185, 241, 0.13)',
+        lineStrong: 'rgba(116, 174, 236, 0.3)',
+        sparkle: 'rgba(158, 206, 255, 0.28)',
+        accent: '#74B8FF',
+    },
+    Thunder: {
+        base: '#211A37',
+        panel: 'rgba(16, 12, 31, 0.9)',
+        chip: 'rgba(255, 255, 255, 0.14)',
+        lineSoft: 'rgba(189, 161, 255, 0.12)',
+        lineStrong: 'rgba(255, 205, 122, 0.32)',
+        sparkle: 'rgba(255, 214, 138, 0.38)',
+        accent: '#FFC86B',
+    },
+    Foggy: {
+        base: '#2A3B4A',
+        panel: 'rgba(21, 32, 43, 0.9)',
+        chip: 'rgba(255, 255, 255, 0.16)',
+        lineSoft: 'rgba(222, 236, 247, 0.12)',
+        lineStrong: 'rgba(207, 228, 244, 0.3)',
+        sparkle: 'rgba(231, 244, 255, 0.26)',
+        accent: '#D6EEFF',
+    },
+    Snowy: {
+        base: '#25405A',
+        panel: 'rgba(17, 34, 52, 0.9)',
+        chip: 'rgba(255, 255, 255, 0.18)',
+        lineSoft: 'rgba(214, 237, 255, 0.13)',
+        lineStrong: 'rgba(189, 223, 250, 0.3)',
+        sparkle: 'rgba(223, 243, 255, 0.34)',
+        accent: '#CFEFFF',
+    },
+    NightClear: {
+        base: '#0D1A2F',
+        panel: 'rgba(6, 14, 28, 0.9)',
+        chip: 'rgba(255, 255, 255, 0.14)',
+        lineSoft: 'rgba(163, 195, 255, 0.11)',
+        lineStrong: 'rgba(145, 184, 255, 0.27)',
+        sparkle: 'rgba(171, 203, 255, 0.28)',
+        accent: '#9FC4FF',
+    },
+};
+
 // ─── Helpers ────────────────────────────────────────────────────────────────────
 
 function formatRemainingMs(ms: number): string {
@@ -102,9 +210,9 @@ export default function AdminDashboard() {
     const { isDarkMode } = useAppTheme();
     const insets = useSafeAreaInsets();
     const c = isDarkMode ? darkColors : lightColors;
-    const headerTopPadding = Math.max(insets.top + 10, 22);
 
     const [currentTime, setCurrentTime] = useState(dayjs());
+    const [locationName, setLocationName] = useState('Locating...');
     const [overrideModalVisible, setOverrideModalVisible] = useState(false);
     const [pairQrModalVisible, setPairQrModalVisible] = useState(false);
     const [trackingInput, setTrackingInput] = useState('');
@@ -342,13 +450,47 @@ export default function AdminDashboard() {
     // Weather
     const [weather, setWeather] = useState<WeatherData | null>(null);
     useEffect(() => {
+        let active = true;
+
         (async () => {
             const { status } = await Location.requestForegroundPermissionsAsync();
-            if (status !== 'granted') return;
+            if (status !== 'granted') {
+                if (active) setLocationName('Permission denied');
+                return;
+            }
+
             const loc = await Location.getCurrentPositionAsync({});
+
             const data = await fetchWeather(loc.coords.latitude, loc.coords.longitude);
-            if (data) setWeather(data);
+
+            if (active && data) {
+                setWeather(data);
+            }
+
+            const address = await Location.reverseGeocodeAsync({
+                latitude: loc.coords.latitude,
+                longitude: loc.coords.longitude,
+            });
+
+            if (!active) return;
+
+            if (address?.length) {
+                const { city, region, name } = address[0];
+                if (city && region) {
+                    setLocationName(`${city}, ${region}`);
+                } else if (city) {
+                    setLocationName(city);
+                } else {
+                    setLocationName(name || 'Unknown Location');
+                }
+            } else {
+                setLocationName('Unknown Location');
+            }
         })();
+
+        return () => {
+            active = false;
+        };
     }, []);
 
     // ─── Hardware Summary ───────────────────────────────────────────────────────
@@ -400,27 +542,115 @@ export default function AdminDashboard() {
     const hardwareAnim = useEntryAnimation(110);
     const pairingAnim = useEntryAnimation(160);
     const actionsStagger = useStaggerAnimation(6, 45, 170);
+    const weatherCondition = weather?.condition || 'Sunny';
+    const isNightTime = currentTime.hour() >= 18 || currentTime.hour() < 6;
+    const nightVariant = isNightTime ? WEATHER_NIGHT_VARIANTS[weatherCondition] : undefined;
+    const isNightVariant = Boolean(nightVariant);
+    const weatherDisplayCondition = nightVariant?.label || weatherCondition;
+    const weatherAnimationKey = nightVariant?.key || weatherCondition;
+    const weatherAnimation = WEATHER_ANIMATIONS[weatherAnimationKey] || WEATHER_ANIMATIONS.Sunny;
+    const isSunnyAnimation = weatherAnimationKey === 'Sunny' || weatherAnimationKey === 'ClearNight';
+    const weatherAtmosphere = isNightVariant
+        ? WEATHER_ATMOSPHERE.NightClear
+        : (WEATHER_ATMOSPHERE[weatherCondition] || WEATHER_ATMOSPHERE.Sunny);
+    const weatherScrimColor = isNightVariant ? 'rgba(2, 8, 18, 0.22)' : 'rgba(2, 8, 18, 0.14)';
+    const weatherTemp = weather?.temp || '--°';
+    const weatherLowTemp = weather?.lowTemp || '--°';
+    const weatherHighTemp = weather?.highTemp || '--°';
+    const weatherHeatIndex = weather?.heatIndex || '--°';
+    const weatherRainChance = weather?.rainChance || '--%';
+    const numericTemp = Number.parseInt(weatherTemp, 10);
+    const numericLow = Number.parseInt(weatherLowTemp, 10);
+    const numericHigh = Number.parseInt(weatherHighTemp, 10);
+    const numericHeat = Number.parseInt(weatherHeatIndex, 10);
+    const numericRain = Number.parseInt(weatherRainChance, 10);
+    const hasRainInsight = Number.isFinite(numericRain) && numericRain >= 30;
+    const hasHeatInsight = Number.isFinite(numericHeat)
+        && Number.isFinite(numericTemp)
+        && Math.abs(numericHeat - numericTemp) >= 2;
+    const hasRangeInsight = Number.isFinite(numericLow) && Number.isFinite(numericHigh);
+    const weatherInsight = hasRainInsight
+        ? `Rain chance ${weatherRainChance}`
+        : hasHeatInsight
+            ? `Feels like ${weatherHeatIndex}`
+            : hasRangeInsight
+                ? `H ${weatherHighTemp} • L ${weatherLowTemp}`
+                : '';
+
     // ─── Render ─────────────────────────────────────────────────────────────────
     return (
         <View style={[styles.container, { backgroundColor: c.bg }]}>
-            <StatusBar barStyle={c.statusBar} backgroundColor={c.bg} />
+            <StatusBar barStyle="light-content" backgroundColor={weatherAtmosphere.base} />
 
-            {/* ── Header ─────────────────────────────────────────────────────── */}
-            <Animated.View style={[styles.header, { backgroundColor: c.bg, paddingTop: headerTopPadding }, headerAnim.style]}>
-                <View>
-                    <Text style={[styles.greeting, { color: c.textPrimary }]}>Admin Overview</Text>
-                    <Text style={[styles.dateLabel, { color: c.textSecondary }]}>
-                        {currentTime.format('dddd, MMM D · h:mm A')}
-                    </Text>
-                </View>
-                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                    {weather && (
-                        <View style={[styles.weatherPill, { backgroundColor: c.pillBg }]}>
-                            <MaterialCommunityIcons name={weather.icon as any} size={16} color={c.textSecondary} />
-                            <Text style={[styles.weatherTemp, { color: c.textPrimary }]}>{weather.temp}</Text>
+            {/* Animated Weather Atmosphere */}
+            <Animated.View style={headerAnim.style}>
+                <View style={styles.headerShell}>
+                    <View style={[styles.atmosphereBase, { backgroundColor: weatherAtmosphere.base, paddingTop: insets.top + 8 }]}> 
+                        <View style={[styles.atmosphereFrame, { borderColor: weatherAtmosphere.lineSoft }]} />
+                        <View style={[styles.atmosphereCornerTopLeft, { borderColor: weatherAtmosphere.lineStrong }]} />
+                        <View style={[styles.atmosphereCornerBottomRight, { borderColor: weatherAtmosphere.lineStrong }]} />
+                        <View style={[styles.atmosphereArcOuter, { borderColor: weatherAtmosphere.lineStrong }]} />
+                        <View style={[styles.atmosphereArcInner, { borderColor: weatherAtmosphere.lineSoft }]} />
+                        {WEATHER_STRIPE_POSITIONS.map((left) => (
+                            <View
+                                key={`stripe-${left}`}
+                                style={[
+                                    styles.atmosphereStripe,
+                                    { left: `${left}%`, backgroundColor: weatherAtmosphere.lineSoft },
+                                ]}
+                            />
+                        ))}
+                        {WEATHER_SPARKLE_POINTS.map((point, idx) => (
+                            <View
+                                key={`spark-${idx}`}
+                                style={[
+                                    styles.atmosphereSparkle,
+                                    {
+                                        top: `${point.top}%`,
+                                        left: `${point.left}%`,
+                                        backgroundColor: weatherAtmosphere.sparkle,
+                                    },
+                                ]}
+                            />
+                        ))}
+                        <View style={[styles.atmosphereScrim, { backgroundColor: weatherScrimColor }]} />
+
+                        <View style={styles.headerMetaRow}>
+                            <View style={[styles.locationChip, { backgroundColor: weatherAtmosphere.chip }]}> 
+                                <MaterialCommunityIcons name="map-marker-radius" size={14} color="rgba(255,255,255,0.92)" />
+                                <Text style={styles.locationChipText} numberOfLines={1}>{locationName}</Text>
+                            </View>
+                            <View style={[styles.iconBox, { backgroundColor: weatherAtmosphere.chip, borderColor: 'rgba(255,255,255,0.28)' }]}> 
+                                <NotificationBell color="#FFFFFF" size={20} compact />
+                            </View>
                         </View>
-                    )}
-                    <NotificationBell color={c.textPrimary} size={22} />
+
+                        <View style={[styles.weatherHeroCard, { backgroundColor: weatherAtmosphere.panel }]}> 
+                            <View style={styles.weatherHeroTopRow}>
+                                <Text style={styles.heroDate}>{currentTime.format('dddd, MMM D')}</Text>
+                            </View>
+
+                            <View style={styles.weatherHeroBody}>
+                                <View style={styles.heroTempColumn}>
+                                    <Text style={styles.heroCondition}>{weatherDisplayCondition}</Text>
+                                    <Text style={styles.heroTemp}>{weatherTemp}</Text>
+                                    {weatherInsight ? (
+                                        <Text style={styles.heroInsightText}>{weatherInsight}</Text>
+                                    ) : null}
+                                </View>
+
+                                <View style={styles.heroAnimationWrap}>
+                                    <LottieView
+                                        source={weatherAnimation}
+                                        autoPlay
+                                        loop
+                                        resizeMode="contain"
+                                        style={[styles.heroAnimation, isSunnyAnimation && styles.heroAnimationSunny]}
+                                    />
+                                </View>
+                            </View>
+                        </View>
+                    </View>
                 </View>
             </Animated.View>
 
@@ -817,36 +1047,169 @@ const styles = StyleSheet.create({
         flex: 1,
     },
 
-    // Header
-    header: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        paddingTop: 22,
-        paddingBottom: 16,
-        paddingHorizontal: 20,
+    headerShell: {
+        paddingBottom: 4,
     },
-    greeting: {
-        fontSize: 26,
-        fontFamily: 'Inter_700Bold',
-        letterSpacing: -0.4,
-    },
-    dateLabel: {
-        fontSize: 13,
-        marginTop: 4,
-        fontFamily: 'Inter_500Medium',
-    },
-    weatherPill: {
-        flexDirection: 'row',
-        alignItems: 'center',
+    atmosphereBase: {
+        minHeight: 186,
+        borderBottomLeftRadius: 24,
+        borderBottomRightRadius: 24,
         paddingHorizontal: 12,
-        paddingVertical: 6,
-        borderRadius: 20,
-        gap: 6,
+        paddingBottom: 8,
+        overflow: 'hidden',
     },
-    weatherTemp: {
-        fontSize: 13,
+    atmosphereFrame: {
+        position: 'absolute',
+        top: 6,
+        left: 6,
+        right: 6,
+        bottom: 6,
+        borderRadius: 18,
+        borderWidth: 1,
+    },
+    atmosphereCornerTopLeft: {
+        position: 'absolute',
+        width: 26,
+        height: 26,
+        top: 12,
+        left: 12,
+        borderTopWidth: 1,
+        borderLeftWidth: 1,
+    },
+    atmosphereCornerBottomRight: {
+        position: 'absolute',
+        width: 26,
+        height: 26,
+        right: 12,
+        bottom: 12,
+        borderBottomWidth: 1,
+        borderRightWidth: 1,
+    },
+    atmosphereArcOuter: {
+        position: 'absolute',
+        width: 180,
+        height: 180,
+        borderRadius: 90,
+        top: -122,
+        right: -56,
+        borderWidth: 1,
+    },
+    atmosphereArcInner: {
+        position: 'absolute',
+        width: 138,
+        height: 138,
+        borderRadius: 69,
+        top: -101,
+        right: -36,
+        borderWidth: 1,
+    },
+    atmosphereStripe: {
+        position: 'absolute',
+        top: 0,
+        bottom: 0,
+        width: 1,
+    },
+    atmosphereSparkle: {
+        position: 'absolute',
+        width: 3,
+        height: 3,
+        borderRadius: 1.5,
+    },
+    atmosphereScrim: {
+        ...StyleSheet.absoluteFillObject,
+    },
+    headerMetaRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        marginBottom: 6,
+    },
+    locationChip: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        maxWidth: '78%',
+        borderRadius: 999,
+        paddingHorizontal: 9,
+        paddingVertical: 5,
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.22)',
+        gap: 4,
+    },
+    locationChipText: {
+        color: 'rgba(255,255,255,0.96)',
+        fontSize: 11,
         fontFamily: 'Inter_600SemiBold',
+    },
+    iconBox: {
+        width: 34,
+        height: 34,
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: 5,
+        borderRadius: 12,
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.25)',
+    },
+    weatherHeroCard: {
+        borderRadius: 16,
+        padding: 8,
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.26)',
+        overflow: 'hidden',
+    },
+    weatherHeroTopRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        marginBottom: 2,
+    },
+    heroDate: {
+        color: 'rgba(255,255,255,0.94)',
+        fontSize: 10,
+        fontFamily: 'Inter_600SemiBold',
+    },
+    weatherHeroBody: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+    },
+    heroTempColumn: {
+        flex: 1,
+        paddingRight: 2,
+    },
+    heroCondition: {
+        color: 'rgba(255,255,255,0.9)',
+        fontSize: 10,
+        fontFamily: 'Inter_600SemiBold',
+        textTransform: 'uppercase',
+        letterSpacing: 0.6,
+        marginBottom: 1,
+    },
+    heroTemp: {
+        color: '#FFFFFF',
+        fontSize: 32,
+        lineHeight: 34,
+        fontFamily: 'SpaceGrotesk_700Bold',
+        letterSpacing: -1.2,
+    },
+    heroInsightText: {
+        marginTop: 4,
+        color: 'rgba(255,255,255,0.9)',
+        fontSize: 10,
+        fontFamily: 'Inter_600SemiBold',
+    },
+    heroAnimationWrap: {
+        width: 110,
+        height: 94,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    heroAnimation: {
+        width: 110,
+        height: 94,
+        alignSelf: 'center',
+    },
+    heroAnimationSunny: {
+        transform: [{ scale: 1.22 }, { translateY: -4 }],
     },
 
     scroll: {

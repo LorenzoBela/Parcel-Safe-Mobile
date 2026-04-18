@@ -19,12 +19,15 @@ interface NotificationBellProps {
     color?: string;
     /** Icon size, defaults to 24 */
     size?: number;
+    /** Compact mode for tighter header containers */
+    compact?: boolean;
 }
 
-export default function NotificationBell({ color = '#FFFFFF', size = 24 }: NotificationBellProps) {
+export default function NotificationBell({ color = '#FFFFFF', size = 24, compact = false }: NotificationBellProps) {
     const navigation = useNavigation<any>();
     const userId = useAuthStore((state: any) => state.user?.userId) as string | undefined;
     const [unreadCount, setUnreadCount] = useState(0);
+    const badgeSize = compact ? 14 : 16;
 
     useFocusEffect(
         useCallback(() => {
@@ -48,14 +51,14 @@ export default function NotificationBell({ color = '#FFFFFF', size = 24 }: Notif
     return (
         <TouchableOpacity
             onPress={() => navigation.navigate('NotificationList')}
-            style={styles.container}
+            style={[styles.container, compact && styles.containerCompact]}
             hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
             accessibilityLabel="Notifications"
             accessibilityRole="button"
         >
             <MaterialCommunityIcons name="bell-outline" size={size} color={color} />
             {unreadCount > 0 && (
-                <Badge size={16} style={styles.badge}>
+                <Badge size={badgeSize} style={[styles.badge, compact && styles.badgeCompact]}>
                     {unreadCount > 99 ? '99+' : unreadCount}
                 </Badge>
             )}
@@ -70,6 +73,9 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
         alignItems: 'center',
     },
+    containerCompact: {
+        marginLeft: 0,
+    },
     badge: {
         position: 'absolute',
         top: -4,
@@ -78,5 +84,10 @@ const styles = StyleSheet.create({
         color: '#FFFFFF',
         fontSize: 10,
         fontFamily: 'Inter_700Bold',
+    },
+    badgeCompact: {
+        top: -3,
+        right: -4,
+        fontSize: 9,
     },
 });

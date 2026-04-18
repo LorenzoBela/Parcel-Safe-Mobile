@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { View, StyleSheet, ScrollView, Switch, ImageBackground, Alert, RefreshControl, TouchableOpacity, Dimensions, Linking, Platform, AppState, Animated, TouchableWithoutFeedback, FlatList, Modal, TextInput } from 'react-native';
+import { View, StyleSheet, ScrollView, Switch, Alert, RefreshControl, TouchableOpacity, Dimensions, Linking, Platform, AppState, Animated, TouchableWithoutFeedback, FlatList, Modal, TextInput } from 'react-native';
 import { useEntryAnimation, useStaggerAnimation, usePressScale } from '../../hooks/useEntryAnimation';
 import { Text, Card, Button, Avatar, ProgressBar, MD3Colors, Chip, useTheme, IconButton, ActivityIndicator } from 'react-native-paper';
 import { useNavigation } from '@react-navigation/native';
@@ -139,7 +139,7 @@ import {
 // EC-90: Power State
 import { subscribeToPower, PowerState, isSolenoidBlockedByVoltage } from '../../services/firebaseClient';
 import useAuthStore from '../../store/authStore';
-import { fetchWeather, weatherBackgroundImages, WeatherData } from '../../services/weatherService';
+import { fetchWeather, WeatherData } from '../../services/weatherService';
 import NotificationBell from '../../components/NotificationBell';
 import { getAuth } from 'firebase/auth'; // EC-Fix: Fallback auth
 import { supabase } from '../../services/supabaseClient'; // EC-Fix: Session restoration
@@ -209,6 +209,113 @@ const PROMO_SLIDES = [
         cta: 'Invite',
     },
 ];
+
+const WEATHER_ANIMATIONS: Record<string, any> = {
+    Sunny: require('../../../assets/weather/sunny.json'),
+    Cloudy: require('../../../assets/weather/cloudy.json'),
+    Rainy: require('../../../assets/weather/rainy.json'),
+    Thunder: require('../../../assets/weather/thunder.json'),
+    Foggy: require('../../../assets/weather/foggy.json'),
+    Snowy: require('../../../assets/weather/snowy.json'),
+    ClearNight: require('../../../assets/weather/clear_night.json'),
+    CloudyNight: require('../../../assets/weather/cloudy_night.json'),
+    RainyNight: require('../../../assets/weather/rainy_night.json'),
+    SnowyNight: require('../../../assets/weather/snowy_night.json'),
+};
+
+const WEATHER_NIGHT_VARIANTS: Record<string, { key: string; label: string }> = {
+    Sunny: { key: 'ClearNight', label: 'Clear Night' },
+    Cloudy: { key: 'CloudyNight', label: 'Cloudy Night' },
+    Rainy: { key: 'RainyNight', label: 'Rainy Night' },
+    Snowy: { key: 'SnowyNight', label: 'Snowy Night' },
+};
+
+type WeatherAtmosphere = {
+    base: string;
+    panel: string;
+    chip: string;
+    lineSoft: string;
+    lineStrong: string;
+    sparkle: string;
+    accent: string;
+};
+
+const WEATHER_STRIPE_POSITIONS = [10, 22, 34, 46, 58, 70, 82];
+
+const WEATHER_SPARKLE_POINTS = [
+    { top: 22, left: 18 },
+    { top: 36, left: 28 },
+    { top: 26, left: 72 },
+    { top: 44, left: 80 },
+    { top: 64, left: 24 },
+    { top: 74, left: 66 },
+];
+
+const WEATHER_ATMOSPHERE: Record<string, WeatherAtmosphere> = {
+    Sunny: {
+        base: '#132844',
+        panel: 'rgba(10, 24, 39, 0.9)',
+        chip: 'rgba(255, 255, 255, 0.18)',
+        lineSoft: 'rgba(255, 232, 173, 0.14)',
+        lineStrong: 'rgba(255, 217, 131, 0.34)',
+        sparkle: 'rgba(255, 222, 145, 0.42)',
+        accent: '#FFD06B',
+    },
+    Cloudy: {
+        base: '#172C41',
+        panel: 'rgba(12, 24, 39, 0.9)',
+        chip: 'rgba(255, 255, 255, 0.16)',
+        lineSoft: 'rgba(185, 211, 238, 0.13)',
+        lineStrong: 'rgba(165, 198, 232, 0.32)',
+        sparkle: 'rgba(198, 224, 249, 0.35)',
+        accent: '#A7D2FF',
+    },
+    Rainy: {
+        base: '#10263B',
+        panel: 'rgba(8, 20, 33, 0.9)',
+        chip: 'rgba(255, 255, 255, 0.14)',
+        lineSoft: 'rgba(132, 185, 241, 0.13)',
+        lineStrong: 'rgba(116, 174, 236, 0.3)',
+        sparkle: 'rgba(158, 206, 255, 0.28)',
+        accent: '#74B8FF',
+    },
+    Thunder: {
+        base: '#211A37',
+        panel: 'rgba(16, 12, 31, 0.9)',
+        chip: 'rgba(255, 255, 255, 0.14)',
+        lineSoft: 'rgba(189, 161, 255, 0.12)',
+        lineStrong: 'rgba(255, 205, 122, 0.32)',
+        sparkle: 'rgba(255, 214, 138, 0.38)',
+        accent: '#FFC86B',
+    },
+    Foggy: {
+        base: '#2A3B4A',
+        panel: 'rgba(21, 32, 43, 0.9)',
+        chip: 'rgba(255, 255, 255, 0.16)',
+        lineSoft: 'rgba(222, 236, 247, 0.12)',
+        lineStrong: 'rgba(207, 228, 244, 0.3)',
+        sparkle: 'rgba(231, 244, 255, 0.26)',
+        accent: '#D6EEFF',
+    },
+    Snowy: {
+        base: '#25405A',
+        panel: 'rgba(17, 34, 52, 0.9)',
+        chip: 'rgba(255, 255, 255, 0.18)',
+        lineSoft: 'rgba(214, 237, 255, 0.13)',
+        lineStrong: 'rgba(189, 223, 250, 0.3)',
+        sparkle: 'rgba(223, 243, 255, 0.34)',
+        accent: '#CFEFFF',
+    },
+    NightClear: {
+        base: '#0D1A2F',
+        panel: 'rgba(6, 14, 28, 0.9)',
+        chip: 'rgba(255, 255, 255, 0.14)',
+        lineSoft: 'rgba(163, 195, 255, 0.11)',
+        lineStrong: 'rgba(145, 184, 255, 0.27)',
+        sparkle: 'rgba(171, 203, 255, 0.28)',
+        accent: '#9FC4FF',
+    },
+};
 
 export default function RiderDashboard() {
     const { showExitModal, setShowExitModal, handleExit } = useExitAppConfirmation();
@@ -2275,6 +2382,40 @@ export default function RiderDashboard() {
     const actionsAnim = useStaggerAnimation(4, 45, 145);
     const mapPreviewAnim = useEntryAnimation(170);
     const jobAnim = useEntryAnimation(215);
+    const weatherCondition = weather?.condition || 'Sunny';
+    const isNightTime = currentTime.hour() >= 18 || currentTime.hour() < 6;
+    const nightVariant = isNightTime ? WEATHER_NIGHT_VARIANTS[weatherCondition] : undefined;
+    const isNightVariant = Boolean(nightVariant);
+    const weatherDisplayCondition = nightVariant?.label || weatherCondition;
+    const weatherAnimationKey = nightVariant?.key || weatherCondition;
+    const weatherAnimation = WEATHER_ANIMATIONS[weatherAnimationKey] || WEATHER_ANIMATIONS.Sunny;
+    const isSunnyAnimation = weatherAnimationKey === 'Sunny' || weatherAnimationKey === 'ClearNight';
+    const weatherAtmosphere = isNightVariant
+        ? WEATHER_ATMOSPHERE.NightClear
+        : (WEATHER_ATMOSPHERE[weatherCondition] || WEATHER_ATMOSPHERE.Sunny);
+    const weatherScrimColor = isNightVariant ? 'rgba(2, 8, 18, 0.22)' : 'rgba(2, 8, 18, 0.14)';
+    const weatherTemp = weather?.temp || '--°';
+    const weatherLowTemp = weather?.lowTemp || '--°';
+    const weatherHighTemp = weather?.highTemp || '--°';
+    const weatherHeatIndex = weather?.heatIndex || '--°';
+    const weatherRainChance = weather?.rainChance || '--%';
+    const numericTemp = Number.parseInt(weatherTemp, 10);
+    const numericLow = Number.parseInt(weatherLowTemp, 10);
+    const numericHigh = Number.parseInt(weatherHighTemp, 10);
+    const numericHeat = Number.parseInt(weatherHeatIndex, 10);
+    const numericRain = Number.parseInt(weatherRainChance, 10);
+    const hasRainInsight = Number.isFinite(numericRain) && numericRain >= 30;
+    const hasHeatInsight = Number.isFinite(numericHeat)
+        && Number.isFinite(numericTemp)
+        && Math.abs(numericHeat - numericTemp) >= 2;
+    const hasRangeInsight = Number.isFinite(numericLow) && Number.isFinite(numericHigh);
+    const weatherInsight = hasRainInsight
+        ? `Rain chance ${weatherRainChance}`
+        : hasHeatInsight
+            ? `Feels like ${weatherHeatIndex}`
+            : hasRangeInsight
+                ? `H ${weatherHighTemp} • L ${weatherLowTemp}`
+                : '';
 
     return (
         <View style={[styles.container, { backgroundColor: c.bg }]}>
@@ -2353,38 +2494,75 @@ export default function RiderDashboard() {
                 onConfirm={handleExit}
             />
 
-            {/* Attractive Header */}
-            <ImageBackground
-                source={{ uri: weather ? (weatherBackgroundImages[weather.condition] || weatherBackgroundImages['Sunny']) : weatherBackgroundImages['Sunny'] }}
-                style={styles.headerBackground}
-                imageStyle={{ borderBottomLeftRadius: 20, borderBottomRightRadius: 20 }}
-                resizeMode="cover"
-            >
-                <View style={styles.headerOverlay}>
-                    <View style={styles.headerContent}>
-                        <View style={styles.headerInfoBox}>
-                            <View style={styles.locationContainer}>
-                                <MaterialCommunityIcons name="map-marker" size={16} color="rgba(255,255,255,0.9)" style={styles.textShadow} />
-                                <Text style={[styles.locationText, styles.textShadow]}>{locationName}</Text>
-                            </View>
-                            <Text style={[styles.dateText, styles.textShadow]}>{currentTime.format('dddd, MMMM D')}</Text>
-                            <Text style={[styles.timeText, styles.textShadow]}>{currentTime.format('h:mm A')}</Text>
+            {/* Animated Weather Atmosphere */}
+            <View style={styles.headerShell}>
+                <View style={[styles.atmosphereBase, { backgroundColor: weatherAtmosphere.base, paddingTop: insets.top + 8 }]}> 
+                    <View style={[styles.atmosphereFrame, { borderColor: weatherAtmosphere.lineSoft }]} />
+                    <View style={[styles.atmosphereCornerTopLeft, { borderColor: weatherAtmosphere.lineStrong }]} />
+                    <View style={[styles.atmosphereCornerBottomRight, { borderColor: weatherAtmosphere.lineStrong }]} />
+                    <View style={[styles.atmosphereArcOuter, { borderColor: weatherAtmosphere.lineStrong }]} />
+                    <View style={[styles.atmosphereArcInner, { borderColor: weatherAtmosphere.lineSoft }]} />
+                    {WEATHER_STRIPE_POSITIONS.map((left) => (
+                        <View
+                            key={`stripe-${left}`}
+                            style={[
+                                styles.atmosphereStripe,
+                                { left: `${left}%`, backgroundColor: weatherAtmosphere.lineSoft },
+                            ]}
+                        />
+                    ))}
+                    {WEATHER_SPARKLE_POINTS.map((point, idx) => (
+                        <View
+                            key={`spark-${idx}`}
+                            style={[
+                                styles.atmosphereSparkle,
+                                {
+                                    top: `${point.top}%`,
+                                    left: `${point.left}%`,
+                                    backgroundColor: weatherAtmosphere.sparkle,
+                                },
+                            ]}
+                        />
+                    ))}
+                    <View style={[styles.atmosphereScrim, { backgroundColor: weatherScrimColor }]} />
+
+                    <View style={styles.headerMetaRow}>
+                        <View style={[styles.locationChip, { backgroundColor: weatherAtmosphere.chip }]}> 
+                            <MaterialCommunityIcons name="map-marker-radius" size={14} color="rgba(255,255,255,0.92)" />
+                            <Text style={styles.locationChipText} numberOfLines={1}>{locationName}</Text>
                         </View>
-                        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                            {weather && (
-                                <View style={styles.weatherContainer}>
-                                    <MaterialCommunityIcons name={weather.icon as any} size={30} color="white" style={styles.textShadow} />
-                                    <Text style={[styles.weatherText, styles.textShadow]}>{weather.temp}</Text>
-                                    <Text style={[styles.weatherCondition, styles.textShadow]}>{weather.condition}</Text>
-                                </View>
-                            )}
-                            <View style={styles.iconBox}>
-                                <NotificationBell color="#FFFFFF" size={24} />
+                        <View style={[styles.iconBox, { backgroundColor: weatherAtmosphere.chip, borderColor: 'rgba(255,255,255,0.28)' }]}> 
+                            <NotificationBell color="#FFFFFF" size={20} compact />
+                        </View>
+                    </View>
+
+                    <View style={[styles.weatherHeroCard, { backgroundColor: weatherAtmosphere.panel }]}> 
+                        <View style={styles.weatherHeroTopRow}>
+                            <Text style={styles.heroDate}>{currentTime.format('dddd, MMM D')}</Text>
+                        </View>
+
+                        <View style={styles.weatherHeroBody}>
+                            <View style={styles.heroTempColumn}>
+                                <Text style={styles.heroCondition}>{weatherDisplayCondition}</Text>
+                                <Text style={styles.heroTemp}>{weatherTemp}</Text>
+                                {weatherInsight ? (
+                                    <Text style={styles.heroInsightText}>{weatherInsight}</Text>
+                                ) : null}
+                            </View>
+
+                            <View style={styles.heroAnimationWrap}>
+                                <LottieView
+                                    source={weatherAnimation}
+                                    autoPlay
+                                    loop
+                                    resizeMode="contain"
+                                    style={[styles.heroAnimation, isSunnyAnimation && styles.heroAnimationSunny]}
+                                />
                             </View>
                         </View>
                     </View>
                 </View>
-            </ImageBackground>
+            </View>
 
             <ScrollView
                 contentContainerStyle={styles.scrollContent}
@@ -3489,77 +3667,169 @@ const styles = StyleSheet.create({
     container: {
         flex: 1,
     },
-    headerBackground: {
+    headerShell: {
+        paddingBottom: 4,
+    },
+    atmosphereBase: {
+        minHeight: 186,
+        borderBottomLeftRadius: 24,
+        borderBottomRightRadius: 24,
+        paddingHorizontal: 12,
+        paddingBottom: 8,
+        overflow: 'hidden',
+    },
+    atmosphereFrame: {
+        position: 'absolute',
+        top: 6,
+        left: 6,
+        right: 6,
+        bottom: 6,
+        borderRadius: 18,
+        borderWidth: 1,
+    },
+    atmosphereCornerTopLeft: {
+        position: 'absolute',
+        width: 26,
+        height: 26,
+        top: 12,
+        left: 12,
+        borderTopWidth: 1,
+        borderLeftWidth: 1,
+    },
+    atmosphereCornerBottomRight: {
+        position: 'absolute',
+        width: 26,
+        height: 26,
+        right: 12,
+        bottom: 12,
+        borderBottomWidth: 1,
+        borderRightWidth: 1,
+    },
+    atmosphereArcOuter: {
+        position: 'absolute',
+        width: 180,
         height: 180,
-        justifyContent: 'flex-end',
+        borderRadius: 90,
+        top: -122,
+        right: -56,
+        borderWidth: 1,
     },
-    headerOverlay: {
-        backgroundColor: 'rgba(0,0,0,0.1)',
-        height: '100%',
-        justifyContent: 'flex-end',
-        paddingBottom: 20,
-        paddingHorizontal: 20,
-        borderBottomLeftRadius: 20,
-        borderBottomRightRadius: 20,
+    atmosphereArcInner: {
+        position: 'absolute',
+        width: 138,
+        height: 138,
+        borderRadius: 69,
+        top: -101,
+        right: -36,
+        borderWidth: 1,
     },
-    headerContent: {
+    atmosphereStripe: {
+        position: 'absolute',
+        top: 0,
+        bottom: 0,
+        width: 1,
+    },
+    atmosphereSparkle: {
+        position: 'absolute',
+        width: 3,
+        height: 3,
+        borderRadius: 1.5,
+    },
+    atmosphereScrim: {
+        ...StyleSheet.absoluteFillObject,
+    },
+    headerMetaRow: {
         flexDirection: 'row',
+        alignItems: 'center',
         justifyContent: 'space-between',
-        alignItems: 'flex-end',
+        marginBottom: 6,
     },
-    headerInfoBox: {
-        backgroundColor: 'rgba(0,0,0,0.15)',
-        padding: 12,
-        borderRadius: 16,
+    locationChip: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        maxWidth: '78%',
+        borderRadius: 999,
+        paddingHorizontal: 9,
+        paddingVertical: 5,
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.22)',
+        gap: 4,
+    },
+    locationChipText: {
+        color: 'rgba(255,255,255,0.96)',
+        fontSize: 11,
+        fontFamily: 'Inter_600SemiBold',
     },
     iconBox: {
-        backgroundColor: 'rgba(0,0,0,0.15)',
-        padding: 8,
+        width: 34,
+        height: 34,
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: 5,
         borderRadius: 12,
-        marginLeft: 8,
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.25)',
     },
-    textShadow: {
-        textShadowColor: 'rgba(0, 0, 0, 0.6)',
-        textShadowOffset: { width: 0, height: 1 },
-        textShadowRadius: 3,
+    weatherHeroCard: {
+        borderRadius: 16,
+        padding: 8,
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.26)',
+        overflow: 'hidden',
     },
-    locationContainer: {
+    weatherHeroTopRow: {
         flexDirection: 'row',
         alignItems: 'center',
-        marginBottom: 4,
+        marginBottom: 2,
     },
-    locationText: {
-        color: 'rgba(255,255,255,0.95)',
-        fontSize: 12,
-        fontFamily: 'Inter_600SemiBold',
-        marginLeft: 4,
-    },
-    dateText: {
-        color: 'rgba(255,255,255,0.95)',
-        fontSize: 14,
+    heroDate: {
+        color: 'rgba(255,255,255,0.94)',
+        fontSize: 10,
         fontFamily: 'Inter_600SemiBold',
     },
-    timeText: {
-        color: 'white',
-        fontSize: 30,
-        fontFamily: 'SpaceGrotesk_700Bold',
-    },
-    weatherContainer: {
+    weatherHeroBody: {
+        flexDirection: 'row',
         alignItems: 'center',
-        backgroundColor: 'rgba(0,0,0,0.15)',
-        paddingVertical: 6,
-        paddingHorizontal: 10,
-        borderRadius: 12,
+        justifyContent: 'space-between',
     },
-    weatherText: {
-        color: 'white',
-        fontSize: 16,
-        fontFamily: 'SpaceGrotesk_700Bold',
+    heroTempColumn: {
+        flex: 1,
+        paddingRight: 2,
     },
-    weatherCondition: {
+    heroCondition: {
         color: 'rgba(255,255,255,0.9)',
         fontSize: 10,
-        fontFamily: 'Inter_500Medium',
+        fontFamily: 'Inter_600SemiBold',
+        textTransform: 'uppercase',
+        letterSpacing: 0.6,
+        marginBottom: 1,
+    },
+    heroTemp: {
+        color: '#FFFFFF',
+        fontSize: 32,
+        lineHeight: 34,
+        fontFamily: 'SpaceGrotesk_700Bold',
+        letterSpacing: -1.2,
+    },
+    heroInsightText: {
+        marginTop: 4,
+        color: 'rgba(255,255,255,0.9)',
+        fontSize: 10,
+        fontFamily: 'Inter_600SemiBold',
+    },
+    heroAnimationWrap: {
+        width: 110,
+        height: 94,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    heroAnimation: {
+        width: 110,
+        height: 94,
+        alignSelf: 'center',
+    },
+    heroAnimationSunny: {
+        transform: [{ scale: 1.22 }, { translateY: -4 }],
     },
     scrollContent: {
         padding: 20,
