@@ -564,15 +564,15 @@ export default function AdminDashboard() {
     const numericHigh = Number.parseInt(weatherHighTemp, 10);
     const numericHeat = Number.parseInt(weatherHeatIndex, 10);
     const numericRain = Number.parseInt(weatherRainChance, 10);
-    const hasRainInsight = Number.isFinite(numericRain) && numericRain >= 30;
-    const hasHeatInsight = Number.isFinite(numericHeat)
-        && Number.isFinite(numericTemp)
-        && Math.abs(numericHeat - numericTemp) >= 2;
+    const hasRainInsight = Number.isFinite(numericRain);
+    const hasHeatInsight = Number.isFinite(numericHeat);
     const hasRangeInsight = Number.isFinite(numericLow) && Number.isFinite(numericHigh);
-    const weatherInsight = hasRainInsight
-        ? `Rain chance ${weatherRainChance}`
+    const weatherInsight = hasHeatInsight && hasRainInsight
+        ? `Feels ${weatherHeatIndex} • Rain ${weatherRainChance}`
         : hasHeatInsight
             ? `Feels like ${weatherHeatIndex}`
+            : hasRainInsight
+                ? `Rain ${weatherRainChance}`
             : hasRangeInsight
                 ? `H ${weatherHighTemp} • L ${weatherLowTemp}`
                 : '';

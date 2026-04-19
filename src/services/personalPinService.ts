@@ -6,6 +6,27 @@ const API_BASE_URL = (
   || 'https://parcel-safe.vercel.app'
 ).replace(/\/+$/, '');
 
+type ApiErrorPayload = {
+  error?: string;
+  message?: string;
+  code?: string;
+  retryAfterSeconds?: number;
+};
+
+export class PersonalPinApiError extends Error {
+  readonly status: number;
+  readonly code?: string;
+  readonly retryAfterSeconds?: number;
+
+  constructor(message: string, status: number, code?: string, retryAfterSeconds?: number) {
+    super(message);
+    this.name = 'PersonalPinApiError';
+    this.status = status;
+    this.code = code;
+    this.retryAfterSeconds = retryAfterSeconds;
+  }
+}
+
 export interface RiderPersonalPinStatus {
   enabled: boolean;
   updatedAt: string | null;
@@ -16,6 +37,13 @@ export interface RiderPersonalPinStatus {
 export interface RiderUnlockVerificationResult {
   unlockToken: string;
   expiresAt: number;
+}
+
+export interface DashboardPinStatus {
+  enabled: boolean;
+  updatedAt: string | null;
+  revealSupported: boolean;
+  note: string;
 }
 
 export type RiderBiometricMethod = 'face' | 'fingerprint' | 'iris' | 'unknown';
@@ -61,7 +89,7 @@ async function request(path: string, method: 'GET' | 'POST' | 'DELETE', body?: R
 
   const contentType = response.headers.get('content-type') || '';
   const responseText = await response.text();
-  let data: any = null;
+  let data: ApiErrorPayload | any = null;
   if (contentType.includes('application/json')) {
     try {
       data = JSON.parse(responseText || '{}');
@@ -77,13 +105,18 @@ async function request(path: string, method: 'GET' | 'POST' | 'DELETE', body?: R
       : '';
 
     if (response.status === 401) {
-      throw new Error('Session expired. Please log in again.');
+      throw new PersonalPinApiError('Session expired. Please log in again.', response.status, data?.code, data?.retryAfterSeconds);
     }
     if (response.status === 403) {
-      throw new Error('Your account is not allowed to manage Personal PIN.');
+      throw new PersonalPinApiError('Your account is not allowed to manage Personal PIN.', response.status, data?.code, data?.retryAfterSeconds);
     }
 
-    throw new Error(backendMessage || textMessage || `Personal PIN request failed (${response.status})`);
+    throw new PersonalPinApiError(
+      backendMessage || textMessage || `Personal PIN request failed (${response.status})`,
+      response.status,
+      data?.code,
+      data?.retryAfterSeconds
+    );
   }
 
   return data;
@@ -91,6 +124,30 @@ async function request(path: string, method: 'GET' | 'POST' | 'DELETE', body?: R
 
 export async function fetchRiderPersonalPinStatus(): Promise<RiderPersonalPinStatus> {
   return request('/api/rider/personal-pin', 'GET');
+}
+
+export async function fetchDashboardPinStatus(): Promise<DashboardPinStatus> {
+  return request('/api/auth/dashboard-pin-status', 'GET');
+}
+
+export async function setDashboardPin(pin: string): Promise<void> {
+  const sanitizedPin = pin.replace(/\D/g, '');
+
+  if (!/^\d{6}$/.test(sanitizedPin)) {
+    throw new Error('PIN must be exactly 6 digits.');
+  }
+
+  await request('/api/auth/set-dashboard-pin', 'POST', { pin: sanitizedPin });
+}
+
+export async function verifyDashboardPin(pin: string): Promise<void> {
+  const sanitizedPin = pin.replace(/\D/g, '');
+
+  if (!/^\d{6}$/.test(sanitizedPin)) {
+    throw new Error('PIN must be exactly 6 digits.');
+  }
+
+  await request('/api/auth/verify-dashboard-pin', 'POST', { pin: sanitizedPin });
 }
 
 export async function setRiderPersonalPin(boxId: string, pin: string): Promise<void> {

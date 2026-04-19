@@ -11,10 +11,12 @@ import {
     StatusBar,
     Platform,
     ActivityIndicator,
+    Modal,
+    TouchableOpacity,
 } from 'react-native';
 import { useEntryAnimation, useStaggerAnimation } from '../../hooks/useEntryAnimation';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Text } from 'react-native-paper';
+import { Text, TextInput } from 'react-native-paper';
 import { useNavigation } from '@react-navigation/native';
 import useAuthStore from '../../store/authStore';
 import { signOut } from '../../services/auth';
@@ -23,6 +25,13 @@ import { useAppTheme } from '../../context/ThemeContext';
 import { PremiumAlert } from '../../services/PremiumAlertService';
 import { authenticateBiometricForSensitiveAction } from '../../services/biometricAuthService';
 import { sessionService } from '../../services/sessionService';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import {
+    fetchDashboardPinStatus,
+    PersonalPinApiError,
+    setDashboardPin,
+    verifyDashboardPin,
+} from '../../services/personalPinService';
 
 // Uber-inspired minimalist colors
 const COLORS = {
@@ -66,19 +75,116 @@ const DASHBOARD_OPTIONS = {
     },
 };
 
+const DASHBOARD_PIN_LOCAL_LOCKOUT_KEY_PREFIX = 'parcelSafe:dashboardPinLockoutUntil:';
+const DASHBOARD_PIN_MAX_ATTEMPTS = 5;
+const DASHBOARD_PIN_LOCKOUT_MS = 30 * 1000;
+
+type DashboardTarget = 'RiderApp' | 'AdminApp';
+type AppTarget = DashboardTarget | 'CustomerApp';
+
 export default function RoleSelectionScreen() {
     const navigation = useNavigation<any>();
     const { isDarkMode: isDark } = useAppTheme();
     const { role, user, logout } = useAuthStore((state: any) => state);
     const userId = user?.userId;
+    const isPrivilegedRole = role === 'admin' || role === 'rider';
 
     const [currentTime, setCurrentTime] = useState(dayjs());
     const [weather, setWeather] = useState<WeatherData | null>(null);
     const [locationName, setLocationName] = useState<string | null>(null);
     const [isSwitchingAccount, setIsSwitchingAccount] = useState(false);
     const [loadingPhase, setLoadingPhase] = useState<'idle' | 'authorizing' | 'registering' | 'routing'>('idle');
+
+    const [showDashboardPinModal, setShowDashboardPinModal] = useState(false);
+    const [showSetPinModal, setShowSetPinModal] = useState(false);
+    const [pinTargetApp, setPinTargetApp] = useState<DashboardTarget | null>(null);
+    const [pinFallbackMessage, setPinFallbackMessage] = useState<string | null>(null);
+    const [hasDashboardPin, setHasDashboardPin] = useState<boolean | null>(null);
+    const [dashboardPinStatusLoading, setDashboardPinStatusLoading] = useState(false);
+
+    const [dashboardPin, setDashboardPin] = useState('');
+    const [showDashboardPin, setShowDashboardPin] = useState(false);
+    const [pinSubmitting, setPinSubmitting] = useState(false);
+
+    const [newDashboardPin, setNewDashboardPin] = useState('');
+    const [confirmDashboardPin, setConfirmDashboardPin] = useState('');
+    const [showNewDashboardPin, setShowNewDashboardPin] = useState(false);
+    const [showConfirmDashboardPin, setShowConfirmDashboardPin] = useState(false);
+    const [saveDashboardPinSubmitting, setSaveDashboardPinSubmitting] = useState(false);
+
+    const [localLockoutUntil, setLocalLockoutUntil] = useState(0);
+    const [lockoutCountdownMs, setLockoutCountdownMs] = useState(0);
+
     const actionLockRef = useRef(false);
+    const failedDashboardPinAttemptsRef = useRef(0);
     const progressAnim = useRef(new Animated.Value(0)).current;
+    const lockoutStorageKey = userId ? `${DASHBOARD_PIN_LOCAL_LOCKOUT_KEY_PREFIX}${userId}` : null;
+
+    const sanitizePinInput = (value: string) => value.replace(/\D/g, '').slice(0, 6);
+
+    const clearLocalLockout = async () => {
+        failedDashboardPinAttemptsRef.current = 0;
+        setLocalLockoutUntil(0);
+        setLockoutCountdownMs(0);
+        if (lockoutStorageKey) {
+            await AsyncStorage.removeItem(lockoutStorageKey).catch(() => undefined);
+        }
+    };
+
+    const applyLocalLockout = async (expiresAtMs: number) => {
+        failedDashboardPinAttemptsRef.current = 0;
+        setLocalLockoutUntil(expiresAtMs);
+        const nextCountdown = Math.max(0, expiresAtMs - Date.now());
+        setLockoutCountdownMs(nextCountdown);
+        if (lockoutStorageKey) {
+            await AsyncStorage.setItem(lockoutStorageKey, String(expiresAtMs)).catch(() => undefined);
+        }
+    };
+
+    const openDashboardPinModal = (targetApp: DashboardTarget, fallbackMessage: string) => {
+        setLoadingPhase('idle');
+        setPinTargetApp(targetApp);
+        setPinFallbackMessage(fallbackMessage);
+        setDashboardPin('');
+        setShowDashboardPin(false);
+        setShowSetPinModal(false);
+        setShowDashboardPinModal(true);
+    };
+
+    const openSetPinModal = (targetApp: DashboardTarget | null, fallbackMessage?: string) => {
+        setLoadingPhase('idle');
+        setPinTargetApp(targetApp);
+        setPinFallbackMessage(fallbackMessage ?? null);
+        setNewDashboardPin('');
+        setConfirmDashboardPin('');
+        setShowNewDashboardPin(false);
+        setShowConfirmDashboardPin(false);
+        setShowDashboardPinModal(false);
+        setShowSetPinModal(true);
+    };
+
+    const navigateToTargetApp = async (targetApp: AppTarget) => {
+        if (targetApp === 'RiderApp') {
+            setLoadingPhase('registering');
+            if (userId) {
+                try {
+                    await sessionService.registerSession(
+                        userId,
+                        Platform.OS === 'ios' ? 'ios' : 'android',
+                        '1.0.1'
+                    );
+                } catch (error) {
+                    console.warn('[RoleSelection] Failed to register rider session:', error);
+                }
+            }
+            setLoadingPhase('routing');
+            navigation.replace('RiderLoading');
+            return;
+        }
+
+        setLoadingPhase('routing');
+        navigation.replace(targetApp);
+    };
 
     // Live clock
     useEffect(() => {
@@ -149,17 +255,94 @@ export default function RoleSelectionScreen() {
     }, []);
 
     useEffect(() => {
+        let mounted = true;
+
+        if (!lockoutStorageKey) {
+            setLocalLockoutUntil(0);
+            setLockoutCountdownMs(0);
+            failedDashboardPinAttemptsRef.current = 0;
+            return;
+        }
+
+        AsyncStorage.getItem(lockoutStorageKey)
+            .then((value) => {
+                if (!mounted || !value) return;
+                const parsed = Number(value);
+                if (!Number.isFinite(parsed) || parsed <= Date.now()) {
+                    AsyncStorage.removeItem(lockoutStorageKey).catch(() => undefined);
+                    return;
+                }
+                setLocalLockoutUntil(parsed);
+                setLockoutCountdownMs(Math.max(0, parsed - Date.now()));
+            })
+            .catch(() => undefined);
+
+        return () => {
+            mounted = false;
+        };
+    }, [lockoutStorageKey]);
+
+    useEffect(() => {
+        if (!localLockoutUntil || localLockoutUntil <= Date.now()) {
+            setLockoutCountdownMs(0);
+            return;
+        }
+
+        const timer = setInterval(() => {
+            const remainingMs = Math.max(0, localLockoutUntil - Date.now());
+            setLockoutCountdownMs(remainingMs);
+            if (remainingMs <= 0) {
+                clearLocalLockout().catch(() => undefined);
+            }
+        }, 250);
+
+        return () => clearInterval(timer);
+    }, [localLockoutUntil]);
+
+    useEffect(() => {
         if (!user || !role) {
             navigation.replace('Login');
         }
     }, [navigation, role, user]);
 
+    useEffect(() => {
+        let mounted = true;
+
+        if (!isPrivilegedRole) {
+            setHasDashboardPin(null);
+            setDashboardPinStatusLoading(false);
+            return;
+        }
+
+        setDashboardPinStatusLoading(true);
+        fetchDashboardPinStatus()
+            .then((status) => {
+                if (!mounted) return;
+                setHasDashboardPin(Boolean(status.enabled));
+            })
+            .catch(() => {
+                if (!mounted) return;
+                setHasDashboardPin(null);
+            })
+            .finally(() => {
+                if (!mounted) return;
+                setDashboardPinStatusLoading(false);
+            });
+
+        return () => {
+            mounted = false;
+        };
+    }, [isPrivilegedRole, userId]);
+
     const colors = isDark ? COLORS.dark : COLORS.light;
     const isBusy = isSwitchingAccount || loadingPhase !== 'idle';
+    const interactionDisabled = isBusy || pinSubmitting || saveDashboardPinSubmitting;
+    const canSetDashboardPin = isPrivilegedRole && hasDashboardPin === false;
     const progressWidth = progressAnim.interpolate({
         inputRange: [0, 1],
         outputRange: ['8%', '100%'],
     });
+    const lockoutSeconds = Math.max(0, Math.ceil(lockoutCountdownMs / 1000));
 
     const loadingLabel = isSwitchingAccount
         ? 'Switching account...'
@@ -169,7 +352,7 @@ export default function RoleSelectionScreen() {
                 ? 'Starting rider session...'
                 : 'Opening dashboard...';
 
-    const handleNavigation = async (targetApp: 'RiderApp' | 'CustomerApp' | 'AdminApp') => {
+    const handleNavigation = async (targetApp: AppTarget) => {
         if (actionLockRef.current || isSwitchingAccount) return;
 
         actionLockRef.current = true;
@@ -181,41 +364,141 @@ export default function RoleSelectionScreen() {
                 setLoadingPhase('authorizing');
                 const authResult = await authenticateBiometricForSensitiveAction('Authorize dashboard access');
                 if (!authResult.success) {
-                    PremiumAlert.alert(
-                        'Authorization Required',
-                        `${'message' in authResult ? authResult.message : 'Authorization failed.'} Dashboard switch was canceled.`
-                    );
+                    if (hasDashboardPin === false) {
+                        openSetPinModal(targetApp as DashboardTarget, authResult.message);
+                    } else {
+                        // Immediate fallback keeps the transition premium and avoids spinner linger.
+                        openDashboardPinModal(targetApp as DashboardTarget, authResult.message);
+                    }
                     return;
                 }
             }
 
-            if (targetApp === 'RiderApp') {
-                setLoadingPhase('registering');
-                if (userId) {
-                    try {
-                        await sessionService.registerSession(
-                            userId,
-                            Platform.OS === 'ios' ? 'ios' : 'android',
-                            '1.0.1'
-                        );
-                    } catch (error) {
-                        console.warn('[RoleSelection] Failed to register rider session:', error);
-                    }
-                }
-                setLoadingPhase('routing');
-                navigation.replace('RiderLoading');
-                didNavigate = true;
-                return;
-            }
-
-            setLoadingPhase('routing');
-            navigation.replace(targetApp);
+            await navigateToTargetApp(targetApp);
             didNavigate = true;
         } finally {
             actionLockRef.current = false;
             if (!didNavigate) {
                 setLoadingPhase('idle');
             }
+        }
+    };
+
+    const registerLocalFailedPinAttempt = async () => {
+        failedDashboardPinAttemptsRef.current += 1;
+        const remainingAttempts = DASHBOARD_PIN_MAX_ATTEMPTS - failedDashboardPinAttemptsRef.current;
+
+        if (failedDashboardPinAttemptsRef.current >= DASHBOARD_PIN_MAX_ATTEMPTS) {
+            await applyLocalLockout(Date.now() + DASHBOARD_PIN_LOCKOUT_MS);
+            return { remainingAttempts: 0, lockoutApplied: true };
+        }
+
+        return { remainingAttempts, lockoutApplied: false };
+    };
+
+    const handleSubmitDashboardPin = async () => {
+        if (actionLockRef.current || pinSubmitting) return;
+        if (!pinTargetApp) return;
+
+        if (lockoutSeconds > 0) {
+            PremiumAlert.alert('Too Many Attempts', `Try again in ${lockoutSeconds}s.`);
+            return;
+        }
+
+        const sanitizedPin = sanitizePinInput(dashboardPin);
+        if (!/^\d{6}$/.test(sanitizedPin)) {
+            PremiumAlert.alert('Invalid PIN', 'Enter your 6-digit Rider PIN to continue.');
+            return;
+        }
+
+        actionLockRef.current = true;
+        try {
+            setPinSubmitting(true);
+            await verifyDashboardPin(sanitizedPin);
+            await clearLocalLockout();
+            setShowDashboardPinModal(false);
+            await navigateToTargetApp(pinTargetApp);
+        } catch (error: any) {
+            const apiCode = typeof error?.code === 'string' ? error.code : null;
+            if (apiCode === 'PIN_NOT_SET') {
+                setHasDashboardPin(false);
+                openSetPinModal(pinTargetApp, pinFallbackMessage || undefined);
+                return;
+            }
+
+            if (apiCode === 'AUTH_EXPIRED') {
+                PremiumAlert.alert('Session Expired', 'Please sign in again to continue.');
+                navigation.replace('Login');
+                return;
+            }
+
+            if (apiCode === 'LOCKED_OUT' || apiCode === 'TOO_MANY_ATTEMPTS') {
+                const retryAfterSeconds = Number((error as PersonalPinApiError)?.retryAfterSeconds || 30);
+                await applyLocalLockout(Date.now() + retryAfterSeconds * 1000);
+                PremiumAlert.alert('Too Many Attempts', `PIN entry is locked. Try again in ${retryAfterSeconds}s.`);
+                return;
+            }
+
+            const { remainingAttempts, lockoutApplied } = await registerLocalFailedPinAttempt();
+            if (lockoutApplied) {
+                PremiumAlert.alert('Too Many Attempts', 'PIN entry is locked for 30 seconds.');
+                return;
+            }
+
+            if (apiCode === 'INVALID_PIN') {
+                PremiumAlert.alert('Incorrect PIN', `Please try again (${remainingAttempts} attempts left).`);
+                return;
+            }
+
+            PremiumAlert.alert('Verification Failed', error?.message || 'Could not verify Rider PIN. Please try again.');
+        } finally {
+            setPinSubmitting(false);
+            actionLockRef.current = false;
+        }
+    };
+
+    const handleSaveDashboardPin = async () => {
+        if (actionLockRef.current || saveDashboardPinSubmitting) return;
+
+        const sanitizedNew = sanitizePinInput(newDashboardPin);
+        const sanitizedConfirm = sanitizePinInput(confirmDashboardPin);
+
+        if (!/^\d{6}$/.test(sanitizedNew)) {
+            PremiumAlert.alert('Invalid PIN', 'Rider PIN must be exactly 6 digits.');
+            return;
+        }
+
+        if (sanitizedNew !== sanitizedConfirm) {
+            PremiumAlert.alert('PIN Mismatch', 'PIN confirmation does not match.');
+            return;
+        }
+
+        actionLockRef.current = true;
+        try {
+            setSaveDashboardPinSubmitting(true);
+            await setDashboardPin(sanitizedNew);
+            setHasDashboardPin(true);
+            await clearLocalLockout();
+            setShowSetPinModal(false);
+
+            if (pinTargetApp) {
+                PremiumAlert.alert('PIN Saved', 'Rider PIN saved. Opening dashboard...');
+                await navigateToTargetApp(pinTargetApp);
+                return;
+            }
+
+            PremiumAlert.alert('PIN Saved', 'Your Rider PIN has been updated.');
+        } catch (error: any) {
+            const apiCode = typeof error?.code === 'string' ? error.code : null;
+            if (apiCode === 'AUTH_EXPIRED') {
+                PremiumAlert.alert('Session Expired', 'Please sign in again to continue.');
+                navigation.replace('Login');
+                return;
+            }
+            PremiumAlert.alert('Save Failed', error?.message || 'Could not save your Rider PIN.');
+        } finally {
+            setSaveDashboardPinSubmitting(false);
+            actionLockRef.current = false;
         }
     };
 
@@ -318,7 +601,7 @@ export default function RoleSelectionScreen() {
                                 {...DASHBOARD_OPTIONS.admin}
                                 colors={colors}
                                 onPress={() => handleNavigation('AdminApp')}
-                                disabled={isBusy}
+                                disabled={interactionDisabled}
                             />
                         </Animated.View>
                     )}
@@ -330,7 +613,7 @@ export default function RoleSelectionScreen() {
                                 {...DASHBOARD_OPTIONS.rider}
                                 colors={colors}
                                 onPress={() => handleNavigation('RiderApp')}
-                                disabled={isBusy}
+                                disabled={interactionDisabled}
                             />
                         </Animated.View>
                     )}
@@ -341,7 +624,7 @@ export default function RoleSelectionScreen() {
                             {...DASHBOARD_OPTIONS.customer}
                             colors={colors}
                             onPress={() => handleNavigation('CustomerApp')}
-                            disabled={isBusy}
+                            disabled={interactionDisabled}
                         />
                     </Animated.View>
                 </View>
@@ -349,15 +632,37 @@ export default function RoleSelectionScreen() {
 
             {/* Footer */}
             <View style={styles.footer}>
+                {canSetDashboardPin && !dashboardPinStatusLoading && (
+                    <Pressable
+                        onPress={() => openSetPinModal(null)}
+                        disabled={interactionDisabled}
+                        style={({ pressed }) => [
+                            styles.setPinButton,
+                            {
+                                borderColor: colors.border,
+                                backgroundColor: pressed ? colors.surface : 'transparent',
+                                opacity: interactionDisabled ? 0.6 : 1,
+                            },
+                        ]}
+                    >
+                        <MaterialCommunityIcons
+                            name="shield-key-outline"
+                            size={16}
+                            color={colors.textSecondary}
+                        />
+                        <Text style={[styles.setPinText, { color: colors.textSecondary }]}>Set Rider PIN</Text>
+                    </Pressable>
+                )}
+
                 <Pressable
                     onPress={handleSwitchAccount}
-                    disabled={isBusy}
+                    disabled={interactionDisabled}
                     style={({ pressed }) => [
                         styles.switchAccountButton,
                         {
                             borderColor: colors.border,
                             backgroundColor: pressed ? colors.surface : 'transparent',
-                            opacity: isBusy ? 0.6 : 1,
+                            opacity: interactionDisabled ? 0.6 : 1,
                         },
                     ]}
                 >
@@ -408,6 +713,212 @@ export default function RoleSelectionScreen() {
                     </View>
                 </View>
             )}
+
+            <Modal
+                visible={showDashboardPinModal}
+                transparent
+                animationType="slide"
+                onRequestClose={() => {
+                    if (!pinSubmitting) {
+                        setShowDashboardPinModal(false);
+                        setPinTargetApp(null);
+                    }
+                }}
+            >
+                <View style={styles.modalOverlay}>
+                    <View style={[styles.modalCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+                        <View style={[styles.modalHeader, { borderBottomColor: colors.border }]}> 
+                            <View style={styles.modalTitleRow}>
+                                <MaterialCommunityIcons name="shield-lock-outline" size={18} color={colors.text} />
+                                <Text style={[styles.modalTitle, { color: colors.text }]}>Authorize Dashboard</Text>
+                            </View>
+                            <TouchableOpacity
+                                onPress={() => {
+                                    if (!pinSubmitting) {
+                                        setShowDashboardPinModal(false);
+                                        setPinTargetApp(null);
+                                    }
+                                }}
+                                disabled={pinSubmitting}
+                                hitSlop={12}
+                            >
+                                <MaterialCommunityIcons name="close" size={22} color={colors.textSecondary} />
+                            </TouchableOpacity>
+                        </View>
+
+                        <View style={styles.modalBody}>
+                            <Text style={[styles.modalDescription, { color: colors.textSecondary }]}> 
+                                {pinFallbackMessage || 'Use your Rider PIN to continue to this dashboard.'}
+                            </Text>
+
+                            {lockoutSeconds > 0 && (
+                                <View style={[styles.lockoutPill, { backgroundColor: colors.background, borderColor: colors.border }]}> 
+                                    <MaterialCommunityIcons name="timer-sand" size={14} color={colors.textSecondary} />
+                                    <Text style={[styles.lockoutPillText, { color: colors.textSecondary }]}>Try again in {lockoutSeconds}s</Text>
+                                </View>
+                            )}
+
+                            <TextInput
+                                mode="outlined"
+                                label="Rider PIN"
+                                value={dashboardPin}
+                                onChangeText={(value) => setDashboardPin(sanitizePinInput(value))}
+                                keyboardType="number-pad"
+                                secureTextEntry={!showDashboardPin}
+                                maxLength={6}
+                                right={
+                                    <TextInput.Icon
+                                        icon={showDashboardPin ? 'eye-off' : 'eye'}
+                                        onPress={() => setShowDashboardPin((prev) => !prev)}
+                                        forceTextInputFocus={false}
+                                    />
+                                }
+                            />
+                        </View>
+
+                        <View style={[styles.modalFooter, { borderTopColor: colors.border }]}> 
+                            {canSetDashboardPin && (
+                                <TouchableOpacity
+                                    activeOpacity={0.7}
+                                    onPress={() => {
+                                        if (!pinSubmitting) {
+                                            openSetPinModal(pinTargetApp, pinFallbackMessage || undefined);
+                                        }
+                                    }}
+                                    disabled={pinSubmitting}
+                                    style={[styles.modalAction, { backgroundColor: colors.background, borderColor: colors.border, opacity: pinSubmitting ? 0.6 : 1 }]}
+                                >
+                                    <Text style={[styles.modalActionText, { color: colors.text }]}>Set PIN</Text>
+                                </TouchableOpacity>
+                            )}
+
+                            <TouchableOpacity
+                                activeOpacity={0.7}
+                                onPress={handleSubmitDashboardPin}
+                                disabled={pinSubmitting || lockoutSeconds > 0 || dashboardPin.length !== 6}
+                                style={[
+                                    styles.modalAction,
+                                    styles.modalActionPrimary,
+                                    {
+                                        backgroundColor: colors.accent,
+                                        opacity: (pinSubmitting || lockoutSeconds > 0 || dashboardPin.length !== 6) ? 0.35 : 1,
+                                    },
+                                ]}
+                            >
+                                {pinSubmitting && <ActivityIndicator size={14} color={colors.background} />}
+                                <Text style={[styles.modalActionPrimaryText, { color: colors.background }]}>Continue</Text>
+                            </TouchableOpacity>
+                        </View>
+                    </View>
+                </View>
+            </Modal>
+
+            <Modal
+                visible={showSetPinModal}
+                transparent
+                animationType="slide"
+                onRequestClose={() => {
+                    if (!saveDashboardPinSubmitting) {
+                        setShowSetPinModal(false);
+                        setPinTargetApp(null);
+                    }
+                }}
+            >
+                <View style={styles.modalOverlay}>
+                    <View style={[styles.modalCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+                        <View style={[styles.modalHeader, { borderBottomColor: colors.border }]}> 
+                            <View style={styles.modalTitleRow}>
+                                <MaterialCommunityIcons name="shield-key-outline" size={18} color={colors.text} />
+                                <Text style={[styles.modalTitle, { color: colors.text }]}>Set Rider PIN</Text>
+                            </View>
+                            <TouchableOpacity
+                                onPress={() => {
+                                    if (!saveDashboardPinSubmitting) {
+                                        setShowSetPinModal(false);
+                                        setPinTargetApp(null);
+                                    }
+                                }}
+                                disabled={saveDashboardPinSubmitting}
+                                hitSlop={12}
+                            >
+                                <MaterialCommunityIcons name="close" size={22} color={colors.textSecondary} />
+                            </TouchableOpacity>
+                        </View>
+
+                        <View style={styles.modalBody}>
+                            <Text style={[styles.modalDescription, { color: colors.textSecondary }]}> 
+                                This 6-digit Rider PIN is used as your fallback dashboard authorization.
+                            </Text>
+                            <TextInput
+                                mode="outlined"
+                                label="New Rider PIN"
+                                value={newDashboardPin}
+                                onChangeText={(value) => setNewDashboardPin(sanitizePinInput(value))}
+                                keyboardType="number-pad"
+                                secureTextEntry={!showNewDashboardPin}
+                                maxLength={6}
+                                right={
+                                    <TextInput.Icon
+                                        icon={showNewDashboardPin ? 'eye-off' : 'eye'}
+                                        onPress={() => setShowNewDashboardPin((prev) => !prev)}
+                                        forceTextInputFocus={false}
+                                    />
+                                }
+                                style={styles.modalInputSpacing}
+                            />
+                            <TextInput
+                                mode="outlined"
+                                label="Confirm Rider PIN"
+                                value={confirmDashboardPin}
+                                onChangeText={(value) => setConfirmDashboardPin(sanitizePinInput(value))}
+                                keyboardType="number-pad"
+                                secureTextEntry={!showConfirmDashboardPin}
+                                maxLength={6}
+                                right={
+                                    <TextInput.Icon
+                                        icon={showConfirmDashboardPin ? 'eye-off' : 'eye'}
+                                        onPress={() => setShowConfirmDashboardPin((prev) => !prev)}
+                                        forceTextInputFocus={false}
+                                    />
+                                }
+                            />
+                        </View>
+
+                        <View style={[styles.modalFooter, { borderTopColor: colors.border }]}> 
+                            <TouchableOpacity
+                                activeOpacity={0.7}
+                                onPress={() => {
+                                    if (!saveDashboardPinSubmitting) {
+                                        setShowSetPinModal(false);
+                                        setPinTargetApp(null);
+                                    }
+                                }}
+                                disabled={saveDashboardPinSubmitting}
+                                style={[styles.modalAction, { backgroundColor: colors.background, borderColor: colors.border, opacity: saveDashboardPinSubmitting ? 0.6 : 1 }]}
+                            >
+                                <Text style={[styles.modalActionText, { color: colors.text }]}>Cancel</Text>
+                            </TouchableOpacity>
+
+                            <TouchableOpacity
+                                activeOpacity={0.7}
+                                onPress={handleSaveDashboardPin}
+                                disabled={saveDashboardPinSubmitting || newDashboardPin.length !== 6 || confirmDashboardPin.length !== 6}
+                                style={[
+                                    styles.modalAction,
+                                    styles.modalActionPrimary,
+                                    {
+                                        backgroundColor: colors.accent,
+                                        opacity: (saveDashboardPinSubmitting || newDashboardPin.length !== 6 || confirmDashboardPin.length !== 6) ? 0.35 : 1,
+                                    },
+                                ]}
+                            >
+                                {saveDashboardPinSubmitting && <ActivityIndicator size={14} color={colors.background} />}
+                                <Text style={[styles.modalActionPrimaryText, { color: colors.background }]}>Save PIN</Text>
+                            </TouchableOpacity>
+                        </View>
+                    </View>
+                </View>
+            </Modal>
         </SafeAreaView>
     );
 }
@@ -619,6 +1130,20 @@ const styles = StyleSheet.create({
         paddingVertical: 24,
         alignItems: 'center',
     },
+    setPinButton: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+        borderWidth: 1,
+        borderRadius: 999,
+        paddingHorizontal: 12,
+        paddingVertical: 8,
+        marginBottom: 8,
+    },
+    setPinText: {
+        fontSize: 12,
+        fontFamily: 'Inter_500Medium',
+    },
     switchAccountButton: {
         flexDirection: 'row',
         alignItems: 'center',
@@ -672,5 +1197,89 @@ const styles = StyleSheet.create({
         fontFamily: 'JetBrainsMono_500Medium',
         letterSpacing: 1.5,
         textTransform: 'uppercase',
+    },
+    modalOverlay: {
+        ...StyleSheet.absoluteFillObject,
+        justifyContent: 'flex-end',
+        backgroundColor: 'rgba(0,0,0,0.35)',
+    },
+    modalCard: {
+        borderTopLeftRadius: 20,
+        borderTopRightRadius: 20,
+        borderWidth: 1,
+    },
+    modalHeader: {
+        paddingHorizontal: 20,
+        paddingVertical: 16,
+        borderBottomWidth: 1,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+    },
+    modalTitleRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+    },
+    modalTitle: {
+        fontSize: 16,
+        fontFamily: 'Inter_700Bold',
+    },
+    modalBody: {
+        paddingHorizontal: 20,
+        paddingVertical: 16,
+    },
+    modalDescription: {
+        fontSize: 13,
+        lineHeight: 18,
+        fontFamily: 'Inter_400Regular',
+        marginBottom: 14,
+    },
+    modalInputSpacing: {
+        marginBottom: 12,
+    },
+    lockoutPill: {
+        borderRadius: 999,
+        borderWidth: 1,
+        paddingHorizontal: 10,
+        paddingVertical: 6,
+        marginBottom: 12,
+        alignSelf: 'flex-start',
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+    },
+    lockoutPillText: {
+        fontSize: 12,
+        fontFamily: 'Inter_500Medium',
+    },
+    modalFooter: {
+        paddingHorizontal: 20,
+        paddingTop: 12,
+        paddingBottom: 24,
+        borderTopWidth: 1,
+        flexDirection: 'row',
+        gap: 10,
+    },
+    modalAction: {
+        flex: 1,
+        borderRadius: 12,
+        borderWidth: 1,
+        minHeight: 44,
+        alignItems: 'center',
+        justifyContent: 'center',
+        flexDirection: 'row',
+        gap: 8,
+    },
+    modalActionPrimary: {
+        borderWidth: 0,
+    },
+    modalActionText: {
+        fontSize: 13,
+        fontFamily: 'Inter_600SemiBold',
+    },
+    modalActionPrimaryText: {
+        fontSize: 13,
+        fontFamily: 'Inter_600SemiBold',
     },
 });

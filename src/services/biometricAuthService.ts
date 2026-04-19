@@ -5,7 +5,14 @@ let biometricInProgress = false;
 
 type BiometricAuthFailure = {
   success: false;
-  reason: 'not-supported' | 'not-enrolled' | 'user-cancel' | 'system-cancel' | 'lockout' | 'unknown-error';
+  reason:
+    | 'not-supported'
+    | 'not-enrolled'
+    | 'user-cancel'
+    | 'system-cancel'
+    | 'lockout'
+    | 'authentication-failed'
+    | 'unknown-error';
   message: string;
 };
 
@@ -27,6 +34,13 @@ function mapTypesToMethod(types: LocalAuthentication.AuthenticationType[]): Ride
 }
 
 function mapLocalAuthError(error?: string): BiometricAuthFailure {
+  if (error === 'not_available') {
+    return {
+      success: false,
+      reason: 'not-supported',
+      message: 'Biometric authentication is not available on this device. Use your Personal PIN.',
+    };
+  }
   if (error === 'not_enrolled') {
     return {
       success: false,
@@ -46,6 +60,13 @@ function mapLocalAuthError(error?: string): BiometricAuthFailure {
       success: false,
       reason: 'system-cancel',
       message: 'Biometric prompt was interrupted. Use your Personal PIN to continue.',
+    };
+  }
+  if (error === 'authentication_failed' || error === 'timeout' || error === 'unable_to_process') {
+    return {
+      success: false,
+      reason: 'authentication-failed',
+      message: 'Biometric was not recognized. Use your Personal PIN to continue.',
     };
   }
   if (error === 'lockout' || error === 'passcode_not_set') {
@@ -113,11 +134,12 @@ export async function authenticateBiometricForUnlock(): Promise<BiometricAuthRes
 
 export async function authenticateBiometricForSensitiveAction(
   promptMessage: string
-): Promise<{ success: true } | { success: false; message: string }> {
+): Promise<{ success: true } | { success: false; reason: BiometricAuthFailure['reason']; message: string }> {
   const hasHardware = await LocalAuthentication.hasHardwareAsync();
   if (!hasHardware) {
     return {
       success: false,
+      reason: 'not-supported',
       message: 'This device does not support biometric authentication.',
     };
   }
@@ -126,6 +148,7 @@ export async function authenticateBiometricForSensitiveAction(
   if (!enrolled) {
     return {
       success: false,
+      reason: 'not-enrolled',
       message: 'No biometrics are enrolled on this phone.',
     };
   }
@@ -133,6 +156,7 @@ export async function authenticateBiometricForSensitiveAction(
   if (biometricInProgress) {
     return {
       success: false,
+      reason: 'system-cancel',
       message: 'Biometric authentication already in progress. Please wait.',
     };
   }
@@ -151,7 +175,11 @@ export async function authenticateBiometricForSensitiveAction(
     }
 
     const mapped = mapLocalAuthError('error' in authResult ? authResult.error : undefined);
-    return { success: false, message: mapped.message.replace('Use your Personal PIN.', 'Use device passcode and try again.') };
+    return {
+      success: false,
+      reason: mapped.reason,
+      message: mapped.message.replace('Use your Personal PIN.', 'Use your Rider PIN and try again.'),
+    };
   } finally {
     biometricInProgress = false;
   }
