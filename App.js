@@ -107,13 +107,46 @@ const AppContent = () => {
     }
 
     if (deliveryId) {
-      navigateWhenReady('DeliveryDetail', { deliveryId });
+      navigateWhenReady('DeliveryDetail', {
+        deliveryId,
+        delivery: { id: deliveryId },
+      });
     }
   };
 
   useEffect(() => {
     let cleanupFunctions = [];
     let timeoutId = null;
+    let authUnsubscribe = null;
+    let pushRegistrationInFlight = false;
+
+    const AUTH_EVENTS_REQUIRING_PUSH_REGISTRATION = new Set([
+      'INITIAL_SESSION',
+      'SIGNED_IN',
+      'TOKEN_REFRESHED',
+      'USER_UPDATED',
+    ]);
+
+    const registerPushForCurrentSession = async (reason) => {
+      if (!setupNotificationChannels || !registerForPushNotifications) {
+        return;
+      }
+
+      if (pushRegistrationInFlight) {
+        if (__DEV__) console.log(`[App] Push registration already in progress (${reason})`);
+        return;
+      }
+
+      pushRegistrationInFlight = true;
+      try {
+        await setupNotificationChannels();
+        await registerForPushNotifications();
+      } catch (error) {
+        if (__DEV__) console.warn(`[App] Push registration failed (${reason}):`, error);
+      } finally {
+        pushRegistrationInFlight = false;
+      }
+    };
 
     // Initialize background services when app starts (deferred to not block first render)
     const initializeServices = async () => {
@@ -131,7 +164,6 @@ const AppContent = () => {
         // Configure notification handler for foreground notifications
         Notifications.setNotificationHandler({
           handleNotification: async () => ({
-            shouldShowAlert: true,
             shouldPlaySound: true,
             shouldSetBadge: true,
             shouldShowBanner: true,  // required on newer Expo SDK to show heads-up banner
@@ -157,14 +189,19 @@ const AppContent = () => {
       }
 
       // 2. Register FCM push token for ALL roles (customer, rider, admin)
-      // Runs BEFORE background-services guard so customers always get a token
-      if (setupNotificationChannels && registerForPushNotifications) {
-        try {
-          await setupNotificationChannels();
-          await registerForPushNotifications();
-        } catch (e) {
-          if (__DEV__) console.warn('[App] Push notification init failed:', e);
-        }
+      // Runs before background-services guard so customers always get a token.
+      await registerPushForCurrentSession('app_start');
+
+      // Attach auth listener only after Supabase is loaded so token re-registration
+      // reliably runs on restored sessions and auth refresh events.
+      if (!authUnsubscribe && supabase?.auth?.onAuthStateChange) {
+        const { data: { subscription: authSub } } = supabase.auth.onAuthStateChange((event, session) => {
+          if (!session || !AUTH_EVENTS_REQUIRING_PUSH_REGISTRATION.has(event)) {
+            return;
+          }
+          registerPushForCurrentSession(`auth_${String(event).toLowerCase()}`).catch(console.error);
+        });
+        authUnsubscribe = authSub;
       }
 
       // Promo ads are server-driven via centralized backend scheduling.
@@ -306,9 +343,7 @@ const AppContent = () => {
         // Token refresh — re-registers with server when the OS rotates the FCM token
         if (onTokenRefresh) {
           const unsubTokenRefresh = onTokenRefresh((_newToken) => {
-            if (registerForPushNotifications) {
-              registerForPushNotifications().catch(console.error);
-            }
+            registerPushForCurrentSession('fcm_token_refresh').catch(console.error);
           });
           cleanupFunctions.push(unsubTokenRefresh);
         }
@@ -330,21 +365,6 @@ const AppContent = () => {
     timeoutId = setTimeout(() => {
       initializeServices();
     }, 100);
-
-    // Re-register FCM token on fresh login — covers all roles (customer, rider, admin)
-    let authUnsubscribe = null;
-    if (supabase) {
-      const { data: { subscription: authSub } } = supabase.auth.onAuthStateChange((event, session) => {
-        if (event === 'SIGNED_IN' && session) {
-          if (setupNotificationChannels && registerForPushNotifications) {
-            setupNotificationChannels()
-              .then(() => registerForPushNotifications())
-              .catch(console.error);
-          }
-        }
-      });
-      authUnsubscribe = authSub;
-    }
 
     const RESUME_TRIGGER_DEBOUNCE_MS = 4000;
 

@@ -83,12 +83,15 @@ export default function DeliveryDetailScreen() {
         icon: isDarkMode ? '#D0D0D0' : '#2C2C2C',
         iconButtonBg: isDarkMode ? '#232323' : '#ECECE7',
     };
-    const { delivery } = route.params;
+    const routeParams = route?.params ?? {};
+    const delivery = routeParams.delivery ?? null;
+    const deliveryId = routeParams.deliveryId ?? delivery?.id ?? null;
     console.log('[DeliveryDetail] Received delivery params:', JSON.stringify(delivery, null, 2));
+    console.log('[DeliveryDetail] Received deliveryId param:', deliveryId);
     const MAPBOX_TOKEN = process.env.EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN;
 
     const [routeGeometry, setRouteGeometry] = useState<any>(null);
-    const [deliveryData, setDeliveryData] = useState<any>(delivery);
+    const [deliveryData, setDeliveryData] = useState<any>(delivery || {});
     const [loading, setLoading] = useState(false);
     const [pickupPhotoVersion, setPickupPhotoVersion] = useState<number>(0);
     const [proofPhotoVersion, setProofPhotoVersion] = useState<number>(0);
@@ -102,6 +105,8 @@ export default function DeliveryDetailScreen() {
     // Fetch fresh details if coordinates are missing
     useEffect(() => {
         const fetchDeliveryDetails = async () => {
+            const sourceId = deliveryId || delivery?.id;
+
             // Check if we have minimal data needed
             if (delivery) {
                 // Ensure coordinates are numbers
@@ -115,7 +120,7 @@ export default function DeliveryDetailScreen() {
                     initialDistance = `${getDistanceFromLatLonInKm(pLat, pLng, dLat, dLng).toFixed(2)} km`;
                 }
 
-                setDeliveryData(prev => ({
+                setDeliveryData((prev: any) => ({
                     ...prev,
                     pickup_lat: !isNaN(pLat) ? pLat : prev.pickup_lat,
                     pickup_lng: !isNaN(pLng) ? pLng : prev.pickup_lng,
@@ -128,22 +133,29 @@ export default function DeliveryDetailScreen() {
                 }));
             }
 
+            if (!sourceId) {
+                console.warn('[DeliveryDetail] Missing delivery object and deliveryId route params');
+                return;
+            }
 
-
-            console.log('[DeliveryDetail] Missing coordinates, fetching from Supabase for ID:', delivery.id);
+            console.log('[DeliveryDetail] Missing coordinates, fetching from Supabase for ID:', sourceId);
+            if (!supabase) {
+                console.warn('[DeliveryDetail] Supabase client unavailable, cannot fetch delivery details');
+                return;
+            }
             setLoading(true);
             try {
                 const { data, error } = await supabase
                     .from('deliveries')
                     .select('*, profiles:customer_id(full_name, phone_number)')
-                    .or(`id.eq.${delivery.id},tracking_number.eq.${delivery.id}`)
+                    .or(`id.eq.${sourceId},tracking_number.eq.${sourceId}`)
                     .maybeSingle();
 
                 if (error) throw error;
 
                 if (data) {
                     console.log('[DeliveryDetail] Fetched fresh data:', data);
-                    setDeliveryData(prev => ({
+                    setDeliveryData((prev: any) => ({
                         ...prev, // Keep passed params
                         ...data, // Override with fresh db data
                         customer: data.profiles?.full_name || 'Unknown',
@@ -164,10 +176,10 @@ export default function DeliveryDetailScreen() {
         };
 
         fetchDeliveryDetails();
-    }, [delivery]);
+    }, [delivery, deliveryId]);
 
     useEffect(() => {
-        const liveId = deliveryData?.id || delivery?.id;
+        const liveId = deliveryData?.id || delivery?.id || deliveryId;
         if (!liveId) return;
 
         const unsubProof = subscribeToDeliveryProof(liveId, (proof) => {
@@ -206,7 +218,7 @@ export default function DeliveryDetailScreen() {
             unsubProof();
             unsubAudit();
         };
-    }, [deliveryData?.id, delivery?.id]);
+    }, [deliveryData?.id, delivery?.id, deliveryId]);
 
     const withCacheBust = (url?: string | null, version?: number | string | null): string | undefined => {
         if (!url) return undefined;
@@ -350,7 +362,7 @@ export default function DeliveryDetailScreen() {
                     if (route.distance !== undefined) {
                         const distKm = (route.distance / 1000).toFixed(1) + ' km';
                         console.log('[DeliveryDetail] Calculated distance from route:', distKm);
-                        setDeliveryData(prev => ({ ...prev, distance: distKm }));
+                        setDeliveryData((prev: any) => ({ ...prev, distance: distKm }));
                     }
                 }
             } catch (error) {

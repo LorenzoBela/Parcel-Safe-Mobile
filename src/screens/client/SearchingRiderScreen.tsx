@@ -15,8 +15,6 @@ import {
 } from '../../services/riderMatchingService';
 import { generateShareToken } from '../../utils/tokenUtils';
 import {
-    registerForPushNotifications,
-    setupNotificationChannels,
     startOngoingNotification,
 } from '../../services/pushNotificationService';
 import useAuthStore from '../../store/authStore';
@@ -133,13 +131,6 @@ export default function SearchingRiderScreen() {
             statusIndex.current = (statusIndex.current + 1) % STATUS_MESSAGES.length;
             setStatusText(STATUS_MESSAGES[statusIndex.current]);
         }, 8000);
-
-        // Setup push notifications for the customer
-        const initNotifications = async () => {
-            await setupNotificationChannels();
-            await registerForPushNotifications();
-        };
-        initNotifications();
 
         // Create booking and notify nearby riders
         const createBookingAndNotify = async () => {

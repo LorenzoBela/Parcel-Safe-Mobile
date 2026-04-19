@@ -8,13 +8,27 @@ type DedupRecord = Record<string, number>;
 
 function buildNotificationKey(message: any): string {
     const data = message?.data || {};
+    const type = String(data.type || '').toUpperCase();
+
+    // Promo campaigns can be sent more than once with different messageIds
+    // (e.g., duplicate backend fanout or multiple valid device tokens). Use
+    // campaign slot/content key to suppress duplicate tray notifications.
+    if (type === 'PROMO' || type === 'PROMO_SCHEDULED') {
+        const campaignSlot = String(data.campaignSlot || '').trim();
+        const title = String(data.title || message?.notification?.title || '').trim();
+        const body = String(data.body || message?.notification?.body || '').trim();
+        const sentTime = Number(message?.sentTime || data.sentTime || Date.now());
+        const slotBucket = campaignSlot || String(Math.floor(sentTime / (2 * 60 * 60 * 1000)));
+        return `promo:${slotBucket}:${title}:${body}`;
+    }
+
     const explicitId = message?.messageId || message?.message_id || data.messageId || data.id;
     if (explicitId) return `id:${String(explicitId)}`;
 
-    const type = String(data.type || 'unknown');
+    const fallbackType = String(data.type || 'unknown');
     const deliveryId = String(data.deliveryId || data.delivery_id || data.orderId || data.bookingId || 'none');
     const sentTime = Number(message?.sentTime || data.sentTime || Date.now());
-    return `fallback:${type}:${deliveryId}:${Math.floor(sentTime / 15000)}`;
+    return `fallback:${fallbackType}:${deliveryId}:${Math.floor(sentTime / 15000)}`;
 }
 
 async function loadMap(): Promise<DedupRecord> {

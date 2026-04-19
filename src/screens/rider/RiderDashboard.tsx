@@ -13,6 +13,7 @@ dayjs.extend(timezone);
 
 const PH_TIMEZONE = 'Asia/Manila';
 import * as Location from 'expo-location';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import MapboxGL, { isMapboxNativeAvailable, MapFallback } from '../../components/map/MapboxWrapper';
 import AnimatedRiderMarker from '../../components/map/AnimatedRiderMarker';
 import LottieView from 'lottie-react-native';
@@ -100,8 +101,6 @@ import {
     runTimeoutSweep
 } from '../../services/riderMatchingService';
 import {
-    registerForPushNotifications,
-    setupNotificationChannels,
     showIncomingOrderNotification,
     showStatusNotification,
     showSecurityNotification,
@@ -782,6 +781,36 @@ export default function RiderDashboard() {
     const [pushToken, setPushToken] = useState<string | null>(null);
     const [pairingState, setPairingState] = useState<BoxPairingState | null>(null);
 
+    useEffect(() => {
+        let isMounted = true;
+
+        const hydratePushToken = async () => {
+            try {
+                const token = await AsyncStorage.getItem('fcm_token');
+                if (isMounted) {
+                    setPushToken(token || null);
+                }
+            } catch {
+                if (isMounted) {
+                    setPushToken(null);
+                }
+            }
+        };
+
+        hydratePushToken();
+
+        const appStateSub = AppState.addEventListener('change', (nextState) => {
+            if (nextState === 'active') {
+                hydratePushToken();
+            }
+        });
+
+        return () => {
+            isMounted = false;
+            appStateSub.remove();
+        };
+    }, []);
+
     // EC-32: Cancellation State
     const [showCancelModal, setShowCancelModal] = useState(false);
     const [cancelLoading, setCancelLoading] = useState(false);
@@ -1313,7 +1342,7 @@ export default function RiderDashboard() {
         return () => clearInterval(interval);
     }, []);
 
-    // Subscribe to incoming order requests (and setup notifications)
+    // Subscribe to incoming order requests
     useEffect(() => {
         console.log('[RiderDashboard] Order Listener Effect. isOnline:', isOnline, 'riderId:', riderId, 'active:', hasActiveDelivery);
 
@@ -1326,16 +1355,6 @@ export default function RiderDashboard() {
             // Don't subscribe to anything if offline
             return;
         }
-
-        // 2. Setup push notifications (idempotent-ish)
-        const initNotifications = async () => {
-            await setupNotificationChannels();
-            const token = await registerForPushNotifications();
-            if (token) {
-                setPushToken(token);
-            }
-        };
-        initNotifications();
 
         let unsubscribeRequests = () => { };
 

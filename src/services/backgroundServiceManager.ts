@@ -196,47 +196,10 @@ async function initializeFCM(): Promise<string | null> {
 function setupFCMHandlers(): void {
     if (!messaging) return;
 
-    // Foreground messages
-    messaging().onMessage(async (remoteMessage: any) => {
-        if (__DEV__) console.log('[BackgroundService] Foreground FCM message');
-
-        const shouldProcess = await shouldProcessNotification(remoteMessage);
-        if (!shouldProcess) {
-            if (__DEV__) console.log('[BackgroundService] Skipping duplicate foreground message');
-            return;
-        }
-
-        // EC-FIX: Ignore stale foreground messages queued up by FCM
-        if (remoteMessage.sentTime) {
-            const ageMs = Date.now() - remoteMessage.sentTime;
-            if (ageMs > 5 * 60 * 1000) { // 5 minutes
-                if (__DEV__) console.log(`[BackgroundService] Ignoring stale foreground message (age: ${Math.round(ageMs / 1000)}s)`);
-                return;
-            }
-        }
-
-        const data = remoteMessage.data || {};
-        const type = String(data.type || '').toUpperCase();
-
-        if (type === 'ORDER' || type === 'INCOMING_ORDER') {
-            await emitEvent('order_received', data);
-            await showOrderNotification(data);
-            return;
-        }
-
-        if (type) {
-            await emitEvent('status_update', data);
-            await showPushDataLocally(data);
-        }
-    });
-
-    // Token refresh
-    messaging().onTokenRefresh(async (token: string) => {
-        if (__DEV__) console.log('[BackgroundService] FCM token refreshed');
-        await AsyncStorage.setItem(BACKGROUND_CONFIG.STORAGE_KEYS.FCM_TOKEN, token);
-        backgroundState.fcmToken = token;
-        // TODO: Update token on server
-    });
+    // Foreground FCM and token-refresh listeners are owned by
+    // pushNotificationService. Registering a second listener here caused
+    // dedup races where this service consumed the message first and the tray
+    // renderer in pushNotificationService never executed.
 }
 
 /**
@@ -261,31 +224,44 @@ export async function handleBackgroundMessage(remoteMessage: any): Promise<void>
     }
 
     const data = remoteMessage.data || {};
-    const type = String(data.type || '').toUpperCase();
+    const notification = remoteMessage.notification || {};
+    const mergedData = {
+        ...data,
+        title: data.title || notification.title,
+        body: data.body || notification.body,
+    };
+    const type = String(mergedData.type || '').toUpperCase();
+    const shouldSkipLocalPromoRender = PROMO_TYPES.has(type);
 
     if (type === 'DISPATCH_CANCEL') {
         // Silent control signal — dismiss any stale incoming-order banner
         // for this bookingId. No UI update, no event emission. This is the
         // entire purpose of the message.
-        await cancelStaleDispatchNotification(data);
+        await cancelStaleDispatchNotification(mergedData);
         return;
     }
 
     if (type === 'ORDER' || type === 'INCOMING_ORDER' || type === 'ORDER_REASSIGNED') {
         // Process order even when app is in background/killed
-        await emitEvent('order_received', data);
-        await showOrderNotification(data);
-    } else if (type) {
-        await emitEvent('status_update', data);
-        await showPushDataLocally(data);
+        await emitEvent('order_received', mergedData);
+        await showOrderNotification(mergedData);
+    } else if (type || mergedData.title || mergedData.body) {
+        await emitEvent('status_update', mergedData);
+        if (shouldSkipLocalPromoRender) {
+            if (__DEV__) {
+                console.log('[BackgroundService] Promo push in background: relying on system tray render, skipping local duplicate render');
+            }
+        } else {
+            await showPushDataLocally(mergedData);
+        }
     }
 
     // When the customer receives an ORDER_ACCEPTED push (rider accepted their booking),
     // schedule a local 2-hour reminder so they know delivery is inbound.
     if (type === 'ORDER_ACCEPTED') {
         await scheduleDeliveryReminderNotification(
-            data.riderName || 'Your rider',
-            data.deliveryId
+            mergedData.riderName || 'Your rider',
+            mergedData.deliveryId
         );
     }
 }

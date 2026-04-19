@@ -11,9 +11,10 @@
  * In Expo Go, notifications will be simulated with console logs.
  */
 
-import { Platform, PermissionsAndroid } from 'react-native';
+import { AppState, Linking, Platform, PermissionsAndroid } from 'react-native';
 import notifee, { AndroidImportance, AndroidVisibility } from '@notifee/react-native';
 import { supabase } from './supabaseClient';
+import { PremiumAlert } from './PremiumAlertService';
 
 // Notifee channel IDs — these must be created via notifee.createChannel() so that
 // notifee.displayNotification + fullScreenAction works reliably on all OEMs.
@@ -66,6 +67,8 @@ try {
 // Flag to track if native notifications are available (lazy detection)
 let nativeNotificationsAvailable: boolean | null = null;
 let notificationHandlerSet = false;
+const POST_NOTIFICATIONS_SETTINGS_PROMPT_KEY = '@post_notifications_settings_prompted_at';
+const POST_NOTIFICATIONS_SETTINGS_PROMPT_COOLDOWN_MS = 6 * 60 * 60 * 1000;
 
 function isTruthyFlag(value: unknown): boolean {
     if (typeof value === 'boolean') return value;
@@ -75,6 +78,172 @@ function isTruthyFlag(value: unknown): boolean {
         return normalized === '1' || normalized === 'true' || normalized === 'yes';
     }
     return false;
+}
+
+function getAndroidApiLevel(): number {
+    if (Platform.OS !== 'android') {
+        return 0;
+    }
+
+    if (typeof Platform.Version === 'number') {
+        return Platform.Version;
+    }
+
+    const parsed = Number(Platform.Version);
+    return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function requiresAndroidPostNotificationsPermission(): boolean {
+    return (
+        Platform.OS === 'android'
+        && getAndroidApiLevel() >= 33
+        && !!PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS
+    );
+}
+
+async function isExpoNotificationPermissionGranted(reason: string): Promise<boolean | null> {
+    if (!Notifications?.getPermissionsAsync) {
+        return null;
+    }
+
+    try {
+        const permissions = await Notifications.getPermissionsAsync();
+        const status = (permissions as any)?.status;
+        const granted = !!(permissions as any)?.granted || status === 'granted';
+
+        if (!granted) {
+            console.warn('[Notifications] Expo permission status not granted:', {
+                reason,
+                status,
+                canAskAgain: (permissions as any)?.canAskAgain,
+            });
+        }
+
+        return granted;
+    } catch (error) {
+        console.warn('[Notifications] Failed to read expo notification permission status:', {
+            reason,
+            error,
+        });
+        return null;
+    }
+}
+
+async function maybePromptEnableNotificationsInSettings(reason: string): Promise<void> {
+    if (!requiresAndroidPostNotificationsPermission() || AppState.currentState !== 'active') {
+        return;
+    }
+
+    try {
+        const rawPromptedAt = await AsyncStorage.getItem(POST_NOTIFICATIONS_SETTINGS_PROMPT_KEY);
+        const lastPromptedAt = rawPromptedAt ? Number(rawPromptedAt) : 0;
+        if (
+            Number.isFinite(lastPromptedAt)
+            && lastPromptedAt > 0
+            && Date.now() - lastPromptedAt < POST_NOTIFICATIONS_SETTINGS_PROMPT_COOLDOWN_MS
+        ) {
+            return;
+        }
+
+        await AsyncStorage.setItem(POST_NOTIFICATIONS_SETTINGS_PROMPT_KEY, String(Date.now()));
+
+        PremiumAlert.alert(
+            'Notifications Disabled',
+            'Turn on notifications in Android Settings to receive tray alerts while the app is open and in the background.',
+            [
+                { text: 'Not now', style: 'cancel' },
+                {
+                    text: 'Open Settings',
+                    onPress: () => {
+                        void Linking.openSettings().catch((error) => {
+                            console.warn('[Notifications] Failed to open Android settings:', error);
+                        });
+                    },
+                },
+            ],
+            { cancelable: true },
+            'bell-badge-outline',
+            '#FF9500'
+        );
+    } catch (error) {
+        console.warn(`[Notifications] Failed to show permission recovery prompt (${reason}):`, error);
+    }
+}
+
+async function ensureAndroidPostNotificationsPermission(
+    reason: string,
+    requestIfMissing: boolean = true
+): Promise<boolean> {
+    if (!requiresAndroidPostNotificationsPermission()) {
+        return true;
+    }
+
+    try {
+        const apiLevel = getAndroidApiLevel();
+        const hasPermission = await PermissionsAndroid.check(
+            PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS
+        );
+
+        if (hasPermission) {
+            return true;
+        }
+
+        const expoGranted = await isExpoNotificationPermissionGranted(reason);
+        if (expoGranted === true) {
+            // Some devices/ROMs can report false negatives on PermissionsAndroid.check.
+            // If Expo reports granted, proceed with notification posting.
+            console.warn('[Notifications] Permission API mismatch; proceeding as granted:', {
+                reason,
+                apiLevel,
+                platformVersion: Platform.Version,
+            });
+            return true;
+        }
+
+        if (!requestIfMissing) {
+            console.warn('[Notifications] POST_NOTIFICATIONS permission not granted:', {
+                reason,
+                apiLevel,
+                platformVersion: Platform.Version,
+            });
+            await maybePromptEnableNotificationsInSettings(reason);
+            return false;
+        }
+
+        const result = await PermissionsAndroid.request(
+            PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS,
+            {
+                title: 'Allow Notifications',
+                message: 'Parcel Safe needs notification permission for order and delivery alerts.',
+                buttonNeutral: 'Ask Me Later',
+                buttonNegative: 'Cancel',
+                buttonPositive: 'OK',
+            }
+        );
+
+        if (result !== PermissionsAndroid.RESULTS.GRANTED) {
+            const expoGrantedAfterRequest = await isExpoNotificationPermissionGranted(`${reason}_after_request`);
+            if (expoGrantedAfterRequest === true) {
+                console.warn('[Notifications] Request result mismatch; proceeding as granted:', {
+                    reason,
+                    result,
+                });
+                return true;
+            }
+
+            console.warn(`[Notifications] POST_NOTIFICATIONS permission result (${reason}): ${result}`);
+            if (result === PermissionsAndroid.RESULTS.NEVER_ASK_AGAIN) {
+                await maybePromptEnableNotificationsInSettings(reason);
+            }
+            return false;
+        }
+
+        console.log(`[Notifications] POST_NOTIFICATIONS permission granted (${reason})`);
+        return true;
+    } catch (error) {
+        console.warn(`[Notifications] Failed POST_NOTIFICATIONS permission check (${reason}):`, error);
+        return false;
+    }
 }
 
 /**
@@ -123,7 +292,6 @@ function ensureNotificationHandler(): void {
     try {
         Notifications.setNotificationHandler({
             handleNotification: async () => ({
-                shouldShowAlert: true,
                 shouldPlaySound: true,
                 shouldSetBadge: true,
                 shouldShowBanner: true,
@@ -349,33 +517,21 @@ export async function registerForPushNotifications(): Promise<string | null> {
         }
 
         // Android 13+ requires explicit runtime POST_NOTIFICATIONS permission.
-        if (Platform.OS === 'android' && PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS) {
-            const hasPostNotifications = await PermissionsAndroid.check(
-                PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS
+        if (Platform.OS === 'android') {
+            const hasPostNotifications = await ensureAndroidPostNotificationsPermission(
+                'register_push_token',
+                true
             );
-
             if (!hasPostNotifications) {
-                const result = await PermissionsAndroid.request(
-                    PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS,
-                    {
-                        title: 'Allow Notifications',
-                        message: 'Parcel Safe needs notification permission for order and delivery alerts.',
-                        buttonNeutral: 'Ask Me Later',
-                        buttonNegative: 'Cancel',
-                        buttonPositive: 'OK',
-                    }
-                );
-
-                if (result !== PermissionsAndroid.RESULTS.GRANTED) {
-                    console.warn('POST_NOTIFICATIONS permission not granted');
-                    return null;
-                }
+                return null;
             }
         }
 
         // Get the FCM token
         const fcmToken = await messaging().getToken();
-        console.log('FCM Push token:', fcmToken);
+        if (__DEV__) {
+            console.log('FCM Push token acquired');
+        }
 
         // Save token to AsyncStorage
         await AsyncStorage.setItem('fcm_token', fcmToken);
@@ -389,10 +545,14 @@ export async function registerForPushNotifications(): Promise<string | null> {
                 const tokenData = await Notifications.getExpoPushTokenAsync({
                     projectId: undefined, // Will use projectId from app.json
                 });
-                console.log('Expo Push token:', tokenData.data);
+                if (__DEV__) {
+                    console.log('Expo Push token acquired');
+                }
             }
         } catch (expoError) {
-            console.log('Expo push token not available:', expoError);
+            if (__DEV__) {
+                console.log('Expo push token not available:', expoError);
+            }
         }
 
         return fcmToken;
@@ -467,17 +627,35 @@ export function setupFCMForegroundHandler(): () => void {
 
     try {
         const unsubscribe = messaging().onMessage(async (remoteMessage: any) => {
-            console.log('[FCM] Foreground message:', remoteMessage);
-
-            const shouldProcess = await shouldProcessNotification(remoteMessage);
-            if (!shouldProcess) {
-                console.log('[FCM] Skipping duplicate foreground message');
-                return;
+            if (__DEV__) {
+                console.log('[FCM] Foreground message:', remoteMessage);
             }
 
             const data = remoteMessage.data || {};
-            const title = remoteMessage.notification?.title || data.title || 'Parcel Safe';
-            const body = remoteMessage.notification?.body || data.body || 'You have a new notification.';
+            const notification = remoteMessage.notification || {};
+            const hasMeaningfulPayload =
+                !!remoteMessage.messageId
+                || Object.keys(data).length > 0
+                || !!notification.title
+                || !!notification.body;
+
+            if (!hasMeaningfulPayload) {
+                if (__DEV__) {
+                    console.log('[FCM] Ignoring empty foreground transport message');
+                }
+                return;
+            }
+
+            const shouldProcess = await shouldProcessNotification(remoteMessage);
+            if (!shouldProcess) {
+                if (__DEV__) {
+                    console.log('[FCM] Skipping duplicate foreground message');
+                }
+                return;
+            }
+
+            const title = notification.title || data.title || 'Parcel Safe';
+            const body = notification.body || data.body || 'You have a new notification.';
             const channelId = data.channelId || NOTIFICATION_CHANNELS.DELIVERY_STATUS;
 
             // EC-FIX: Ignore stale foreground messages queued up by FCM
@@ -486,13 +664,22 @@ export function setupFCMForegroundHandler(): () => void {
             if (remoteMessage.sentTime) {
                 const ageMs = Date.now() - remoteMessage.sentTime;
                 if (ageMs > 5 * 60 * 1000) { // 5 minutes
-                    console.log(`[FCM] Ignoring stale foreground message (age: ${Math.round(ageMs / 1000)}s):`, title);
+                    if (__DEV__) {
+                        console.log(`[FCM] Ignoring stale foreground message (age: ${Math.round(ageMs / 1000)}s):`, title);
+                    }
                     return;
                 }
             }
 
             if (checkNotificationsAvailable()) {
-                await scheduleWakingNotification(title, body, data, channelId);
+                const notificationId = await scheduleWakingNotification(title, body, data, channelId);
+                if (__DEV__) {
+                    console.log('[FCM] Foreground tray notification displayed:', {
+                        notificationId,
+                        channelId,
+                        appState: AppState.currentState,
+                    });
+                }
             }
 
             // When customer receives ORDER_ACCEPTED foreground push, schedule 2-hr reminder
@@ -582,12 +769,75 @@ export async function saveTokenToDatabase(userId: string, token: string): Promis
 async function scheduleWakingNotification(title: string, body: string, data: any, channelId: string): Promise<string> {
     if (Platform.OS === 'android') {
         try {
+            const hasPostNotifications = await ensureAndroidPostNotificationsPermission(
+                'schedule_waking_notification',
+                false
+            );
+            if (!hasPostNotifications) {
+                console.warn('[scheduleWakingNotification] Permission check denied; attempting best-effort notification post');
+            }
+
             // Always use a notifee-registered channel so fullScreenAction (screen wake)
             // is guaranteed. Fall back to delivery-status if the ID is unrecognised.
             const notifeeChannelId = CHANNEL_TO_NOTIFEE[channelId] ?? NOTIFEE_DELIVERY_STATUS_CHANNEL;
+            const isForeground = AppState.currentState === 'active';
             const forceWake = isTruthyFlag(data?.forceWake);
-            const shouldWakeScreen = forceWake || notifeeChannelId !== NOTIFEE_PROMOTIONS_CHANNEL;
-            await notifee.displayNotification({
+            const wantsWakeIntent = forceWake || notifeeChannelId !== NOTIFEE_PROMOTIONS_CHANNEL;
+            const shouldWakeScreen = !isForeground && wantsWakeIntent;
+
+            if (isForeground && Notifications?.scheduleNotificationAsync) {
+                try {
+                    const foregroundNotificationId = await Notifications.scheduleNotificationAsync({
+                        content: {
+                            title,
+                            body,
+                            data,
+                            sound: 'default',
+                            channelId,
+                            priority: Notifications.AndroidNotificationPriority.MAX,
+                        },
+                        trigger: null,
+                    });
+
+                    if (__DEV__) {
+                        console.log('[scheduleWakingNotification] Foreground expo notification posted:', {
+                            notificationId: foregroundNotificationId,
+                            channelId,
+                        });
+                    }
+
+                    return foregroundNotificationId;
+                } catch (foregroundError) {
+                    console.warn('[scheduleWakingNotification] Foreground expo post failed, trying notifee:', foregroundError);
+                }
+            }
+
+            if (__DEV__) {
+                console.log('[scheduleWakingNotification] Posting Android notification:', {
+                    requestedChannelId: channelId,
+                    resolvedChannelId: notifeeChannelId,
+                    isForeground,
+                    shouldWakeScreen,
+                });
+            }
+
+            // If the user blocked this Android channel, force fallback path.
+            // This gives expo-notifications a chance to render via the server
+            // channelId while we preserve visibility in logs.
+            if (typeof (notifee as any).isChannelBlocked === 'function') {
+                const blocked = await (notifee as any).isChannelBlocked(notifeeChannelId);
+                if (__DEV__) {
+                    console.log('[scheduleWakingNotification] Channel blocked state:', {
+                        channelId: notifeeChannelId,
+                        blocked,
+                    });
+                }
+                if (blocked) {
+                    throw new Error(`Notifee channel blocked: ${notifeeChannelId}`);
+                }
+            }
+
+            const displayedNotificationId = await notifee.displayNotification({
                 title,
                 body,
                 data,
@@ -605,13 +855,23 @@ async function scheduleWakingNotification(title: string, body: string, data: any
                     showTimestamp: true,
                 },
             });
-            return 'NOTIFEE_NOTIF_ID';
+
+            if (!displayedNotificationId) {
+                console.warn('[scheduleWakingNotification] Notifee returned empty notification id');
+            }
+
+            return displayedNotificationId || `notifee-${Date.now()}`;
         } catch (error) {
             console.warn('[scheduleWakingNotification] notifee failed, falling back to expo:', error);
         }
     }
 
     // iOS or Android fallback
+    if (!Notifications?.scheduleNotificationAsync) {
+        console.warn('[scheduleWakingNotification] expo-notifications fallback unavailable');
+        return 'FALLBACK_UNAVAILABLE';
+    }
+
     const id = await Notifications.scheduleNotificationAsync({
         content: {
             title,
