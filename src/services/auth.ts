@@ -89,6 +89,41 @@ const extractResult = (data: any): GoogleSignInResult => {
 };
 
 /**
+ * Silent sign-in — re-uses existing Google session without showing the account picker.
+ * Uses getTokens() to obtain a fresh idToken from the cached credential.
+ * Throws if no cached session exists (caller should fall back to interactive signIn).
+ */
+export const signInWithGoogleSilently = async (): Promise<GoogleSignInResult> => {
+  if (DEV_MODE || !GoogleAuth) {
+    throw new Error('Google Sign-In is not available in this runtime.');
+  }
+
+  try {
+    // Get the current cached user info
+    const user = await GoogleAuth.getCurrentUser();
+    if (!user) {
+      throw new Error('No cached Google session found.');
+    }
+
+    // Refresh or fetch a fresh idToken from the existing session
+    const tokens = await GoogleAuth.getTokens();
+    if (!tokens?.idToken) {
+      throw new Error('Failed to retrieve token from cached session.');
+    }
+
+    return {
+      idToken: tokens.idToken,
+      email: user.email,
+      name: user.name || undefined,
+      photo: user.photo || undefined,
+    };
+  } catch (error: any) {
+    console.log('[AuthFlow] Silent sign-in failed, will require interactive flow:', error?.message);
+    throw error;
+  }
+};
+
+/**
  * Google Sign-In flow (v16 handles Credential Manager natively under the hood)
  */
 export const signInWithGoogle = async (): Promise<GoogleSignInResult> => {
@@ -127,8 +162,22 @@ export const signInWithGoogle = async (): Promise<GoogleSignInResult> => {
 
 import { AppState } from 'react-native';
 
-export const signInWithGoogleAndSyncProfile = async (): Promise<AuthSessionResult> => {
-  const googleResult = await signInWithGoogle();
+export const signInWithGoogleAndSyncProfile = async (
+  options?: { silent?: boolean }
+): Promise<AuthSessionResult> => {
+  let googleResult: GoogleSignInResult;
+
+  if (options?.silent) {
+    try {
+      googleResult = await signInWithGoogleSilently();
+      console.log('[AuthFlow] Silent sign-in succeeded, skipping account picker.');
+    } catch {
+      console.log('[AuthFlow] Silent sign-in unavailable, falling back to interactive flow.');
+      googleResult = await signInWithGoogle();
+    }
+  } else {
+    googleResult = await signInWithGoogle();
+  }
 
   // Wait for app to be active to ensure network is ready (fix for "Network request failed" when backgrounded)
   if (AppState.currentState !== 'active') {

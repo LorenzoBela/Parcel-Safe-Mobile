@@ -26,6 +26,7 @@ import { supabase } from '../../services/supabaseClient';
 import useAuthStore from '../../store/authStore';
 import { triggerForegroundResumePipeline } from '../../services/foregroundResumePipelineService';
 import { useAppTheme } from '../../context/ThemeContext';
+import * as Application from 'expo-application';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -35,21 +36,21 @@ interface Props {
 
 const COLORS = {
     light: {
-        background: '#FFFFFF',
-        surface: '#F6F6F6',
-        text: '#000000',
-        textSecondary: '#6B6B6B',
-        border: '#E8E8E8',
-        progressBg: '#E8E8E8',
-        progressFill: '#000000',
+        background: '#FAFAFA',
+        surface: '#FFFFFF',
+        text: '#09090B',
+        textSecondary: '#52525B',
+        border: '#E4E4E7',
+        progressBg: '#E4E4E7',
+        progressFill: '#09090B',
     },
     dark: {
         background: '#000000',
-        surface: '#1C1C1E',
+        surface: '#09090B',
         text: '#FFFFFF',
-        textSecondary: '#8E8E93',
-        border: '#2C2C2E',
-        progressBg: '#2C2C2E',
+        textSecondary: '#A1A1AA',
+        border: '#27272A',
+        progressBg: '#27272A',
         progressFill: '#FFFFFF',
     },
 };
@@ -264,6 +265,19 @@ export default function ResumeScreen({ onReady }: Props) {
                     </Text>
                 )}
             </View>
+
+            {/* Footer */}
+            <View style={styles.footer}>
+                <View style={styles.securityBadge}>
+                    <MaterialCommunityIcons name="shield-check" size={14} color={colors.textSecondary} />
+                    <Text style={[styles.securityText, { color: colors.textSecondary }]}>
+                        SECURE CONNECTION
+                    </Text>
+                </View>
+                <Text style={[styles.versionText, { color: colors.textSecondary }]}>
+                    v{Application.nativeApplicationVersion || '1.0.0'} ({Application.nativeBuildVersion || '1'})
+                </Text>
+            </View>
         </Animated.View>
     );
 }
@@ -282,16 +296,16 @@ const styles = StyleSheet.create({
     logoBox: {
         width: 72,
         height: 72,
-        borderRadius: 18,
-        borderWidth: StyleSheet.hairlineWidth,
+        borderRadius: 20,
+        borderWidth: 1,
         justifyContent: 'center',
         alignItems: 'center',
-        marginBottom: 16,
+        marginBottom: 20,
     },
     appName: {
-        fontSize: 22,
+        fontSize: 26,
         fontFamily: 'Inter_700Bold',
-        letterSpacing: -0.3,
+        letterSpacing: -0.5,
         marginBottom: 4,
     },
     tagline: {
@@ -321,5 +335,31 @@ const styles = StyleSheet.create({
     statusText: {
         fontSize: 13,
         fontFamily: 'Inter_400Regular',
+    },
+    footer: {
+        position: 'absolute',
+        bottom: 48,
+        alignItems: 'center',
+        width: '100%',
+    },
+    securityBadge: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: 'rgba(128,128,128,0.1)',
+        paddingHorizontal: 12,
+        paddingVertical: 6,
+        borderRadius: 100,
+        gap: 6,
+        marginBottom: 12,
+    },
+    securityText: {
+        fontSize: 10,
+        fontFamily: 'JetBrainsMono_700Bold',
+        letterSpacing: 1,
+    },
+    versionText: {
+        fontSize: 10,
+        fontFamily: 'Inter_400Regular',
+        opacity: 0.5,
     },
 });

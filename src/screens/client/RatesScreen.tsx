@@ -6,7 +6,7 @@ import { useNavigation } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAppTheme } from '../../context/ThemeContext';
 import { PRICING, RateInfo, fetchRates } from '../../services/pricingService';
-
+import FareEstimator from '../../components/FareEstimator';
 const API_BASE_URL =
     process.env.EXPO_PUBLIC_TRACKING_WEB_BASE_URL
     || process.env.EXPO_PUBLIC_API_URL
@@ -72,6 +72,8 @@ export default function RatesScreen() {
         <ScrollView
             style={[styles.container, { backgroundColor: c.bg }]}
             contentContainerStyle={{ paddingTop: insets.top + 12, paddingBottom: insets.bottom + 40 }}
+            keyboardShouldPersistTaps="handled"
+            nestedScrollEnabled={true}
         >
             <StatusBar barStyle={isDarkMode ? 'light-content' : 'dark-content'} />
 
@@ -81,6 +83,8 @@ export default function RatesScreen() {
                 <Text style={[styles.headerTitle, { color: c.text }]}>System Rates</Text>
                 <Text style={[styles.headerSub, { color: c.textSec }]}>Transparent pricing for secure deliveries</Text>
             </View>
+
+            <FareEstimator />
 
             {/* Standard Delivery */}
             <Text style={[styles.sectionLabel, { color: c.textSec }]}>STANDARD DELIVERY</Text>
@@ -108,14 +112,6 @@ export default function RatesScreen() {
                 </View>
             </View>
 
-            {/* Surcharges */}
-            <Text style={[styles.sectionLabel, { color: c.textSec }]}>ADD-ONS & SURCHARGES</Text>
-            <View style={[styles.section, { backgroundColor: c.card, borderColor: c.border }]}>
-                <RateRow label="High Value (Insured)" value="+ ₱50.00" c={c} />
-                <RateRow label="Wait Time (per 5 min)" value="+ ₱15.00" c={c} />
-                <RateRow label="Night Service (10PM–6AM)" value="+ 20%" c={c} />
-                <RateRow label="Holiday Surcharge" value="+ 15%" c={c} />
-            </View>
 
             {/* Security included */}
             <Text style={[styles.sectionLabel, { color: c.textSec }]}>INCLUDED SECURITY</Text>

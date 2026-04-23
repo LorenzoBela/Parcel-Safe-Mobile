@@ -1,21 +1,31 @@
 import React from 'react';
-import { Animated, StyleSheet, ScrollView, View } from 'react-native';
+import { Animated, StyleSheet, ScrollView, View, Pressable } from 'react-native';
 import { useEntryAnimation } from '../../hooks/useEntryAnimation';
-import { Text, Button } from 'react-native-paper';
+import { Text } from 'react-native-paper';
 import { useNavigation } from '@react-navigation/native';
 import { useAppTheme } from '../../context/ThemeContext';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
-// ─── Colors ─────────────────────────────────────────────────────────────────────
 const light = {
-    bg: '#FFFFFF', card: '#F6F6F6', border: '#E5E5EA',
-    text: '#000000', textSec: '#6B6B6B', textTer: '#AEAEB2',
-    accent: '#000000', error: '#FF3B30',
+    bg: '#FAFAFA', card: '#FFFFFF', border: '#E4E4E7',
+    text: '#09090B', textSec: '#52525B', textTer: '#A1A1AA',
+    accent: '#09090B',
 };
 const dark = {
-    bg: '#000000', card: '#141414', border: '#2C2C2E',
-    text: '#FFFFFF', textSec: '#8E8E93', textTer: '#636366',
-    accent: '#FFFFFF', error: '#FF453A',
+    bg: '#000000', card: '#09090B', border: '#27272A',
+    text: '#FAFAFA', textSec: '#A1A1AA', textTer: '#71717A',
+    accent: '#FAFAFA',
 };
+
+const Section = ({ index, title, content, c }: { index: string, title: string, content: string, c: typeof light }) => (
+    <View style={styles.sectionContainer}>
+        <View style={styles.sectionHeader}>
+            <Text style={[styles.sectionIndex, { color: c.textTer }]}>{index}</Text>
+            <Text style={[styles.sectionTitle, { color: c.text }]}>{title}</Text>
+        </View>
+        <Text style={[styles.paragraph, { color: c.textSec }]}>{content}</Text>
+    </View>
+);
 
 export default function PrivacyPolicyScreen() {
     const { isDarkMode } = useAppTheme();
@@ -24,39 +34,48 @@ export default function PrivacyPolicyScreen() {
     const screenAnim = useEntryAnimation(0);
 
     return (
-        <Animated.View style={[{ flex: 1, backgroundColor: c.bg }, screenAnim.style]}>
-        <ScrollView style={[styles.container, { backgroundColor: c.bg }]}>
-            <View style={styles.content}>
-                <Text variant="headlineMedium" style={[styles.title, { color: c.text }]}>Privacy Policy</Text>
-                <Text variant="bodySmall" style={{ color: c.textTer, marginBottom: 20 }}>Last Updated: January 2026</Text>
+        <SafeAreaView edges={['bottom']} style={{ flex: 1, backgroundColor: c.bg }}>
+            <Animated.View style={[{ flex: 1 }, screenAnim.style]}>
+                <ScrollView 
+                    style={styles.container} 
+                    contentContainerStyle={styles.content}
+                    showsVerticalScrollIndicator={false}
+                >
+                    <View style={styles.header}>
+                        <Text style={[styles.tagline, { color: c.textTer }]}>LEGAL AGREEMENT</Text>
+                        <Text style={[styles.title, { color: c.text }]}>Privacy Policy</Text>
+                        <View style={[styles.divider, { backgroundColor: c.text }]} />
+                        <Text style={[styles.subtitle, { color: c.textSec }]}>Last Updated: January 2026</Text>
+                    </View>
 
-                <Text variant="titleMedium" style={[styles.sectionTitle, { color: c.text }]}>1. Data Collection</Text>
-                <Text variant="bodyMedium" style={[styles.paragraph, { color: c.textSec }]}>
-                    We collect personal information such as name, phone number, and delivery address to facilitate our services. We also collect geolocation data during active deliveries.
-                </Text>
+                    <Section c={c} index="01" title="Introduction" content="We value your privacy. This policy explains how we collect, use, and protect your personal information in strict compliance with relevant laws, including the Data Privacy Act of 2012 (Republic Act No. 10173)." />
+                    <Section c={c} index="02" title="Data Collection" content="We collect personal information such as your name, contact details, and delivery address to facilitate our services. We also collect precise geolocation data during active deliveries and hardware interaction logs (such as IoT lock/unlock events)." />
+                    <Section c={c} index="03" title="How We Use Your Data" content="Your data is used strictly for operational purposes: matching riders with deliveries, calculating fees, generating secure OTPs, and verifying drop-offs. Geolocation and timestamp data are utilized to ensure physical security and prevent fraud. We do not sell, rent, or lease your personal data to third parties under any circumstances." />
+                    <Section c={c} index="04" title="How We Protect Your Data" content="We implement industry-standard encryption for data both in transit and at rest. Access to personal data is restricted by strict Row-Level Security (RLS) policies within our databases, ensuring only authorized personnel (e.g., the assigned rider) can view delivery specifics. We enforce rigorous data handling protocols and conduct regular security audits." />
+                    <Section c={c} index="05" title="Your Rights (DPA of 2012)" content="Under the Data Privacy Act of 2012, you possess the right to be informed, access, object, erasure or blocking, damages, file a complaint, rectify, and data portability. To exercise any of these rights, please contact our designated Data Protection Officer at privacy@parcelsafe.com." />
+                    <Section c={c} index="06" title="Data Retention" content="We retain your personal data only for as long as necessary to fulfill the purposes outlined in this policy, or as required by applicable laws. Delivery logs and OTP hashes are archived securely immediately after delivery completion." />
 
-                <Text variant="titleMedium" style={[styles.sectionTitle, { color: c.text }]}>2. How We Use Data</Text>
-                <Text variant="bodyMedium" style={[styles.paragraph, { color: c.textSec }]}>
-                    Your data is used to match you with riders, calculate delivery fees, and ensure the security of your parcels. We do not sell your data to third parties.
-                </Text>
+                    <View style={{ height: 100 }} />
+                </ScrollView>
 
-                <Text variant="titleMedium" style={[styles.sectionTitle, { color: c.text }]}>3. Data Security</Text>
-                <Text variant="bodyMedium" style={[styles.paragraph, { color: c.textSec }]}>
-                    We implement industry-standard encryption and security measures to protect your data. However, no method of transmission over the internet is 100% secure.
-                </Text>
-
-                <Text variant="titleMedium" style={[styles.sectionTitle, { color: c.text }]}>4. Your Rights</Text>
-                <Text variant="bodyMedium" style={[styles.paragraph, { color: c.textSec }]}>
-                    You have the right to access, correct, or delete your personal data. Contact our support team to exercise these rights.
-                </Text>
-
-                <Button mode="contained" onPress={() => navigation.goBack()} buttonColor={c.accent} textColor={c.bg} style={styles.button}>
-                    Close
-                </Button>
-                <View style={{ height: 40 }} />
-            </View>
-        </ScrollView>
-        </Animated.View>
+                {/* Floating Button */}
+                <View style={[styles.floatingFooter, { borderTopColor: c.border, backgroundColor: c.bg }]}>
+                    <Pressable 
+                        style={({ pressed }) => [
+                            styles.actionButton,
+                            { 
+                                backgroundColor: c.text,
+                                opacity: pressed ? 0.8 : 1,
+                                transform: [{ scale: pressed ? 0.98 : 1 }]
+                            }
+                        ]}
+                        onPress={() => navigation.goBack()}
+                    >
+                        <Text style={[styles.actionButtonText, { color: c.bg }]}>Understood & Close</Text>
+                    </Pressable>
+                </View>
+            </Animated.View>
+        </SafeAreaView>
     );
 }
 
@@ -65,24 +84,83 @@ const styles = StyleSheet.create({
         flex: 1,
     },
     content: {
-        padding: 24,
+        paddingHorizontal: 28,
+        paddingTop: 64,
+        paddingBottom: 40,
+    },
+    header: {
+        marginBottom: 56,
+    },
+    tagline: {
+        fontFamily: 'Inter_600SemiBold',
+        fontSize: 12,
+        letterSpacing: 2,
+        marginBottom: 16,
     },
     title: {
         fontFamily: 'Inter_700Bold',
-        marginBottom: 8,
+        fontSize: 40,
+        letterSpacing: -1.5,
+        lineHeight: 44,
+        marginBottom: 24,
+    },
+    divider: {
+        width: 60,
+        height: 4,
+        marginBottom: 24,
+    },
+    subtitle: {
+        fontFamily: 'Inter_400Regular',
+        fontSize: 15,
+        letterSpacing: 0.2,
+    },
+    sectionContainer: {
+        marginBottom: 48,
+    },
+    sectionHeader: {
+        flexDirection: 'row',
+        alignItems: 'baseline',
+        marginBottom: 16,
+    },
+    sectionIndex: {
+        fontFamily: 'Inter_700Bold',
+        fontSize: 16,
+        marginRight: 16,
     },
     sectionTitle: {
         fontFamily: 'Inter_700Bold',
-        marginTop: 16,
-        marginBottom: 8,
+        fontSize: 22,
+        letterSpacing: -0.5,
     },
     paragraph: {
-        marginBottom: 8,
-        lineHeight: 22,
+        fontFamily: 'Inter_400Regular',
+        fontSize: 16,
+        lineHeight: 28,
+        letterSpacing: 0.2,
     },
-    button: {
-        marginTop: 32,
-        borderRadius: 12,
-        paddingVertical: 6,
+    floatingFooter: {
+        position: 'absolute',
+        bottom: 0,
+        left: 0,
+        right: 0,
+        paddingHorizontal: 24,
+        paddingVertical: 16,
+        borderTopWidth: 1,
+    },
+    actionButton: {
+        width: '100%',
+        paddingVertical: 18,
+        borderRadius: 16,
+        alignItems: 'center',
+        justifyContent: 'center',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.1,
+        shadowRadius: 12,
+        elevation: 2,
+    },
+    actionButtonText: {
+        fontFamily: 'Inter_600SemiBold',
+        fontSize: 16,
+        letterSpacing: 0,
     }
 });

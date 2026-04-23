@@ -17,13 +17,13 @@ import {
 
 // ─── Colors ─────────────────────────────────────────────────────────────────────
 const light = {
-    bg: '#FFFFFF', card: '#F6F6F6', border: '#E5E5EA',
-    text: '#000000', textSec: '#6B6B6B', textTer: '#AEAEB2',
-    accent: '#000000', red: '#E11900', switchTrack: '#000000',
+    bg: '#FAFAFA', card: '#FFFFFF', border: '#E4E4E7',
+    text: '#09090B', textSec: '#52525B', textTer: '#A1A1AA',
+    accent: '#09090B', red: '#E11900', switchTrack: '#09090B',
 };
 const dark = {
-    bg: '#000000', card: '#141414', border: '#2C2C2E',
-    text: '#FFFFFF', textSec: '#8E8E93', textTer: '#636366',
+    bg: '#000000', card: '#09090B', border: '#27272A',
+    text: '#FFFFFF', textSec: '#A1A1AA', textTer: '#52525B',
     accent: '#FFFFFF', red: '#FF453A', switchTrack: '#FFFFFF',
 };
 
@@ -334,8 +334,7 @@ export default function SettingsScreen() {
                     <Text style={[styles.logoutText, { color: c.red }]}>Log Out</Text>
                 </TouchableOpacity>
 
-                <Text style={[styles.version, { color: c.textTer }]}>App Version {appVersion}{buildVersion}</Text>
-                <Text style={[styles.versionRuntime, { color: c.textTer }]}>Runtime {runtimeVersion}</Text>
+                <Text style={[styles.version, { color: c.textTer }]}>v{appVersion}{buildVersion}</Text>
             </Animated.View>
         </ScrollView>
         </Animated.View>
@@ -357,19 +356,23 @@ const styles = StyleSheet.create({
         elevation: 6,
     },
     profileInfo: { flex: 1, marginLeft: 14 },
-    profileName: { fontSize: 18, fontFamily: 'Inter_700Bold' },
-    profileEmail: { fontSize: 13, marginTop: 2 },
+    profileName: { fontSize: 20, fontFamily: 'Inter_700Bold', letterSpacing: -0.5 },
+    profileEmail: { fontSize: 13, marginTop: 4, fontFamily: 'Inter_400Regular' },
     profileChevron: {
         width: 32, height: 32, borderRadius: 16,
         alignItems: 'center', justifyContent: 'center',
     },
     sectionTitle: {
-        fontSize: 12, fontFamily: 'Inter_600SemiBold', letterSpacing: 0.8,
-        marginHorizontal: 20, marginBottom: 6, marginTop: 4,
+        fontSize: 12, fontFamily: 'JetBrainsMono_700Bold', letterSpacing: 1.2, textTransform: 'uppercase',
+        marginHorizontal: 20, marginBottom: 12, marginTop: 8,
     },
     section: {
-        marginHorizontal: 16, borderRadius: 14, borderWidth: 1,
-        overflow: 'hidden', marginBottom: 20,
+        marginHorizontal: 16, borderRadius: 16, borderWidth: 1,
+        overflow: 'hidden', marginBottom: 24,
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.05,
+        shadowRadius: 8,
+        elevation: 2,
     },
     row: {
         flexDirection: 'row', alignItems: 'center', paddingVertical: 14,
@@ -379,16 +382,15 @@ const styles = StyleSheet.create({
         width: 36, height: 36, borderRadius: 12, alignItems: 'center', justifyContent: 'center',
     },
     rowContent: { flex: 1, marginLeft: 12 },
-    rowLabel: { fontSize: 15, fontFamily: 'Inter_500Medium' },
-    rowSub: { fontSize: 12, marginTop: 1 },
+    rowLabel: { fontSize: 16, fontFamily: 'Inter_600SemiBold', letterSpacing: -0.2 },
+    rowSub: { fontSize: 13, marginTop: 2, fontFamily: 'Inter_400Regular' },
     logoutBtn: {
         flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
         marginHorizontal: 16, paddingVertical: 14, borderRadius: 14, borderWidth: 1,
         gap: 8, marginBottom: 8,
     },
     logoutText: { fontSize: 15, fontFamily: 'Inter_600SemiBold' },
-    version: { textAlign: 'center', fontSize: 12, marginTop: 16 },
-    versionRuntime: { textAlign: 'center', fontSize: 11, marginTop: 4 },
+    version: { textAlign: 'center', fontSize: 12, marginTop: 16, fontFamily: 'Inter_400Regular', opacity: 0.6 },
 
     // Loading Screen Styles
     loadingContainer: {

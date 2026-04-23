@@ -554,22 +554,6 @@ export default function CustomerDashboard() {
                     )}
                 </Animated.View>
 
-                {/* ── Stats Strip ──────────────────────────────────────── */}
-                <Animated.View style={[styles.statsRow, statsAnim.style]}>
-                    <View style={[styles.statItem, { backgroundColor: c.card, borderColor: c.border }]}>
-                        <Text style={[styles.statValue, { color: c.text }]}>{totalDeliveries}</Text>
-                        <Text style={[styles.statLabel, { color: c.textTer }]}>TOTAL</Text>
-                    </View>
-                    <View style={[styles.statItem, { backgroundColor: c.card, borderColor: c.border }]}>
-                        <Text style={[styles.statValue, { color: c.text }]}>{completedDeliveries}</Text>
-                        <Text style={[styles.statLabel, { color: c.textTer }]}>COMPLETED</Text>
-                    </View>
-                    <View style={[styles.statItem, { backgroundColor: c.card, borderColor: c.border }]}>
-                        <Text style={[styles.statValue, { color: c.text }]}>{inTransitDeliveries}</Text>
-                        <Text style={[styles.statLabel, { color: c.textTer }]}>ACTIVE</Text>
-                    </View>
-                </Animated.View>
-
                 {/* Banners */}
                 <NetworkStatusBanner />
                 <CustomerHardwareBanner displayStatus={displayStatus} />
@@ -681,11 +665,27 @@ export default function CustomerDashboard() {
                 </TouchableOpacity>
 
                 {/* ── Quick Actions ──────────────────────────────────────── */}
-                <View style={styles.quickRow}>
+                <View style={[styles.gridRow, { marginBottom: 12 }]}>
                     <QuickAction icon="calculator" label="Rates" c={c} onPress={() => navigation.navigate('Rates')} />
                     <QuickAction icon="history" label="History" c={c} onPress={() => navigation.navigate('DeliveryLog')} />
                     <QuickAction icon="file-document-outline" label="Report" c={c} onPress={() => navigation.navigate('Report')} />
                 </View>
+                </Animated.View>
+
+                {/* ── Stats Strip ──────────────────────────────────────── */}
+                <Animated.View style={[styles.gridRow, statsAnim.style, { marginBottom: 24 }]}>
+                    <View style={[styles.gridItem, { backgroundColor: c.card, borderColor: c.border }]}>
+                        <Text style={[styles.statValue, { color: c.text }]}>{totalDeliveries}</Text>
+                        <Text style={[styles.statLabel, { color: c.textTer }]}>TOTAL</Text>
+                    </View>
+                    <View style={[styles.gridItem, { backgroundColor: c.card, borderColor: c.border }]}>
+                        <Text style={[styles.statValue, { color: c.text }]}>{completedDeliveries}</Text>
+                        <Text style={[styles.statLabel, { color: c.textTer }]}>COMPLETED</Text>
+                    </View>
+                    <View style={[styles.gridItem, { backgroundColor: c.card, borderColor: c.border }]}>
+                        <Text style={[styles.statValue, { color: c.text }]}>{inTransitDeliveries}</Text>
+                        <Text style={[styles.statLabel, { color: c.textTer }]}>ACTIVE</Text>
+                    </View>
                 </Animated.View>
 
                 {/* ── Recent Activity ────────────────────────────────────── */}
@@ -844,10 +844,8 @@ function InfoRow({ icon, text, c }: { icon: string; text: string; c: typeof ligh
 
 function QuickAction({ icon, label, onPress, c }: { icon: string; label: string; onPress: () => void; c: typeof lightC }) {
     return (
-        <TouchableOpacity style={styles.quickItem} onPress={onPress} activeOpacity={0.7}>
-            <View style={[styles.quickIcon, { backgroundColor: c.pillBg, borderColor: c.border }]}>
-                <MaterialCommunityIcons name={icon as any} size={22} color={c.accent} />
-            </View>
+        <TouchableOpacity style={[styles.gridItem, { backgroundColor: c.card, borderColor: c.border }]} onPress={onPress} activeOpacity={0.7}>
+            <MaterialCommunityIcons name={icon as any} size={22} color={c.text} style={{ marginBottom: 2 }} />
             <Text style={[styles.quickLabel, { color: c.textSec }]}>{label}</Text>
         </TouchableOpacity>
     );
@@ -1062,17 +1060,18 @@ const styles = StyleSheet.create({
         paddingVertical: 12, borderRadius: 12, borderWidth: 1, gap: 6,
     },
     secondaryBtnText: { fontSize: 13, fontFamily: 'Inter_600SemiBold' },
-    // Stats
-    statsRow: {
+    // Grid (Stats & Quick Actions)
+    gridRow: {
         flexDirection: 'row', justifyContent: 'space-between',
-        marginBottom: 16, gap: 8,
+        marginBottom: 12, gap: 8,
     },
-    statItem: {
+    gridItem: {
         flex: 1, alignItems: 'center', paddingVertical: 14,
         borderRadius: 14, borderWidth: 1, gap: 2,
     },
-    statValue: { fontSize: 20, fontFamily: 'Inter_700Bold' },
-    statLabel: { fontSize: 9, fontFamily: 'Inter_600SemiBold', letterSpacing: 0.5 },
+    // Stats specifics
+    statValue: { fontSize: 22, fontFamily: 'JetBrainsMono_700Bold' },
+    statLabel: { fontSize: 10, fontFamily: 'Inter_600SemiBold', letterSpacing: 0.5, textTransform: 'uppercase' },
     // Empty
     emptyCard: {
         alignItems: 'center', padding: 28, borderRadius: 16, borderWidth: 1, marginBottom: 20,
@@ -1114,11 +1113,8 @@ const styles = StyleSheet.create({
     bookTitle: { fontSize: 18, fontFamily: 'Inter_700Bold' },
     bookSub: { fontSize: 13, marginTop: 2 },
     bookIcon: { width: 50, height: 50, borderRadius: 25, alignItems: 'center', justifyContent: 'center' },
-    // Quick actions
-    quickRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 24 },
-    quickItem: { alignItems: 'center', width: '30%' },
-    quickIcon: { width: 52, height: 52, borderRadius: 16, alignItems: 'center', justifyContent: 'center', borderWidth: 1, marginBottom: 6 },
-    quickLabel: { fontSize: 12, fontFamily: 'Inter_500Medium' },
+    // Quick actions specifics
+    quickLabel: { fontSize: 12, fontFamily: 'Inter_600SemiBold' },
     // Activity
     activityRow: {
         flexDirection: 'row', alignItems: 'center', padding: 14, borderRadius: 14,

@@ -33,22 +33,24 @@ import {
     verifyDashboardPin,
 } from '../../services/personalPinService';
 
-// Uber-inspired minimalist colors
+// Luxury tech minimalist colors
 const COLORS = {
     light: {
-        background: '#FFFFFF',
-        surface: '#F6F6F6',
-        text: '#000000',
-        textSecondary: '#6B6B6B',
-        border: '#E8E8E8',
-        accent: '#000000',
+        background: '#FAFAFA',
+        surface: '#FFFFFF',
+        text: '#09090B',
+        textSecondary: '#52525B',
+        textTertiary: '#A1A1AA',
+        border: '#E4E4E7',
+        accent: '#09090B',
     },
     dark: {
         background: '#000000',
-        surface: '#1C1C1E',
+        surface: '#09090B',
         text: '#FFFFFF',
-        textSecondary: '#8E8E93',
-        border: '#2C2C2E',
+        textSecondary: '#A1A1AA',
+        textTertiary: '#52525B',
+        border: '#27272A',
         accent: '#FFFFFF',
     }
 };
@@ -364,11 +366,12 @@ export default function RoleSelectionScreen() {
                 setLoadingPhase('authorizing');
                 const authResult = await authenticateBiometricForSensitiveAction('Authorize dashboard access');
                 if (!authResult.success) {
+                    const fallbackMessage = (authResult as any).message || 'Biometric authentication failed. Please use your PIN.';
                     if (hasDashboardPin === false) {
-                        openSetPinModal(targetApp as DashboardTarget, authResult.message);
+                        openSetPinModal(targetApp as DashboardTarget, fallbackMessage);
                     } else {
                         // Immediate fallback keeps the transition premium and avoids spinner linger.
-                        openDashboardPinModal(targetApp as DashboardTarget, authResult.message);
+                        openDashboardPinModal(targetApp as DashboardTarget, fallbackMessage);
                     }
                     return;
                 }
@@ -1075,7 +1078,7 @@ const styles = StyleSheet.create({
     name: {
         fontSize: 34,
         fontFamily: 'Inter_700Bold',
-        letterSpacing: -1,
+        letterSpacing: -1.5,
         marginTop: 4,
     },
     content: {
@@ -1096,9 +1099,13 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'space-between',
-        padding: 16,
+        padding: 20,
         borderRadius: 16,
         borderWidth: 1,
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.05,
+        shadowRadius: 8,
+        elevation: 2,
     },
     cardContent: {
         flexDirection: 'row',
@@ -1118,13 +1125,13 @@ const styles = StyleSheet.create({
     },
     cardTitle: {
         fontSize: 18,
-        fontFamily: 'Inter_600SemiBold',
-        letterSpacing: -0.2,
+        fontFamily: 'Inter_700Bold',
+        letterSpacing: -0.5,
     },
     cardSubtitle: {
         fontSize: 14,
         fontFamily: 'Inter_400Regular',
-        marginTop: 2,
+        marginTop: 4,
     },
     footer: {
         paddingVertical: 24,
