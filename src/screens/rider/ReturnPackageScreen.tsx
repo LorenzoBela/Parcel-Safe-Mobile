@@ -92,6 +92,16 @@ export default function ReturnPackageScreen() {
     const { isDarkMode } = useAppTheme();
     const params = route.params as RouteParams;
 
+    const c = {
+        bg: isDarkMode ? '#000000' : '#ffffff',
+        text: isDarkMode ? '#ffffff' : '#000000',
+        border: isDarkMode ? '#ffffff' : '#000000',
+        surface: isDarkMode ? '#111111' : '#ffffff',
+        muted: isDarkMode ? '#a1a1aa' : '#52525b',
+        success: isDarkMode ? '#4ade80' : '#166534',
+        warning: isDarkMode ? '#fde047' : '#9a3412',
+    };
+
     const {
         deliveryId = 'TRK-XXXX-XXXX',
         pickupAddress = 'Unknown Address',
@@ -116,7 +126,7 @@ export default function ReturnPackageScreen() {
     const headingSmoother = useHeadingSmoothing();
 
     // Geofence circle for map preview
-    const mapAvailable = isMapboxNativeAvailable;
+    const mapAvailable = isMapboxNativeAvailable();
     const hasRiderPosition = riderLat !== 0 || riderLng !== 0;
     const geofenceCircle = useMemo(
         () => buildGeofenceCircleGeoJSON(pickupLng, pickupLat, GEOFENCE_RADIUS_M),
@@ -380,27 +390,27 @@ export default function ReturnPackageScreen() {
     const getStepProgress = () => (STEP_ORDER.indexOf(currentStep) + 1) / STEP_ORDER.length;
     const stepColor = (step: ReturnStep) =>
         STEP_ORDER.indexOf(step) <= STEP_ORDER.indexOf(currentStep)
-            ? theme.colors.primary
-            : theme.colors.outline;
+            ? c.text
+            : c.muted;
 
     // ── Render ──────────────────────────────────────────────────────────────────
     return (
-        <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
+        <View style={[styles.container, { backgroundColor: c.bg }]}>
             <ScrollView contentContainerStyle={styles.scrollContent}>
 
                 {/* Progress Bar */}
-                <Surface style={[styles.card, { backgroundColor: theme.colors.surface }]} elevation={1}>
-                    <Text variant="labelMedium" style={{ color: theme.colors.onSurfaceVariant, marginBottom: 8 }}>
+                <Surface style={[styles.card, { backgroundColor: c.surface, borderColor: c.border }]} elevation={0}>
+                    <Text variant="labelMedium" style={{ color: c.muted, marginBottom: 8, fontFamily: 'Inter_900Black', textTransform: 'uppercase' }}>
                         RETURN PROGRESS
                     </Text>
                     <ProgressBar
                         progress={getStepProgress()}
-                        color={theme.colors.primary}
-                        style={{ height: 8, borderRadius: 4 }}
+                        color={c.text}
+                        style={{ height: 12, borderRadius: 0, backgroundColor: isDarkMode ? '#333' : '#e5e5e5' }}
                     />
                     <View style={styles.progressLabels}>
                         {STEP_LABELS.map((label, i) => (
-                            <Text key={label} variant="labelSmall" style={{ color: stepColor(STEP_ORDER[i]) }}>
+                            <Text key={label} variant="labelSmall" style={{ color: stepColor(STEP_ORDER[i]), fontFamily: 'Inter_700Bold', textTransform: 'uppercase' }}>
                                 {label}
                             </Text>
                         ))}
@@ -413,26 +423,27 @@ export default function ReturnPackageScreen() {
                         styles.statusCard,
                         {
                             backgroundColor: currentStep === 'COMPLETED'
-                                ? (theme.dark ? '#1B5E20' : '#E8F5E9')
-                                : (theme.dark ? '#E65100' : '#FFF3E0'),
+                                ? (isDarkMode ? '#052e16' : '#dcfce7')
+                                : (isDarkMode ? '#000000' : '#ffffff'),
+                            borderColor: c.border,
                         },
                     ]}
-                    elevation={2}
+                    elevation={0}
                 >
                     <MaterialCommunityIcons
                         name={currentStep === 'COMPLETED' ? 'check-circle' : 'backup-restore'}
                         size={48}
-                        color={currentStep === 'COMPLETED' ? '#4CAF50' : '#FF9800'}
+                        color={currentStep === 'COMPLETED' ? c.success : c.text}
                     />
                     <View style={styles.statusContent}>
-                        <Text variant="titleMedium" style={{ fontFamily: 'Inter_700Bold', color: theme.colors.onSurface }}>
+                        <Text variant="titleMedium" style={{ fontFamily: 'Inter_900Black', textTransform: 'uppercase', color: c.text }}>
                             {currentStep === 'NAVIGATING' && 'Navigating to Pickup'}
                             {currentStep === 'ARRIVED' && 'Confirm Arrival'}
                             {currentStep === 'PHOTO_CAPTURE' && 'Capture Sender Photo'}
                             {currentStep === 'UPLOADING' && 'Uploading Photo…'}
                             {currentStep === 'COMPLETED' && 'Return Complete!'}
                         </Text>
-                        <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
+                        <Text variant="bodySmall" style={{ color: c.muted, fontFamily: 'Inter_700Bold' }}>
                             {currentStep === 'NAVIGATING' && `${formatDistance()} away • Head to the original pickup location`}
                             {currentStep === 'ARRIVED' && (
                                 isInsideGeofence
@@ -465,7 +476,7 @@ export default function ReturnPackageScreen() {
                 </Surface>
 
                 {/* Destination & Map Card */}
-                <Surface style={[styles.card, { backgroundColor: theme.colors.surface, padding: 0, overflow: 'hidden' }]} elevation={1}>
+                <Surface style={[styles.card, { backgroundColor: c.surface, padding: 0, overflow: 'hidden', borderColor: c.border }]} elevation={0}>
                     {/* Map Preview */}
                     <View style={styles.mapContainer}>
                         {mapAvailable && hasRiderPosition ? (
@@ -507,7 +518,7 @@ export default function ReturnPackageScreen() {
 
                                 {/* 2. The Return/Pickup Point Marker */}
                                 <MapboxGL.PointAnnotation id="return-marker" coordinate={[pickupLng, pickupLat]}>
-                                    <View style={[styles.targetMarker, { backgroundColor: isInsideGeofence ? '#4CAF50' : theme.colors.primary }]}>
+                                    <View style={[styles.targetMarker, { backgroundColor: isInsideGeofence ? c.success : '#000', borderColor: '#fff' }]}>
                                         <MaterialCommunityIcons name="home-map-marker" size={16} color="white" />
                                     </View>
                                 </MapboxGL.PointAnnotation>
@@ -522,44 +533,48 @@ export default function ReturnPackageScreen() {
                                 )}
                             </MapboxGL.MapView>
                         ) : (
-                            <View style={[styles.mapPlaceholder, { backgroundColor: theme.colors.surfaceVariant }]}>
+                            <View style={[styles.mapPlaceholder, { backgroundColor: c.surface }]}>
                                 {!hasRiderPosition ? (
                                     <>
-                                        <ActivityIndicator size="small" color={theme.colors.primary} />
-                                        <Text style={{ marginTop: 8, color: theme.colors.onSurfaceVariant }}>Acquiring GPS...</Text>
+                                        <ActivityIndicator size="small" color={c.text} />
+                                        <Text style={{ marginTop: 8, color: c.muted, fontFamily: 'Inter_700Bold' }}>Acquiring GPS...</Text>
                                     </>
                                 ) : (
-                                    <MaterialCommunityIcons name="map-marker-off" size={32} color={theme.colors.onSurfaceVariant} />
+                                    <MaterialCommunityIcons name="map-marker-off" size={32} color={c.muted} />
                                 )}
                             </View>
                         )}
 
                         {/* Floating Distance Badge overlay on the map */}
                         {distanceM !== null && (
-                            <View style={[styles.mapDistanceBadge, { backgroundColor: theme.colors.surface, borderColor: theme.colors.outlineVariant }]}>
-                                <Text variant="labelMedium" style={{ fontFamily: 'Inter_700Bold', color: theme.colors.onSurface }}>
+                            <View style={[styles.mapDistanceBadge, { backgroundColor: c.surface, borderColor: c.border }]}>
+                                <Text variant="labelMedium" style={{ fontFamily: 'Inter_900Black', color: c.text }}>
                                     {formatDistance()}
                                 </Text>
-                                <Text variant="labelSmall" style={{ color: theme.colors.onSurfaceVariant }}>to zone</Text>
+                                <Text variant="labelSmall" style={{ color: c.muted, fontFamily: 'Inter_700Bold' }}>to zone</Text>
                             </View>
                         )}
                     </View>
 
                     {/* Destination details below map */}
                     <View style={styles.destinationDetails}>
-                        <View style={[styles.markerIcon, { backgroundColor: theme.colors.errorContainer }]}>
-                            <MaterialCommunityIcons name="map-marker" size={24} color={theme.colors.error} />
+                        <View style={[styles.markerIcon, { backgroundColor: c.border }]}>
+                            <MaterialCommunityIcons name="home-map-marker" size={24} color={c.bg} />
                         </View>
                         <View style={{ flex: 1, marginLeft: 12 }}>
-                            <Text variant="labelSmall" style={{ color: theme.colors.onSurfaceVariant }}>RETURN TO</Text>
-                            <Text variant="titleMedium" style={{ fontFamily: 'Inter_700Bold', color: theme.colors.onSurface }}>{senderName}</Text>
-                            <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>{pickupAddress}</Text>
+                            <Text variant="labelSmall" style={{ color: c.muted, fontFamily: 'Inter_900Black' }}>RETURN TO</Text>
+                            <Text variant="titleMedium" style={{ fontFamily: 'Inter_900Black', color: c.text }}>{senderName}</Text>
+                            <Text variant="bodySmall" style={{ color: c.muted, fontFamily: 'Inter_700Bold' }}>{pickupAddress}</Text>
                         </View>
                     </View>
 
                     {currentStep === 'NAVIGATING' && (
                         <View style={styles.navigationButtonContainer}>
-                            <Button mode="contained" icon="navigation" onPress={openNavigation}>
+                            <Button mode="contained" icon="navigation" onPress={openNavigation}
+                                contentStyle={{ height: 56 }}
+                                labelStyle={{ fontFamily: 'Inter_900Black', fontSize: 16 }}
+                                style={{ borderRadius: 0, borderWidth: 3, borderColor: '#000', backgroundColor: '#000' }}
+                            >
                                 Open Navigation
                             </Button>
                         </View>
@@ -568,14 +583,14 @@ export default function ReturnPackageScreen() {
 
                 {/* ── Box Verification / Fallback Photo Card ── */}
                 {currentStep === 'PHOTO_CAPTURE' && (
-                    <Surface style={[styles.card, { backgroundColor: theme.colors.surface }]} elevation={1}>
+                    <Surface style={[styles.card, { backgroundColor: c.surface, borderColor: c.border }]} elevation={0}>
                         <View style={styles.rowHeader}>
                             <MaterialCommunityIcons
                                 name={hardwareSuccess ? 'check-circle' : cameraFailed ? 'camera-off' : 'cctv'}
                                 size={20}
-                                color={hardwareSuccess ? '#4CAF50' : cameraFailed ? theme.colors.error : theme.colors.primary}
+                                color={hardwareSuccess ? c.success : cameraFailed ? c.warning : c.text}
                             />
-                            <Text variant="labelLarge" style={{ marginLeft: 8, color: theme.colors.onSurface }}>
+                            <Text variant="labelLarge" style={{ marginLeft: 8, color: c.text, fontFamily: 'Inter_900Black', textTransform: 'uppercase' }}>
                                 {cameraFailed ? 'Fallback Photo Required' : 'Box Camera Verification'}
                             </Text>
                         </View>
@@ -584,11 +599,12 @@ export default function ReturnPackageScreen() {
                         {!cameraFailed && (
                             <View style={[
                                 styles.statusBanner,
-                                { backgroundColor: hardwareSuccess ? '#DCFCE7' : boxOtpValidated ? '#DBEAFE' : '#F3F4F6' },
+                                { backgroundColor: isDarkMode ? '#000' : '#f4f4f5', borderColor: c.border, borderWidth: 2, borderRadius: 0 },
                             ]}>
                                 <Text style={{
-                                    color: hardwareSuccess ? '#15803d' : boxOtpValidated ? '#1d4ed8' : '#4b5563',
+                                    color: hardwareSuccess ? c.success : c.text,
                                     fontSize: 13,
+                                    fontFamily: 'Inter_700Bold'
                                 }}>
                                     {hardwareSuccess
                                         ? '✅ Box unlocked — sender photo captured automatically'
@@ -612,19 +628,19 @@ export default function ReturnPackageScreen() {
                         {/* Fallback: only shown when box camera failed */}
                         {cameraFailed && (
                             <>
-                                <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant, marginBottom: 12 }}>
+                                <Text variant="bodySmall" style={{ color: c.muted, marginBottom: 12, fontFamily: 'Inter_700Bold' }}>
                                     The box camera failed. Use your phone to capture a photo of the sender as proof.
                                 </Text>
                                 {photoUri ? (
-                                    <View style={styles.photoPreview}>
-                                        <MaterialCommunityIcons name="check-circle" size={40} color="#4CAF50" />
-                                        <Text variant="bodyMedium" style={{ color: '#4CAF50', marginTop: 8 }}>Fallback photo captured</Text>
-                                        <Button mode="outlined" icon="camera-retake" onPress={handleCapturePhoto} style={{ marginTop: 12 }} compact>
+                                    <View style={[styles.photoPreview, { borderColor: c.border, borderWidth: 2, borderRadius: 0, backgroundColor: isDarkMode ? '#000' : '#f4f4f5' }]}>
+                                        <MaterialCommunityIcons name="check-circle" size={40} color={c.success} />
+                                        <Text variant="bodyMedium" style={{ color: c.success, marginTop: 8, fontFamily: 'Inter_900Black', textTransform: 'uppercase' }}>Fallback photo captured</Text>
+                                        <Button mode="outlined" icon="camera-retake" onPress={handleCapturePhoto} style={{ marginTop: 12, borderRadius: 0, borderWidth: 3, borderColor: c.border }} compact textColor={c.text} labelStyle={{ fontFamily: 'Inter_900Black' }}>
                                             Retake
                                         </Button>
                                     </View>
                                 ) : (
-                                    <Button mode="contained" icon="camera" onPress={handleCapturePhoto}>
+                                    <Button mode="contained" icon="camera" onPress={handleCapturePhoto} style={{ borderRadius: 0, borderWidth: 3, borderColor: '#000', backgroundColor: '#000' }} contentStyle={{ height: 56 }} labelStyle={{ fontFamily: 'Inter_900Black' }}>
                                         Capture Fallback Photo
                                     </Button>
                                 )}
@@ -632,7 +648,7 @@ export default function ReturnPackageScreen() {
                         )}
 
                         {!!uploadError && (
-                            <Text variant="bodySmall" style={{ color: theme.colors.error, marginTop: 8 }}>
+                            <Text variant="bodySmall" style={{ color: c.warning, marginTop: 8, fontFamily: 'Inter_700Bold' }}>
                                 {uploadError}
                             </Text>
                         )}
@@ -641,25 +657,25 @@ export default function ReturnPackageScreen() {
 
                 {/* ── Upload Progress ── */}
                 {currentStep === 'UPLOADING' && (
-                    <Surface style={[styles.card, styles.centered, { backgroundColor: theme.colors.surface }]} elevation={1}>
-                        <ActivityIndicator size="large" color={theme.colors.primary} />
-                        <Text variant="bodyMedium" style={{ marginTop: 16, color: theme.colors.onSurfaceVariant }}>
+                    <Surface style={[styles.card, styles.centered, { backgroundColor: c.surface, borderColor: c.border }]} elevation={0}>
+                        <ActivityIndicator size="large" color={c.text} />
+                        <Text variant="bodyMedium" style={{ marginTop: 16, color: c.muted, fontFamily: 'Inter_900Black', textTransform: 'uppercase' }}>
                             Uploading photo to secure storage…
                         </Text>
                     </Surface>
                 )}
 
                 {/* Tracking ID */}
-                <Surface style={[styles.card, { backgroundColor: theme.colors.surface }]} elevation={1}>
+                <Surface style={[styles.card, { backgroundColor: c.surface, borderColor: c.border }]} elevation={0}>
                     <View style={styles.trackingRow}>
-                        <MaterialCommunityIcons name="package-variant" size={20} color={theme.colors.primary} />
-                        <Text variant="bodyMedium" style={{ marginLeft: 8, color: theme.colors.onSurfaceVariant }}>Tracking Number:</Text>
+                        <MaterialCommunityIcons name="package-variant" size={20} color={c.text} />
+                        <Text variant="bodyMedium" style={{ marginLeft: 8, color: c.muted, fontFamily: 'Inter_900Black', textTransform: 'uppercase' }}>Tracking Number:</Text>
                     </View>
                     <Text
                         variant="bodyMedium"
                         numberOfLines={1}
                         ellipsizeMode="middle"
-                        style={{ fontFamily: 'Inter_700Bold', marginTop: 4, color: theme.colors.onSurface }}
+                        style={{ fontFamily: 'Inter_700Bold', marginTop: 4, color: c.text }}
                     >
                         {deliveryId}
                     </Text>
@@ -667,12 +683,12 @@ export default function ReturnPackageScreen() {
 
                 {/* ── Completion Card ── */}
                 {currentStep === 'COMPLETED' && (
-                    <Surface style={[styles.completedCard, { backgroundColor: theme.dark ? '#1B5E20' : '#E8F5E9' }]} elevation={2}>
-                        <MaterialCommunityIcons name="check-decagram" size={64} color="#4CAF50" />
-                        <Text variant="headlineSmall" style={{ fontFamily: 'Inter_700Bold', marginTop: 16, color: theme.colors.onSurface }}>
+                    <Surface style={[styles.completedCard, { backgroundColor: isDarkMode ? '#052e16' : '#dcfce7', borderColor: c.border }]} elevation={0}>
+                        <MaterialCommunityIcons name="check-decagram" size={64} color={c.success} />
+                        <Text variant="headlineSmall" style={{ fontFamily: 'Inter_900Black', marginTop: 16, color: c.text, textTransform: 'uppercase' }}>
                             Return Successful!
                         </Text>
-                        <Text variant="bodyMedium" style={{ textAlign: 'center', marginTop: 8, color: theme.colors.onSurfaceVariant }}>
+                        <Text variant="bodyMedium" style={{ textAlign: 'center', marginTop: 8, color: c.muted, fontFamily: 'Inter_700Bold' }}>
                             The package has been returned to the sender. Your job is complete.
                         </Text>
                     </Surface>
@@ -681,14 +697,15 @@ export default function ReturnPackageScreen() {
             </ScrollView>
 
             {/* Bottom Actions */}
-            <Surface style={[styles.bottomActions, { backgroundColor: theme.colors.surface }]} elevation={4}>
+            <Surface style={[styles.bottomActions, { backgroundColor: c.bg, borderTopWidth: 3, borderColor: '#000' }]} elevation={0}>
                 {currentStep === 'NAVIGATING' && (
                     <Button
                         mode="contained"
                         onPress={handleConfirmArrival}
-                        style={{ flex: 1 }}
+                        style={{ flex: 1, borderRadius: 0, borderWidth: 3, borderColor: '#000', backgroundColor: isInsideGeofence ? '#000' : '#ef4444' }}
+                        contentStyle={{ height: 56 }}
+                        labelStyle={{ fontFamily: 'Inter_900Black', fontSize: 16 }}
                         icon={isInsideGeofence ? 'map-marker-check' : 'map-marker-off'}
-                        buttonColor={isInsideGeofence ? undefined : theme.colors.error}
                     >
                         {isInsideGeofence ? "I've Arrived" : `Out of Range (${formatDistance()})`}
                     </Button>
@@ -698,9 +715,10 @@ export default function ReturnPackageScreen() {
                     <Button
                         mode="contained"
                         onPress={handleConfirmArrival}
-                        style={{ flex: 1 }}
+                        style={{ flex: 1, borderRadius: 0, borderWidth: 3, borderColor: '#000', backgroundColor: isInsideGeofence ? '#000' : '#ef4444' }}
+                        contentStyle={{ height: 56 }}
+                        labelStyle={{ fontFamily: 'Inter_900Black', fontSize: 16 }}
                         icon={isInsideGeofence ? 'map-marker-check' : 'map-marker-off'}
-                        buttonColor={isInsideGeofence ? undefined : theme.colors.error}
                     >
                         {isInsideGeofence ? 'Confirm Arrival' : `Out of Range (${formatDistance()})`}
                     </Button>
@@ -710,22 +728,23 @@ export default function ReturnPackageScreen() {
                     <Button
                         mode="contained"
                         onPress={handleUploadAndComplete}
-                        style={{ flex: 1 }}
+                        style={{ flex: 1, borderRadius: 0, borderWidth: 3, borderColor: '#000', backgroundColor: '#000' }}
+                        contentStyle={{ height: 56 }}
+                        labelStyle={{ fontFamily: 'Inter_900Black', fontSize: 16 }}
                         icon="upload"
-                        buttonColor="#4CAF50"
                     >
                         Upload Fallback &amp; Complete
                     </Button>
                 )}
 
                 {currentStep === 'UPLOADING' && (
-                    <Button mode="contained" disabled style={{ flex: 1 }} loading>
+                    <Button mode="contained" disabled style={{ flex: 1, borderRadius: 0, borderWidth: 3, borderColor: '#000' }} contentStyle={{ height: 56 }} labelStyle={{ fontFamily: 'Inter_900Black', fontSize: 16 }} loading>
                         Saving…
                     </Button>
                 )}
 
                 {currentStep === 'COMPLETED' && (
-                    <Button mode="contained" onPress={handleDone} style={{ flex: 1 }} icon="home">
+                    <Button mode="contained" onPress={handleDone} style={{ flex: 1, borderRadius: 0, borderWidth: 3, borderColor: '#000', backgroundColor: '#000' }} contentStyle={{ height: 56 }} labelStyle={{ fontFamily: 'Inter_900Black', fontSize: 16 }} icon="home">
                         Back to Dashboard
                     </Button>
                 )}
@@ -739,8 +758,9 @@ const styles = StyleSheet.create({
     scrollContent: { padding: 16, paddingBottom: 100 },
     card: {
         padding: 16,
-        borderRadius: 12,
+        borderRadius: 0,
         marginBottom: 16,
+        borderWidth: 3,
     },
     progressLabels: {
         flexDirection: 'row',
@@ -751,8 +771,9 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         alignItems: 'center',
         padding: 20,
-        borderRadius: 16,
+        borderRadius: 0,
         marginBottom: 16,
+        borderWidth: 3,
     },
     statusContent: { marginLeft: 16, flex: 1 },
     destinationHeader: { flexDirection: 'row', alignItems: 'center' },
@@ -774,9 +795,10 @@ const styles = StyleSheet.create({
     trackingRow: { flexDirection: 'row', alignItems: 'center' },
     completedCard: {
         padding: 32,
-        borderRadius: 16,
+        borderRadius: 0,
         alignItems: 'center',
         marginBottom: 16,
+        borderWidth: 3,
     },
     bottomActions: {
         position: 'absolute',
@@ -786,8 +808,6 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         padding: 16,
         paddingBottom: 24,
-        borderTopLeftRadius: 20,
-        borderTopRightRadius: 20,
     },
     mapContainer: {
         height: 160,
@@ -807,20 +827,20 @@ const styles = StyleSheet.create({
         right: 12,
         paddingHorizontal: 10,
         paddingVertical: 4,
-        borderRadius: 16,
+        borderRadius: 0,
         alignItems: 'center',
         justifyContent: 'center',
-        borderWidth: 1,
+        borderWidth: 3,
         shadowColor: '#000',
         shadowOffset: { width: 0, height: 2 },
         shadowOpacity: 0.1,
         shadowRadius: 4,
-        elevation: 3,
+        elevation: 0,
     },
     targetMarker: {
         width: 28,
         height: 28,
-        borderRadius: 14,
+        borderRadius: 0,
         alignItems: 'center',
         justifyContent: 'center',
         borderWidth: 2,
@@ -829,7 +849,7 @@ const styles = StyleSheet.create({
         shadowOffset: { width: 0, height: 2 },
         shadowOpacity: 0.3,
         shadowRadius: 3,
-        elevation: 4,
+        elevation: 0,
     },
     riderMarkerContainer: {
         width: 36,

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { View, Animated, StyleSheet, ScrollView, Alert, TouchableOpacity, Modal } from 'react-native';
+import { View, Animated, StyleSheet, ScrollView, Alert, TouchableOpacity, Modal, KeyboardAvoidingView, Platform, Dimensions } from 'react-native';
 import { useEntryAnimation } from '../../hooks/useEntryAnimation';
 import { Text, Card, Button, Surface, useTheme, IconButton, Divider, Portal, ActivityIndicator, TextInput } from 'react-native-paper';
 import * as Progress from 'react-native-progress';
@@ -1924,87 +1924,107 @@ export default function BoxControlsScreen() {
                 animationType="fade"
                 onRequestClose={() => { }}
             >
-                <View style={styles.modalOverlay}>
-                    <Surface style={[styles.modalContent, { width: '92%', maxWidth: 520, backgroundColor: c.card }]} elevation={5}>
-                        <View style={styles.modalHeader}>
-                            <Text variant="titleLarge" style={{ fontFamily: 'Inter_700Bold', color: c.text }}>Security Hold Response Required</Text>
-                        </View>
-                        <View style={styles.modalBody}>
-                            {!activeTamperIncident?.id && (
-                                <View style={{ marginBottom: 12, padding: 10, borderRadius: 8, backgroundColor: c.orangeBg }}>
-                                    <Text variant="bodySmall" style={{ color: c.orangeText }}>
-                                        {incidentLoading
-                                            ? 'Syncing incident record... Controls remain blocked for safety.'
-                                            : 'Incident record not yet available. Retry sync to continue.'}
-                                    </Text>
-                                </View>
-                            )}
-
-                            <Text variant="bodyMedium" style={{ color: c.textSec, marginBottom: 12 }}>
-                                This box is locked due to tamper detection. You must submit evidence before normal controls are restored.
-                            </Text>
-
-                            <View style={{ gap: 10, marginBottom: 14 }}>
-                                <Button
-                                    mode={tamperDisposition === 'HARDWARE_DAMAGED' ? 'contained' : 'outlined'}
-                                    onPress={() => setTamperDisposition('HARDWARE_DAMAGED')}
-                                >
-                                    Hardware Damaged
-                                </Button>
-                                <Button
-                                    mode={tamperDisposition === 'ACCIDENTAL_TRIGGER' ? 'contained' : 'outlined'}
-                                    onPress={() => setTamperDisposition('ACCIDENTAL_TRIGGER')}
-                                >
-                                    Accidental Trigger
-                                </Button>
+                <KeyboardAvoidingView 
+                    behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+                    style={{ flex: 1 }}
+                >
+                    <View style={[styles.modalOverlay, { backgroundColor: c.text === '#FFFFFF' ? 'rgba(0,0,0,0.9)' : 'rgba(255,255,255,0.9)' }]}>
+                        <Surface style={[styles.modalContent, { width: '92%', maxWidth: 520, backgroundColor: c.bg, borderColor: c.border, borderWidth: 1, borderRadius: 0, padding: 0 }]} elevation={0}>
+                            <View style={[styles.modalHeader, { padding: 24, borderBottomWidth: 4, borderBottomColor: c.text }]}>
+                                <Text style={{ fontFamily: 'Inter_900Black', fontSize: 24, color: c.text, textTransform: 'uppercase', letterSpacing: -1 }}>Security Hold</Text>
                             </View>
+                            <ScrollView style={{ maxHeight: Dimensions.get('window').height * 0.6 }} contentContainerStyle={{ padding: 24 }}>
+                                {!activeTamperIncident?.id && (
+                                    <View style={{ marginBottom: 24, padding: 16, borderWidth: 2, borderColor: c.text, backgroundColor: c.card }}>
+                                        <Text style={{ color: c.text, fontFamily: 'Inter_700Bold', fontSize: 13, textTransform: 'uppercase' }}>
+                                            {incidentLoading
+                                                ? 'Syncing incident record...'
+                                                : 'Incident record unavailable. Retry sync.'}
+                                        </Text>
+                                    </View>
+                                )}
 
-                            {tamperDisposition === 'HARDWARE_DAMAGED' && (
-                                <View style={{ gap: 8, marginBottom: 14 }}>
-                                    <Button
-                                        mode="contained-tonal"
-                                        icon="camera"
-                                        onPress={handleCaptureTamperPhoto}
-                                        disabled={tamperSubmitting || !activeTamperIncident?.id}
+                                <Text style={{ color: c.textSec, marginBottom: 24, fontSize: 15, lineHeight: 22, fontFamily: 'Inter_500Medium' }}>
+                                    BOX LOCKED DUE TO DETECTED TAMPERING. SUBMIT SECURITY EVIDENCE TO RESTORE NORMAL OPERATION.
+                                </Text>
+
+                                <View style={{ gap: 12, marginBottom: 24 }}>
+                                    <TouchableOpacity 
+                                        activeOpacity={0.8}
+                                        style={{ padding: 16, borderWidth: 2, borderColor: tamperDisposition === 'HARDWARE_DAMAGED' ? c.text : c.border, backgroundColor: tamperDisposition === 'HARDWARE_DAMAGED' ? c.text : 'transparent' }}
+                                        onPress={() => setTamperDisposition('HARDWARE_DAMAGED')}
                                     >
-                                        {tamperPhotoUri ? 'Retake Damage Photo' : 'Capture Damage Photo'}
-                                    </Button>
-                                    <Text style={{ color: c.textSec, fontSize: 12 }}>
-                                        {tamperPhotoUrl ? 'Photo uploaded and ready for submission.' : 'A photo is required for this disposition.'}
-                                    </Text>
+                                        <Text style={{ fontFamily: 'Inter_700Bold', textAlign: 'center', color: tamperDisposition === 'HARDWARE_DAMAGED' ? c.bg : c.text, textTransform: 'uppercase' }}>Hardware Damaged</Text>
+                                    </TouchableOpacity>
+                                    <TouchableOpacity 
+                                        activeOpacity={0.8}
+                                        style={{ padding: 16, borderWidth: 2, borderColor: tamperDisposition === 'ACCIDENTAL_TRIGGER' ? c.text : c.border, backgroundColor: tamperDisposition === 'ACCIDENTAL_TRIGGER' ? c.text : 'transparent' }}
+                                        onPress={() => setTamperDisposition('ACCIDENTAL_TRIGGER')}
+                                    >
+                                        <Text style={{ fontFamily: 'Inter_700Bold', textAlign: 'center', color: tamperDisposition === 'ACCIDENTAL_TRIGGER' ? c.bg : c.text, textTransform: 'uppercase' }}>Accidental Trigger</Text>
+                                    </TouchableOpacity>
                                 </View>
-                            )}
 
-                            {tamperDisposition === 'ACCIDENTAL_TRIGGER' && (
-                                <TextInput
-                                    mode="outlined"
-                                    label="Explanation"
-                                    value={tamperNote}
-                                    onChangeText={setTamperNote}
-                                    multiline
-                                    numberOfLines={4}
-                                    style={{ marginBottom: 14 }}
-                                />
-                            )}
+                                {tamperDisposition === 'HARDWARE_DAMAGED' && (
+                                    <View style={{ gap: 12, marginBottom: 24 }}>
+                                        <TouchableOpacity 
+                                            activeOpacity={0.8}
+                                            style={{ padding: 16, backgroundColor: c.card, borderWidth: 1, borderColor: c.text, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, opacity: (tamperSubmitting || !activeTamperIncident?.id) ? 0.5 : 1 }}
+                                            onPress={handleCaptureTamperPhoto}
+                                            disabled={tamperSubmitting || !activeTamperIncident?.id}
+                                        >
+                                            <MaterialCommunityIcons name="camera" size={20} color={c.text} />
+                                            <Text style={{ fontFamily: 'Inter_700Bold', color: c.text, textTransform: 'uppercase' }}>
+                                                {tamperPhotoUri ? 'Retake Photo' : 'Capture Photo'}
+                                            </Text>
+                                        </TouchableOpacity>
+                                        <Text style={{ color: c.textSec, fontSize: 12, fontFamily: 'Inter_500Medium', textAlign: 'center' }}>
+                                            {tamperPhotoUrl ? 'Photo ready for submission.' : 'Photographic evidence required.'}
+                                        </Text>
+                                    </View>
+                                )}
 
-                            <Button
-                                mode="contained"
-                                onPress={handleSubmitTamperEvidence}
-                                loading={tamperSubmitting || incidentLoading}
-                                disabled={tamperSubmitting || incidentLoading || !activeTamperIncident?.id}
-                            >
-                                Submit Security Evidence
-                            </Button>
-                            <Button
-                                mode="text"
-                                onPress={loadActiveTamperIncident}
-                                disabled={tamperSubmitting || incidentLoading}
-                            >
-                                Refresh Incident Status
-                            </Button>
-                        </View>
-                    </Surface>
-                </View>
+                                {tamperDisposition === 'ACCIDENTAL_TRIGGER' && (
+                                    <TextInput
+                                        mode="flat"
+                                        label="Explanation Details"
+                                        value={tamperNote}
+                                        onChangeText={setTamperNote}
+                                        multiline
+                                        numberOfLines={4}
+                                        style={{ marginBottom: 24, backgroundColor: c.card, fontFamily: 'Inter_500Medium', height: 140 }}
+                                        textColor={c.text}
+                                        activeUnderlineColor={c.text}
+                                        theme={{ colors: { primary: c.text, onSurfaceVariant: c.textSec } }}
+                                    />
+                                )}
+
+                                <View style={{ gap: 12 }}>
+                                    <TouchableOpacity 
+                                        activeOpacity={0.8}
+                                        style={{ padding: 18, backgroundColor: c.text, opacity: (tamperSubmitting || incidentLoading || !activeTamperIncident?.id) ? 0.5 : 1 }}
+                                        onPress={handleSubmitTamperEvidence}
+                                        disabled={tamperSubmitting || incidentLoading || !activeTamperIncident?.id}
+                                    >
+                                        <Text style={{ fontFamily: 'Inter_900Black', textAlign: 'center', color: c.bg, fontSize: 16, textTransform: 'uppercase', letterSpacing: 1 }}>
+                                            {tamperSubmitting || incidentLoading ? 'Processing' : 'Submit Evidence'}
+                                        </Text>
+                                    </TouchableOpacity>
+                                    <TouchableOpacity 
+                                        activeOpacity={0.8}
+                                        style={{ padding: 16 }}
+                                        onPress={loadActiveTamperIncident}
+                                        disabled={tamperSubmitting || incidentLoading}
+                                    >
+                                        <Text style={{ fontFamily: 'Inter_700Bold', textAlign: 'center', color: c.textSec, textTransform: 'uppercase', fontSize: 13 }}>
+                                            Refresh Indcident
+                                        </Text>
+                                    </TouchableOpacity>
+                                </View>
+                            </ScrollView>
+                        </Surface>
+                    </View>
+                </KeyboardAvoidingView>
             </Modal>
 
             <Modal

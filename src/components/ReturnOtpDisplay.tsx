@@ -13,6 +13,31 @@ import * as Clipboard from 'expo-clipboard';
 
 import { getReturnOtpRemainingHours } from '../services/cancellationService';
 import { PremiumAlert } from '../services/PremiumAlertService';
+import { useAppTheme } from '../context/ThemeContext';
+
+// ── Uber-style dual palette ──
+const lightC = {
+    bg: '#FFFFFF', card: '#FFFFFF', search: '#F2F2F7',
+    text: '#000000', textSec: '#6B6B6B', textTer: '#AEAEB2',
+    border: '#E5E5EA', accent: '#000000', accentText: '#FFFFFF',
+    divider: '#F2F2F7',
+    greenBg: '#ECFDF5', greenText: '#059669',
+    redBg: '#FEF2F2', redText: '#DC2626',
+    orangeBg: '#FFF7ED', orangeText: '#EA580C',
+    blueBg: '#EFF6FF', blueText: '#2563EB',
+    purpleBg: '#F5F3FF', purpleText: '#7C3AED',
+};
+const darkC = {
+    bg: '#000000', card: '#1C1C1E', search: '#2C2C2E',
+    text: '#FFFFFF', textSec: '#8E8E93', textTer: '#636366',
+    border: '#38383A', accent: '#FFFFFF', accentText: '#000000',
+    divider: '#2C2C2E',
+    greenBg: '#052E16', greenText: '#4ADE80',
+    redBg: '#450A0A', redText: '#FCA5A5',
+    orangeBg: '#431407', orangeText: '#FDBA74',
+    blueBg: '#172554', blueText: '#93C5FD',
+    purpleBg: '#2E1065', purpleText: '#C4B5FD',
+};
 
 interface ReturnOtpDisplayProps {
     otp: string;
@@ -29,7 +54,8 @@ export default function ReturnOtpDisplay({
     showValidity = true,
     onCopy,
 }: ReturnOtpDisplayProps) {
-    const theme = useTheme();
+    const { isDarkMode } = useAppTheme();
+    const c = isDarkMode ? darkC : lightC;
     const [copied, setCopied] = useState(false);
     const [remainingHours, setRemainingHours] = useState(24);
 
@@ -49,33 +75,34 @@ export default function ReturnOtpDisplay({
     const handleCopy = async () => {
         await Clipboard.setStringAsync(otp);
         setCopied(true);
-        PremiumAlert.alert('Copied!', 'OTP copied to clipboard');
+        PremiumAlert.alert('COPIED!', 'OTP COPIED TO CLIPBOARD');
         onCopy?.();
-        setTimeout(() => setCopied(false), 3000);
+        setTimeout(() => setCopied(false), 2000);
     };
 
     if (compact) {
         return (
-            <TouchableOpacity onPress={handleCopy} activeOpacity={0.7}>
+            <TouchableOpacity onPress={handleCopy} activeOpacity={0.8}>
                 <Surface
                     style={[
                         styles.compactContainer,
                         {
-                            backgroundColor: theme.dark ? '#1A237E' : '#E8EAF6',
-                            borderColor: copied ? theme.colors.primary : 'transparent',
+                            backgroundColor: copied ? c.text : c.search,
+                            borderColor: copied ? c.text : c.border,
                             borderWidth: 1,
+                            borderRadius: 0,
                         }
                     ]}
-                    elevation={1}
+                    elevation={0}
                 >
-                    <MaterialCommunityIcons name="key-variant" size={16} color={theme.colors.primary} />
+                    <MaterialCommunityIcons name="key-variant" size={16} color={copied ? c.bg : c.text} />
                     <Text
-                        variant="labelLarge"
                         style={{
-                            letterSpacing: 2,
-                            color: theme.colors.primary,
+                            letterSpacing: 4,
+                            color: copied ? c.bg : c.text,
                             marginLeft: 8,
-                            fontFamily: 'monospace',
+                            fontFamily: 'Inter_900Black',
+                            fontSize: 16
                         }}
                     >
                         {otp}
@@ -83,7 +110,7 @@ export default function ReturnOtpDisplay({
                     <MaterialCommunityIcons
                         name={copied ? "check" : "content-copy"}
                         size={16}
-                        color={theme.colors.primary}
+                        color={copied ? c.bg : c.text}
                         style={{ marginLeft: 8 }}
                     />
                 </Surface>
@@ -92,53 +119,54 @@ export default function ReturnOtpDisplay({
     }
 
     return (
-        <Surface style={[styles.container, { backgroundColor: theme.colors.surface }]} elevation={2}>
+        <Surface style={[styles.container, { backgroundColor: c.card, borderWidth: 1, borderColor: c.border }]} elevation={0}>
             <View style={styles.header}>
-                <MaterialCommunityIcons name="key-variant" size={24} color={theme.colors.primary} />
-                <Text variant="titleMedium" style={{ marginLeft: 8, fontFamily: 'Inter_700Bold', color: theme.colors.onSurface }}>
+                <MaterialCommunityIcons name="key-variant" size={24} color={c.text} />
+                <Text style={{ marginLeft: 8, fontFamily: 'Inter_900Black', color: c.text, textTransform: 'uppercase', letterSpacing: 0.5, fontSize: 14 }}>
                     Return Authorization OTP
                 </Text>
             </View>
 
-            <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant, marginBottom: 16 }}>
-                Give this code to the sender to retrieve their package from the box
+            <Text style={{ color: c.textSec, marginBottom: 16, fontFamily: 'Inter_500Medium', fontSize: 13, lineHeight: 18 }}>
+                Give this code to the sender to retrieve their package from the box.
             </Text>
 
-            <TouchableOpacity onPress={handleCopy} activeOpacity={0.7}>
+            <TouchableOpacity onPress={handleCopy} activeOpacity={0.9}>
                 <Surface
                     style={[
                         styles.otpBox,
                         {
-                            backgroundColor: theme.dark ? '#1A237E' : '#E8EAF6',
-                            borderColor: copied ? theme.colors.primary : 'transparent',
-                            borderWidth: 2,
+                            backgroundColor: c.text,
+                            borderRadius: 0,
+                            paddingVertical: 24,
                         }
                     ]}
                     elevation={0}
                 >
                     <Text
-                        variant="displaySmall"
                         style={{
-                            letterSpacing: 8,
-                            color: theme.colors.primary,
-                            fontFamily: 'monospace',
+                            letterSpacing: 12,
+                            color: c.bg,
+                            fontFamily: 'Inter_900Black',
+                            fontSize: 32,
+                            textAlign: 'center'
                         }}
                     >
                         {otp}
                     </Text>
                     <IconButton
                         icon={copied ? "check" : "content-copy"}
-                        size={20}
-                        iconColor={theme.colors.primary}
+                        size={24}
+                        iconColor={copied ? c.greenText : c.bg}
                         style={styles.copyButton}
                     />
                 </Surface>
             </TouchableOpacity>
 
             {showValidity && (
-                <View style={[styles.validityBadge, { backgroundColor: theme.dark ? '#1B5E20' : '#E8F5E9' }]}>
-                    <MaterialCommunityIcons name="clock-outline" size={16} color="#4CAF50" />
-                    <Text variant="labelMedium" style={{ marginLeft: 6, color: '#4CAF50' }}>
+                <View style={[styles.validityBadge, { backgroundColor: c.search, borderRadius: 0, marginTop: 12 }]}>
+                    <MaterialCommunityIcons name="clock-outline" size={16} color={c.text} />
+                    <Text style={{ marginLeft: 6, color: c.text, fontFamily: 'Inter_700Bold', fontSize: 12, textTransform: 'uppercase' }}>
                         Valid for {remainingHours} hours
                     </Text>
                 </View>
@@ -150,7 +178,7 @@ export default function ReturnOtpDisplay({
 const styles = StyleSheet.create({
     container: {
         padding: 20,
-        borderRadius: 16,
+        borderRadius: 0,
     },
     header: {
         flexDirection: 'row',

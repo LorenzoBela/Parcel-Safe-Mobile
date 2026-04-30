@@ -17,6 +17,31 @@ import {
 } from '../services/cancellationService';
 import ReturnOtpDisplay from './ReturnOtpDisplay';
 import { parseUTCString } from '../utils/date';
+import { useAppTheme } from '../context/ThemeContext';
+
+// ── Uber-style dual palette ──
+const lightC = {
+    bg: '#FFFFFF', card: '#FFFFFF', search: '#F2F2F7',
+    text: '#000000', textSec: '#6B6B6B', textTer: '#AEAEB2',
+    border: '#E5E5EA', accent: '#000000', accentText: '#FFFFFF',
+    divider: '#F2F2F7',
+    greenBg: '#ECFDF5', greenText: '#059669',
+    redBg: '#FEF2F2', redText: '#DC2626',
+    orangeBg: '#FFF7ED', orangeText: '#EA580C',
+    blueBg: '#EFF6FF', blueText: '#2563EB',
+    purpleBg: '#F5F3FF', purpleText: '#7C3AED',
+};
+const darkC = {
+    bg: '#000000', card: '#1C1C1E', search: '#2C2C2E',
+    text: '#FFFFFF', textSec: '#8E8E93', textTer: '#636366',
+    border: '#38383A', accent: '#FFFFFF', accentText: '#000000',
+    divider: '#2C2C2E',
+    greenBg: '#052E16', greenText: '#4ADE80',
+    redBg: '#450A0A', redText: '#FCA5A5',
+    orangeBg: '#431407', orangeText: '#FDBA74',
+    blueBg: '#172554', blueText: '#93C5FD',
+    purpleBg: '#2E1065', purpleText: '#C4B5FD',
+};
 
 interface CancellationStatusCardProps {
     cancellation: CancellationState;
@@ -33,7 +58,8 @@ export default function CancellationStatusCard({
     showReturnOtp = true,
     compact = false,
 }: CancellationStatusCardProps) {
-    const theme = useTheme();
+    const { isDarkMode } = useAppTheme();
+    const c = isDarkMode ? darkC : lightC;
 
     const isOtpValid = isReturnOtpValid(cancellation.returnOtpIssuedAt, Date.now());
     const remainingHours = getReturnOtpRemainingHours(cancellation.returnOtpIssuedAt, Date.now());
@@ -41,23 +67,27 @@ export default function CancellationStatusCard({
     if (compact) {
         return (
             <Surface
-                style={[styles.compactCard, { backgroundColor: theme.colors.errorContainer }]}
-                elevation={1}
+                style={[styles.compactCard, { backgroundColor: c.redBg }]}
+                elevation={0}
             >
                 <View style={styles.compactContent}>
-                    <MaterialCommunityIcons name="cancel" size={20} color={theme.colors.error} />
+                    <MaterialCommunityIcons name="cancel" size={20} color={c.redText} />
                     <View style={{ marginLeft: 12, flex: 1 }}>
-                        <Text variant="labelMedium" style={{ fontFamily: 'Inter_700Bold', color: theme.colors.error }}>
+                        <Text style={{ fontFamily: 'Inter_700Bold', color: c.redText, textTransform: 'uppercase', fontSize: 12, letterSpacing: 0.5 }}>
                             Delivery Cancelled
                         </Text>
-                        <Text variant="bodySmall" style={{ color: theme.colors.onErrorContainer }}>
+                        <Text style={{ color: c.redText, opacity: 0.8, fontSize: 13, fontFamily: 'Inter_500Medium' }}>
                             {formatCancellationReason(cancellation.reason)}
                         </Text>
                     </View>
                     {cancellation.packageRetrieved ? (
-                        <Chip compact icon="check" style={{ backgroundColor: '#E8F5E9' }}>Retrieved</Chip>
+                        <View style={{ backgroundColor: c.greenBg, paddingHorizontal: 10, paddingVertical: 4 }}>
+                            <Text style={{ color: c.greenText, fontFamily: 'Inter_700Bold', fontSize: 11, textTransform: 'uppercase' }}>Retrieved</Text>
+                        </View>
                     ) : (
-                        <Chip compact icon="clock-outline" style={{ backgroundColor: '#FFF3E0' }}>Pending</Chip>
+                        <View style={{ backgroundColor: c.orangeBg, paddingHorizontal: 10, paddingVertical: 4 }}>
+                            <Text style={{ color: c.orangeText, fontFamily: 'Inter_700Bold', fontSize: 11, textTransform: 'uppercase' }}>Pending</Text>
+                        </View>
                     )}
                 </View>
             </Surface>
@@ -65,15 +95,15 @@ export default function CancellationStatusCard({
     }
 
     return (
-        <Surface style={[styles.container, { backgroundColor: theme.colors.surface }]} elevation={2}>
+        <Surface style={[styles.container, { backgroundColor: c.card, borderWidth: 1, borderColor: c.border }]} elevation={0}>
             {/* Header */}
-            <View style={[styles.header, { backgroundColor: theme.colors.errorContainer }]}>
-                <MaterialCommunityIcons name="alert-circle" size={32} color={theme.colors.error} />
+            <View style={[styles.header, { backgroundColor: c.redBg, borderBottomWidth: 1, borderBottomColor: c.redText }]}>
+                <MaterialCommunityIcons name="alert-circle" size={32} color={c.redText} />
                 <View style={{ marginLeft: 12, flex: 1 }}>
-                    <Text variant="titleMedium" style={{ fontFamily: 'Inter_700Bold', color: theme.colors.error }}>
+                    <Text style={{ fontFamily: 'Inter_900Black', color: c.redText, textTransform: 'uppercase', fontSize: 16, letterSpacing: 1 }}>
                         Delivery Cancelled
                     </Text>
-                    <Text variant="bodySmall" style={{ color: theme.colors.onErrorContainer }}>
+                    <Text style={{ color: c.redText, fontFamily: 'Inter_500Medium', fontSize: 13, opacity: 0.9 }}>
                         {formatCancellationReason(cancellation.reason)}
                         {cancellation.reasonDetails ? ` - ${cancellation.reasonDetails}` : ''}
                     </Text>
@@ -85,18 +115,18 @@ export default function CancellationStatusCard({
                 {/* Rider Info (for customer view) */}
                 {variant === 'customer' && cancellation.riderName && (
                     <View style={styles.detailRow}>
-                        <MaterialCommunityIcons name="motorbike" size={18} color={theme.colors.onSurfaceVariant} />
-                        <Text variant="bodySmall" style={{ marginLeft: 8, color: theme.colors.onSurfaceVariant }}>
-                            Cancelled by: <Text style={{ fontFamily: 'Inter_700Bold', color: theme.colors.onSurface }}>{cancellation.riderName}</Text>
+                        <MaterialCommunityIcons name="motorbike" size={18} color={c.textSec} />
+                        <Text style={{ marginLeft: 8, color: c.textSec, fontFamily: 'Inter_500Medium', fontSize: 13 }}>
+                            Cancelled by: <Text style={{ fontFamily: 'Inter_700Bold', color: c.text }}>{cancellation.riderName}</Text>
                         </Text>
                     </View>
                 )}
 
                 {/* Cancelled Time */}
                 <View style={styles.detailRow}>
-                    <MaterialCommunityIcons name="clock-outline" size={18} color={theme.colors.onSurfaceVariant} />
-                    <Text variant="bodySmall" style={{ marginLeft: 8, color: theme.colors.onSurfaceVariant }}>
-                        Cancelled at: <Text style={{ fontFamily: 'Inter_700Bold', color: theme.colors.onSurface }}>
+                    <MaterialCommunityIcons name="clock-outline" size={18} color={c.textSec} />
+                    <Text style={{ marginLeft: 8, color: c.textSec, fontFamily: 'Inter_500Medium', fontSize: 13 }}>
+                        Cancelled at: <Text style={{ fontFamily: 'Inter_700Bold', color: c.text }}>
                             {parseUTCString(cancellation.cancelledAt).toLocaleTimeString('en-US', { timeZone: 'Asia/Manila' })}
                         </Text>
                     </Text>
@@ -107,14 +137,14 @@ export default function CancellationStatusCard({
                     <MaterialCommunityIcons
                         name={cancellation.packageRetrieved ? 'check-circle' : 'package-variant'}
                         size={18}
-                        color={cancellation.packageRetrieved ? '#4CAF50' : theme.colors.onSurfaceVariant}
+                        color={cancellation.packageRetrieved ? c.greenText : c.textSec}
                     />
-                    <Text variant="bodySmall" style={{ marginLeft: 8, color: theme.colors.onSurfaceVariant }}>
+                    <Text style={{ marginLeft: 8, color: c.textSec, fontFamily: 'Inter_500Medium', fontSize: 13 }}>
                         Package: <Text style={{
                             fontFamily: 'Inter_700Bold',
-                            color: cancellation.packageRetrieved ? '#4CAF50' : theme.colors.primary
+                            color: cancellation.packageRetrieved ? c.greenText : c.text
                         }}>
-                            {cancellation.packageRetrieved ? 'Retrieved' : 'Awaiting Pickup'}
+                            {cancellation.packageRetrieved ? 'RETRIEVED' : 'AWAITING PICKUP'}
                         </Text>
                     </Text>
                 </View>
@@ -123,14 +153,14 @@ export default function CancellationStatusCard({
             {/* Return OTP Section */}
             {showReturnOtp && !cancellation.packageRetrieved && (
                 <View style={styles.otpSection}>
-                    <View style={styles.divider} />
+                    <View style={[styles.divider, { backgroundColor: c.border, height: 1, marginVertical: 16 }]} />
 
                     {variant === 'customer' ? (
                         <View style={styles.customerOtpInfo}>
-                            <Text variant="titleSmall" style={{ fontFamily: 'Inter_700Bold', marginBottom: 8, color: theme.colors.onSurface }}>
+                            <Text style={{ fontFamily: 'Inter_900Black', marginBottom: 8, color: c.text, textTransform: 'uppercase', letterSpacing: 0.5 }}>
                                 Package Return Instructions
                             </Text>
-                            <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant, marginBottom: 16 }}>
+                            <Text style={{ color: c.textSec, marginBottom: 16, fontFamily: 'Inter_500Medium', fontSize: 13, lineHeight: 18 }}>
                                 The rider will return your package to the pickup location. Use the code below to unlock the box and retrieve your package.
                             </Text>
 
@@ -141,22 +171,24 @@ export default function CancellationStatusCard({
                         </View>
                     ) : (
                         <View style={styles.riderOtpInfo}>
-                            <Text variant="titleSmall" style={{ fontFamily: 'Inter_700Bold', marginBottom: 8, color: theme.colors.onSurface }}>
+                            <Text style={{ fontFamily: 'Inter_900Black', marginBottom: 8, color: c.text, textTransform: 'uppercase', letterSpacing: 0.5 }}>
                                 Package Return Instructions
                             </Text>
-                            <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant, marginBottom: 12 }}>
+                            <Text style={{ color: c.textSec, marginBottom: 20, fontFamily: 'Inter_500Medium', fontSize: 13, lineHeight: 18 }}>
                                 Please return the package to the pickup location. The sender will receive a Return OTP to unlock the box once you arrive.
                             </Text>
 
                             {onNavigateToReturn && (
-                                <Button
-                                    mode="contained"
+                                <TouchableOpacity 
+                                    activeOpacity={0.8}
+                                    style={{ padding: 16, backgroundColor: c.text, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 }}
                                     onPress={onNavigateToReturn}
-                                    style={{ marginTop: 16 }}
-                                    icon="navigation"
                                 >
-                                    Navigate to Return Location
-                                </Button>
+                                    <MaterialCommunityIcons name="navigation" size={20} color={c.bg} />
+                                    <Text style={{ fontFamily: 'Inter_700Bold', color: c.bg, textTransform: 'uppercase', fontSize: 14 }}>
+                                        Navigate to Return Location
+                                    </Text>
+                                </TouchableOpacity>
                             )}
                         </View>
                     )}
@@ -165,20 +197,20 @@ export default function CancellationStatusCard({
 
             {/* Package Retrieved Success */}
             {cancellation.packageRetrieved && (
-                <View style={[styles.retrievedBanner, { backgroundColor: theme.dark ? '#1B5E20' : '#E8F5E9' }]}>
-                    <MaterialCommunityIcons name="check-decagram" size={24} color="#4CAF50" />
-                    <Text variant="bodyMedium" style={{ marginLeft: 12, color: '#4CAF50', fontFamily: 'Inter_700Bold' }}>
-                        Package Retrieved Successfully
+                <View style={[styles.retrievedBanner, { backgroundColor: c.greenBg }]}>
+                    <MaterialCommunityIcons name="check-decagram" size={24} color={c.greenText} />
+                    <Text style={{ marginLeft: 12, color: c.greenText, fontFamily: 'Inter_900Black', fontSize: 14, textTransform: 'uppercase' }}>
+                        Package Retrieved
                     </Text>
                 </View>
             )}
 
             {/* OTP Expired Warning */}
             {!cancellation.packageRetrieved && !isOtpValid && (
-                <View style={[styles.expiredBanner, { backgroundColor: theme.colors.errorContainer }]}>
-                    <MaterialCommunityIcons name="clock-alert" size={20} color={theme.colors.error} />
-                    <Text variant="bodySmall" style={{ marginLeft: 8, color: theme.colors.error }}>
-                        Return OTP has expired. Please contact support.
+                <View style={[styles.expiredBanner, { backgroundColor: c.redBg, padding: 12, flexDirection: 'row', alignItems: 'center' }]}>
+                    <MaterialCommunityIcons name="clock-alert" size={20} color={c.redText} />
+                    <Text style={{ marginLeft: 8, color: c.redText, fontFamily: 'Inter_700Bold', fontSize: 13, textTransform: 'uppercase' }}>
+                        Return OTP EXPIRED. Contact Support.
                     </Text>
                 </View>
             )}
@@ -188,7 +220,7 @@ export default function CancellationStatusCard({
 
 const styles = StyleSheet.create({
     container: {
-        borderRadius: 16,
+        borderRadius: 0,
         overflow: 'hidden',
     },
     header: {
@@ -198,7 +230,6 @@ const styles = StyleSheet.create({
     },
     details: {
         padding: 16,
-        paddingTop: 12,
     },
     detailRow: {
         flexDirection: 'row',

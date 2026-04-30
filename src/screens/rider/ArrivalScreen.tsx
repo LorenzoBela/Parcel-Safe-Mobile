@@ -1289,11 +1289,11 @@ export default function ArrivalScreen() {
     // EC-78: Handle Reassignment Modal and Timer
     useEffect(() => {
         if (reassignmentState && isReassignmentPending(reassignmentState)) {
-            const type = getReassignmentType(reassignmentState, riderId);
+            const type = getReassignmentType(reassignmentState, riderId || '');
             if (type) {
                 setShowReassignmentModal(true);
                 // Start auto-ack timer associated with this screen's context
-                const cleanup = startAutoAckTimer(params.boxId || 'BOX_001', riderId, reassignmentState, () => {
+                const cleanup = startAutoAckTimer(params.boxId || 'BOX_001', riderId || '', reassignmentState, () => {
                     handlePostAcknowledge(type);
                 });
                 return cleanup;
@@ -1305,8 +1305,8 @@ export default function ArrivalScreen() {
 
     const handleReassignmentAcknowledge = async () => {
         if (reassignmentState) {
-            await acknowledgeReassignment(params.boxId || 'BOX_001', riderId);
-            const type = getReassignmentType(reassignmentState, riderId);
+            await acknowledgeReassignment(params.boxId || 'BOX_001', riderId || '');
+            const type = getReassignmentType(reassignmentState, riderId || '');
             handlePostAcknowledge(type);
         }
     };
@@ -1706,10 +1706,10 @@ export default function ArrivalScreen() {
                     isPickupConfirmed ? (
                         isReturning ? (
                             // ── EC-32: Return Journey Card ──────────────────────────────────────────
-                            <Card style={{ margin: 16, borderRadius: 12, backgroundColor: c.card, overflow: 'hidden' }} elevation={2}>
+                            <Card style={{ margin: 16, borderRadius: 0, borderWidth: 3, borderColor: '#000', backgroundColor: '#fff', overflow: 'hidden' }} elevation={0}>
                                 {/* Map Preview */}
-                                <View style={{ height: 160, width: '100%', backgroundColor: '#e5e5e5', position: 'relative' }}>
-                                    {isMapboxNativeAvailable && currentPosition.lat !== 0 && params.pickupLng && params.pickupLat ? (
+                                <View style={{ height: 160, width: '100%', backgroundColor: '#000', position: 'relative' }}>
+                                    {isMapboxNativeAvailable() && currentPosition.lat !== 0 && params.pickupLng && params.pickupLat ? (
                                         <MapboxGL.MapView
                                             style={{ flex: 1 }}
                                             logoEnabled={false}
@@ -1977,7 +1977,7 @@ export default function ArrivalScreen() {
                 <ReassignmentAlertModal
                     visible={showReassignmentModal}
                     state={reassignmentState}
-                    type={getReassignmentType(reassignmentState, riderId)}
+                    type={getReassignmentType(reassignmentState, riderId || '')}
                     onAcknowledge={handleReassignmentAcknowledge}
                 />
             </Animated.View>
@@ -2302,17 +2302,17 @@ const styles = StyleSheet.create({
     // Grace Period Card
     gracePeriodCard: {
         marginBottom: 16,
-        borderRadius: 12,
-        borderWidth: 2,
-        elevation: 2,
+        borderRadius: 0,
+        borderWidth: 3,
+        elevation: 0,
     },
     gracePeriodActive: {
-        borderColor: '#3b82f6',
-        backgroundColor: '#EFF6FF',
+        borderColor: '#000',
+        backgroundColor: '#fff',
     },
     gracePeriodExpired: {
-        borderColor: '#dc2626',
-        backgroundColor: '#FEF2F2',
+        borderColor: '#000',
+        backgroundColor: '#000',
     },
     gracePeriodHeader: {
         flexDirection: 'row',
@@ -2323,29 +2323,32 @@ const styles = StyleSheet.create({
         fontSize: 32,
     },
     gracePeriodTitle: {
-        fontSize: 14,
-        fontFamily: 'Inter_700Bold',
+        fontSize: 16,
+        fontFamily: 'Inter_900Black',
         color: '#1a1a1a',
         marginBottom: 2,
+        textTransform: 'uppercase',
     },
     gracePeriodSubtext: {
         fontSize: 12,
         color: '#6b7280',
+        fontWeight: 'bold',
     },
     gracePeriodTimerBox: {
         alignItems: 'center',
-        backgroundColor: 'white',
+        backgroundColor: 'black',
         paddingHorizontal: 12,
-        paddingVertical: 6,
-        borderRadius: 8,
-        borderWidth: 1,
-        borderColor: '#e5e7eb',
-        minWidth: 70,
+        paddingVertical: 10,
+        borderRadius: 0,
+        borderWidth: 2,
+        borderColor: '#000',
+        minWidth: 80,
     },
     gracePeriodTimer: {
-        fontSize: 20,
-        fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
-        color: '#1d4ed8',
+        fontSize: 22,
+        fontFamily: Platform.OS === 'ios' ? 'Courier-Bold' : 'monospace',
+        color: '#fff',
+        fontWeight: '900',
     },
     gracePeriodTimerLabel: {
         fontSize: 9,
@@ -2356,10 +2359,11 @@ const styles = StyleSheet.create({
     },
     batteryIncidentCard: {
         marginBottom: 16,
-        borderRadius: 12,
-        borderWidth: 2,
-        borderColor: '#dc2626',
-        backgroundColor: '#fff7f7',
+        borderRadius: 0,
+        borderWidth: 3,
+        borderColor: '#000',
+        backgroundColor: '#fff',
+        elevation: 0,
     },
     batteryIncidentHeader: {
         flexDirection: 'row',
@@ -2367,30 +2371,34 @@ const styles = StyleSheet.create({
         gap: 12,
     },
     batteryIncidentIcon: {
-        fontSize: 28,
+        fontSize: 32,
     },
     batteryIncidentTitle: {
-        fontSize: 14,
-        fontFamily: 'Inter_700Bold',
+        fontSize: 16,
+        fontFamily: 'Inter_900Black',
         marginBottom: 2,
+        textTransform: 'uppercase',
     },
     batteryIncidentSubtext: {
         fontSize: 12,
+        fontWeight: 'bold',
+        color: '#000',
     },
     batteryIncidentTimerBox: {
         alignItems: 'center',
-        backgroundColor: 'white',
+        backgroundColor: '#000',
         paddingHorizontal: 12,
-        paddingVertical: 6,
-        borderRadius: 8,
-        borderWidth: 1,
-        borderColor: '#fecaca',
-        minWidth: 70,
+        paddingVertical: 10,
+        borderRadius: 0,
+        borderWidth: 2,
+        borderColor: '#000',
+        minWidth: 80,
     },
     batteryIncidentTimer: {
-        fontSize: 20,
-        fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
-        color: '#dc2626',
+        fontSize: 22,
+        fontFamily: Platform.OS === 'ios' ? 'Courier-Bold' : 'monospace',
+        color: '#fff',
+        fontWeight: '900',
     },
     batteryIncidentTimerLabel: {
         fontSize: 9,
@@ -2402,10 +2410,11 @@ const styles = StyleSheet.create({
     // EC-FIX: GPS Acquisition Loading Gate styles
     gpsGateCard: {
         width: '100%',
-        borderRadius: 16,
-        borderWidth: 1,
+        borderWidth: 2,
         padding: 16,
-        elevation: 2,
+        elevation: 0,
+        borderRadius: 0,
+        backgroundColor: '#fff',
     },
     gpsGateRow: {
         flexDirection: 'row',
@@ -2413,7 +2422,8 @@ const styles = StyleSheet.create({
         paddingVertical: 12,
     },
     gpsGateDivider: {
-        height: 1,
+        height: 2,
         marginVertical: 2,
+        backgroundColor: '#000',
     },
 });
