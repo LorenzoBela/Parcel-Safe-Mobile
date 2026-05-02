@@ -68,7 +68,7 @@ import {
     subscribeToLockout,
     LockoutState,
     subscribeToBattery,
-    BatteryState,
+    DualBatteryState,
     subscribeToTamper,
     TamperState,
     // Lock Events (OTP + Face Detection from hardware)
@@ -281,7 +281,19 @@ export default function ArrivalScreen() {
     const [lockoutCountdown, setLockoutCountdown] = useState('');
 
     // EC-03: Battery State
-    const [batteryState, setBatteryState] = useState<BatteryState | null>(null);
+    const [batteryState, setBatteryState] = useState<DualBatteryState | null>(null);
+    const batteryMainPct = batteryState?.main?.percentage;
+    const batteryLockPct = batteryState?.secondary?.percentage;
+    const hasBatteryLow = Boolean(
+        batteryState?.main?.lowBatteryWarning || batteryState?.secondary?.lowBatteryWarning
+    );
+    const hasBatteryCritical = Boolean(
+        batteryState?.main?.criticalBatteryWarning || batteryState?.secondary?.criticalBatteryWarning
+    );
+    const batterySummary = [
+        batteryMainPct != null ? `MCU ${Math.round(batteryMainPct)}%` : null,
+        batteryLockPct != null ? `Lock ${Math.round(batteryLockPct)}%` : null,
+    ].filter(Boolean).join(' / ');
 
     // EC-18: Tamper State
     const [tamperState, setTamperState] = useState<TamperState | null>(null);
@@ -384,10 +396,17 @@ export default function ArrivalScreen() {
         // EC-03: Subscribe to battery state
         const unsubscribeBattery = subscribeToBattery(params.boxId, (state) => {
             setBatteryState(state);
-            if (state?.criticalBatteryWarning) {
+            const isCritical = Boolean(
+                state?.main?.criticalBatteryWarning || state?.secondary?.criticalBatteryWarning
+            );
+            if (isCritical) {
+                const summary = [
+                    state?.main?.percentage != null ? `MCU ${Math.round(state.main.percentage)}%` : null,
+                    state?.secondary?.percentage != null ? `Lock ${Math.round(state.secondary.percentage)}%` : null,
+                ].filter(Boolean).join(' / ');
                 PremiumAlert.alert(
                     '⚠️ Critical Battery',
-                    `Box battery is critically low (${state.percentage}%). Complete delivery quickly!`,
+                    `Box battery is critically low${summary ? ` (${summary})` : ''}. Complete delivery quickly!`,
                     [{ text: 'OK' }]
                 );
             }
@@ -1460,8 +1479,8 @@ export default function ArrivalScreen() {
         }
 
         // Battery
-        if (batteryState?.lowBatteryWarning) {
-            const isCritical = batteryState.criticalBatteryWarning;
+        if (hasBatteryLow) {
+            const isCritical = hasBatteryCritical;
             statuses.push(
                 <Card key="battery" style={[styles.statusPill, isCritical ? styles.statusPillError : styles.statusPillWarning]}>
                     <View style={styles.pillContent}>
@@ -1471,7 +1490,7 @@ export default function ArrivalScreen() {
                                 {isCritical ? 'CRITICAL' : 'BATTERY'}
                             </Text>
                             <Text style={[styles.pillText, isCritical ? styles.textError : styles.textWarning]}>
-                                {batteryState.percentage}%
+                                {batterySummary || '--'}
                             </Text>
                         </View>
                     </View>
@@ -1599,10 +1618,10 @@ export default function ArrivalScreen() {
                         </Text>
                     </View>
                 )}
-                {batteryState?.criticalBatteryWarning && (
+                {hasBatteryCritical && (
                     <View style={[styles.statusMessageContainer, styles.bgSubtleError, { marginTop: 16 }]}>
                         <Text style={[styles.statusMessageText, styles.textError]}>
-                            ⚠️ Smart Box Battery Critical ({batteryState.percentage}%)
+                            ⚠️ Smart Box Battery Critical ({batterySummary || '--'})
                         </Text>
                     </View>
                 )}
@@ -1667,7 +1686,7 @@ export default function ArrivalScreen() {
                     </Card>
                 )}
 
-                {isDropoffPhase && deliveryStatus === 'ARRIVED' && batteryState?.criticalBatteryWarning && (
+                {isDropoffPhase && deliveryStatus === 'ARRIVED' && hasBatteryCritical && (
                     <Card style={[styles.batteryIncidentCard, { backgroundColor: c.card, borderColor: c.border }]}>
                         <Card.Content>
                             <View style={styles.batteryIncidentHeader}>

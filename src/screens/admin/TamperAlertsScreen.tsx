@@ -25,6 +25,20 @@ const darkC = {
     overlay: 'rgba(20,20,20,0.95)', alertBorder: '#3C1515',
 };
 
+const toNumber = (value: unknown): number | null => {
+    if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+    if (typeof value === 'string') {
+        const parsed = Number(value);
+        return Number.isFinite(parsed) ? parsed : null;
+    }
+    return null;
+};
+
+const hasValidLocation = (lat: number | null, lng: number | null): boolean => {
+    if (lat == null || lng == null) return false;
+    return lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180;
+};
+
 interface AuditLog {
     id: string;
     action: string;
@@ -81,10 +95,14 @@ export default function TamperAlertsScreen() {
             .filter(([, status]) => status.tamper?.detected || status.tamper?.lockdown)
             .map(([id, status]) => {
                 const loc = locations?.[id];
+                const lat = toNumber(loc?.latitude);
+                const lng = toNumber(loc?.longitude);
+                const hasLocation = hasValidLocation(lat, lng);
                 return {
                     id,
-                    lat: loc?.latitude ?? 0,
-                    lng: loc?.longitude ?? 0,
+                    lat,
+                    lng,
+                    hasLocation,
                     status: 'TAMPERED' as const,
                     reportedAt: (status.tamper as any)?.timestamp_str || new Date().toISOString(),
                 };
@@ -93,15 +111,18 @@ export default function TamperAlertsScreen() {
 
     useEffect(() => {
         if (activeBoxes.length > 0 && cameraCenter[0] === DEFAULT_CENTER[0] && cameraCenter[1] === DEFAULT_CENTER[1]) {
-            setCameraCenter([activeBoxes[0].lng, activeBoxes[0].lat]);
-            setCameraZoom(14);
+            const firstWithLocation = activeBoxes.find((b) => b.hasLocation);
+            if (firstWithLocation?.lat != null && firstWithLocation?.lng != null) {
+                setCameraCenter([firstWithLocation.lng, firstWithLocation.lat]);
+                setCameraZoom(14);
+            }
         }
     }, [activeBoxes, cameraCenter]);
 
     const selectBox = (boxId: string) => {
         setSelectedBoxId(boxId);
         const box = activeBoxes.find((b) => b.id === boxId);
-        if (box) {
+        if (box?.hasLocation && box.lat != null && box.lng != null) {
             setCameraCenter([box.lng, box.lat]);
             setCameraZoom(15);
         }
@@ -144,7 +165,7 @@ export default function TamperAlertsScreen() {
         }
     };
 
-    const renderItem = ({ item }: { item: typeof activeBoxes[0] }) => (
+    const renderItem = ({ item }: { item: (typeof activeBoxes)[number] }) => (
         <View style={[styles.alertCard, { backgroundColor: c.card, borderColor: c.alertBorder }]}>
             <View style={[styles.alertIconWrap, { backgroundColor: isDarkMode ? '#3C1515' : '#FEE2E2' }]}>
                 <MaterialCommunityIcons name="shield-alert-outline" size={20} color={c.red} />
@@ -160,7 +181,9 @@ export default function TamperAlertsScreen() {
                     When: {formatPst(item.reportedAt)} PST
                 </Text>
                 <Text style={[styles.alertBody, { color: c.textSec }]}>
-                    Where: {item.lat.toFixed(5)}, {item.lng.toFixed(5)}
+                    Where: {item.hasLocation && item.lat != null && item.lng != null
+                        ? `${item.lat.toFixed(5)}, ${item.lng.toFixed(5)}`
+                        : 'Unknown'}
                 </Text>
                 <Text style={[styles.alertBody, { color: c.textSec }]}>
                     Unauthorized lid open or lock bypass.
@@ -180,13 +203,14 @@ export default function TamperAlertsScreen() {
         </View>
     );
 
+    const mapBoxes = activeBoxes.filter((b) => b.hasLocation && b.lat != null && b.lng != null);
     const featureCollection = {
         type: 'FeatureCollection',
-        features: activeBoxes.map(b => ({
+        features: mapBoxes.map(b => ({
             type: 'Feature',
             id: b.id,
             properties: { id: b.id, selected: b.id === selectedBoxId },
-            geometry: { type: 'Point', coordinates: [b.lng, b.lat] },
+            geometry: { type: 'Point', coordinates: [b.lng!, b.lat!] },
         })),
     };
 

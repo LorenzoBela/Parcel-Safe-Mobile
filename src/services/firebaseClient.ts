@@ -175,6 +175,12 @@ export interface HardwareDiagnostics {
     batt_v?: number;
     /** Low battery flag */
     batt_low?: boolean;
+    /** Locks Battery Percentage 0-100 (Secondary/12V) */
+    batt_b_pct?: number;
+    /** Locks Battery Voltage */
+    batt_b_v?: number;
+    /** Locks Low battery flag */
+    batt_b_low?: boolean;
     /** Phone tracking sidecar diagnostics when phone GPS fallback is active */
     phone_status?: {
         data_bytes?: number;
@@ -232,18 +238,25 @@ export function subscribeToLocation(
                     source: rawData.phone.source || 'phone_background',
                 } as LocationData;
             }
-        } else if (rawData.latitude != null) {
+        } else if (
+            rawData.latitude != null || rawData.lat != null
+            || rawData.longitude != null || rawData.lng != null
+        ) {
             // Legacy flat structure from old firmware — route by source field
-            const data: LocationData = {
-                ...rawData,
-                latitude: Number(rawData.latitude ?? rawData.lat),
-                longitude: Number(rawData.longitude ?? rawData.lng),
-                source: rawData.source || 'box',
-            };
-            if (data.source === 'box') {
-                latestLocationsCache[boxId].box = data;
-            } else {
-                latestLocationsCache[boxId].phone = data;
+            const latitude = Number(rawData.latitude ?? rawData.lat);
+            const longitude = Number(rawData.longitude ?? rawData.lng);
+            if (Number.isFinite(latitude) && Number.isFinite(longitude)) {
+                const data: LocationData = {
+                    ...rawData,
+                    latitude,
+                    longitude,
+                    source: rawData.source || 'box',
+                };
+                if (data.source === 'box') {
+                    latestLocationsCache[boxId].box = data;
+                } else {
+                    latestLocationsCache[boxId].phone = data;
+                }
             }
         }
 
@@ -298,14 +311,21 @@ export function subscribeToAllLocations(
                 } as LocationData : null;
                 const best = consolidateLocation(boxLoc, phoneLoc) ?? boxLoc ?? phoneLoc;
                 if (best) normalized[boxId] = best;
-            } else if (entry.latitude != null) {
+            } else if (
+                entry.latitude != null || entry.lat != null
+                || entry.longitude != null || entry.lng != null
+            ) {
                 // Legacy flat structure
-                normalized[boxId] = {
-                    ...entry,
-                    latitude: Number(entry.latitude ?? entry.lat),
-                    longitude: Number(entry.longitude ?? entry.lng),
-                    source: entry.source || 'box',
-                } as LocationData;
+                const latitude = Number(entry.latitude ?? entry.lat);
+                const longitude = Number(entry.longitude ?? entry.lng);
+                if (Number.isFinite(latitude) && Number.isFinite(longitude)) {
+                    normalized[boxId] = {
+                        ...entry,
+                        latitude,
+                        longitude,
+                        source: entry.source || 'box',
+                    } as LocationData;
+                }
             }
         }
 
@@ -446,13 +466,20 @@ export async function fetchBoxLocationOnce(boxId: string): Promise<LocationData 
     }
 
     // Legacy flat structure
-    if (rawData.latitude != null) {
-        return {
-            ...rawData,
-            latitude: Number(rawData.latitude ?? rawData.lat),
-            longitude: Number(rawData.longitude ?? rawData.lng),
-            source: rawData.source || 'box',
-        } as LocationData;
+    if (
+        rawData.latitude != null || rawData.lat != null
+        || rawData.longitude != null || rawData.lng != null
+    ) {
+        const latitude = Number(rawData.latitude ?? rawData.lat);
+        const longitude = Number(rawData.longitude ?? rawData.lng);
+        if (Number.isFinite(latitude) && Number.isFinite(longitude)) {
+            return {
+                ...rawData,
+                latitude,
+                longitude,
+                source: rawData.source || 'box',
+            } as LocationData;
+        }
     }
 
     return null;
@@ -551,34 +578,60 @@ export interface BatteryState {
     timestamp: number;
 }
 
+export interface DualBatteryState {
+    main: BatteryState | null;      // Microcontrollers (7.5V)
+    secondary: BatteryState | null; // Locks (12V)
+}
+
 /**
  * Subscribe to box battery state updates.
- * Firmware writes flat fields (batt_v, batt_pct, batt_low) into hardware/{boxId}.
- * We derive the BatteryState from those fields here.
+ * Firmware writes flat fields (batt_v, batt_pct, batt_low and batt_b_*) into hardware/{boxId}.
+ * We derive the DualBatteryState from those fields here.
  */
 export function subscribeToBattery(
     boxId: string,
-    callback: (state: BatteryState | null) => void
+    callback: (state: DualBatteryState | null) => void
 ): () => void {
     const db = getFirebaseDatabase();
     const hwRef = ref(db, `hardware/${boxId}`);
 
     const unsubscribe = onValue(hwRef, (snapshot) => {
         const data = snapshot.val();
-        if (!data || data.batt_pct == null) {
+        if (!data) {
             callback(null);
             return;
         }
-        const pct: number = data.batt_pct;
-        const state: BatteryState = {
-            percentage: pct,
-            voltage: data.batt_v ?? 0,
-            charging: false,
-            lowBatteryWarning: pct < 20,
-            criticalBatteryWarning: pct < 10,
-            timestamp: data.last_updated ?? Date.now(),
-        };
-        callback(state);
+
+        let main: BatteryState | null = null;
+        if (data.batt_pct != null) {
+            main = {
+                percentage: data.batt_pct,
+                voltage: data.batt_v ?? 0,
+                charging: false,
+                lowBatteryWarning: data.batt_pct < 20,
+                criticalBatteryWarning: data.batt_pct < 10,
+                timestamp: data.last_updated ?? Date.now(),
+            };
+        }
+
+        let secondary: BatteryState | null = null;
+        if (data.batt_b_pct != null) {
+            secondary = {
+                percentage: data.batt_b_pct,
+                voltage: data.batt_b_v ?? 0,
+                charging: false,
+                lowBatteryWarning: data.batt_b_pct < 20,
+                criticalBatteryWarning: data.batt_b_pct < 10,
+                timestamp: data.last_updated ?? Date.now(),
+            };
+        }
+
+        if (!main && !secondary) {
+            callback(null);
+            return;
+        }
+
+        callback({ main, secondary });
     });
 
     return () => off(hwRef);

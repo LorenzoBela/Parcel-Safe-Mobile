@@ -19,7 +19,7 @@ import AnimatedRiderMarker from '../../components/map/AnimatedRiderMarker';
 import LottieView from 'lottie-react-native';
 import { useLocationRedundancy, getStatusMessage, getStatusColor } from '../../hooks/useLocationRedundancy';
 import { useSecurityAlerts } from '../../hooks/useSecurityAlerts';
-import { subscribeToBattery, BatteryState, subscribeToTamper, TamperState, subscribeToLocation, LocationData, subscribeToKeypad, KeypadState, subscribeToHinge, HingeState, subscribeToBoxState, BoxState, updateBoxState, writePhoneLocation, updateLivePhoneCompassHeading } from '../../services/firebaseClient';
+import { subscribeToBattery, DualBatteryState, subscribeToTamper, TamperState, subscribeToLocation, LocationData, subscribeToKeypad, KeypadState, subscribeToHinge, HingeState, subscribeToBoxState, BoxState, updateBoxState, writePhoneLocation, updateLivePhoneCompassHeading } from '../../services/firebaseClient';
 import {
     verifyRiderBiometricForUnlock,
     verifyRiderPersonalPinForUnlock,
@@ -517,7 +517,16 @@ export default function RiderDashboard() {
     const [routeGeometry, setRouteGeometry] = useState<any>(null);
 
     // EC-03: Battery Monitoring
-    const [batteryState, setBatteryState] = useState<BatteryState | null>(null);
+    const [batteryState, setBatteryState] = useState<DualBatteryState | null>(null);
+    const batteryMainPct = batteryState?.main?.percentage;
+    const batteryLockPct = batteryState?.secondary?.percentage;
+    const batteryWorstPct = batteryMainPct == null && batteryLockPct == null
+        ? null
+        : Math.min(batteryMainPct ?? 100, batteryLockPct ?? 100);
+    const batterySummary = [
+        batteryMainPct != null ? `MCU ${Math.round(batteryMainPct)}%` : null,
+        batteryLockPct != null ? `Lock ${Math.round(batteryLockPct)}%` : null,
+    ].filter(Boolean).join(' / ');
 
     // EC-18: Tamper Detection
     const [tamperState, setTamperState] = useState<TamperState | null>(null);
@@ -1215,17 +1224,27 @@ export default function RiderDashboard() {
         const unsubscribeBattery = monitorBoxId ? subscribeToBattery(monitorBoxId, (state) => {
             setBatteryState(state);
 
-            // Show alert on low battery
-            if (state?.lowBatteryWarning && !state?.criticalBatteryWarning) {
+            const isLow = Boolean(
+                state?.main?.lowBatteryWarning || state?.secondary?.lowBatteryWarning
+            );
+            const isCritical = Boolean(
+                state?.main?.criticalBatteryWarning || state?.secondary?.criticalBatteryWarning
+            );
+            const summary = [
+                state?.main?.percentage != null ? `MCU ${Math.round(state.main.percentage)}%` : null,
+                state?.secondary?.percentage != null ? `Lock ${Math.round(state.secondary.percentage)}%` : null,
+            ].filter(Boolean).join(' / ');
+
+            if (isLow && !isCritical) {
                 PremiumAlert.alert(
                     'Low Battery Warning',
-                    `Box battery is at ${state.percentage}%. Consider completing current delivery soon.`,
+                    `Box battery is low${summary ? ` (${summary})` : ''}. Consider completing current delivery soon.`,
                     [{ text: 'OK' }]
                 );
-            } else if (state?.criticalBatteryWarning) {
+            } else if (isCritical) {
                 PremiumAlert.alert(
                     '⚠️ Critical Battery',
-                    `Box battery is critically low at ${state.percentage}%! Delivery may fail if battery dies.`,
+                    `Box battery is critically low${summary ? ` (${summary})` : ''}! Delivery may fail if battery dies.`,
                     [{ text: 'Understood' }]
                 );
             }
@@ -2250,7 +2269,7 @@ export default function RiderDashboard() {
     }, [isOnline, riderLocation, metersBetween]);
 
     useEffect(() => {
-        const pct = batteryState?.percentage;
+        const pct = batteryWorstPct;
 
         if (pct == null) {
             setBatteryEtaLabel('No Data');
@@ -2307,7 +2326,7 @@ export default function RiderDashboard() {
         const remainingPct = Math.max(0, pct - reservePct);
         const hoursToReserve = remainingPct / drainPerHour;
         setBatteryEtaLabel(formatBatteryEta(hoursToReserve));
-    }, [batteryState?.percentage]);
+    }, [batteryWorstPct]);
 
     const onlineSessionMs = onlineSessionStartedAt ? Math.max(0, currentTime.valueOf() - onlineSessionStartedAt) : 0;
     const onlineSessionLabel = isOnline && onlineSessionStartedAt
@@ -2346,7 +2365,7 @@ export default function RiderDashboard() {
 
 
     const boxStatus = {
-        battery: batteryState?.percentage ? batteryState.percentage / 100 : 0,
+        battery: batteryWorstPct != null ? batteryWorstPct / 100 : 0,
         connection: boxState?.connection || 'Offline',
         signal: boxState?.rssi ? `${boxState.rssi} dBm` : 'No Signal',
     };
@@ -2362,8 +2381,8 @@ export default function RiderDashboard() {
     // EC-03: Get battery icon based on level
     // EC-03: Get battery icon based on level
     const getBatteryIcon = () => {
-        if (!batteryState) return 'battery-unknown';
-        const pct = batteryState.percentage;
+        if (batteryWorstPct == null) return 'battery-unknown';
+        const pct = batteryWorstPct;
         if (pct > 80) return 'battery';
         if (pct > 60) return 'battery-70';
         if (pct > 40) return 'battery-50';
@@ -2372,8 +2391,8 @@ export default function RiderDashboard() {
     };
 
     const getBatteryColor = () => {
-        if (!batteryState) return '#9E9E9E';
-        const pct = batteryState.percentage;
+        if (batteryWorstPct == null) return '#9E9E9E';
+        const pct = batteryWorstPct;
         if (pct > 20) return '#2196F3';
         if (pct > 10) return '#FF9800';
         return '#F44336';
@@ -2980,8 +2999,8 @@ export default function RiderDashboard() {
                                 {batteryEtaLabel}
                             </Text>
                             <Text style={[styles.metricHint, { color: c.textSec }]}>
-                                {batteryState?.percentage != null
-                                    ? `${batteryState.percentage}% remaining (to 10%)`
+                                {batterySummary
+                                    ? `${batterySummary} remaining (to 10%)`
                                     : 'Waiting for live battery data'}
                             </Text>
                         </Animated.View>
@@ -3378,7 +3397,7 @@ export default function RiderDashboard() {
                                     style={styles.progressBar}
                                 />
                                 <Text variant="labelSmall" style={{ marginLeft: 8, fontFamily: 'Inter_700Bold', color: isPaired ? getBatteryColor() : c.textSec }}>
-                                    {isPaired ? (batteryState ? `${batteryState.percentage}%` : 'Syncing...') : '--%'}
+                                    {isPaired ? (batterySummary || 'Syncing...') : '--%'}
                                 </Text>
                             </View>
                         </View>

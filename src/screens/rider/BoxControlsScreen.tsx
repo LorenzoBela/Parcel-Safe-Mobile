@@ -35,6 +35,7 @@ import { useNavigation, useRoute } from '@react-navigation/native';
 import {
     subscribeToBattery,
     BatteryState,
+    DualBatteryState,
     subscribeToTamper,
     TamperState,
     subscribeToBoxState,
@@ -111,8 +112,8 @@ export default function BoxControlsScreen() {
     const [cachedBoxId, setCachedBoxId] = useState<string | null>(null);
     const [boxState, setBoxState] = useState<BoxState | null>(null);
 
-    // EC-03: Battery Monitoring State
-    const [batteryState, setBatteryState] = useState<BatteryState | null>(null);
+    // EC-03: Battery Monitoring State (dual-channel: MCU 7.5V + Lock 12V)
+    const [batteryState, setBatteryState] = useState<DualBatteryState | null>(null);
 
     // EC-18: Tamper Detection State
     const [tamperState, setTamperState] = useState<TamperState | null>(null);
@@ -251,7 +252,7 @@ export default function BoxControlsScreen() {
     const firmwareTimestamp: number | undefined =
         rawBoxState?.last_updated ?? boxState?.last_heartbeat;
     const telemetry = {
-        voltage: batteryState ? `${batteryState.voltage.toFixed(1)}V` : '-- V',
+        voltage: batteryState?.main ? `${batteryState.main.voltage.toFixed(1)}V` : '-- V',
         // gps_fix is a JSON boolean written by the firmware under hardware/{boxId}
         gps: hwDiag?.gps_fix === true ? 'Fixed' : hwDiag?.gps_fix === false ? 'No Fix' : '--',
         // rssi is a dBm integer; -999 means modem offline / CSQ unknown
@@ -328,9 +329,8 @@ export default function BoxControlsScreen() {
         addLog("Control Panel accessed", "info");
         addLog("Telemetry stream connected", "success");
 
-        // EC-03: Subscribe to battery state
+        // EC-03: Subscribe to battery state (dual-channel)
         const unsubscribeBattery = subscribeToBattery(boxId, (state) => {
-            setBatteryState(state);
             setBatteryState(state);
         });
 
@@ -1080,10 +1080,12 @@ export default function BoxControlsScreen() {
         bleOtpService.stopScan();
     };
 
-    // EC-03: Get battery color
+    // EC-03: Get battery color (uses worst of MCU/Lock)
     const getBatteryColor = () => {
         if (batteryState == null) return c.textTer;
-        const pct = batteryState.percentage;
+        const mainPct = batteryState.main?.percentage ?? 100;
+        const lockPct = batteryState.secondary?.percentage ?? 100;
+        const pct = Math.min(mainPct, lockPct);
         if (pct > 20) return c.greenText;
         if (pct > 10) return c.orangeText;
         return c.redText;
@@ -1091,7 +1093,9 @@ export default function BoxControlsScreen() {
 
     const getBatteryIcon = () => {
         if (batteryState == null) return 'battery-unknown';
-        const pct = batteryState.percentage;
+        const mainPct = batteryState.main?.percentage ?? 100;
+        const lockPct = batteryState.secondary?.percentage ?? 100;
+        const pct = Math.min(mainPct, lockPct);
         if (pct > 80) return 'battery';
         if (pct > 60) return 'battery-70';
         if (pct > 40) return 'battery-50';
@@ -1291,19 +1295,22 @@ export default function BoxControlsScreen() {
                 )}
 
                 {/* EC-03: Low Battery Warning Banner */}
-                {isPaired && batteryState?.lowBatteryWarning && (
-                    <Surface style={[styles.warningBanner, { backgroundColor: batteryState.criticalBatteryWarning ? c.redBg : c.orangeBg, borderLeftWidth: 4, borderLeftColor: batteryState.criticalBatteryWarning ? c.redText : c.orangeText }]} elevation={isDarkMode ? 0 : 3}>
+                {isPaired && (batteryState?.main?.lowBatteryWarning || batteryState?.secondary?.lowBatteryWarning) && (
+                    <Surface style={[styles.warningBanner, { backgroundColor: (batteryState?.main?.criticalBatteryWarning || batteryState?.secondary?.criticalBatteryWarning) ? c.redBg : c.orangeBg, borderLeftWidth: 4, borderLeftColor: (batteryState?.main?.criticalBatteryWarning || batteryState?.secondary?.criticalBatteryWarning) ? c.redText : c.orangeText }]} elevation={isDarkMode ? 0 : 3}>
                         <MaterialCommunityIcons
                             name="battery-alert"
                             size={24}
-                            color={batteryState.criticalBatteryWarning ? c.redText : c.orangeText}
+                            color={(batteryState?.main?.criticalBatteryWarning || batteryState?.secondary?.criticalBatteryWarning) ? c.redText : c.orangeText}
                         />
                         <View style={{ flex: 1, marginLeft: 12 }}>
-                            <Text style={[styles.warningTitle, { color: batteryState.criticalBatteryWarning ? c.redText : c.orangeText }]}>
-                                {batteryState.criticalBatteryWarning ? '🔴 CRITICAL BATTERY' : '🟡 LOW BATTERY'}
+                            <Text style={[styles.warningTitle, { color: (batteryState?.main?.criticalBatteryWarning || batteryState?.secondary?.criticalBatteryWarning) ? c.redText : c.orangeText }]}>
+                                {(batteryState?.main?.criticalBatteryWarning || batteryState?.secondary?.criticalBatteryWarning) ? '🔴 CRITICAL BATTERY' : '🟡 LOW BATTERY'}
                             </Text>
                             <Text style={[styles.warningText, { color: c.textSec }]}>
-                                Battery at {batteryState.percentage}% - {batteryState.criticalBatteryWarning ? 'Charge immediately!' : 'Charge soon'}
+                                {batteryState?.main?.lowBatteryWarning ? `MCU at ${batteryState.main.percentage}%` : ''}
+                                {batteryState?.main?.lowBatteryWarning && batteryState?.secondary?.lowBatteryWarning ? ' · ' : ''}
+                                {batteryState?.secondary?.lowBatteryWarning ? `Lock at ${batteryState.secondary.percentage}%` : ''}
+                                {' - '}{(batteryState?.main?.criticalBatteryWarning || batteryState?.secondary?.criticalBatteryWarning) ? 'Charge immediately!' : 'Charge soon'}
                             </Text>
                         </View>
                     </Surface>
@@ -1372,9 +1379,15 @@ export default function BoxControlsScreen() {
                 <View style={[styles.telemetryCard, { backgroundColor: c.card, borderColor: c.border, borderWidth: isDarkMode ? 1 : 0 }]}>
                     <TelemetryItem
                         icon={isPaired ? getBatteryIcon() : "battery-unknown"}
-                        label="Battery"
-                        value={isPaired ? (batteryState ? `${batteryState.percentage}%` : '--') : '--%'}
+                        label="MCU Battery"
+                        value={isPaired ? (batteryState?.main ? `${batteryState.main.percentage}%` : '--') : '--%'}
                         color={isPaired ? getBatteryColor() : c.textTer}
+                    />
+                    <TelemetryItem
+                        icon={isPaired ? (batteryState?.secondary ? (batteryState.secondary.percentage > 20 ? 'battery' : 'battery-alert') : 'battery-unknown') : 'battery-unknown'}
+                        label="Lock Battery"
+                        value={isPaired ? (batteryState?.secondary ? `${batteryState.secondary.percentage}%` : '--') : '--%'}
+                        color={isPaired ? (batteryState?.secondary ? (batteryState.secondary.percentage > 20 ? c.greenText : (batteryState.secondary.percentage > 10 ? c.orangeText : c.redText)) : c.textTer) : c.textTer}
                     />
                     <TelemetryItem
                         icon={isPaired ? (hwDiag?.gps_fix ? 'satellite-variant' : 'crosshairs-question') : 'crosshairs-gps'}
@@ -1723,16 +1736,37 @@ export default function BoxControlsScreen() {
                                 <MaterialCommunityIcons name="battery-charging-medium" size={20} color={c.textSec} />
                             </View>
                             <View style={styles.diagInfo}>
-                                <Text style={[styles.diagTitle, { color: c.text }]}>Battery</Text>
+                                <Text style={[styles.diagTitle, { color: c.text }]}>MCU Battery</Text>
                                 <Text style={{ fontSize: 12, color: c.textSec }}>
                                     {isPaired 
-                                        ? `${batteryState?.percentage ?? hwDiag?.batt_pct ?? '--'}% remaining`
+                                        ? `${batteryState?.main?.percentage ?? hwDiag?.batt_pct ?? '--'}% remaining`
                                         : 'Requires pairing'}
                                 </Text>
                             </View>
                             <View style={[styles.diagBadge, { backgroundColor: c.search }]}>
                                 <Text style={[styles.diagBadgeText, { color: c.text }]}>
-                                    {isPaired ? `${(hwDiag?.batt_v ?? batteryState?.voltage ?? 0).toFixed(1)} V` : '--'}
+                                    {isPaired ? `${(hwDiag?.batt_v ?? batteryState?.main?.voltage ?? 0).toFixed(1)} V` : '--'}
+                                </Text>
+                            </View>
+                        </View>
+
+                        <Divider style={[styles.divider, { backgroundColor: c.divider }]} />
+
+                        <View style={styles.diagRow}>
+                            <View style={[styles.iconContainer, { backgroundColor: c.search }]}>
+                                <MaterialCommunityIcons name="battery-lock" size={20} color={c.textSec} />
+                            </View>
+                            <View style={styles.diagInfo}>
+                                <Text style={[styles.diagTitle, { color: c.text }]}>Lock Battery</Text>
+                                <Text style={{ fontSize: 12, color: c.textSec }}>
+                                    {isPaired 
+                                        ? `${batteryState?.secondary?.percentage ?? '--'}% remaining`
+                                        : 'Requires pairing'}
+                                </Text>
+                            </View>
+                            <View style={[styles.diagBadge, { backgroundColor: c.search }]}>
+                                <Text style={[styles.diagBadgeText, { color: c.text }]}>
+                                    {isPaired ? `${(batteryState?.secondary?.voltage ?? 0).toFixed(1)} V` : '--'}
                                 </Text>
                             </View>
                         </View>

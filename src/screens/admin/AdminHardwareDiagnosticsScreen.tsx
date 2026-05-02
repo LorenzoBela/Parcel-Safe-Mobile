@@ -138,9 +138,18 @@ function formatSignal(hw: HardwareDiagnostics): string {
 }
 
 function formatBattery(hw: HardwareDiagnostics): string {
-    if (typeof hw.batt_pct === 'number') return `${Math.round(hw.batt_pct)}%`;
-    if (typeof hw.batt_v === 'number') return `${hw.batt_v.toFixed(2)} V`;
-    return 'N/A';
+    const mainPct = typeof hw.batt_pct === 'number' ? Math.round(hw.batt_pct) : null;
+    const lockPct = typeof hw.batt_b_pct === 'number' ? Math.round(hw.batt_b_pct) : null;
+    const mainVal = mainPct != null
+        ? `${mainPct}%`
+        : (typeof hw.batt_v === 'number' ? `${hw.batt_v.toFixed(2)} V` : null);
+    const lockVal = lockPct != null
+        ? `${lockPct}%`
+        : (typeof hw.batt_b_v === 'number' ? `${hw.batt_b_v.toFixed(2)} V` : null);
+
+    if (!mainVal && !lockVal) return 'N/A';
+    if (mainVal && lockVal) return `MCU ${mainVal} / Lock ${lockVal}`;
+    return mainVal ? `MCU ${mainVal}` : `Lock ${lockVal}`;
 }
 
 function formatGeo(hw: HardwareDiagnostics): string {
@@ -223,7 +232,10 @@ export default function AdminHardwareDiagnosticsScreen() {
                 const theftState = normalizeTheftState(hw);
                 const stale = isStaleHeartbeat(hw);
                 const securityAlert = hasSecurityAlert(hw, theftState);
-                const powerAlert = hw.batt_low === true || (typeof hw.batt_pct === 'number' && hw.batt_pct <= 15);
+                const powerAlert = hw.batt_low === true
+                    || hw.batt_b_low === true
+                    || (typeof hw.batt_pct === 'number' && hw.batt_pct <= 15)
+                    || (typeof hw.batt_b_pct === 'number' && hw.batt_b_pct <= 15);
 
                 return {
                     boxId,
@@ -270,16 +282,22 @@ export default function AdminHardwareDiagnosticsScreen() {
     const alertCount = useMemo(() => rows.filter((row) => row.hasAlert).length, [rows]);
     const onlineCount = useMemo(() => rows.filter((row) => !row.isStale).length, [rows]);
     const avgBattery = useMemo(() => {
-        const batteries = rows
+        const mainBatteries = rows
             .map((row) => row.hw.batt_pct)
             .filter((value): value is number => typeof value === 'number' && Number.isFinite(value));
+        const lockBatteries = rows
+            .map((row) => row.hw.batt_b_pct)
+            .filter((value): value is number => typeof value === 'number' && Number.isFinite(value));
 
-        if (batteries.length === 0) {
-            return 'N/A';
-        }
+        const getAverage = (values: number[]) =>
+            values.reduce((sum, value) => sum + value, 0) / values.length;
 
-        const avg = batteries.reduce((sum, value) => sum + value, 0) / batteries.length;
-        return `${Math.round(avg)}%`;
+        const mainAvg = mainBatteries.length > 0 ? Math.round(getAverage(mainBatteries)) : null;
+        const lockAvg = lockBatteries.length > 0 ? Math.round(getAverage(lockBatteries)) : null;
+
+        if (mainAvg == null && lockAvg == null) return 'N/A';
+        if (mainAvg != null && lockAvg != null) return `MCU ${mainAvg}% / Lock ${lockAvg}%`;
+        return mainAvg != null ? `MCU ${mainAvg}%` : `Lock ${lockAvg}%`;
     }, [rows]);
 
     const selectedRow = useMemo(
@@ -559,16 +577,28 @@ export default function AdminHardwareDiagnosticsScreen() {
                                     <View style={[styles.detailSection, { borderColor: c.border, backgroundColor: c.search }]}> 
                                         <Text style={[styles.detailSectionTitle, { color: c.text }]}>Power & Security</Text>
                                         <View style={styles.detailLine}>
-                                            <Text style={[styles.detailKey, { color: c.textSec }]}>Battery %</Text>
+                                            <Text style={[styles.detailKey, { color: c.textSec }]}>MCU Battery %</Text>
                                             <Text style={[styles.detailValue, { color: c.text }]}>{typeof selectedRow.hw.batt_pct === 'number' ? `${Math.round(selectedRow.hw.batt_pct)}%` : 'N/A'}</Text>
                                         </View>
                                         <View style={styles.detailLine}>
-                                            <Text style={[styles.detailKey, { color: c.textSec }]}>Battery V</Text>
+                                            <Text style={[styles.detailKey, { color: c.textSec }]}>MCU Battery V</Text>
                                             <Text style={[styles.detailValue, { color: c.text }]}>{typeof selectedRow.hw.batt_v === 'number' ? `${selectedRow.hw.batt_v.toFixed(2)} V` : 'N/A'}</Text>
                                         </View>
                                         <View style={styles.detailLine}>
-                                            <Text style={[styles.detailKey, { color: c.textSec }]}>Low Battery</Text>
+                                            <Text style={[styles.detailKey, { color: c.textSec }]}>MCU Low Battery</Text>
                                             <Text style={[styles.detailValue, { color: c.text }]}>{yesNoUnknown(selectedRow.hw.batt_low)}</Text>
+                                        </View>
+                                        <View style={styles.detailLine}>
+                                            <Text style={[styles.detailKey, { color: c.textSec }]}>Lock Battery %</Text>
+                                            <Text style={[styles.detailValue, { color: c.text }]}>{typeof selectedRow.hw.batt_b_pct === 'number' ? `${Math.round(selectedRow.hw.batt_b_pct)}%` : 'N/A'}</Text>
+                                        </View>
+                                        <View style={styles.detailLine}>
+                                            <Text style={[styles.detailKey, { color: c.textSec }]}>Lock Battery V</Text>
+                                            <Text style={[styles.detailValue, { color: c.text }]}>{typeof selectedRow.hw.batt_b_v === 'number' ? `${selectedRow.hw.batt_b_v.toFixed(2)} V` : 'N/A'}</Text>
+                                        </View>
+                                        <View style={styles.detailLine}>
+                                            <Text style={[styles.detailKey, { color: c.textSec }]}>Lock Low Battery</Text>
+                                            <Text style={[styles.detailValue, { color: c.text }]}>{yesNoUnknown(selectedRow.hw.batt_b_low)}</Text>
                                         </View>
                                         <View style={styles.detailLine}>
                                             <Text style={[styles.detailKey, { color: c.textSec }]}>Tamper</Text>

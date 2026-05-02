@@ -18,7 +18,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useHardwareStatus } from '../../hooks/useHardwareStatus';
 import { HardwareAlertList } from '../../components/HardwareAlertBanner';
 import { HardwareStatusBadge, StatusDot } from '../../components/HardwareStatusBadge';
-import { subscribeToPower, PowerState, subscribeToResourceConflict, ResourceConflictState, subscribeToBoxState, BoxState } from '../../services/firebaseClient';
+import { subscribeToPower, PowerState, subscribeToResourceConflict, ResourceConflictState, subscribeToBoxState, BoxState, subscribeToBattery, DualBatteryState } from '../../services/firebaseClient';
 import {
     BoxPairingState,
     isPairingActive,
@@ -47,6 +47,7 @@ export default function HardwareStatusScreen({ route, navigation }: HardwareStat
 
     // EC-90: Power State
     const [powerState, setPowerState] = useState<PowerState | null>(null);
+    const [batteryState, setBatteryState] = useState<DualBatteryState | null>(null);
 
     // Geofence / theft state from hardware telemetry
     const [boxState, setBoxState] = useState<BoxState | null>(null);
@@ -75,6 +76,12 @@ export default function HardwareStatusScreen({ route, navigation }: HardwareStat
     useEffect(() => {
         if (!boxId) return;
         const unsubscribe = subscribeToPower(boxId, setPowerState);
+        return () => unsubscribe();
+    }, [boxId]);
+
+    useEffect(() => {
+        if (!boxId) return;
+        const unsubscribe = subscribeToBattery(boxId, setBatteryState);
         return () => unsubscribe();
     }, [boxId]);
 
@@ -110,6 +117,13 @@ export default function HardwareStatusScreen({ route, navigation }: HardwareStat
     const handleAcknowledgeReboot = async () => {
         await acknowledgeReboot();
         refresh();
+    };
+
+    const getBatteryValueColor = (percentage?: number) => {
+        if (percentage == null) return undefined;
+        if (percentage <= 10) return '#ef4444';
+        if (percentage <= 20) return '#eab308';
+        return undefined;
     };
 
     if (!isPaired || !boxId) {
@@ -431,6 +445,16 @@ export default function HardwareStatusScreen({ route, navigation }: HardwareStat
                                     powerState?.status === 'CRITICAL' || powerState?.status === 'DEAD' ? '#ef4444' :
                                         powerState?.status === 'WARNING' ? '#eab308' : undefined
                                 }
+                            />
+                            <DetailRow
+                                label="MCU Battery"
+                                value={batteryState?.main?.percentage != null ? `${Math.round(batteryState.main.percentage)}%` : '--'}
+                                valueColor={getBatteryValueColor(batteryState?.main?.percentage)}
+                            />
+                            <DetailRow
+                                label="Lock Battery"
+                                value={batteryState?.secondary?.percentage != null ? `${Math.round(batteryState.secondary.percentage)}%` : '--'}
+                                valueColor={getBatteryValueColor(batteryState?.secondary?.percentage)}
                             />
                             <DetailRow
                                 label="Status"
