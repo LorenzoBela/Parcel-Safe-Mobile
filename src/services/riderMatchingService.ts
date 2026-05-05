@@ -207,6 +207,28 @@ const EARTH_RADIUS_KM = 6371;
 // Request expiry time (2 minutes to accept/reject - to account for clock skew)
 export const REQUEST_EXPIRY_MS = 120 * 1000;
 
+const EPOCH_MS_CUTOFF = 1_000_000_000_000;
+
+function normalizeEpochMs(value: unknown): number {
+    if (typeof value === 'number' && Number.isFinite(value)) {
+        return value < EPOCH_MS_CUTOFF ? value * 1000 : value;
+    }
+
+    if (typeof value === 'string') {
+        const numeric = Number(value);
+        if (Number.isFinite(numeric)) {
+            return numeric < EPOCH_MS_CUTOFF ? numeric * 1000 : numeric;
+        }
+
+        const parsed = Date.parse(value);
+        if (Number.isFinite(parsed)) {
+            return parsed;
+        }
+    }
+
+    return 0;
+}
+
 /**
  * Rider location data structure
  */
@@ -2119,7 +2141,8 @@ export function subscribeToRiderRequests(
 
             // Allow requests that expire up to 1 minute ago (grace period for clock skew)
             const GRACE_PERIOD_MS = 60 * 1000;
-            const isNotExpired = requestData.expires_at > (Date.now() - GRACE_PERIOD_MS);
+            const expiresAtMs = normalizeEpochMs(requestData.expires_at);
+            const isNotExpired = !expiresAtMs || expiresAtMs > (Date.now() - GRACE_PERIOD_MS);
 
             if (requestData.status === 'PENDING' && isNotExpired) {
                 requests.push({
@@ -2134,7 +2157,7 @@ export function subscribeToRiderRequests(
                         dropoffLng: requestData.dropoff_lng,
                         distanceToPickupKm: requestData.distance_to_pickup_km,
                         estimatedFare: requestData.estimated_fare,
-                        expiresAt: requestData.expires_at,
+                        expiresAt: expiresAtMs || (Date.now() + REQUEST_EXPIRY_MS),
                         customerId: requestData.customer_id,
                         distance: requestData.distance,
                         duration: requestData.duration,
@@ -2482,10 +2505,12 @@ export async function checkActiveBookings(userId: string): Promise<any | null> {
  * an order in the pool that `acceptOrder` would reject with `reserved_for_other`.
  */
 function isBookingClaimable(booking: any, currentRiderId?: string): boolean {
-    if (!booking.current_candidate || !booking.offer_expires_at) return true;
+    if (!booking.current_candidate) return true;
+    const offerExpiresAt = normalizeEpochMs(booking.offer_expires_at);
+    if (!offerExpiresAt) return true;
     const now = Date.now();
     // Grace window keeps parity with acceptOrder's 2s drift tolerance.
-    if (now > booking.offer_expires_at + 2000) return true;
+    if (now > offerExpiresAt + 2000) return true;
     return Boolean(currentRiderId && booking.current_candidate === currentRiderId);
 }
 
@@ -2515,6 +2540,7 @@ export async function fetchAvailableOrders(
                 && !booking.accepted_by
                 && isBookingClaimable(booking, currentRiderId)
             ) {
+                const createdAtMs = normalizeEpochMs(booking.created_at) || Date.now();
                 // Check distance
                 const distance = calculateHaversineDistance(
                     riderLat,
@@ -2534,7 +2560,7 @@ export async function fetchAvailableOrders(
                         dropoffLng: booking.dropoff_lng,
                         distanceToPickupKm: distance,
                         estimatedFare: booking.estimated_fare,
-                        expiresAt: booking.created_at + REQUEST_EXPIRY_MS, // Though pool orders might live longer natively, we map it
+                        expiresAt: createdAtMs + REQUEST_EXPIRY_MS,
                         customerId: booking.customer_id,
                         distance: booking.distance,
                         duration: booking.duration,
@@ -2586,6 +2612,7 @@ export function subscribeToAvailableOrders(
                 && !booking.accepted_by
                 && isBookingClaimable(booking, currentRiderId)
             ) {
+                const createdAtMs = normalizeEpochMs(booking.created_at) || Date.now();
                 const distance = calculateHaversineDistance(
                     riderLat,
                     riderLng,
@@ -2605,7 +2632,7 @@ export function subscribeToAvailableOrders(
                         distanceToPickupKm: distance,
                         estimatedFare: booking.estimated_fare,
                         // Expire slightly differently or just omit visual timer for pool
-                        expiresAt: booking.created_at + REQUEST_EXPIRY_MS, 
+                        expiresAt: createdAtMs + REQUEST_EXPIRY_MS,
                         customerId: booking.customer_id,
                         distance: booking.distance,
                         duration: booking.duration,

@@ -515,13 +515,15 @@ TaskManager.defineTask(CONFIG.TASK_NAME, async ({ data, error }) => {
     // Restore currentBoxId from AsyncStorage if it was lost (JS runtime restarted
     // while phone was locked — the native foreground service kept running but the
     // in-memory variable was wiped)
-    if (!sanitizeBoxId(currentBoxId)) {
-        currentBoxId = await restoreBoxId();
-        if (!currentBoxId) {
+    let boxId = sanitizeBoxId(currentBoxId);
+    if (!boxId) {
+        boxId = await restoreBoxId();
+        if (!boxId) {
             console.warn('[EC-15] Task fired but no boxId in memory or AsyncStorage — dropping update');
             return; // No active delivery — nothing to write
         }
-        console.log('[EC-15] boxId restored from AsyncStorage:', currentBoxId);
+        currentBoxId = boxId;
+        console.log('[EC-15] boxId restored from AsyncStorage:', boxId);
         // Also restore last known location so the no-fix heartbeat can work immediately
         await restoreLastKnownLocation();
     }
@@ -533,7 +535,7 @@ TaskManager.defineTask(CONFIG.TASK_NAME, async ({ data, error }) => {
 
         // ---- Feature 3: Accuracy Filter ----
         const accuracy = location.coords.accuracy ?? 999;
-        console.log(`[EC-15] Task fired | box=${currentBoxId} | acc=${accuracy.toFixed(0)}m | lat=${location.coords.latitude.toFixed(5)} lng=${location.coords.longitude.toFixed(5)}`);
+        console.log(`[EC-15] Task fired | box=${boxId} | acc=${accuracy.toFixed(0)}m | lat=${location.coords.latitude.toFixed(5)} lng=${location.coords.longitude.toFixed(5)}`);
         const isLowAccuracy = accuracy > CONFIG.ACCURACY_REJECT_THRESHOLD_M;
         if (isLowAccuracy) {
             accuracyRejectCount++;
@@ -560,7 +562,7 @@ TaskManager.defineTask(CONFIG.TASK_NAME, async ({ data, error }) => {
             cumulativeDataBytes += 500;
 
             // Write current location
-            updates[`/locations/${currentBoxId}/phone`] = {
+            updates[`/locations/${boxId}/phone`] = {
                 latitude: location.coords.latitude,
                 longitude: location.coords.longitude,
                 accuracy: location.coords.accuracy ?? null,
@@ -574,17 +576,17 @@ TaskManager.defineTask(CONFIG.TASK_NAME, async ({ data, error }) => {
             };
 
             // Track data bandwidth in real-time alongside location
-            updates[`/hardware/${currentBoxId}/phone_status/data_bytes`] = cumulativeDataBytes;
+            updates[`/hardware/${boxId}/phone_status/data_bytes`] = cumulativeDataBytes;
 
             await writeMultiPathUpdates(updates);
-            await writeBackgroundStatusBestEffort(currentBoxId, {
+            await writeBackgroundStatusBestEffort(boxId, {
                 lastUpdate: timestampSentinel,
                 source: 'phone_background',
                 accuracy: location.coords.accuracy,
                 signal_lost: false,
                 gps_degraded: isLowAccuracy,
             });
-            console.log(`[EC-15] ✓ Firebase write OK | box=${currentBoxId} | lat=${location.coords.latitude.toFixed(5)} lng=${location.coords.longitude.toFixed(5)} | acc=${accuracy.toFixed(0)}m`);
+            console.log(`[EC-15] ✓ Firebase write OK | box=${boxId} | lat=${location.coords.latitude.toFixed(5)} lng=${location.coords.longitude.toFixed(5)} | acc=${accuracy.toFixed(0)}m`);
 
             // Track last written location for drift prevention
             lastWrittenLocation = {
@@ -610,7 +612,7 @@ TaskManager.defineTask(CONFIG.TASK_NAME, async ({ data, error }) => {
                 phoneStatus.data_bytes = cumulativeDataBytes;
             }
 
-            await writePhoneStatusIfDue(currentBoxId, phoneStatus);
+            await writePhoneStatusIfDue(boxId, phoneStatus);
 
             // Persist data bytes to survive app restarts (every ~10 writes)
             if (Math.random() < 0.1) {
@@ -621,7 +623,7 @@ TaskManager.defineTask(CONFIG.TASK_NAME, async ({ data, error }) => {
             console.error('[EC-15] ✗ Firebase write FAILED (will queue):', e);
             try {
                 await offlineQueueService.enqueueLocationUpdate(
-                    currentBoxId,
+                    boxId,
                     location.coords.latitude,
                     location.coords.longitude,
                     location.coords.speed ?? 0,
@@ -649,7 +651,7 @@ TaskManager.defineTask(CONFIG.TASK_NAME, async ({ data, error }) => {
                 const timestampSentinel = getTimestampSentinel();
                 cumulativeDataBytes += 200;
 
-                updates[`/locations/${currentBoxId}/phone`] = {
+                updates[`/locations/${boxId}/phone`] = {
                     latitude: lastWrittenLocation.lat,
                     longitude: lastWrittenLocation.lng,
                     accuracy: null,
@@ -662,10 +664,10 @@ TaskManager.defineTask(CONFIG.TASK_NAME, async ({ data, error }) => {
                     gps_degraded: true,
                     no_fix: true,
                 };
-                updates[`/hardware/${currentBoxId}/phone_status/data_bytes`] = cumulativeDataBytes;
+                updates[`/hardware/${boxId}/phone_status/data_bytes`] = cumulativeDataBytes;
 
                 await writeMultiPathUpdates(updates);
-                await writeBackgroundStatusBestEffort(currentBoxId, {
+                await writeBackgroundStatusBestEffort(boxId, {
                     lastUpdate: timestampSentinel,
                     source: 'phone_background',
                     signal_lost: false,
@@ -676,7 +678,7 @@ TaskManager.defineTask(CONFIG.TASK_NAME, async ({ data, error }) => {
                 lastWrittenLocation = { ...lastWrittenLocation, timestamp: Date.now() };
                 persistLastKnownLocation(lastWrittenLocation);
                 lastBackgroundTaskUpdateTimestamp = Date.now();
-                console.log(`[EC-15] ↺ No-fix heartbeat | box=${currentBoxId} | last known: ${lastWrittenLocation.lat.toFixed(5)},${lastWrittenLocation.lng.toFixed(5)}`);
+                console.log(`[EC-15] ↺ No-fix heartbeat | box=${boxId} | last known: ${lastWrittenLocation.lat.toFixed(5)},${lastWrittenLocation.lng.toFixed(5)}`);
             } catch (e) {
                 console.warn('[EC-15] No-fix heartbeat write failed (non-fatal):', e);
             }
@@ -709,7 +711,7 @@ TaskManager.defineTask(CONFIG.TASK_NAME, async ({ data, error }) => {
                     const updates: Record<string, any> = {};
                     const ts = getTimestampSentinel();
                     cumulativeDataBytes += 500;
-                    updates[`/locations/${currentBoxId}/phone`] = {
+                    updates[`/locations/${boxId}/phone`] = {
                         latitude: freshFix.coords.latitude,
                         longitude: freshFix.coords.longitude,
                         accuracy: freshFix.coords.accuracy ?? null,
@@ -722,9 +724,9 @@ TaskManager.defineTask(CONFIG.TASK_NAME, async ({ data, error }) => {
                         gps_degraded: isLowAccuracy,
                         recovered: true,
                     };
-                    updates[`/hardware/${currentBoxId}/phone_status/data_bytes`] = cumulativeDataBytes;
+                    updates[`/hardware/${boxId}/phone_status/data_bytes`] = cumulativeDataBytes;
                     await writeMultiPathUpdates(updates);
-                    await writeBackgroundStatusBestEffort(currentBoxId, {
+                    await writeBackgroundStatusBestEffort(boxId, {
                         lastUpdate: ts,
                         source: 'phone_background',
                         signal_lost: false,

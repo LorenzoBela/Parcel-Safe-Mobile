@@ -79,6 +79,8 @@ import {
     LowLightState,
     isLowLightFallbackRequired,
     getLowLightMessage,
+    requestBoxContextRefresh,
+    writePhoneLocation,
 } from '../../services/firebaseClient';
 
 import { bleOtpService, BleBoxDevice } from '../../services/bleOtpService';
@@ -220,6 +222,37 @@ export default function ArrivalScreen() {
     );
     const [geofenceTarget, setGeofenceTarget] = useState<'pickup' | 'dropoff' | 'return_pickup'>('pickup');
     const [distanceMeters, setDistanceMeters] = useState<number | null>(null);
+    const [manualRefreshBusy, setManualRefreshBusy] = useState(false);
+
+    const applyPhonePosition = useCallback((coords: { latitude: number; longitude: number; accuracy: number | null; heading: number | null; speed: number | null }, fallbackAccuracy: number) => {
+        const position = {
+            lat: coords.latitude,
+            lng: coords.longitude,
+            accuracy: coords.accuracy ?? fallbackAccuracy,
+            heading: coords.heading ?? 0,
+            speed: coords.speed ?? 0,
+        };
+        setCurrentPosition(position);
+
+        const now = Date.now();
+        const quality = {
+            hdop: Math.max(0.8, Math.min(8, (position.accuracy || fallbackAccuracy) / 6)),
+            satellites: (position.accuracy || fallbackAccuracy) <= 20 ? 8 : ((position.accuracy || fallbackAccuracy) <= 40 ? 6 : 4),
+            timestamp: now,
+        };
+        const nextState = updateGeofenceState(
+            phoneGeofenceStateRef.current,
+            { lat: position.lat, lng: position.lng },
+            { latitude: geofence.centerLat, longitude: geofence.centerLng },
+            quality,
+            null,
+            now
+        );
+        phoneGeofenceStateRef.current = nextState;
+        setIsPhoneInside(nextState.stableState === 'INSIDE');
+        setDistanceMeters(Math.round(nextState.rawDistanceM));
+        setPhoneLocationLastSeen(now);
+    }, [geofence.centerLat, geofence.centerLng]);
 
     // EC-FIX: Derive gpsAcquired — phone GPS is required, box is best-effort (4s timeout)
     useEffect(() => {
@@ -284,16 +317,20 @@ export default function ArrivalScreen() {
     const [batteryState, setBatteryState] = useState<DualBatteryState | null>(null);
     const batteryMainPct = batteryState?.main?.percentage;
     const batteryLockPct = batteryState?.secondary?.percentage;
-    const hasBatteryLow = Boolean(
-        batteryState?.main?.lowBatteryWarning || batteryState?.secondary?.lowBatteryWarning
-    );
-    const hasBatteryCritical = Boolean(
-        batteryState?.main?.criticalBatteryWarning || batteryState?.secondary?.criticalBatteryWarning
-    );
+    const mainLow = Boolean(batteryState?.main?.lowBatteryWarning);
+    const lockLow = Boolean(batteryState?.secondary?.lowBatteryWarning);
+    const mainCritical = Boolean(batteryState?.main?.criticalBatteryWarning);
+    const lockCritical = Boolean(batteryState?.secondary?.criticalBatteryWarning);
+    const hasBatteryLow = mainLow || lockLow;
+    const hasBatteryCritical = mainCritical || lockCritical;
     const batterySummary = [
         batteryMainPct != null ? `MCU ${Math.round(batteryMainPct)}%` : null,
         batteryLockPct != null ? `Lock ${Math.round(batteryLockPct)}%` : null,
     ].filter(Boolean).join(' / ');
+    const batteryAlertSummary = [
+        (mainCritical || mainLow) && batteryMainPct != null ? `MCU ${Math.round(batteryMainPct)}%` : null,
+        (lockCritical || lockLow) && batteryLockPct != null ? `Lock ${Math.round(batteryLockPct)}%` : null,
+    ].filter(Boolean).join(' / ') || batterySummary;
 
     // EC-18: Tamper State
     const [tamperState, setTamperState] = useState<TamperState | null>(null);
@@ -306,6 +343,7 @@ export default function ArrivalScreen() {
     const tamperDeliveryFlaggedRef = useRef(false);
     const tamperAlertShownRef = useRef(false);
     const pickupArrivalNotifSentRef = useRef(false);
+    const dropoffArrivalSyncInFlightRef = useRef(false);
 
     // Lock Events (OTP + Face Detection from hardware)
     const [lockEvent, setLockEvent] = useState<LockEvent | null>(null);
@@ -801,36 +839,6 @@ export default function ArrivalScreen() {
             // Fast relock after resume/lockscreen: keep high-accuracy warm briefly.
             startForegroundGpsWarmWindow(25000).catch(() => { });
 
-            const applyPosition = (coords: { latitude: number; longitude: number; accuracy: number | null; heading: number | null; speed: number | null }, fallbackAccuracy: number) => {
-                const position = {
-                    lat: coords.latitude,
-                    lng: coords.longitude,
-                    accuracy: coords.accuracy ?? fallbackAccuracy,
-                    heading: coords.heading ?? 0,
-                    speed: coords.speed ?? 0,
-                };
-                setCurrentPosition(position);
-
-                const now = Date.now();
-                const quality = {
-                    hdop: Math.max(0.8, Math.min(8, (position.accuracy || fallbackAccuracy) / 6)),
-                    satellites: (position.accuracy || fallbackAccuracy) <= 20 ? 8 : ((position.accuracy || fallbackAccuracy) <= 40 ? 6 : 4),
-                    timestamp: now,
-                };
-                const nextState = updateGeofenceState(
-                    phoneGeofenceStateRef.current,
-                    { lat: position.lat, lng: position.lng },
-                    { latitude: geofence.centerLat, longitude: geofence.centerLng },
-                    quality,
-                    null,
-                    now
-                );
-                phoneGeofenceStateRef.current = nextState;
-                setIsPhoneInside(nextState.stableState === 'INSIDE');
-                setDistanceMeters(Math.round(nextState.rawDistanceM));
-                setPhoneLocationLastSeen(now);
-            };
-
             // Now that we have a loading gate, we no longer need to seed with fast/inaccurate 
             // cached locations (which caused the 'bouncing' effect the user noticed).
             // We directly wait for the continuous high-accuracy watch to yield its first accurate fix.
@@ -843,7 +851,7 @@ export default function ArrivalScreen() {
                     distanceInterval: 5,
                 },
                 (location) => {
-                    applyPosition(location.coords, 25);
+                    applyPhonePosition(location.coords, 25);
                 }
             );
         };
@@ -855,7 +863,7 @@ export default function ArrivalScreen() {
                 subscription.remove();
             }
         };
-    }, [geofence]);
+    }, [geofence, applyPhonePosition]);
 
     // Device Compass Heading (Foreground)
     useEffect(() => {
@@ -996,13 +1004,14 @@ export default function ArrivalScreen() {
             clearTimeout(masterSwitchDebounceRef.current);
         }
 
+        const debounceMs = geofenceTarget === 'dropoff' ? 250 : 500;
         masterSwitchDebounceRef.current = setTimeout(() => {
             const nextInside = isPhoneInside && (isBoxOffline || isBoxInside || isPhoneOnlyFallback);
             if (nextInside !== masterDecisionRef.current) {
                 masterDecisionRef.current = nextInside;
                 setIsInsideGeoFence(nextInside);
             }
-        }, 500);
+        }, debounceMs);
 
         return () => {
             if (masterSwitchDebounceRef.current) {
@@ -1010,14 +1019,14 @@ export default function ArrivalScreen() {
                 masterSwitchDebounceRef.current = null;
             }
         };
-    }, [isPhoneInside, isBoxInside, isBoxOffline, isPhoneOnlyFallback]);
+    }, [geofenceTarget, isPhoneInside, isBoxInside, isBoxOffline, isPhoneOnlyFallback]);
 
     // 3b. EC-FIX: Phone-Only Fallback Timer
     // If phone has been stably inside the geofence for 15 seconds but box status
     // is stuck (neither offline nor inside), activate phone-only fallback.
     // This safeguards against the debounce/hysteresis gap that blocks pickup indefinitely.
     useEffect(() => {
-        const PHONE_ONLY_FALLBACK_MS = 15000;
+        const PHONE_ONLY_FALLBACK_MS = geofenceTarget === 'dropoff' ? 7000 : 15000;
 
         if (isPhoneInside && !isBoxOffline && !isBoxInside && !isPhoneOnlyFallback) {
             // Phone is inside but box status is stuck — start fallback countdown
@@ -1028,7 +1037,7 @@ export default function ArrivalScreen() {
             const timer = setTimeout(() => {
                 // Double-check conditions still hold after timeout
                 if (phoneInsideSinceRef.current > 0 && !boxOfflineRef.current) {
-                    console.log('[ArrivalScreen] EC-FIX: Phone-only fallback activated — box status stuck for 15s');
+                    console.log(`[ArrivalScreen] EC-FIX: Phone-only fallback activated - box status stuck for ${PHONE_ONLY_FALLBACK_MS}ms`);
                     setIsPhoneOnlyFallback(true);
                 }
             }, PHONE_ONLY_FALLBACK_MS);
@@ -1046,7 +1055,78 @@ export default function ArrivalScreen() {
             // Don't clear fallback here — it's no longer needed but clearing could cause flicker.
             // The master switch will use the correct path (isBoxOffline or isBoxInside) instead.
         }
-    }, [isPhoneInside, isBoxOffline, isBoxInside, isPhoneOnlyFallback]);
+    }, [geofenceTarget, isPhoneInside, isBoxOffline, isBoxInside, isPhoneOnlyFallback]);
+
+    // 3c. Dropoff arrival sync
+    // Push ARRIVED and refresh the box as soon as the dropoff geofence is confirmed.
+    useEffect(() => {
+        const shouldSyncDropoffArrival =
+            geofenceTarget === 'dropoff' &&
+            isInsideGeoFence &&
+            ['IN_TRANSIT', 'PICKED_UP'].includes(deliveryStatus);
+
+        if (!shouldSyncDropoffArrival) {
+            if (geofenceTarget !== 'dropoff' || !isInsideGeoFence) {
+                dropoffArrivalSyncInFlightRef.current = false;
+            }
+            return;
+        }
+
+        if (dropoffArrivalSyncInFlightRef.current) return;
+        dropoffArrivalSyncInFlightRef.current = true;
+
+        const arrivedAtNow = Date.now();
+        const hasPhoneFix = currentPosition.lat !== 0 || currentPosition.lng !== 0;
+
+        setDeliveryStatus('ARRIVED');
+        setArrivedAt((prev) => prev ?? arrivedAtNow);
+
+        const statusUpdate = updateDeliveryStatus(params.deliveryId, 'ARRIVED', {
+            arrived_at: arrivedAtNow,
+            arrival_source: 'rider_app_dropoff_geofence',
+            boxId: params.boxId,
+        }).then((ok) => {
+            if (!ok) throw new Error('ARRIVED transition failed');
+            return ok;
+        });
+        const syncTasks: Promise<unknown>[] = [
+            statusUpdate,
+            statusUpdate.then(() => requestBoxContextRefresh(params.boxId, 'dropoff_arrived')),
+        ];
+
+        if (hasPhoneFix) {
+            syncTasks.push(writePhoneLocation(
+                params.boxId,
+                currentPosition.lat,
+                currentPosition.lng,
+                currentPosition.speed,
+                currentPosition.heading,
+                localPhoneHeading
+            ));
+        }
+
+        Promise.allSettled(syncTasks).then((results) => {
+            if (results[0]?.status === 'rejected') {
+                console.warn('[ArrivalScreen] Dropoff ARRIVED sync failed', results[0].reason);
+                dropoffArrivalSyncInFlightRef.current = false;
+            }
+            if (results[1]?.status === 'rejected') {
+                console.warn('[ArrivalScreen] Dropoff box context refresh failed', results[1].reason);
+            }
+            setBoxLocationSubscriptionEpoch((prev) => prev + 1);
+        });
+    }, [
+        geofenceTarget,
+        isInsideGeoFence,
+        deliveryStatus,
+        params.deliveryId,
+        params.boxId,
+        currentPosition.lat,
+        currentPosition.lng,
+        currentPosition.speed,
+        currentPosition.heading,
+        localPhoneHeading,
+    ]);
 
     // 4. Pickup Arrival Notification — fires once when rider first enters pickup geofence
     useEffect(() => {
@@ -1456,6 +1536,77 @@ export default function ArrivalScreen() {
         }
     };
 
+    const handleManualRefresh = useCallback(async () => {
+        if (manualRefreshBusy) return;
+        setManualRefreshBusy(true);
+
+        try {
+            phoneGeofenceStateRef.current = createInitialState();
+            boxGeofenceStateRef.current = createInitialState();
+            masterDecisionRef.current = false;
+            phoneInsideSinceRef.current = 0;
+            setIsPhoneOnlyFallback(false);
+
+            if (!isBackgroundLocationRunning()) {
+                startBackgroundLocation(params.boxId).catch((err) => {
+                    console.warn('[ArrivalScreen] Background location restart failed', err);
+                });
+            }
+            setTrackingPhase('ARRIVAL');
+            startForegroundGpsWarmWindow(15000).catch(() => { });
+
+            const phoneRefresh = (async () => {
+                const permission = await Location.getForegroundPermissionsAsync();
+                let hasPermission = permission.status === 'granted';
+
+                if (!hasPermission) {
+                    const requested = await Location.requestForegroundPermissionsAsync();
+                    hasPermission = requested.status === 'granted';
+                }
+
+                if (!hasPermission) {
+                    throw new Error('Phone location permission not granted');
+                }
+
+                const loc = await Promise.race([
+                    Location.getCurrentPositionAsync({
+                        accuracy: Location.Accuracy.High,
+                    }),
+                    new Promise<never>((_, reject) => {
+                        setTimeout(() => reject(new Error('Phone GPS refresh timed out')), 10000);
+                    }),
+                ]) as Location.LocationObject;
+
+                applyPhonePosition(loc.coords, 25);
+                await writePhoneLocation(
+                    params.boxId,
+                    loc.coords.latitude,
+                    loc.coords.longitude,
+                    loc.coords.speed ?? 0,
+                    loc.coords.heading ?? 0,
+                    localPhoneHeading
+                );
+            })();
+
+            const [boxResult, phoneResult] = await Promise.allSettled([
+                requestBoxContextRefresh(params.boxId, 'arrival_refresh'),
+                phoneRefresh,
+            ]);
+
+            setBoxLocationSubscriptionEpoch((prev) => prev + 1);
+
+            if (boxResult.status === 'rejected') {
+                console.warn('[ArrivalScreen] Manual refresh box GPS request failed', boxResult.reason);
+            }
+
+            if (phoneResult.status === 'rejected') {
+                console.warn('[ArrivalScreen] Manual refresh phone GPS failed', phoneResult.reason);
+            }
+        } finally {
+            setManualRefreshBusy(false);
+        }
+    }, [manualRefreshBusy, params.boxId, applyPhonePosition, localPhoneHeading]);
+
     // EC-12: Render System Status (Horizontal Scroll)
     const renderSystemStatus = () => {
         const statuses = [];
@@ -1487,10 +1638,10 @@ export default function ArrivalScreen() {
                         <Text style={styles.pillIcon}>{isCritical ? '🔴' : '🟡'}</Text>
                         <View>
                             <Text style={[styles.pillTitle, isCritical ? styles.textError : styles.textWarning]}>
-                                {isCritical ? 'CRITICAL' : 'BATTERY'}
+                                {isCritical ? 'CRITICAL' : 'LOW POWER'}
                             </Text>
                             <Text style={[styles.pillText, isCritical ? styles.textError : styles.textWarning]}>
-                                {batterySummary || '--'}
+                                {batteryAlertSummary || '--'}
                             </Text>
                         </View>
                     </View>
@@ -1610,6 +1761,21 @@ export default function ArrivalScreen() {
                     Arrival & Verification
                 </Text>
 
+                <View style={styles.refreshRow}>
+                    <Button
+                        mode="contained"
+                        icon="refresh"
+                        onPress={handleManualRefresh}
+                        loading={manualRefreshBusy}
+                        disabled={manualRefreshBusy}
+                        buttonColor={isDarkMode ? '#0f172a' : '#111827'}
+                        textColor="#f8fafc"
+                        style={styles.refreshButton}
+                    >
+                        Refresh Status
+                    </Button>
+                </View>
+
                 {/* Status Modals & Top Alerts */}
                 {lockoutState?.active && (
                     <View style={[styles.statusMessageContainer, styles.bgSubtleError, { marginTop: 16 }]}>
@@ -1621,7 +1787,7 @@ export default function ArrivalScreen() {
                 {hasBatteryCritical && (
                     <View style={[styles.statusMessageContainer, styles.bgSubtleError, { marginTop: 16 }]}>
                         <Text style={[styles.statusMessageText, styles.textError]}>
-                            ⚠️ Smart Box Battery Critical ({batterySummary || '--'})
+                            ⚠️ Smart Box Battery Critical ({batteryAlertSummary || '--'})
                         </Text>
                     </View>
                 )}
@@ -2018,6 +2184,16 @@ const styles = StyleSheet.create({
         marginBottom: 20,
         fontFamily: 'Inter_700Bold',
         color: '#1a1a1a',
+    },
+    refreshRow: {
+        alignItems: 'center',
+        marginBottom: 16,
+    },
+    refreshButton: {
+        borderRadius: 10,
+        paddingHorizontal: 12,
+        borderWidth: 2,
+        borderColor: '#111827',
     },
 
     // System Status Container

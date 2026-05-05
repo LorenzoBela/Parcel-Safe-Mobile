@@ -98,7 +98,8 @@ import {
     removeRiderFromOnline,
     subscribeToAvailableOrders,
     RiderOrderRequest,
-    runTimeoutSweep
+    runTimeoutSweep,
+    SEARCH_RADIUS_KM
 } from '../../services/riderMatchingService';
 import {
     showIncomingOrderNotification,
@@ -933,22 +934,26 @@ export default function RiderDashboard() {
 
     // Real-time listener for Available Orders
     useEffect(() => {
-        if (!isOnline || !riderLocation) {
+        const demandLat = riderLocation?.coords.latitude ?? localPhoneLocation?.coords.latitude ?? null;
+        const demandLng = riderLocation?.coords.longitude ?? localPhoneLocation?.coords.longitude ?? null;
+
+        if (!isOnline || demandLat == null || demandLng == null) {
             setAvailableOrdersCount(0);
             return;
         }
 
         const unsubscribe = subscribeToAvailableOrders(
-            riderLocation.coords.latitude,
-            riderLocation.coords.longitude,
-            5, // SEARCH_RADIUS_KM
+            demandLat,
+            demandLng,
+            SEARCH_RADIUS_KM,
             (orders) => {
                 setAvailableOrdersCount(orders.length);
-            }
+            },
+            riderId ?? undefined
         );
 
         return unsubscribe;
-    }, [isOnline, riderLocation]);
+    }, [isOnline, riderLocation, localPhoneLocation, riderId]);
 
     // Dynamic delivery state — populated from real sources when available
     const nextDelivery = useMemo(() => activeDelivery ? {

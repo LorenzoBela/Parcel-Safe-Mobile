@@ -567,6 +567,19 @@ export async function updateBoxState(
     });
 }
 
+export async function requestBoxContextRefresh(
+    boxId: string,
+    source: string = 'mobile'
+): Promise<void> {
+    const db = getFirebaseDatabase();
+    const hwRef = ref(db, `hardware/${boxId}`);
+
+    await update(hwRef, {
+        refresh_context_at: serverTimestamp(),
+        refresh_context_source: source,
+    });
+}
+
 // ==================== EC-03: Battery Monitoring ====================
 
 export interface BatteryState {
@@ -1133,6 +1146,18 @@ export function subscribeToPhotoAuditLog(
     });
 
     return () => off(auditRef);
+}
+
+/**
+ * Read latest firmware photo audit once for reconcile/fallback flows.
+ */
+export async function getPhotoAuditLogSnapshot(
+    deliveryId: string
+): Promise<PhotoAuditState | null> {
+    const db = getFirebaseDatabase();
+    const auditRef = ref(db, `audit_logs/${deliveryId}`);
+    const snapshot = await get(auditRef);
+    return (snapshot.val() as PhotoAuditState | null) ?? null;
 }
 
 /**

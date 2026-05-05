@@ -6,9 +6,10 @@
  */
 
 import React, { useEffect, useState, useRef } from 'react';
-import { View, StyleSheet, Animated, Vibration, Modal as RNModal } from 'react-native';
+import { View, StyleSheet, Animated, Vibration, ScrollView, useWindowDimensions } from 'react-native';
 import { Text, Button, Surface, useTheme, IconButton, Divider } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { RiderOrderRequest } from '../services/riderMatchingService';
 
 interface IncomingOrderModalProps {
@@ -25,6 +26,9 @@ export default function IncomingOrderModal({
     onReject,
 }: IncomingOrderModalProps) {
     const theme = useTheme();
+    const insets = useSafeAreaInsets();
+    const { height: screenHeight } = useWindowDimensions();
+    const maxCardHeight = Math.max(0, screenHeight - insets.top - insets.bottom - 24);
     const [currentIndex, setCurrentIndex] = useState(0);
     const [timeLeft, setTimeLeft] = useState(15);
     const slideAnim = useRef(new Animated.Value(-300)).current;
@@ -121,143 +125,151 @@ export default function IncomingOrderModal({
                 styles.container,
                 {
                     transform: [{ translateY: slideAnim }],
+                    paddingTop: insets.top + 12,
+                    paddingBottom: insets.bottom + 12,
                 },
             ]}
             pointerEvents={visible ? 'auto' : 'none'}
         >
             <Animated.View style={{ transform: [{ scale: pulseAnim }] }}>
                 <Surface style={[styles.card, { backgroundColor: theme.colors.elevation.level3 }]} elevation={5}>
-                    {/* Header */}
-                    <View style={styles.header}>
-                        <View style={styles.headerLeft}>
-                            <MaterialCommunityIcons
-                                name="package-variant"
-                                size={28}
-                                color={theme.colors.primary}
+                    <ScrollView
+                        style={[styles.scrollArea, { maxHeight: maxCardHeight }]}
+                        contentContainerStyle={styles.scrollContent}
+                        showsVerticalScrollIndicator={false}
+                    >
+                        {/* Header */}
+                        <View style={styles.header}>
+                            <View style={styles.headerLeft}>
+                                <MaterialCommunityIcons
+                                    name="package-variant"
+                                    size={28}
+                                    color={theme.colors.primary}
+                                />
+                                <View style={styles.headerText}>
+                                    <Text variant="titleMedium" style={[styles.title, { color: theme.colors.onSurface }]}>
+                                        New Order Request ({currentIndex + 1}/{requests.length})
+                                    </Text>
+                                    <Text variant="bodySmall" style={[styles.timer, { color: theme.colors.error }]}>
+                                        {timeLeft}s remaining
+                                    </Text>
+                                </View>
+                            </View>
+
+                            {/* Navigation Buttons for Multiple Requests */}
+                            {requests.length > 1 && (
+                                <View style={styles.navigation}>
+                                    <IconButton
+                                        icon="chevron-left"
+                                        size={24}
+                                        onPress={handlePrev}
+                                        disabled={currentIndex === 0}
+                                    />
+                                    <IconButton
+                                        icon="chevron-right"
+                                        size={24}
+                                        onPress={handleNext}
+                                        disabled={currentIndex === requests.length - 1}
+                                    />
+                                </View>
+                            )}
+
+                            {/* <IconButton
+                                icon="close"
+                                size={20}
+                                onPress={() => onReject(currentRequestWrapper.requestId)}
+                                style={styles.closeButton}
+                            /> */}
+                        </View>
+
+                        <View style={[styles.timerBar, { backgroundColor: theme.colors.surfaceVariant }]}>
+                            <View
+                                style={[
+                                    styles.timerProgress,
+                                    {
+                                        width: `${(timeLeft / 15) * 100}%`,
+                                        backgroundColor: timeLeft <= 5 ? theme.colors.error : theme.colors.primary,
+                                    },
+                                ]}
                             />
-                            <View style={styles.headerText}>
-                                <Text variant="titleMedium" style={[styles.title, { color: theme.colors.onSurface }]}>
-                                    New Order Request ({currentIndex + 1}/{requests.length})
-                                </Text>
-                                <Text variant="bodySmall" style={[styles.timer, { color: theme.colors.error }]}>
-                                    {timeLeft}s remaining
-                                </Text>
+                        </View>
+
+                        <Divider style={styles.divider} />
+
+                        {/* Order Details */}
+                        <View style={styles.details}>
+                            {/* Pickup */}
+                            <View style={styles.locationRow}>
+                                <View style={[styles.locationIcon, { backgroundColor: theme.colors.primaryContainer }]}>
+                                    <MaterialCommunityIcons name="circle-slice-8" size={16} color={theme.colors.primary} />
+                                </View>
+                                <View style={styles.locationInfo}>
+                                    <Text variant="labelSmall" style={[styles.locationLabel, { color: theme.colors.outline }]}>PICKUP</Text>
+                                    <Text variant="bodyMedium" numberOfLines={2} style={[styles.address, { color: theme.colors.onSurface }]}>
+                                        {currentRequest.pickupAddress}
+                                    </Text>
+                                </View>
+                            </View>
+
+                            {/* Vertical connector */}
+                            <View style={styles.connector}>
+                                <View style={[styles.connectorLine, { backgroundColor: theme.colors.outlineVariant }]} />
+                            </View>
+
+                            {/* Dropoff */}
+                            <View style={styles.locationRow}>
+                                <View style={[styles.locationIcon, { backgroundColor: theme.colors.errorContainer }]}>
+                                    <MaterialCommunityIcons name="map-marker" size={16} color={theme.colors.error} />
+                                </View>
+                                <View style={styles.locationInfo}>
+                                    <Text variant="labelSmall" style={[styles.locationLabel, { color: theme.colors.outline }]}>DROPOFF</Text>
+                                    <Text variant="bodyMedium" numberOfLines={2} style={[styles.address, { color: theme.colors.onSurface }]}>
+                                        {currentRequest.dropoffAddress}
+                                    </Text>
+                                </View>
                             </View>
                         </View>
 
-                        {/* Navigation Buttons for Multiple Requests */}
-                        {requests.length > 1 && (
-                            <View style={styles.navigation}>
-                                <IconButton
-                                    icon="chevron-left"
-                                    size={24}
-                                    onPress={handlePrev}
-                                    disabled={currentIndex === 0}
-                                />
-                                <IconButton
-                                    icon="chevron-right"
-                                    size={24}
-                                    onPress={handleNext}
-                                    disabled={currentIndex === requests.length - 1}
-                                />
+                        <Divider style={styles.divider} />
+
+                        {/* Fare and Distance */}
+                        <View style={styles.infoRow}>
+                            <View style={styles.infoItem}>
+                                <MaterialCommunityIcons name="map-marker-distance" size={20} color={theme.colors.outline} />
+                                <Text variant="bodyMedium" style={[styles.infoText, { color: theme.colors.outline }]}>
+                                    {currentRequest.distanceToPickupKm.toFixed(1)} km away
+                                </Text>
                             </View>
-                        )}
-
-                        {/* <IconButton
-                            icon="close"
-                            size={20}
-                            onPress={() => onReject(currentRequestWrapper.requestId)}
-                            style={styles.closeButton}
-                        /> */}
-                    </View>
-
-                    <View style={[styles.timerBar, { backgroundColor: theme.colors.surfaceVariant }]}>
-                        <View
-                            style={[
-                                styles.timerProgress,
-                                {
-                                    width: `${(timeLeft / 15) * 100}%`,
-                                    backgroundColor: timeLeft <= 5 ? theme.colors.error : theme.colors.primary,
-                                },
-                            ]}
-                        />
-                    </View>
-
-                    <Divider style={styles.divider} />
-
-                    {/* Order Details */}
-                    <View style={styles.details}>
-                        {/* Pickup */}
-                        <View style={styles.locationRow}>
-                            <View style={[styles.locationIcon, { backgroundColor: theme.colors.primaryContainer }]}>
-                                <MaterialCommunityIcons name="circle-slice-8" size={16} color={theme.colors.primary} />
-                            </View>
-                            <View style={styles.locationInfo}>
-                                <Text variant="labelSmall" style={[styles.locationLabel, { color: theme.colors.outline }]}>PICKUP</Text>
-                                <Text variant="bodyMedium" numberOfLines={2} style={[styles.address, { color: theme.colors.onSurface }]}>
-                                    {currentRequest.pickupAddress}
+                            <View style={styles.fareContainer}>
+                                <Text variant="labelSmall" style={[styles.fareLabel, { color: theme.colors.outline }]}>ESTIMATED FARE</Text>
+                                <Text variant="headlineSmall" style={[styles.fare, { color: theme.colors.primary }]}>
+                                    {formatCurrency(currentRequest.estimatedFare)}
                                 </Text>
                             </View>
                         </View>
 
-                        {/* Vertical connector */}
-                        <View style={styles.connector}>
-                            <View style={[styles.connectorLine, { backgroundColor: theme.colors.outlineVariant }]} />
+                        {/* Action Buttons */}
+                        <View style={styles.actions}>
+                            <Button
+                                mode="outlined"
+                                onPress={() => onReject(currentRequestWrapper.requestId)}
+                                style={[styles.button, styles.rejectButton, { borderColor: theme.colors.error }]}
+                                textColor={theme.colors.error}
+                                icon="close"
+                            >
+                                Reject
+                            </Button>
+                            <Button
+                                mode="contained"
+                                onPress={() => onAccept(currentRequestWrapper)}
+                                style={[styles.button, styles.acceptButton, { backgroundColor: theme.colors.primary }]}
+                                textColor={theme.colors.onPrimary}
+                                icon="check"
+                            >
+                                Accept
+                            </Button>
                         </View>
-
-                        {/* Dropoff */}
-                        <View style={styles.locationRow}>
-                            <View style={[styles.locationIcon, { backgroundColor: theme.colors.errorContainer }]}>
-                                <MaterialCommunityIcons name="map-marker" size={16} color={theme.colors.error} />
-                            </View>
-                            <View style={styles.locationInfo}>
-                                <Text variant="labelSmall" style={[styles.locationLabel, { color: theme.colors.outline }]}>DROPOFF</Text>
-                                <Text variant="bodyMedium" numberOfLines={2} style={[styles.address, { color: theme.colors.onSurface }]}>
-                                    {currentRequest.dropoffAddress}
-                                </Text>
-                            </View>
-                        </View>
-                    </View>
-
-                    <Divider style={styles.divider} />
-
-                    {/* Fare and Distance */}
-                    <View style={styles.infoRow}>
-                        <View style={styles.infoItem}>
-                            <MaterialCommunityIcons name="map-marker-distance" size={20} color={theme.colors.outline} />
-                            <Text variant="bodyMedium" style={[styles.infoText, { color: theme.colors.outline }]}>
-                                {currentRequest.distanceToPickupKm.toFixed(1)} km away
-                            </Text>
-                        </View>
-                        <View style={styles.fareContainer}>
-                            <Text variant="labelSmall" style={[styles.fareLabel, { color: theme.colors.outline }]}>ESTIMATED FARE</Text>
-                            <Text variant="headlineSmall" style={[styles.fare, { color: theme.colors.primary }]}>
-                                {formatCurrency(currentRequest.estimatedFare)}
-                            </Text>
-                        </View>
-                    </View>
-
-                    {/* Action Buttons */}
-                    <View style={styles.actions}>
-                        <Button
-                            mode="outlined"
-                            onPress={() => onReject(currentRequestWrapper.requestId)}
-                            style={[styles.button, styles.rejectButton, { borderColor: theme.colors.error }]}
-                            textColor={theme.colors.error}
-                            icon="close"
-                        >
-                            Reject
-                        </Button>
-                        <Button
-                            mode="contained"
-                            onPress={() => onAccept(currentRequestWrapper)}
-                            style={[styles.button, styles.acceptButton, { backgroundColor: theme.colors.primary }]}
-                            textColor={theme.colors.onPrimary}
-                            icon="check"
-                        >
-                            Accept
-                        </Button>
-                    </View>
+                    </ScrollView>
                 </Surface>
             </Animated.View>
         </Animated.View>
@@ -271,8 +283,13 @@ const styles = StyleSheet.create({
         left: 0,
         right: 0,
         zIndex: 1000,
-        padding: 16,
-        paddingTop: 50, // Account for status bar
+        paddingHorizontal: 16,
+    },
+    scrollArea: {
+        width: '100%',
+    },
+    scrollContent: {
+        paddingBottom: 4,
     },
     card: {
         borderRadius: 16,
