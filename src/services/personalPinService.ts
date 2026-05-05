@@ -165,6 +165,20 @@ export async function setRiderPersonalPin(boxId: string, pin: string): Promise<v
   await request('/api/rider/personal-pin', 'POST', { boxId: sanitizedBoxId, pin: sanitizedPin });
 }
 
+export async function syncRiderPersonalPinRuntime(boxId: string): Promise<void> {
+  const sanitizedBoxId = boxId.trim();
+
+  if (!sanitizedBoxId) {
+    throw new Error('Missing box ID. Please pair your box again.');
+  }
+
+  await request('/api/rider/personal-pin', 'POST', {
+    boxId: sanitizedBoxId,
+    action: 'sync-runtime',
+    syncOnly: true,
+  });
+}
+
 export async function resetRiderPersonalPin(boxId: string): Promise<void> {
   const sanitizedBoxId = boxId.trim();
   if (!sanitizedBoxId) {

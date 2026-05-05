@@ -5,6 +5,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { AppState, type NativeEventSubscription } from 'react-native';
 import { calculateDistanceMeters } from '../utils/geoUtils';
 import * as Location from 'expo-location';
+import { syncRiderPersonalPinRuntime } from './personalPinService';
 
 export type PairingMode = 'ONE_TIME' | 'SESSION';
 export type PairingStatus = 'ACTIVE' | 'EXPIRED' | 'REVOKED';
@@ -351,6 +352,14 @@ export async function pairBoxWithRider(params: {
         ...pairingPayload,
         last_updated: serverTimestamp(),
     });
+
+    // Best-effort: if the rider already has a Personal PIN, publish its
+    // hardware-safe hash to this newly paired box immediately.
+    try {
+        await syncRiderPersonalPinRuntime(boxId);
+    } catch (error) {
+        console.warn('[Pairing] Personal PIN runtime sync skipped:', error instanceof Error ? error.message : error);
+    }
 
     // Cache last paired box for cross-screen fallback.
     try {

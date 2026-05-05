@@ -194,6 +194,37 @@ export type HardwareByBoxId = Record<string, HardwareDiagnostics>;
 
 // ==================== Location Functions ====================
 
+const toFiniteNumberOrNull = (value: unknown): number | null => {
+    if (value == null || value === '') return null;
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? numeric : null;
+};
+
+const toBooleanValue = (value: unknown): boolean => {
+    if (typeof value === 'boolean') return value;
+    if (typeof value === 'number') return value !== 0;
+    if (typeof value === 'string') {
+        const normalized = value.trim().toLowerCase();
+        return normalized === 'true' || normalized === '1' || normalized === 'yes';
+    }
+    return false;
+};
+
+const normalizeLocationEntry = (raw: any, fallbackSource: string): LocationData | null => {
+    const latitude = toFiniteNumberOrNull(raw?.latitude ?? raw?.lat);
+    const longitude = toFiniteNumberOrNull(raw?.longitude ?? raw?.lng);
+    if (latitude == null || longitude == null) {
+        return null;
+    }
+
+    return {
+        ...raw,
+        latitude,
+        longitude,
+        source: raw?.source || fallbackSource,
+    } as LocationData;
+};
+
 // Global cache for latest locations per box to enable smooth consolidation
 const latestLocationsCache: Record<string, { box: LocationData | null, phone: LocationData | null }> = {};
 
@@ -223,20 +254,16 @@ export function subscribeToLocation(
             // New split-path structure: { box: { latitude, ... }, phone: { latitude, ... } }
             // Both sub-trees arrive in one snapshot — no overwriting possible.
             if (rawData.box) {
-                latestLocationsCache[boxId].box = {
-                    ...rawData.box,
-                    latitude: Number(rawData.box.latitude ?? rawData.box.lat),
-                    longitude: Number(rawData.box.longitude ?? rawData.box.lng),
-                    source: rawData.box.source || 'box',
-                } as LocationData;
+                const boxLocation = normalizeLocationEntry(rawData.box, 'box');
+                if (boxLocation) {
+                    latestLocationsCache[boxId].box = boxLocation;
+                }
             }
             if (rawData.phone) {
-                latestLocationsCache[boxId].phone = {
-                    ...rawData.phone,
-                    latitude: Number(rawData.phone.latitude ?? rawData.phone.lat),
-                    longitude: Number(rawData.phone.longitude ?? rawData.phone.lng),
-                    source: rawData.phone.source || 'phone_background',
-                } as LocationData;
+                const phoneLocation = normalizeLocationEntry(rawData.phone, 'phone_background');
+                if (phoneLocation) {
+                    latestLocationsCache[boxId].phone = phoneLocation;
+                }
             }
         } else if (
             rawData.latitude != null || rawData.lat != null
@@ -2048,7 +2075,17 @@ export function subscribeToPower(
 
     const unsubscribe = onValue(powerRef, (snapshot) => {
         const data = snapshot.val();
-        callback(data as PowerState | null);
+        if (!data) {
+            callback(null);
+            return;
+        }
+
+        callback({
+            ...data,
+            voltage: toFiniteNumberOrNull(data.voltage) ?? 0,
+            solenoid_blocked: toBooleanValue(data.solenoid_blocked),
+            timestamp: toFiniteNumberOrNull(data.timestamp) ?? Date.now(),
+        } as PowerState);
     });
 
     return () => off(powerRef);

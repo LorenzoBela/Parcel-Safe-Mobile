@@ -44,6 +44,22 @@ const CONFIG = {
     PHONE_GPS_START_RETRY_BACKOFF_MS: 30000,
 };
 
+const toFiniteNumber = (value: unknown, fallback: number): number => {
+    if (value == null || value === '') return fallback;
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? numeric : fallback;
+};
+
+const toBoolean = (value: unknown): boolean => {
+    if (typeof value === 'boolean') return value;
+    if (typeof value === 'number') return value !== 0;
+    if (typeof value === 'string') {
+        const normalized = value.trim().toLowerCase();
+        return normalized === 'true' || normalized === '1' || normalized === 'yes';
+    }
+    return false;
+};
+
 // ==================== Types ====================
 
 export type PowerState = 'SLEEP' | 'STANDBY' | 'ACTIVE';
@@ -182,6 +198,9 @@ class LocationRedundancyManager {
         }
 
         this.boxId = null;
+        this.phoneGpsStartRetryBlockedUntil = 0;
+        this.phoneGpsStartInFlight = false;
+        this.foregroundFallbackActive = false;
         this.updateState({
             powerState: 'SLEEP',
             source: 'none',
@@ -255,9 +274,9 @@ class LocationRedundancyManager {
 
     // EC-84: Handle GPS health updates
     private handleGpsHealthUpdate(data: GpsHealthState): void {
-        const hdop = data.box_hdop || 100;
-        const satellites = data.satellites_visible || 0;
-        const obstructionDetected = data.obstruction_detected || false;
+        const hdop = toFiniteNumber(data.box_hdop, 100);
+        const satellites = toFiniteNumber(data.satellites_visible, 0);
+        const obstructionDetected = toBoolean(data.obstruction_detected);
 
         // Determine if signal is degraded
         // HDOP > 5 is generally considered poor

@@ -89,6 +89,28 @@ const sanitizeBoxId = (value: unknown): string | null => {
     if (lowered === 'null' || lowered === 'undefined' || lowered === 'unknown_box') return null;
     return trimmed;
 };
+
+type FiniteCoordinates = { latitude: number; longitude: number };
+
+const toFiniteNumberOrNull = (value: unknown): number | null => {
+    if (value == null || value === '') return null;
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? numeric : null;
+};
+
+const getFiniteCoordinates = (
+    value?: { latitude?: unknown; longitude?: unknown } | null
+): FiniteCoordinates | null => {
+    const latitude = toFiniteNumberOrNull(value?.latitude);
+    const longitude = toFiniteNumberOrNull(value?.longitude);
+    return latitude == null || longitude == null ? null : { latitude, longitude };
+};
+
+const formatFixedNumber = (value: unknown, digits: number, fallback = '--'): string => {
+    const numeric = toFiniteNumberOrNull(value);
+    return numeric == null ? fallback : numeric.toFixed(digits);
+};
+
 import {
     subscribeToRiderRequests,
     subscribeToDelivery,
@@ -315,6 +337,29 @@ const WEATHER_ATMOSPHERE: Record<string, WeatherAtmosphere> = {
         sparkle: 'rgba(171, 203, 255, 0.28)',
         accent: '#9FC4FF',
     },
+};
+
+const BATTERY_RESERVE_PCT = 10;
+const BATTERY_FALLBACK_DRAIN_PCT_PER_HOUR = 6;
+const BATTERY_MIN_TREND_DROP_PCT = 2;
+const BATTERY_MIN_TREND_HOURS = 0.25;
+type BatteryChannel = 'main' | 'secondary';
+type BatteryEtaTrend = { startPct: number; startTs: number; latestPct: number; latestTs: number };
+type BatteryEtaLabels = Record<BatteryChannel, string | null>;
+const EMPTY_BATTERY_ETA_LABELS: BatteryEtaLabels = { main: null, secondary: null };
+
+const formatBatteryEta = (hours: number): string => {
+    if (!Number.isFinite(hours) || hours <= 0) return '<1h';
+    if (hours > 72) return '>72h';
+    const h = Math.floor(hours);
+    const m = Math.round((hours - h) * 60);
+    if (h === 0) return `${m}m`;
+    return `${h}h ${m}m`;
+};
+
+const getFallbackBatteryEta = (pct: number): string => {
+    const remainingPct = Math.max(0, pct - BATTERY_RESERVE_PCT);
+    return `~${formatBatteryEta(remainingPct / BATTERY_FALLBACK_DRAIN_PCT_PER_HOUR)}`;
 };
 
 export default function RiderDashboard() {
@@ -582,6 +627,10 @@ export default function RiderDashboard() {
         gpsHealth, // EC-84
         lastLocation // EC-Redundancy: Use this for reliable updates
     } = useLocationRedundancy();
+    const riderCoords = useMemo(() => getFiniteCoordinates(riderLocation?.coords), [riderLocation]);
+    const liveCoords = useMemo(() => getFiniteCoordinates(lastLocation), [lastLocation]);
+    const displayCoords = liveCoords ?? riderCoords;
+    const displaySpeed = toFiniteNumberOrNull(lastLocation?.speed ?? riderLocation?.coords.speed) ?? undefined;
 
     // EC-FIX: Local phone location state for fallback
     const [localPhoneLocation, setLocalPhoneLocation] = useState<Location.LocationObject | null>(null);
@@ -1025,6 +1074,7 @@ export default function RiderDashboard() {
             };
         }
     }, [activeDelivery]);
+    const destinationCoords = useMemo(() => getFiniteCoordinates(destination), [destination]);
 
     // Check for active deliveries
     const checkActiveDeliveries = useCallback(async () => {
@@ -1555,7 +1605,7 @@ export default function RiderDashboard() {
             if (state?.solenoid_blocked) {
                 PremiumAlert.alert(
                     '🔋 Low Battery Alert',
-                    `Box battery is critically low (${state.voltage.toFixed(1)}V). Unlock is disabled until charged.`,
+                    `Box battery is critically low (${formatFixedNumber(state.voltage, 1)}V). Unlock is disabled until charged.`,
                     [{ text: 'OK' }]
                 );
             }
@@ -1827,16 +1877,7 @@ export default function RiderDashboard() {
 
     // Fetch route from Mapbox Directions API
     const fetchRoute = useCallback(async () => {
-        // EC-FIX: Use lastLocation (live) if available, otherwise riderLocation (initial)
-        const currentLoc = lastLocation ? {
-            latitude: lastLocation.latitude,
-            longitude: lastLocation.longitude
-        } : (riderLocation ? {
-            latitude: riderLocation.coords.latitude,
-            longitude: riderLocation.coords.longitude
-        } : null);
-
-        if (!currentLoc || !MAPBOX_TOKEN || !destination) {
+        if (!displayCoords || !destinationCoords || !MAPBOX_TOKEN) {
             // Keep existing geometry if we just lost location momentarily
             return;
         }
@@ -1846,13 +1887,13 @@ export default function RiderDashboard() {
 
         // EC-FIX: Check if destination changed. If so, force fetch to get accurate ETA/Route.
         const destinationChanged = !lastRouteDestination.current ||
-            lastRouteDestination.current.latitude !== destination.latitude ||
-            lastRouteDestination.current.longitude !== destination.longitude;
+            lastRouteDestination.current.latitude !== destinationCoords.latitude ||
+            lastRouteDestination.current.longitude !== destinationCoords.longitude;
 
         if (!destinationChanged && lastRouteFetchLocation.current) {
             const dist = calculateDistance(
-                currentLoc.latitude,
-                currentLoc.longitude,
+                displayCoords.latitude,
+                displayCoords.longitude,
                 lastRouteFetchLocation.current.latitude,
                 lastRouteFetchLocation.current.longitude
             );
@@ -1865,10 +1906,10 @@ export default function RiderDashboard() {
 
         if (!shouldFetch) return;
 
-        lastRouteDestination.current = { latitude: destination.latitude, longitude: destination.longitude };
+        lastRouteDestination.current = destinationCoords;
 
         try {
-            const url = `https://api.mapbox.com/directions/v5/mapbox/driving/${currentLoc.longitude},${currentLoc.latitude};${destination.longitude},${destination.latitude}?geometries=geojson&access_token=${MAPBOX_TOKEN}`;
+            const url = `https://api.mapbox.com/directions/v5/mapbox/driving/${displayCoords.longitude},${displayCoords.latitude};${destinationCoords.longitude},${destinationCoords.latitude}?geometries=geojson&access_token=${MAPBOX_TOKEN}`;
 
             const response = await fetch(url);
             const data = await response.json();
@@ -1876,7 +1917,7 @@ export default function RiderDashboard() {
             if (data.routes && data.routes.length > 0) {
                 const route = data.routes[0];
                 setRouteGeometry(route.geometry);
-                lastRouteFetchLocation.current = currentLoc;
+                lastRouteFetchLocation.current = displayCoords;
 
                 // Update distance with actual route distance
                 const distanceKm = (route.distance / 1000).toFixed(2);
@@ -1915,7 +1956,7 @@ export default function RiderDashboard() {
             console.error('Route calculation error:', error);
             // do not clear geometry on error, keep stale route
         }
-    }, [riderLocation, lastLocation, MAPBOX_TOKEN, destination, activeDelivery?.id, activeDelivery?.status]);
+    }, [displayCoords, destinationCoords, MAPBOX_TOKEN, activeDelivery?.id, activeDelivery?.status]);
 
     // Calculate route when location changes
     useEffect(() => {
@@ -1967,12 +2008,12 @@ export default function RiderDashboard() {
                 setRiderLocation(lastKnown);
 
                 // Only calculate initial straight-line distance if we don't have a route yet
-                if (!routeGeometry) {
+                if (!routeGeometry && destinationCoords) {
                     const dist = calculateDistance(
                         lastKnown.coords.latitude,
                         lastKnown.coords.longitude,
-                        destination.latitude,
-                        destination.longitude
+                        destinationCoords.latitude,
+                        destinationCoords.longitude
                     );
                     setDistance(`${dist} km`);
                 }
@@ -1985,13 +2026,15 @@ export default function RiderDashboard() {
             setRiderLocation(location);
 
             // Calculate distance
-            const dist = calculateDistance(
-                location.coords.latitude,
-                location.coords.longitude,
-                destination.latitude,
-                destination.longitude
-            );
-            setDistance(`${dist} km`);
+            if (destinationCoords) {
+                const dist = calculateDistance(
+                    location.coords.latitude,
+                    location.coords.longitude,
+                    destinationCoords.latitude,
+                    destinationCoords.longitude
+                );
+                setDistance(`${dist} km`);
+            }
 
             let address = await Location.reverseGeocodeAsync({
                 latitude: location.coords.latitude,
@@ -2007,7 +2050,7 @@ export default function RiderDashboard() {
             console.log('Error fetching location:', error);
             setLocationName('Location unavailable');
         }
-    }, []);
+    }, [destinationCoords, routeGeometry]);
 
     useEffect(() => {
         fetchLocation();
@@ -2068,16 +2111,15 @@ export default function RiderDashboard() {
 
     // Auto-geocode when rider moves
     useEffect(() => {
-        if (!riderLocation) return;
-        const { latitude, longitude } = riderLocation.coords;
-        geocodeAddress(latitude, longitude);
-    }, [riderLocation, geocodeAddress]);
+        if (!riderCoords) return;
+        geocodeAddress(riderCoords.latitude, riderCoords.longitude);
+    }, [riderCoords, geocodeAddress]);
 
     // Manual address refresh handler
     const handleRefreshAddress = useCallback(async () => {
-        if (!riderLocation) return;
-        await geocodeAddress(riderLocation.coords.latitude, riderLocation.coords.longitude, true);
-    }, [riderLocation, geocodeAddress]);
+        if (!riderCoords) return;
+        await geocodeAddress(riderCoords.latitude, riderCoords.longitude, true);
+    }, [riderCoords, geocodeAddress]);
 
     const onRefresh = useCallback(async () => {
         setRefreshing(true);
@@ -2198,9 +2240,9 @@ export default function RiderDashboard() {
     // At-a-glance telemetry state
     const [onlineSessionStartedAt, setOnlineSessionStartedAt] = useState<number | null>(null);
     const [distanceTravelledKm, setDistanceTravelledKm] = useState(0);
-    const [batteryEtaLabel, setBatteryEtaLabel] = useState('Learning...');
+    const [batteryEtaLabels, setBatteryEtaLabels] = useState<BatteryEtaLabels>(EMPTY_BATTERY_ETA_LABELS);
     const distanceCursorRef = useRef<{ latitude: number; longitude: number; timestamp: number } | null>(null);
-    const batteryTrendRef = useRef<{ startPct: number; startTs: number; latestPct: number; latestTs: number } | null>(null);
+    const batteryTrendRef = useRef<Record<BatteryChannel, BatteryEtaTrend | null>>({ main: null, secondary: null });
 
     const metersBetween = useCallback((lat1: number, lon1: number, lat2: number, lon2: number): number => {
         const R = 6371000;
@@ -2217,15 +2259,6 @@ export default function RiderDashboard() {
         const minutes = Math.floor((totalSeconds % 3600) / 60);
         if (hours === 0) return `${minutes}m`;
         return `${hours}h ${minutes}m`;
-    };
-
-    const formatBatteryEta = (hours: number): string => {
-        if (!Number.isFinite(hours) || hours <= 0) return '<1h';
-        if (hours > 72) return '>72h';
-        const h = Math.floor(hours);
-        const m = Math.round((hours - h) * 60);
-        if (h === 0) return `${m}m`;
-        return `${h}h ${m}m`;
     };
 
     useEffect(() => {
@@ -2274,64 +2307,91 @@ export default function RiderDashboard() {
     }, [isOnline, riderLocation, metersBetween]);
 
     useEffect(() => {
-        const pct = batteryWorstPct;
-
-        if (pct == null) {
-            setBatteryEtaLabel('No Data');
-            batteryTrendRef.current = null;
-            return;
-        }
-
+        const readings: Record<BatteryChannel, number | undefined> = {
+            main: batteryMainPct,
+            secondary: batteryLockPct,
+        };
+        const nextLabels: BatteryEtaLabels = { ...EMPTY_BATTERY_ETA_LABELS };
         const now = Date.now();
-        const trend = batteryTrendRef.current;
 
-        if (!trend) {
-            batteryTrendRef.current = {
-                startPct: pct,
-                startTs: now,
-                latestPct: pct,
-                latestTs: now,
-            };
-            setBatteryEtaLabel('Learning...');
-            return;
+        (Object.keys(readings) as BatteryChannel[]).forEach((channel) => {
+            const pct = readings[channel];
+
+            if (pct == null || !Number.isFinite(pct)) {
+                batteryTrendRef.current[channel] = null;
+                return;
+            }
+
+            const trend = batteryTrendRef.current[channel];
+
+            if (!trend) {
+                batteryTrendRef.current[channel] = {
+                    startPct: pct,
+                    startTs: now,
+                    latestPct: pct,
+                    latestTs: now,
+                };
+                nextLabels[channel] = getFallbackBatteryEta(pct);
+                return;
+            }
+
+            // If battery climbs significantly, assume charging/recovery and restart trend.
+            if (pct > trend.latestPct + 2) {
+                batteryTrendRef.current[channel] = {
+                    startPct: pct,
+                    startTs: now,
+                    latestPct: pct,
+                    latestTs: now,
+                };
+                nextLabels[channel] = 'Charging';
+                return;
+            }
+
+            if (pct <= trend.latestPct) {
+                trend.latestPct = pct;
+                trend.latestTs = now;
+            }
+
+            const consumedPct = trend.startPct - trend.latestPct;
+            const elapsedHours = (trend.latestTs - trend.startTs) / 3600000;
+
+            if (consumedPct < BATTERY_MIN_TREND_DROP_PCT || elapsedHours < BATTERY_MIN_TREND_HOURS) {
+                nextLabels[channel] = getFallbackBatteryEta(pct);
+                return;
+            }
+
+            const drainPerHour = consumedPct / elapsedHours;
+            if (!Number.isFinite(drainPerHour) || drainPerHour <= 0) {
+                nextLabels[channel] = 'Stable';
+                return;
+            }
+
+            const remainingPct = Math.max(0, pct - BATTERY_RESERVE_PCT);
+            const hoursToReserve = remainingPct / drainPerHour;
+            nextLabels[channel] = formatBatteryEta(hoursToReserve);
+        });
+
+        setBatteryEtaLabels(nextLabels);
+    }, [batteryMainPct, batteryLockPct]);
+
+    const batteryEtaRows = useMemo(() => {
+        const rows: { key: BatteryChannel; label: string; eta: string }[] = [];
+        if (batteryMainPct != null) {
+            rows.push({
+                key: 'main',
+                label: 'MCU',
+                eta: batteryEtaLabels.main ?? getFallbackBatteryEta(batteryMainPct),
+            });
         }
-
-        // If battery climbs significantly, assume charging/recovery and restart trend.
-        if (pct > trend.latestPct + 2) {
-            batteryTrendRef.current = {
-                startPct: pct,
-                startTs: now,
-                latestPct: pct,
-                latestTs: now,
-            };
-            setBatteryEtaLabel('Charging');
-            return;
+        if (batteryLockPct != null) {
+            rows.push({
+                key: 'secondary',
+                label: 'Lock',
+                eta: batteryEtaLabels.secondary ?? getFallbackBatteryEta(batteryLockPct),
+            });
         }
-
-        if (pct <= trend.latestPct) {
-            trend.latestPct = pct;
-            trend.latestTs = now;
-        }
-
-        const consumedPct = trend.startPct - trend.latestPct;
-        const elapsedHours = (trend.latestTs - trend.startTs) / 3600000;
-
-        if (consumedPct < 2 || elapsedHours < 0.25) {
-            setBatteryEtaLabel('Learning...');
-            return;
-        }
-
-        const drainPerHour = consumedPct / elapsedHours;
-        if (!Number.isFinite(drainPerHour) || drainPerHour <= 0) {
-            setBatteryEtaLabel('Stable');
-            return;
-        }
-
-        const reservePct = 10;
-        const remainingPct = Math.max(0, pct - reservePct);
-        const hoursToReserve = remainingPct / drainPerHour;
-        setBatteryEtaLabel(formatBatteryEta(hoursToReserve));
-    }, [batteryWorstPct]);
+        return rows;
+    }, [batteryMainPct, batteryLockPct, batteryEtaLabels]);
 
     const onlineSessionMs = onlineSessionStartedAt ? Math.max(0, currentTime.valueOf() - onlineSessionStartedAt) : 0;
     const onlineSessionLabel = isOnline && onlineSessionStartedAt
@@ -2686,7 +2746,7 @@ export default function RiderDashboard() {
                             <Text style={[styles.bannerText, { color: c.orangeText }]}>
                                 {gpsHealth.obstructionDetected
                                     ? "Box antenna obstructed! Please clear package."
-                                    : `Poor reception (HDOP: ${gpsHealth.hdop.toFixed(1)})`}
+                                    : `Poor reception (HDOP: ${formatFixedNumber(gpsHealth.hdop, 1)})`}
                             </Text>
                         </View>
                     </View>
@@ -2776,13 +2836,13 @@ export default function RiderDashboard() {
                                 <View style={{ marginLeft: 10, flex: 1 }}>
                                     <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                                         <Text variant="titleSmall" style={{ fontFamily: 'Inter_700Bold', color: c.text }}>Your Location</Text>
-                                        {riderLocation && (
+                                        {displayCoords && (
                                             <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: c.greenText, marginLeft: 6 }} />
                                         )}
                                     </View>
-                                    {riderLocation && (
+                                    {displayCoords && (
                                         <Text variant="bodySmall" style={{ color: c.textSec, fontSize: 10, marginTop: 1 }}>
-                                            {riderLocation.coords.latitude.toFixed(5)}°, {riderLocation.coords.longitude.toFixed(5)}°
+                                            {displayCoords.latitude.toFixed(5)}°, {displayCoords.longitude.toFixed(5)}°
                                             {localPhoneHeading != null ? `  •  🧭 ${Math.round(localPhoneHeading)}°` : ''}
                                         </Text>
                                     )}
@@ -2802,7 +2862,7 @@ export default function RiderDashboard() {
                             </View>
                         </View>
                         <View style={styles.mapPreviewContainer}>
-                            {(lastLocation || riderLocation) && MAPBOX_TOKEN ? (
+                            {displayCoords && MAPBOX_TOKEN ? (
                                 <>
                                     <MapboxGL.MapView
                                         pointerEvents="none"
@@ -2820,18 +2880,18 @@ export default function RiderDashboard() {
                                     >
                                         <MapboxGL.Camera
                                             centerCoordinate={[
-                                                lastLocation ? lastLocation.longitude : riderLocation!.coords.longitude,
-                                                lastLocation ? lastLocation.latitude : riderLocation!.coords.latitude,
+                                                displayCoords.longitude,
+                                                displayCoords.latitude,
                                             ]}
                                             zoomLevel={mapZoomLevel}
                                             animationMode="flyTo"
                                             animationDuration={800}
                                         />
                                         <AnimatedRiderMarker
-                                            latitude={lastLocation ? lastLocation.latitude : riderLocation!.coords.latitude}
-                                            longitude={lastLocation ? lastLocation.longitude : riderLocation!.coords.longitude}
-                                            rotation={headingSmoother.smooth(riderLocation?.coords.heading ?? -1, (lastLocation?.speed ?? riderLocation?.coords.speed) ?? undefined, localPhoneHeading ?? undefined)}
-                                            speed={lastLocation?.speed ?? riderLocation?.coords.speed ?? undefined}
+                                            latitude={displayCoords.latitude}
+                                            longitude={displayCoords.longitude}
+                                            rotation={headingSmoother.smooth(riderLocation?.coords.heading ?? -1, displaySpeed, localPhoneHeading ?? undefined)}
+                                            speed={displaySpeed}
                                         />
                                     </MapboxGL.MapView>
                                     {/* Address Overlay with Refresh Button */}
@@ -3000,9 +3060,24 @@ export default function RiderDashboard() {
                                 <Text numberOfLines={1} style={[styles.metricLabel, { color: c.textSec }]}>Battery ETA</Text>
                                 <MaterialCommunityIcons name={getBatteryIcon() as any} size={18} color={c.textSec} />
                             </View>
-                            <Text style={[styles.metricValue, { color: c.text }]}>
-                                {batteryEtaLabel}
-                            </Text>
+                            {batteryEtaRows.length > 0 ? (
+                                <View style={styles.batteryEtaList}>
+                                    {batteryEtaRows.map((row) => (
+                                        <View key={row.key} style={styles.batteryEtaRow}>
+                                            <Text numberOfLines={1} style={[styles.batteryEtaName, { color: c.textSec }]}>
+                                                {row.label}
+                                            </Text>
+                                            <Text numberOfLines={1} style={[styles.batteryEtaReading, { color: c.text }]}>
+                                                {row.eta}
+                                            </Text>
+                                        </View>
+                                    ))}
+                                </View>
+                            ) : (
+                                <Text style={[styles.metricValue, { color: c.text }]}>
+                                    No Data
+                                </Text>
+                            )}
                             <Text style={[styles.metricHint, { color: c.textSec }]}>
                                 {batterySummary
                                     ? `${batterySummary} remaining (to 10%)`
@@ -3071,7 +3146,7 @@ export default function RiderDashboard() {
                     {nextDelivery ? (
                         <Card style={[styles.jobCard, { backgroundColor: c.card, borderColor: c.border, borderWidth: 1 }]} mode="contained" onPress={() => navigation.navigate('JobDetail', { job: nextDelivery })}>
                             <View style={styles.mapContainer}>
-                                {(lastLocation || riderLocation) && MAPBOX_TOKEN ? (
+                                {displayCoords && destinationCoords && MAPBOX_TOKEN ? (
                                     <MapboxGL.MapView
                                         style={styles.map}
                                         logoEnabled={false}
@@ -3086,12 +3161,12 @@ export default function RiderDashboard() {
                                         <MapboxGL.Camera
                                             bounds={{
                                                 ne: [
-                                                    Math.max(lastLocation ? lastLocation.longitude : riderLocation!.coords.longitude, destination.longitude),
-                                                    Math.max(lastLocation ? lastLocation.latitude : riderLocation!.coords.latitude, destination.latitude)
+                                                    Math.max(displayCoords.longitude, destinationCoords.longitude),
+                                                    Math.max(displayCoords.latitude, destinationCoords.latitude)
                                                 ],
                                                 sw: [
-                                                    Math.min(lastLocation ? lastLocation.longitude : riderLocation!.coords.longitude, destination.longitude),
-                                                    Math.min(lastLocation ? lastLocation.latitude : riderLocation!.coords.latitude, destination.latitude)
+                                                    Math.min(displayCoords.longitude, destinationCoords.longitude),
+                                                    Math.min(displayCoords.latitude, destinationCoords.latitude)
                                                 ],
                                                 paddingTop: 40,
                                                 paddingRight: 40,
@@ -3104,16 +3179,16 @@ export default function RiderDashboard() {
 
                                         {/* Rider Location Marker */}
                                         <AnimatedRiderMarker
-                                            latitude={lastLocation ? lastLocation.latitude : riderLocation!.coords.latitude}
-                                            longitude={lastLocation ? lastLocation.longitude : riderLocation!.coords.longitude}
-                                            rotation={headingSmoother.smooth(riderLocation?.coords.heading ?? -1, (lastLocation?.speed ?? riderLocation?.coords.speed) ?? undefined, localPhoneHeading ?? undefined)}
-                                            speed={lastLocation?.speed ?? riderLocation?.coords.speed ?? undefined}
+                                            latitude={displayCoords.latitude}
+                                            longitude={displayCoords.longitude}
+                                            rotation={headingSmoother.smooth(riderLocation?.coords.heading ?? -1, displaySpeed, localPhoneHeading ?? undefined)}
+                                            speed={displaySpeed}
                                         />
 
                                         {/* Destination Marker */}
                                         <MapboxGL.PointAnnotation
                                             id="destination"
-                                            coordinate={[destination.longitude, destination.latitude]}
+                                            coordinate={[destinationCoords.longitude, destinationCoords.latitude]}
                                             title={destination.title}
                                         >
                                             <View style={{
@@ -4028,6 +4103,26 @@ const styles = StyleSheet.create({
         fontSize: 16,
         fontFamily: 'Inter_700Bold',
         marginBottom: 4,
+    },
+    batteryEtaList: {
+        marginBottom: 4,
+    },
+    batteryEtaRow: {
+        minHeight: 20,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+    },
+    batteryEtaName: {
+        fontSize: 11,
+        fontFamily: 'Inter_700Bold',
+        marginRight: 8,
+    },
+    batteryEtaReading: {
+        flex: 1,
+        fontSize: 15,
+        fontFamily: 'Inter_700Bold',
+        textAlign: 'right',
     },
     metricHint: {
         fontSize: 11,

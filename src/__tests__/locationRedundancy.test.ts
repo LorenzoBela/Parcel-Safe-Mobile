@@ -3,6 +3,7 @@ import { locationRedundancy } from "../services/locationRedundancy";
 // We mock the modules used by the redundancy manager so tests run in Node.
 let mockBoxLocationCallback: ((location: any) => void) | null = null;
 let mockBoxStateCallback: ((state: any) => void) | null = null;
+let mockGpsHealthCallback: ((state: any) => void) | null = null;
 let mockPhoneWatchCallback: ((location: any) => void) | null = null;
 
 const mockRemovePhoneWatch = jest.fn();
@@ -12,13 +13,23 @@ jest.mock("expo-location", () => {
         requestForegroundPermissionsAsync: jest
             .fn()
             .mockResolvedValue({ status: "granted" }),
-        Accuracy: { Balanced: 3 },
+        getForegroundPermissionsAsync: jest
+            .fn()
+            .mockResolvedValue({ status: "granted" }),
+        Accuracy: { Balanced: 3, BestForNavigation: 6 },
         watchPositionAsync: jest.fn(async (_options: any, callback: any) => {
             mockPhoneWatchCallback = callback;
             return { remove: mockRemovePhoneWatch };
         }),
     };
 });
+
+jest.mock("../services/backgroundLocationService", () => ({
+    backgroundLocationService: {
+        start: jest.fn().mockResolvedValue(false),
+        stop: jest.fn().mockResolvedValue(undefined),
+    },
+}));
 
 jest.mock("../services/firebaseClient", () => {
     return {
@@ -36,16 +47,19 @@ jest.mock("../services/firebaseClient", () => {
         }),
         writePhoneLocation: jest.fn().mockResolvedValue(undefined),
         subscribeToGpsHealth: jest.fn((_boxId: string, cb: any) => {
-            // For now just a no-op mock, or capture if needed
-            return () => { };
+            mockGpsHealthCallback = cb;
+            return () => {
+                mockGpsHealthCallback = null;
+            };
         }),
     };
 });
 
 const flushPromises = async () => {
     // Enough to flush microtasks created by async/await chains in this code.
-    await Promise.resolve();
-    await Promise.resolve();
+    for (let i = 0; i < 8; i += 1) {
+        await Promise.resolve();
+    }
 };
 
 describe("locationRedundancy", () => {
@@ -55,6 +69,7 @@ describe("locationRedundancy", () => {
         mockRemovePhoneWatch.mockClear();
         mockBoxLocationCallback = null;
         mockBoxStateCallback = null;
+        mockGpsHealthCallback = null;
         mockPhoneWatchCallback = null;
 
         // Ensure singleton starts clean each test.
@@ -124,7 +139,7 @@ describe("locationRedundancy", () => {
             latitude: 1,
             longitude: 1,
             source: "box",
-            server_timestamp: Date.now() - 20_000,
+            server_timestamp: Date.now() - 40_000,
         });
 
         // Heartbeat monitor will detect staleness and start fallback.
@@ -170,5 +185,25 @@ describe("locationRedundancy", () => {
 
         expect(locationRedundancy.getState().phoneGpsActive).toBe(false);
         expect(locationRedundancy.getState().source).toBe("box");
+    });
+
+    test("normalizes string GPS health telemetry from Firebase", () => {
+        locationRedundancy.start("BOX_001");
+
+        expect(typeof mockGpsHealthCallback).toBe("function");
+        mockGpsHealthCallback?.({
+            box_hdop: "6.7",
+            satellites_visible: "3",
+            obstruction_detected: "false",
+        });
+
+        const state = locationRedundancy.getState();
+        expect(state.gpsHealth).toMatchObject({
+            hdop: 6.7,
+            satellites: 3,
+            obstructionDetected: false,
+            isDegraded: true,
+        });
+        expect(typeof state.gpsHealth?.hdop).toBe("number");
     });
 });

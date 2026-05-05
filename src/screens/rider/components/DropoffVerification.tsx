@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { View, StyleSheet, Alert, Linking, Image } from 'react-native';
 import { Text, Card, Button, IconButton, Switch } from 'react-native-paper';
 import * as ImagePicker from 'expo-image-picker';
@@ -199,6 +199,24 @@ export default function DropoffVerification({
         ? `${effectiveHardwareProofUrl}${effectiveHardwareProofUrl.includes('?') ? '&' : '?'}t=${proofVersion || Date.now()}`
         : null;
 
+    const markOtpVerified = useCallback(() => {
+        setBoxOtpValidated(true);
+        setOtpConfirmedByCloud(true);
+        setOtpSyncPending(false);
+    }, []);
+
+    const markFaceVerified = useCallback(() => {
+        markOtpVerified();
+        setFaceDetected(true);
+        setFaceConfirmedByCloud(true);
+        setFaceSyncPending(false);
+    }, [markOtpVerified]);
+
+    const markHardwareVerified = useCallback(() => {
+        setHardwareSuccess(true);
+        markFaceVerified();
+    }, [markFaceVerified]);
+
     // Auto-arrive logic
     useEffect(() => {
         let mounted = true;
@@ -219,10 +237,12 @@ export default function DropoffVerification({
             setProofVersion(cached.proofVersion);
             setManualModeEnabled(cached.manualModeEnabled);
             if (cached.boxOtpValidated) {
-                setOtpSyncPending(true);
+                setOtpConfirmedByCloud(true);
+                setOtpSyncPending(false);
             }
             if (cached.faceDetected) {
-                setFaceSyncPending(true);
+                setFaceConfirmedByCloud(true);
+                setFaceSyncPending(false);
             }
         };
 
@@ -303,16 +323,13 @@ export default function DropoffVerification({
             lastCloudSignalAtRef.current = Date.now();
 
             if (proof?.proof_photo_url) {
-                setHardwareSuccess(true);
                 setHardwareProofUrl(proof.proof_photo_url);
                 setProofVersion(
                     typeof proof.proof_photo_uploaded_at === 'number'
                         ? proof.proof_photo_uploaded_at
                         : Date.now()
                 );
-                setBoxOtpValidated(true);
-                setOtpConfirmedByCloud(true);
-                setOtpSyncPending(false);
+                markHardwareVerified();
             }
 
             if (!proof?.proof_photo_url && photoAudit?.latest_photo_url) {
@@ -322,43 +339,31 @@ export default function DropoffVerification({
                         ? photoAudit.latest_photo_uploaded_at
                         : Date.now()
                 );
-                setHardwareSuccess(true);
-                setBoxOtpValidated(true);
-                setOtpConfirmedByCloud(true);
-                setOtpSyncPending(false);
+                markHardwareVerified();
             }
 
             if (lockEventSnapshot) {
                 setLockEvent(lockEventSnapshot);
+                const otpPassed =
+                    lockEventSnapshot.otp_valid ||
+                    lockEventSnapshot.face_detected ||
+                    lockEventSnapshot.unlocked;
+                const facePassed = lockEventSnapshot.face_detected || lockEventSnapshot.unlocked;
 
-                if (lockEventSnapshot.otp_valid) {
-                    setBoxOtpValidated(true);
-                    setOtpConfirmedByCloud(true);
-                    setOtpSyncPending(false);
+                if (otpPassed) {
+                    markOtpVerified();
                 } else {
-                    setBoxOtpValidated(false);
-                    setOtpConfirmedByCloud(false);
                     setOtpSyncPending(false);
                 }
 
-                if (lockEventSnapshot.face_detected) {
-                    setFaceDetected(true);
-                    setFaceConfirmedByCloud(true);
-                    setFaceSyncPending(false);
+                if (facePassed) {
+                    markFaceVerified();
                 } else if (lockEventSnapshot.otp_valid) {
-                    setFaceDetected(false);
-                    setFaceConfirmedByCloud(false);
                     setFaceSyncPending(false);
                 }
 
                 if (lockEventSnapshot.unlocked) {
-                    setHardwareSuccess(true);
-                    setBoxOtpValidated(true);
-                    setFaceDetected(true);
-                    setOtpConfirmedByCloud(true);
-                    setFaceConfirmedByCloud(true);
-                    setOtpSyncPending(false);
-                    setFaceSyncPending(false);
+                    markHardwareVerified();
                 }
             }
 
@@ -504,16 +509,13 @@ export default function DropoffVerification({
         const unsubscribeProof = subscribeToDeliveryProof(deliveryId, (proof) => {
             lastCloudSignalAtRef.current = Date.now();
             if (canProcessOtpSignals && proof && proof.proof_photo_url) {
-                setHardwareSuccess(true);
                 setHardwareProofUrl(proof.proof_photo_url);
                 if (typeof proof.proof_photo_uploaded_at === 'number') {
                     setProofVersion(proof.proof_photo_uploaded_at);
                 } else {
                     setProofVersion(Date.now());
                 }
-                setBoxOtpValidated(true); // proof_photo_url implies box validated OTP
-                setOtpConfirmedByCloud(true);
-                setOtpSyncPending(false);
+                markHardwareVerified(); // proof_photo_url implies box validated OTP + face
             }
         });
 
@@ -527,10 +529,7 @@ export default function DropoffVerification({
             } else {
                 setProofVersion(Date.now());
             }
-            setHardwareSuccess(true);
-            setBoxOtpValidated(true);
-            setOtpConfirmedByCloud(true);
-            setOtpSyncPending(false);
+            markHardwareVerified();
         });
 
         // Monitor camera state for failures
@@ -557,37 +556,25 @@ export default function DropoffVerification({
             }
 
             setLockEvent(event);
+            const otpPassed = event.otp_valid || event.face_detected || event.unlocked;
+            const facePassed = event.face_detected || event.unlocked;
 
-            if (event.otp_valid) {
-                setBoxOtpValidated(true);
-                setOtpConfirmedByCloud(true);
-                setOtpSyncPending(false);
+            if (otpPassed) {
+                markOtpVerified();
             } else if (event.otp_valid === false) {
-                setBoxOtpValidated(false);
-                setOtpConfirmedByCloud(false);
                 setOtpSyncPending(false);
             }
             if (event.face_retry_exhausted || event.fallback_required) {
                 setCameraFailed(true);
             }
-            if (event.face_detected) {
-                setFaceDetected(true);
-                setFaceConfirmedByCloud(true);
-                setFaceSyncPending(false);
+            if (facePassed) {
+                markFaceVerified();
             } else if (event.face_detected === false && event.otp_valid) {
-                setFaceDetected(false);
-                setFaceConfirmedByCloud(false);
                 setFaceSyncPending(false);
             }
             if (event.unlocked) {
                 // Box confirmed OTP + face + solenoid fired
-                setHardwareSuccess(true);
-                setBoxOtpValidated(true);
-                setFaceDetected(true);
-                setOtpConfirmedByCloud(true);
-                setFaceConfirmedByCloud(true);
-                setOtpSyncPending(false);
-                setFaceSyncPending(false);
+                markHardwareVerified();
             }
         });
 
@@ -598,7 +585,15 @@ export default function DropoffVerification({
             unsubscribeCamera();
             unsubscribeLockEvents();
         };
-    }, [boxId, deliveryId, canProcessOtpSignals, subscriptionEpoch]);
+    }, [
+        boxId,
+        deliveryId,
+        canProcessOtpSignals,
+        subscriptionEpoch,
+        markOtpVerified,
+        markFaceVerified,
+        markHardwareVerified,
+    ]);
 
     useEffect(() => {
         const flush = async () => {
@@ -832,9 +827,15 @@ export default function DropoffVerification({
     const showManualControls = lockAwaitingClose || lockCloseConfirmed || (manualModeEnabled && canRevealManualControls);
     const zoneStatusText = !isInsideGeoFence
         ? 'Navigate to the drop-off zone.'
-        : deliveryStatus === 'ARRIVED'
-            ? 'Arrived. Customer can enter the OTP on the box.'
-            : 'Inside drop-off zone. Syncing the box now.';
+        : canSwipe
+            ? 'Verification complete. Swipe to finish delivery.'
+            : boxOtpValidated && faceDetected
+                ? 'OTP and face confirmed. Waiting for proof photo.'
+                : boxOtpValidated
+                    ? 'OTP accepted. Waiting for face check.'
+                    : deliveryStatus === 'ARRIVED'
+                        ? 'Arrived. Customer can enter the OTP on the box.'
+                        : 'Inside drop-off zone. Syncing the box now.';
 
     const getCompactHandoverStatusText = (): string => {
         if (hardwareSuccess && hasHardwareProof) {

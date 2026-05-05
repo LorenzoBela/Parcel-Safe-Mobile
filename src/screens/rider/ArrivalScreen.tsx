@@ -155,6 +155,13 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { PremiumAlert } from '../../services/PremiumAlertService';
 
 const BATTERY_HANDOFF_TIMEOUT_MS = 15 * 60 * 1000;
+const PHONE_DROPOFF_CLEAR_INSIDE_MAX_M = 40;
+const PHONE_DROPOFF_CLEAR_INSIDE_RATIO = 0.8;
+const DROPOFF_PHONE_DISTANCE_INTERVAL_M = 1;
+const DEFAULT_PHONE_DISTANCE_INTERVAL_M = 5;
+const MANUAL_REFRESH_PHONE_TIMEOUT_MS = 10000;
+const MANUAL_REFRESH_CACHED_PHONE_MAX_AGE_MS = 30000;
+const MANUAL_REFRESH_LAST_KNOWN_ACCURACY_M = 80;
 
 function formatRemainingMinutesSeconds(remainingMs: number): string {
     const clamped = Math.max(0, remainingMs);
@@ -248,11 +255,30 @@ export default function ArrivalScreen() {
             null,
             now
         );
-        phoneGeofenceStateRef.current = nextState;
-        setIsPhoneInside(nextState.stableState === 'INSIDE');
-        setDistanceMeters(Math.round(nextState.rawDistanceM));
+        const geometricResult = checkGeofence(position, geofence);
+        const clearInsideRadiusM = Math.min(
+            geofence.radiusMeters * PHONE_DROPOFF_CLEAR_INSIDE_RATIO,
+            PHONE_DROPOFF_CLEAR_INSIDE_MAX_M
+        );
+        const isClearDropoffFix =
+            geofenceTarget === 'dropoff' &&
+            geometricResult.isInside &&
+            nextState.rawDistanceM <= clearInsideRadiusM;
+        const effectiveState: GeofenceStabilityState = isClearDropoffFix && nextState.stableState !== 'INSIDE'
+            ? {
+                ...nextState,
+                stableState: 'INSIDE',
+                rawState: 'INSIDE',
+                hysteresisCount: Math.max(nextState.hysteresisCount, 3),
+                lastStableChangeMs: now,
+            }
+            : nextState;
+
+        phoneGeofenceStateRef.current = effectiveState;
+        setIsPhoneInside(effectiveState.stableState === 'INSIDE');
+        setDistanceMeters(geometricResult.distanceMeters);
         setPhoneLocationLastSeen(now);
-    }, [geofence.centerLat, geofence.centerLng]);
+    }, [geofence, geofenceTarget]);
 
     // EC-FIX: Derive gpsAcquired — phone GPS is required, box is best-effort (4s timeout)
     useEffect(() => {
@@ -848,7 +874,9 @@ export default function ArrivalScreen() {
                 {
                     accuracy: Location.Accuracy.High,
                     timeInterval: 2000,
-                    distanceInterval: 5,
+                    distanceInterval: geofenceTarget === 'dropoff'
+                        ? DROPOFF_PHONE_DISTANCE_INTERVAL_M
+                        : DEFAULT_PHONE_DISTANCE_INTERVAL_M,
                 },
                 (location) => {
                     applyPhonePosition(location.coords, 25);
@@ -863,7 +891,7 @@ export default function ArrivalScreen() {
                 subscription.remove();
             }
         };
-    }, [geofence, applyPhonePosition]);
+    }, [geofence, geofenceTarget, applyPhonePosition]);
 
     // Device Compass Heading (Foreground)
     useEffect(() => {
@@ -1568,14 +1596,42 @@ export default function ArrivalScreen() {
                     throw new Error('Phone location permission not granted');
                 }
 
-                const loc = await Promise.race([
-                    Location.getCurrentPositionAsync({
-                        accuracy: Location.Accuracy.High,
-                    }),
-                    new Promise<never>((_, reject) => {
-                        setTimeout(() => reject(new Error('Phone GPS refresh timed out')), 10000);
-                    }),
-                ]) as Location.LocationObject;
+                const hasRecentCurrentPosition =
+                    (currentPosition.lat !== 0 || currentPosition.lng !== 0) &&
+                    Date.now() - phoneLocationLastSeen <= MANUAL_REFRESH_CACHED_PHONE_MAX_AGE_MS;
+
+                if (hasRecentCurrentPosition) {
+                    applyPhonePosition({
+                        latitude: currentPosition.lat,
+                        longitude: currentPosition.lng,
+                        accuracy: currentPosition.accuracy,
+                        heading: currentPosition.heading,
+                        speed: currentPosition.speed,
+                    }, 25);
+                }
+
+                let loc: Location.LocationObject;
+                try {
+                    loc = await Promise.race([
+                        Location.getCurrentPositionAsync({
+                            accuracy: Location.Accuracy.High,
+                        }),
+                        new Promise<never>((_, reject) => {
+                            setTimeout(() => reject(new Error('Phone GPS refresh timed out')), MANUAL_REFRESH_PHONE_TIMEOUT_MS);
+                        }),
+                    ]) as Location.LocationObject;
+                } catch (error) {
+                    const lastKnown = await Location.getLastKnownPositionAsync({
+                        maxAge: MANUAL_REFRESH_CACHED_PHONE_MAX_AGE_MS,
+                        requiredAccuracy: MANUAL_REFRESH_LAST_KNOWN_ACCURACY_M,
+                    });
+
+                    if (!lastKnown) {
+                        throw error;
+                    }
+
+                    loc = lastKnown;
+                }
 
                 applyPhonePosition(loc.coords, 25);
                 await writePhoneLocation(
@@ -1605,7 +1661,14 @@ export default function ArrivalScreen() {
         } finally {
             setManualRefreshBusy(false);
         }
-    }, [manualRefreshBusy, params.boxId, applyPhonePosition, localPhoneHeading]);
+    }, [
+        manualRefreshBusy,
+        params.boxId,
+        applyPhonePosition,
+        currentPosition,
+        phoneLocationLastSeen,
+        localPhoneHeading,
+    ]);
 
     // EC-12: Render System Status (Horizontal Scroll)
     const renderSystemStatus = () => {
