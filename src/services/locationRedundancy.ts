@@ -1,7 +1,7 @@
 /**
  * GPS Location Redundancy Service
  * 
- * Implements smart failover between Box GPS (primary) and Phone GPS (fallback).
+ * Keeps rider phone GPS primary during active tracking, with box GPS as backup.
  * Power-optimized: GPS only active during deliveries, adaptive intervals.
  * 
  * Per Parcel-Safe Constitution Article 1.1: "The Nervous System (Firebase RTDB)"
@@ -35,10 +35,6 @@ const CONFIG = {
 
     /** How often to check for new delivery when in SLEEP state (ms) */
     DEEP_SLEEP_WAKE_INTERVAL: 60000,
-
-    /** How long HDOP must remain healthy before phone GPS is deactivated (ms).
-     *  Prevents rapid on/off cycling in marginal signal areas. */
-    GPS_HEALTH_RECOVERY_DEBOUNCE: 15000,
 
     /** Backoff window before retrying failed background service startup (ms). */
     PHONE_GPS_START_RETRY_BACKOFF_MS: 30000,
@@ -105,7 +101,6 @@ class LocationRedundancyManager {
     private heartbeatCheckInterval: NodeJS.Timeout | null = null;
     private lastSourceSwitchTime: number = 0;
     private phoneGpsSessionToken: number = 0;
-    private gpsHealthRecoveryTimer: ReturnType<typeof setTimeout> | null = null;
     private phoneGpsStartRetryBlockedUntil: number = 0;
     private phoneGpsStartInFlight = false;
     private foregroundFallbackActive = false;
@@ -156,6 +151,7 @@ class LocationRedundancyManager {
             return;
         }
         this.updateState({ powerState: 'ACTIVE' });
+        void this.startPhoneGpsFallback();
     }
 
     /**
@@ -176,11 +172,6 @@ class LocationRedundancyManager {
     stop(): void {
         this.stopPhoneGps();
         this.stopHeartbeatMonitor();
-
-        if (this.gpsHealthRecoveryTimer) {
-            clearTimeout(this.gpsHealthRecoveryTimer);
-            this.gpsHealthRecoveryTimer = null;
-        }
 
         if (this.unsubscribeLocation) {
             this.unsubscribeLocation();
@@ -243,18 +234,13 @@ class LocationRedundancyManager {
             if (!location) return;
 
             const src = location.source as string;
-            if (src === 'box' || src === 'consolidated') {
-                // 'consolidated' = both box + phone are fresh; box GPS is working
+            if (src === 'phone' || src === 'phone_background' || src === 'phone_foreground') {
+                this.updateState({
+                    lastLocation: location,
+                    source: 'phone'
+                });
+            } else if (src === 'box' || src === 'consolidated') {
                 this.handleBoxLocationUpdate(location);
-            } else if (this.state.source === 'phone' || !this.state.isBoxOnline) {
-                // EC-FIX: Loopback - Update UI with phone location from Firebase
-                // This ensures the rider sees exactly what the customer sees
-                if (src === 'phone' || src === 'phone_background') {
-                    this.updateState({
-                        lastLocation: location,
-                        source: 'phone'
-                    });
-                }
             }
         });
 
@@ -291,44 +277,41 @@ class LocationRedundancyManager {
             }
         });
 
-        // Trigger fallback if degraded and box is "online" but blindly trusted
-        // Ideally we only switch if we are MOVING, but for now safety first.
+        // Keep phone GPS available whenever box signal quality degrades.
         if (isDegraded && this.state.powerState === 'ACTIVE' && !this.state.phoneGpsActive) {
             console.log(`[Redundancy] GPS Degraded (HDOP: ${hdop}, Obstruction: ${obstructionDetected}). Activating Phone GPS.`);
             // Cancel any pending recovery timer — health is bad again
-            if (this.gpsHealthRecoveryTimer) {
-                clearTimeout(this.gpsHealthRecoveryTimer);
-                this.gpsHealthRecoveryTimer = null;
-            }
             this.startPhoneGpsFallback();
-        } else if (!isDegraded && this.state.phoneGpsActive && !this.gpsHealthRecoveryTimer) {
-            // GPS health has recovered. Wait GPS_HEALTH_RECOVERY_DEBOUNCE before deactivating phone
-            // GPS to prevent rapid cycling in marginal signal areas (e.g. in/out of building).
-            console.log(`[Redundancy] GPS Health recovering (HDOP: ${hdop}). Scheduling phone GPS shutdown in ${CONFIG.GPS_HEALTH_RECOVERY_DEBOUNCE}ms.`);
-            this.gpsHealthRecoveryTimer = setTimeout(() => {
-                this.gpsHealthRecoveryTimer = null;
-                // Double-check health is still good before deactivating
-                const currentHealth = this.state.gpsHealth;
-                if (currentHealth && !currentHealth.isDegraded && this.state.phoneGpsActive) {
-                    console.log('[Redundancy] GPS Health confirmed recovered. Deactivating phone GPS to save battery.');
-                    this.stopPhoneGps();
-                    this.lastSourceSwitchTime = Date.now();
-                    this.updateState({
-                        source: this.state.isBoxOnline ? 'box' : 'none',
-                        phoneGpsActive: false,
-                    });
-                }
-            }, CONFIG.GPS_HEALTH_RECOVERY_DEBOUNCE);
-        } else if (isDegraded && this.gpsHealthRecoveryTimer) {
-            // Health degraded again before the recovery timer fired — cancel recovery
-            clearTimeout(this.gpsHealthRecoveryTimer);
-            this.gpsHealthRecoveryTimer = null;
         }
     }
 
     private handleBoxLocationUpdate(location: LocationData): void {
-        const now = Date.now();
         const serverTime = location.server_timestamp || location.timestamp;
+        const lastLocation = this.state.lastLocation;
+        const lastLocationTime = lastLocation?.server_timestamp || lastLocation?.timestamp || 0;
+        const normalizedLastLocationTime = lastLocationTime > 0 && lastLocationTime < 1e12
+            ? lastLocationTime * 1000
+            : lastLocationTime;
+        const hasFreshPhoneLocation = (
+            this.state.phoneGpsActive
+            && lastLocation != null
+            && (
+                lastLocation.source === 'phone'
+                || lastLocation.source === 'phone_background'
+                || lastLocation.source === 'phone_foreground'
+            )
+            && normalizedLastLocationTime > 0
+            && Date.now() - normalizedLastLocationTime <= 60000
+        );
+
+        if (hasFreshPhoneLocation) {
+            this.updateState({
+                lastBoxHeartbeat: serverTime,
+                isBoxOnline: true,
+                source: 'phone',
+            });
+            return;
+        }
 
         this.updateState({
             lastLocation: location,
@@ -336,16 +319,6 @@ class LocationRedundancyManager {
             isBoxOnline: true,
             source: 'box',
         });
-
-        // If box came back online and we're in fallback mode, stop phone GPS
-        if (this.state.phoneGpsActive) {
-            const timeSinceSwitch = now - this.lastSourceSwitchTime;
-            if (timeSinceSwitch >= CONFIG.RECONNECT_DEBOUNCE) {
-                console.log('[Redundancy] Box back online, stopping phone GPS fallback');
-                this.stopPhoneGps();
-                this.lastSourceSwitchTime = now;
-            }
-        }
     }
 
     private startHeartbeatMonitor(): void {

@@ -21,6 +21,9 @@ import {
     set,
     serverTimestamp,
 } from 'firebase/database';
+import { getFirebaseDatabase } from './firebaseClient';
+import { consolidateLocation } from './locationUtils';
+import type { LocationData } from '../types';
 
 // ==================== Types ====================
 
@@ -102,7 +105,49 @@ export const THEFT_CONFIG = {
     PHOTO_BURST_DEFAULT_COUNT: 5,
 };
 
-import { getFirebaseDatabase } from './firebaseClient';
+const toFiniteNumberOrNull = (value: unknown): number | null => {
+    if (value == null || value === '') return null;
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? numeric : null;
+};
+
+const normalizeLocationSource = (value: unknown, fallback: LocationData['source']): LocationData['source'] => {
+    if (
+        value === 'box'
+        || value === 'phone'
+        || value === 'phone_background'
+        || value === 'phone_foreground'
+        || value === 'consolidated'
+    ) {
+        return value;
+    }
+    return fallback;
+};
+
+const normalizeLocationEntry = (raw: any, fallbackSource: LocationData['source']): LocationData | null => {
+    const latitude = toFiniteNumberOrNull(raw?.latitude ?? raw?.lat);
+    const longitude = toFiniteNumberOrNull(raw?.longitude ?? raw?.lng);
+    if (latitude == null || longitude == null) return null;
+
+    return {
+        ...raw,
+        latitude,
+        longitude,
+        source: normalizeLocationSource(raw?.source, fallbackSource),
+    } as LocationData;
+};
+
+const getPreferredLocationFromRaw = (raw: any): LocationData | null => {
+    if (!raw) return null;
+
+    if (raw.box != null || raw.phone != null) {
+        const boxLoc = raw.box ? normalizeLocationEntry(raw.box, 'box') : null;
+        const phoneLoc = raw.phone ? normalizeLocationEntry(raw.phone, 'phone_background') : null;
+        return consolidateLocation(boxLoc, phoneLoc) ?? boxLoc ?? phoneLoc;
+    }
+
+    return normalizeLocationEntry(raw, 'box');
+};
 
 // ==================== Theft Status Functions ====================
 
@@ -170,8 +215,7 @@ export async function reportTheft(
                 resolve(snapshot.val());
             }, { onlyOnce: true });
         });
-        // Normalize split-path structure { box, phone } vs legacy flat object
-        const currentLocation = rawSnap?.box ?? (rawSnap?.latitude != null ? rawSnap : null);
+        const currentLocation = getPreferredLocationFromRaw(rawSnap);
 
         await set(theftRef, {
             state: 'STOLEN',
@@ -214,8 +258,7 @@ export function subscribeToBoxLocation(
     const unsubscribe = onValue(locationRef, (snapshot) => {
         const raw = snapshot.val();
         if (!raw) { callback(null); return; }
-        // Normalize split-path { box, phone } vs legacy flat
-        const data = raw.box ?? (raw.latitude != null ? raw : null);
+        const data = getPreferredLocationFromRaw(raw);
         if (data) {
             callback({
                 lat: data.latitude,

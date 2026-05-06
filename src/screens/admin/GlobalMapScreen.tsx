@@ -213,16 +213,11 @@ function isPhoneGpsSource(source?: string): boolean {
 }
 
 function gpsSourceLabel(source?: string): string {
-    if (!source) return 'Unknown';
-    if (source === 'consolidated') return 'Both';
-    if (source === 'phone' || source.startsWith('phone_')) return 'Phone';
-    return 'Box';
+    return source ? 'Live' : 'Unknown';
 }
 
 function gpsSourceIcon(source?: string): string {
-    if (source === 'consolidated') return 'swap-horizontal';
-    if (isPhoneGpsSource(source)) return 'cellphone';
-    return 'cube-outline';
+    return 'crosshairs-gps';
 }
 
 /** Format a timestamp to exact time (HH:MM:SS AM/PM) */
@@ -464,6 +459,7 @@ export default function GlobalMapScreen() {
         let cancelled = false;
 
         const loadTamperIncidents = async () => {
+            if (!supabase) return;
             const { data, error } = await supabase
                 .from('tamper_incidents')
                 .select('id,box_id,status,detected_at,location_lat,location_lng,location_source')
@@ -1520,7 +1516,7 @@ export default function GlobalMapScreen() {
                                                 <FeedRow icon="cellphone" label="Phone Data" value={phoneDataLabel} />
                                                 <FeedRow
                                                     icon={gpsSourceIcon(box.gpsSource)}
-                                                    label="GPS Source"
+                                                    label="GPS Signal"
                                                     value={gpsSourceLabel(box.gpsSource)}
                                                 />
                                             </View>

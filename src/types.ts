@@ -10,7 +10,7 @@ export interface LocationData {
     accuracy?: number;
     /** Horizontal Dilution of Precision from box hardware GNSS (lower = better, < 2 is excellent) */
     hdop?: number;
-    source: 'box' | 'phone';
+    source: 'box' | 'phone' | 'phone_background' | 'phone_foreground' | 'consolidated';
 }
 
 export type LocationsByBoxId = Record<string, LocationData>;

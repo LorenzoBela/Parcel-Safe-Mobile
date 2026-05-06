@@ -629,8 +629,8 @@ export default function RiderDashboard() {
     } = useLocationRedundancy();
     const riderCoords = useMemo(() => getFiniteCoordinates(riderLocation?.coords), [riderLocation]);
     const liveCoords = useMemo(() => getFiniteCoordinates(lastLocation), [lastLocation]);
-    const displayCoords = liveCoords ?? riderCoords;
-    const displaySpeed = toFiniteNumberOrNull(lastLocation?.speed ?? riderLocation?.coords.speed) ?? undefined;
+    const displayCoords = riderCoords ?? liveCoords;
+    const displaySpeed = toFiniteNumberOrNull(riderLocation?.coords.speed ?? lastLocation?.speed) ?? undefined;
 
     // EC-FIX: Local phone location state for fallback
     const [localPhoneLocation, setLocalPhoneLocation] = useState<Location.LocationObject | null>(null);
@@ -1485,22 +1485,16 @@ export default function RiderDashboard() {
             return;
         }
 
-        // EC-FIX: Intelligent Location Source Selection
-        // Only prefer "redundant" location if it comes from the BOX and the box is ONLINE.
-        // If the box is offline, or the source is 'phone', we prefer our own fresh riderLocation
-        // to avoid stale loopbacks from Firebase.
-        const shouldUseRedundancy = lastLocation && (lastLocation.source === 'box' || isBoxOnline);
-
-        const loc = shouldUseRedundancy ? {
-            latitude: lastLocation!.latitude,
-            longitude: lastLocation!.longitude,
-            speed: lastLocation!.speed,
-            heading: lastLocation!.heading,
-        } : (riderLocation ? {
+        const loc = riderLocation ? {
             latitude: riderLocation.coords.latitude,
             longitude: riderLocation.coords.longitude,
             speed: riderLocation.coords.speed ?? undefined,
             heading: riderLocation.coords.heading ?? undefined,
+        } : (lastLocation ? {
+            latitude: lastLocation.latitude,
+            longitude: lastLocation.longitude,
+            speed: lastLocation.speed,
+            heading: lastLocation.heading,
         } : null);
 
         if (loc) {
@@ -2852,11 +2846,11 @@ export default function RiderDashboard() {
                                 {gpsSource !== 'none' && (
                                     <Chip
                                         compact
-                                        icon={gpsSource === 'box' ? 'access-point' : 'cellphone'}
+                                        icon="crosshairs-gps"
                                         style={{ backgroundColor: c.greenBg }}
                                         textStyle={{ fontSize: 10, color: c.greenText }}
                                     >
-                                        {gpsSource === 'box' ? 'Box GPS' : 'Phone GPS'}
+                                        Live GPS
                                     </Chip>
                                 )}
                             </View>
@@ -2997,27 +2991,27 @@ export default function RiderDashboard() {
                                 { backgroundColor: hasActiveDelivery ? getStatusColor(gpsSource, isBoxOnline) + '20' : c.search }
                             ]}>
                                 <MaterialCommunityIcons
-                                    name={hasActiveDelivery && gpsSource === 'box' ? 'access-point' : hasActiveDelivery && gpsSource === 'phone' ? 'cellphone' : 'access-point-off'}
+                                    name={hasActiveDelivery && gpsSource !== 'none' ? 'crosshairs-gps' : 'access-point-off'}
                                     size={24}
                                     color={hasActiveDelivery ? getStatusColor(gpsSource, isBoxOnline) : c.textTer}
                                 />
                             </View>
                             <View style={styles.gpsStatusInfo}>
                                 <Text variant="titleSmall" style={{ fontFamily: 'Inter_700Bold', color: c.text }}>GPS Tracking</Text>
-                                <Text variant="bodySmall" style={{ color: hasActiveDelivery ? (localPhoneLocation && gpsSource === 'none' ? c.orangeText : getStatusColor(gpsSource, isBoxOnline)) : c.textSec }}>
+                                <Text variant="bodySmall" style={{ color: hasActiveDelivery ? (localPhoneLocation && gpsSource === 'none' ? c.greenText : getStatusColor(gpsSource, isBoxOnline)) : c.textSec }}>
                                     {hasActiveDelivery ?
-                                        (localPhoneLocation && gpsSource === 'none' ? 'Using Phone (Local Fallback)' : getStatusMessage(gpsSource, isBoxOnline))
+                                        (localPhoneLocation && gpsSource === 'none' ? 'Live GPS Active' : getStatusMessage(gpsSource, isBoxOnline))
                                         : 'No Active Delivery'}
                                 </Text>
                             </View>
                             {phoneGpsActive && hasActiveDelivery && (
                                 <Chip
                                     compact
-                                    icon="phone"
-                                    style={{ backgroundColor: c.orangeBg }}
-                                    textStyle={{ fontSize: 10, color: c.orangeText }}
+                                    icon="crosshairs-gps"
+                                    style={{ backgroundColor: c.greenBg }}
+                                    textStyle={{ fontSize: 10, color: c.greenText }}
                                 >
-                                    Fallback
+                                    Live
                                 </Chip>
                             )}
                         </View>

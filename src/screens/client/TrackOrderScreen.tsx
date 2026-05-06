@@ -53,6 +53,13 @@ const formatSpeed = (speedMs: number | undefined | null) => {
 };
 
 const PH_TIMEZONE = 'Asia/Manila';
+const LOCATION_STALE_MS = 60000;
+
+const isLiveLocationFresh = (lastUpdated?: number | null): boolean => {
+    if (typeof lastUpdated !== 'number' || !Number.isFinite(lastUpdated)) return false;
+    const timestampMs = lastUpdated > 0 && lastUpdated < 1e12 ? lastUpdated * 1000 : lastUpdated;
+    return Date.now() - timestampMs <= LOCATION_STALE_MS;
+};
 
 const formatPhDateTime = (value: string | number | null | undefined): string => {
     if (value == null) return 'Unknown time';
@@ -292,12 +299,11 @@ export default function TrackOrderScreen() {
     // Two-Phase Routing: determine the current route target
     const routeTarget = (delivery?.status === 'RETURNING') ? pickupLocation : (isPickedUp ? destination : pickupLocation);
 
-    // EC-FIX: Smart Fallback Logic - Prefer the freshest data source
+    // Prefer rider live GPS; use the box stream only when rider GPS is missing/stale.
     const useBoxLocation = useMemo(() => {
-        if (!boxLiveLocation) return false;
-        if (!riderLiveLocation) return true;
-        // If box location is newer than rider location (plus 5s grace period for network jitter), use box
-        return boxLiveLocation.lastUpdated > (riderLiveLocation.lastUpdated + 5000);
+        if (isLiveLocationFresh(riderLiveLocation?.lastUpdated)) return false;
+        if (isLiveLocationFresh(boxLiveLocation?.lastUpdated)) return true;
+        return !riderLiveLocation && !!boxLiveLocation;
     }, [boxLiveLocation, riderLiveLocation]);
 
     const displayLocation = useBoxLocation ? boxLiveLocation : riderLiveLocation;
@@ -308,10 +314,10 @@ export default function TrackOrderScreen() {
 
     const tamperWhere = useMemo(() => {
         if (boxLiveLocation?.lat != null && boxLiveLocation?.lng != null) {
-            return `${boxLiveLocation.lat.toFixed(5)}, ${boxLiveLocation.lng.toFixed(5)} (box GPS)`;
+            return `${boxLiveLocation.lat.toFixed(5)}, ${boxLiveLocation.lng.toFixed(5)} (GPS)`;
         }
         if (riderLiveLocation?.lat != null && riderLiveLocation?.lng != null) {
-            return `${riderLiveLocation.lat.toFixed(5)}, ${riderLiveLocation.lng.toFixed(5)} (phone fallback)`;
+            return `${riderLiveLocation.lat.toFixed(5)}, ${riderLiveLocation.lng.toFixed(5)} (GPS)`;
         }
         if (delivery?.dropoff_lat != null && delivery?.dropoff_lng != null) {
             return `${Number(delivery.dropoff_lat).toFixed(5)}, ${Number(delivery.dropoff_lng).toFixed(5)} (drop-off reference)`;
@@ -630,7 +636,7 @@ export default function TrackOrderScreen() {
         });
 
         const initialRiderId = params.riderId;
-        let unsubscribeRiderLocation = () => undefined;
+        let unsubscribeRiderLocation: () => void = () => {};
         if (initialRiderId) {
             unsubscribeRiderLocation = subscribeToRiderLocation(initialRiderId, (location) => {
                 if (stopTracking.current) return;
@@ -1507,7 +1513,7 @@ export default function TrackOrderScreen() {
                         </TouchableOpacity>
 
                         {/* Pickup Photo - Show if available and NOT pending */}
-                        {pickupPhotoUri && delivery?.status !== 'PENDING' && (
+                        {pickupPhotoUri && delivery && delivery.status !== 'PENDING' && (
                             <View>
                                 <Card style={{ marginBottom: 12, borderRadius: 12 }} mode="elevated">
                                     <Card.Title title="Pickup Photo" titleVariant="titleSmall" />
@@ -1522,7 +1528,7 @@ export default function TrackOrderScreen() {
                         )}
 
                         {/* Completed state: show proof photo and go-home buttons */}
-                        {delivery?.status === 'COMPLETED' && (
+                        {delivery && delivery.status === 'COMPLETED' && (
                             <View>
                                 {proofPhotoUri && (
                                     <Card style={{ marginBottom: 12, borderRadius: 12 }} mode="elevated">

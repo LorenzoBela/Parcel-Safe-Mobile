@@ -160,19 +160,27 @@ describe("locationRedundancy", () => {
         expect(locationRedundancy.getState().phoneGpsActive).toBe(true);
     });
 
-    test("stops phone fallback when box GPS resumes", async () => {
+    test("keeps phone GPS primary when box GPS resumes", async () => {
         locationRedundancy.start("BOX_001");
         locationRedundancy.activate();
 
-        // Start fallback deterministically (no heartbeat received).
+        // Start phone tracking deterministically (no heartbeat received).
         jest.advanceTimersByTime(2000);
         await flushPromises();
         expect(locationRedundancy.getState().phoneGpsActive).toBe(true);
 
-        // Advance time past the debounce window (5000ms RECONNECT_DEBOUNCE).
-        jest.advanceTimersByTime(6000);
+        await mockPhoneWatchCallback?.({
+            coords: {
+                latitude: 14.5995,
+                longitude: 120.9842,
+                speed: 1.2,
+                heading: 90,
+            },
+        });
 
-        // Box resumes sending valid GPS -> fallback should stop.
+        const phoneLocation = locationRedundancy.getState().lastLocation;
+
+        // Box resumes sending valid GPS -> it is kept as backup only.
         mockBoxLocationCallback?.({
             latitude: 3,
             longitude: 3,
@@ -180,11 +188,13 @@ describe("locationRedundancy", () => {
             server_timestamp: Date.now(),
         });
 
-        // stopPhoneGps may cancel an in-flight start; give it a tick to tear down.
+        // Give async state updates a tick.
         await flushPromises();
 
-        expect(locationRedundancy.getState().phoneGpsActive).toBe(false);
-        expect(locationRedundancy.getState().source).toBe("box");
+        expect(mockRemovePhoneWatch).not.toHaveBeenCalled();
+        expect(locationRedundancy.getState().phoneGpsActive).toBe(true);
+        expect(locationRedundancy.getState().source).toBe("phone");
+        expect(locationRedundancy.getState().lastLocation).toBe(phoneLocation);
     });
 
     test("normalizes string GPS health telemetry from Firebase", () => {

@@ -12,10 +12,6 @@ export const calculateDistance = (lat1: number, lng1: number, lat2: number, lng2
     return R * c;
 };
 
-// Merge distance thresholds (metres)
-const MERGE_THRESHOLD_M = 50;   // blend up to this distance
-const DISCARD_THRESHOLD_M = 150; // beyond this the sources have definitely diverged
-
 export const consolidateLocation = (boxLoc: LocationData | null, phoneLoc: LocationData | null): LocationData | null => {
     if (!boxLoc && !phoneLoc) return null;
 
@@ -23,67 +19,19 @@ export const consolidateLocation = (boxLoc: LocationData | null, phoneLoc: Locat
     let boxTime = boxLoc?.server_timestamp || boxLoc?.timestamp || 0;
     let phoneTime = phoneLoc?.server_timestamp || phoneLoc?.timestamp || 0;
 
-    // Normalize to milliseconds if they are in seconds
+    // Normalize to milliseconds if they are in seconds.
     if (boxTime > 0 && boxTime < 1e12) boxTime *= 1000;
     if (phoneTime > 0 && phoneTime < 1e12) phoneTime *= 1000;
 
     const boxFresh = boxLoc && (now - boxTime) <= 30000;
     const phoneFresh = phoneLoc && (now - phoneTime) <= 30000;
 
-    if (boxFresh && phoneFresh) {
-        const distM = calculateDistance(boxLoc.latitude, boxLoc.longitude, phoneLoc.latitude, phoneLoc.longitude) * 1000;
-
-        // Sources have diverged beyond recovery — one GPS is clearly wrong, trust the hardware
-        if (distM > DISCARD_THRESHOLD_M) {
-            return { ...boxLoc, timestamp: boxTime };
-        }
-
-        // Accuracy-weighted blend using inverse-variance weighting (1/σ²).
-        // Box: use HDOP×5 as CEP proxy when no explicit accuracy field.
-        // Phone: use the accuracy field reported by the OS location API.
-        const boxAccM: number = boxLoc.accuracy ?? (boxLoc.hdop != null ? boxLoc.hdop * 5 : 10);
-        const phoneAccM: number = phoneLoc.accuracy ?? 20;
-
-        // Phone blend weight fades linearly to 0 as divergence approaches DISCARD_THRESHOLD_M
-        const distanceFade = distM <= MERGE_THRESHOLD_M
-            ? 1
-            : 1 - (distM - MERGE_THRESHOLD_M) / (DISCARD_THRESHOLD_M - MERGE_THRESHOLD_M);
-
-        const wBox = 1 / (boxAccM * boxAccM);
-        const wPhone = (1 / (phoneAccM * phoneAccM)) * distanceFade;
-        const wTotal = wBox + wPhone;
-
-        const blended: LocationData = {
-            ...boxLoc,
-            latitude: (boxLoc.latitude * wBox + phoneLoc.latitude * wPhone) / wTotal,
-            longitude: (boxLoc.longitude * wBox + phoneLoc.longitude * wPhone) / wTotal,
-            accuracy: 1 / Math.sqrt(wTotal),
-            source: 'consolidated' as any,
-            timestamp: Math.max(boxTime, phoneTime),
-        };
-
-        // Merge phone sensor fields — the box hardware has no compass sensor,
-        // so compassHeading is only available from the phone.
-        if (phoneLoc.compassHeading != null && blended.compassHeading == null) {
-            blended.compassHeading = phoneLoc.compassHeading;
-        }
-        if (phoneLoc.speed != null && (blended.speed == null || blended.speed === 0)) {
-            blended.speed = phoneLoc.speed;
-        }
-        if (phoneLoc.heading != null && (blended.heading == null || blended.heading === 0)) {
-            blended.heading = phoneLoc.heading;
-        }
-
-        return blended;
-    }
-
-    if (boxFresh) return boxLoc;
     if (phoneFresh) return phoneLoc;
+    if (boxFresh) return boxLoc;
 
-    // Both are stale. Fast fallback to whoever last spoke
+    // Both are stale. Fast fallback to whoever last spoke.
     if (boxTime >= phoneTime) {
         return boxLoc || phoneLoc;
-    } else {
-        return phoneLoc || boxLoc;
     }
+    return phoneLoc || boxLoc;
 };

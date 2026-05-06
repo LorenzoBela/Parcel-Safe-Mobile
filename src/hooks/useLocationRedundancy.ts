@@ -119,7 +119,12 @@ export function useLocationRedundancy(
         // instead of waiting for the first Firebase read.
         const warmupFix = getCachedWarmupFix();
         if (warmupFix) {
-            locationRedundancy.seedInitialLocation(warmupFix.coords);
+            const { latitude, longitude, accuracy } = warmupFix.coords;
+            locationRedundancy.seedInitialLocation({
+                latitude,
+                longitude,
+                accuracy: accuracy ?? undefined,
+            });
         }
         locationRedundancy.start(id);
     }, []);
@@ -157,9 +162,9 @@ export function useLocationRedundancy(
 export function getStatusMessage(source: LocationSource, isBoxOnline: boolean): string {
     switch (source) {
         case 'box':
-            return 'Box GPS Active';
+            return 'Live GPS Active';
         case 'phone':
-            return 'Phone GPS Fallback';
+            return 'Live GPS Active';
         case 'none':
             return isBoxOnline ? 'Waiting for GPS...' : 'No Signal';
         default:
@@ -175,7 +180,7 @@ export function getStatusColor(source: LocationSource, isBoxOnline: boolean): st
         case 'box':
             return '#4CAF50'; // Green
         case 'phone':
-            return '#FFC107'; // Yellow/Amber
+            return '#4CAF50'; // Green
         case 'none':
             return '#F44336'; // Red
         default:

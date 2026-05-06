@@ -298,11 +298,13 @@ export default function DropoffVerification({
             const autoArrive = async () => {
                 await updateDeliveryStatus(deliveryId, 'ARRIVED', {
                     arrived_at: Date.now(),
+                    arrival_source: 'dropoff_verification_auto_arrive',
+                    boxId,
                 });
             };
             autoArrive();
         }
-    }, [canAutoArrive, isInsideGeoFence, deliveryStatus, deliveryId]);
+    }, [canAutoArrive, isInsideGeoFence, deliveryStatus, deliveryId, boxId]);
 
     const canProcessOtpSignals =
         canAutoArrive &&

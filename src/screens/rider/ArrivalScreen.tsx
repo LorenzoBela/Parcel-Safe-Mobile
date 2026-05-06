@@ -162,6 +162,10 @@ const DEFAULT_PHONE_DISTANCE_INTERVAL_M = 5;
 const MANUAL_REFRESH_PHONE_TIMEOUT_MS = 10000;
 const MANUAL_REFRESH_CACHED_PHONE_MAX_AGE_MS = 30000;
 const MANUAL_REFRESH_LAST_KNOWN_ACCURACY_M = 80;
+const DROPOFF_ARRIVAL_RETRY_MS = 2500;
+const DROPOFF_ARRIVAL_CONFIRMATION_RETRY_MS = 4000;
+const DROPOFF_ARRIVAL_RETRYABLE_STATUSES = new Set(['IN_TRANSIT', 'PICKED_UP', 'ARRIVED']);
+const DROPOFF_ARRIVAL_CONFIRMED_STATUSES = new Set(['ARRIVED', 'COMPLETED']);
 
 function formatRemainingMinutesSeconds(remainingMs: number): string {
     const clamped = Math.max(0, remainingMs);
@@ -230,6 +234,7 @@ export default function ArrivalScreen() {
     const [geofenceTarget, setGeofenceTarget] = useState<'pickup' | 'dropoff' | 'return_pickup'>('pickup');
     const [distanceMeters, setDistanceMeters] = useState<number | null>(null);
     const [manualRefreshBusy, setManualRefreshBusy] = useState(false);
+    const [dropoffArrivalRetryTick, setDropoffArrivalRetryTick] = useState(0);
 
     const applyPhonePosition = useCallback((coords: { latitude: number; longitude: number; accuracy: number | null; heading: number | null; speed: number | null }, fallbackAccuracy: number) => {
         const position = {
@@ -370,6 +375,8 @@ export default function ArrivalScreen() {
     const tamperAlertShownRef = useRef(false);
     const pickupArrivalNotifSentRef = useRef(false);
     const dropoffArrivalSyncInFlightRef = useRef(false);
+    const dropoffArrivalPersistedRef = useRef(false);
+    const dropoffArrivalRetryTimerRef = useRef<NodeJS.Timeout | null>(null);
 
     // Lock Events (OTP + Face Detection from hardware)
     const [lockEvent, setLockEvent] = useState<LockEvent | null>(null);
@@ -391,6 +398,25 @@ export default function ArrivalScreen() {
     const authedUserId = useAuthStore((state: any) => state.user?.userId) as string | undefined;
     const riderId = authedUserId;
     const [deliveryStatus, setDeliveryStatus] = useState<string>('ASSIGNED');
+
+    const clearDropoffArrivalRetry = useCallback(() => {
+        if (dropoffArrivalRetryTimerRef.current) {
+            clearTimeout(dropoffArrivalRetryTimerRef.current);
+            dropoffArrivalRetryTimerRef.current = null;
+        }
+    }, []);
+
+    const scheduleDropoffArrivalRetry = useCallback((delayMs = DROPOFF_ARRIVAL_RETRY_MS) => {
+        if (dropoffArrivalPersistedRef.current) return;
+        clearDropoffArrivalRetry();
+        dropoffArrivalRetryTimerRef.current = setTimeout(() => {
+            dropoffArrivalRetryTimerRef.current = null;
+            dropoffArrivalSyncInFlightRef.current = false;
+            setDropoffArrivalRetryTick((prev) => prev + 1);
+        }, delayMs);
+    }, [clearDropoffArrivalRetry]);
+
+    useEffect(() => clearDropoffArrivalRetry, [clearDropoffArrivalRetry]);
 
     const scheduleNextTimerTick = useCallback(() => {
         if (timerTickTimeoutRef.current) {
@@ -576,12 +602,25 @@ export default function ArrivalScreen() {
             }
             setDeliveryStatus(delivery.status);
 
+            if (DROPOFF_ARRIVAL_CONFIRMED_STATUSES.has(delivery.status)) {
+                dropoffArrivalPersistedRef.current = true;
+                dropoffArrivalSyncInFlightRef.current = false;
+                clearDropoffArrivalRetry();
+            } else if (DROPOFF_ARRIVAL_RETRYABLE_STATUSES.has(delivery.status)) {
+                dropoffArrivalPersistedRef.current = false;
+            }
+
             // Track arrived_at timestamp for grace period
-            if (delivery.status === 'ARRIVED' && delivery.arrived_at && !arrivedAt) {
-                const ts = typeof delivery.arrived_at === 'number'
-                    ? delivery.arrived_at
-                    : new Date(delivery.arrived_at).getTime();
-                setArrivedAt(ts);
+            if (delivery.status === 'ARRIVED') {
+                const rawArrivedAt = delivery.arrived_at ?? delivery.updated_at;
+                if (rawArrivedAt) {
+                    const ts = typeof rawArrivedAt === 'number'
+                        ? rawArrivedAt
+                        : new Date(rawArrivedAt).getTime();
+                    if (Number.isFinite(ts)) {
+                        setArrivedAt((prev) => prev ?? ts);
+                    }
+                }
             }
 
             // EC-Fix: sync OTP code from Firebase (now stored in delivery node)
@@ -611,7 +650,7 @@ export default function ArrivalScreen() {
         fetchOtp();
 
         return unsubscribe;
-    }, [params.deliveryId]);
+    }, [params.deliveryId, clearDropoffArrivalRetry]);
 
     const isReturning = ['RETURNING', 'TAMPERED'].includes(deliveryStatus);
     const isPickupConfirmed = ['IN_TRANSIT', 'ARRIVED', 'COMPLETED', 'RETURNING', 'TAMPERED'].includes(deliveryStatus);
@@ -1091,23 +1130,23 @@ export default function ArrivalScreen() {
         const shouldSyncDropoffArrival =
             geofenceTarget === 'dropoff' &&
             isInsideGeoFence &&
-            ['IN_TRANSIT', 'PICKED_UP'].includes(deliveryStatus);
+            !dropoffArrivalPersistedRef.current &&
+            DROPOFF_ARRIVAL_RETRYABLE_STATUSES.has(deliveryStatus);
 
         if (!shouldSyncDropoffArrival) {
-            if (geofenceTarget !== 'dropoff' || !isInsideGeoFence) {
+            if (geofenceTarget !== 'dropoff' || !isInsideGeoFence || dropoffArrivalPersistedRef.current) {
                 dropoffArrivalSyncInFlightRef.current = false;
+                clearDropoffArrivalRetry();
             }
             return;
         }
 
         if (dropoffArrivalSyncInFlightRef.current) return;
         dropoffArrivalSyncInFlightRef.current = true;
+        clearDropoffArrivalRetry();
 
         const arrivedAtNow = Date.now();
         const hasPhoneFix = currentPosition.lat !== 0 || currentPosition.lng !== 0;
-
-        setDeliveryStatus('ARRIVED');
-        setArrivedAt((prev) => prev ?? arrivedAtNow);
 
         const statusUpdate = updateDeliveryStatus(params.deliveryId, 'ARRIVED', {
             arrived_at: arrivedAtNow,
@@ -1137,7 +1176,18 @@ export default function ArrivalScreen() {
             if (results[0]?.status === 'rejected') {
                 console.warn('[ArrivalScreen] Dropoff ARRIVED sync failed', results[0].reason);
                 dropoffArrivalSyncInFlightRef.current = false;
+                scheduleDropoffArrivalRetry();
+                setBoxLocationSubscriptionEpoch((prev) => prev + 1);
+                return;
             }
+
+            setDeliveryStatus('ARRIVED');
+            setArrivedAt((prev) => prev ?? arrivedAtNow);
+
+            if (!dropoffArrivalPersistedRef.current) {
+                scheduleDropoffArrivalRetry(DROPOFF_ARRIVAL_CONFIRMATION_RETRY_MS);
+            }
+
             if (results[1]?.status === 'rejected') {
                 console.warn('[ArrivalScreen] Dropoff box context refresh failed', results[1].reason);
             }
@@ -1154,6 +1204,9 @@ export default function ArrivalScreen() {
         currentPosition.speed,
         currentPosition.heading,
         localPhoneHeading,
+        clearDropoffArrivalRetry,
+        scheduleDropoffArrivalRetry,
+        dropoffArrivalRetryTick,
     ]);
 
     // 4. Pickup Arrival Notification — fires once when rider first enters pickup geofence
@@ -1658,6 +1711,12 @@ export default function ArrivalScreen() {
             if (phoneResult.status === 'rejected') {
                 console.warn('[ArrivalScreen] Manual refresh phone GPS failed', phoneResult.reason);
             }
+
+            if (geofenceTarget === 'dropoff' && isInsideGeoFence && !dropoffArrivalPersistedRef.current) {
+                dropoffArrivalSyncInFlightRef.current = false;
+                clearDropoffArrivalRetry();
+                setDropoffArrivalRetryTick((prev) => prev + 1);
+            }
         } finally {
             setManualRefreshBusy(false);
         }
@@ -1668,6 +1727,9 @@ export default function ArrivalScreen() {
         currentPosition,
         phoneLocationLastSeen,
         localPhoneHeading,
+        geofenceTarget,
+        isInsideGeoFence,
+        clearDropoffArrivalRetry,
     ]);
 
     // EC-12: Render System Status (Horizontal Scroll)
