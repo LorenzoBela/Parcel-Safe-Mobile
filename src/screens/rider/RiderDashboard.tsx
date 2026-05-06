@@ -1278,31 +1278,6 @@ export default function RiderDashboard() {
         // EC-03: Subscribe to battery state (real-time)
         const unsubscribeBattery = monitorBoxId ? subscribeToBattery(monitorBoxId, (state) => {
             setBatteryState(state);
-
-            const isLow = Boolean(
-                state?.main?.lowBatteryWarning || state?.secondary?.lowBatteryWarning
-            );
-            const isCritical = Boolean(
-                state?.main?.criticalBatteryWarning || state?.secondary?.criticalBatteryWarning
-            );
-            const summary = [
-                state?.main?.percentage != null ? `MCU ${Math.round(state.main.percentage)}%` : null,
-                state?.secondary?.percentage != null ? `Lock ${Math.round(state.secondary.percentage)}%` : null,
-            ].filter(Boolean).join(' / ');
-
-            if (isLow && !isCritical) {
-                PremiumAlert.alert(
-                    'Low Battery Warning',
-                    `Box battery is low${summary ? ` (${summary})` : ''}. Consider completing current delivery soon.`,
-                    [{ text: 'OK' }]
-                );
-            } else if (isCritical) {
-                PremiumAlert.alert(
-                    '⚠️ Critical Battery',
-                    `Box battery is critically low${summary ? ` (${summary})` : ''}! Delivery may fail if battery dies.`,
-                    [{ text: 'Understood' }]
-                );
-            }
         }) : () => { };
 
         // EC-18: Subscribe to tamper state
@@ -1596,13 +1571,6 @@ export default function RiderDashboard() {
 
         const unsubscribePower = subscribeToPower(boxIdForMonitoring, (state) => {
             setPowerState(state);
-            if (state?.solenoid_blocked) {
-                PremiumAlert.alert(
-                    '🔋 Low Battery Alert',
-                    `Box battery is critically low (${formatFixedNumber(state.voltage, 1)}V). Unlock is disabled until charged.`,
-                    [{ text: 'OK' }]
-                );
-            }
         });
 
         return () => unsubscribePower();
@@ -2429,6 +2397,25 @@ export default function RiderDashboard() {
         signal: boxState?.rssi ? `${boxState.rssi} dBm` : 'No Signal',
     };
 
+    const batteryIsLow = Boolean(
+        batteryState?.main?.lowBatteryWarning || batteryState?.secondary?.lowBatteryWarning
+    );
+    const batteryIsCritical = Boolean(
+        batteryState?.main?.criticalBatteryWarning || batteryState?.secondary?.criticalBatteryWarning
+    );
+    const solenoidBlocked = Boolean(powerState?.solenoid_blocked);
+    const showBatteryBanner = isPaired && (batteryIsLow || solenoidBlocked);
+    const batteryBannerAccent = (batteryIsCritical || solenoidBlocked) ? c.redText : c.orangeText;
+    const batteryBannerBg = (batteryIsCritical || solenoidBlocked) ? c.redBg : c.orangeBg;
+    const batteryBannerTitle = (batteryIsCritical || solenoidBlocked) ? 'CRITICAL BATTERY' : 'LOW BATTERY';
+    const batteryBannerPrimary = batterySummary ? `${batterySummary} remaining` : 'Battery level low';
+    const batteryBannerSecondary = solenoidBlocked
+        ? 'Unlock disabled until charged.'
+        : (batteryIsCritical ? 'Charge immediately to avoid delivery failure.' : 'Plan a charge stop soon.');
+    const batteryBannerPercent = batteryWorstPct != null
+        ? Math.max(2, Math.min(100, Math.round(batteryWorstPct)))
+        : 0;
+
     // Fetch live weather when rider location is available
     useEffect(() => {
         if (!riderLocation) return;
@@ -2693,6 +2680,30 @@ export default function RiderDashboard() {
                     status={tokenStatus}
                     onReloginRequired={() => navigation.navigate('Login')}
                 />
+                {showBatteryBanner && (
+                    <View style={[styles.batteryBanner, { backgroundColor: batteryBannerBg, borderColor: batteryBannerAccent }]}> 
+                        <View style={styles.batteryBannerRow}>
+                            <View style={[styles.batteryBadge, { backgroundColor: batteryBannerAccent }]}> 
+                                <MaterialCommunityIcons name="battery-alert" size={16} color={c.bg} />
+                            </View>
+                            <View style={{ flex: 1 }}>
+                                <Text style={[styles.batteryBannerTitle, { color: batteryBannerAccent }]}>{batteryBannerTitle}</Text>
+                                <Text style={[styles.batteryBannerText, { color: batteryBannerAccent }]}>{batteryBannerPrimary}</Text>
+                                <Text style={[styles.batteryBannerHint, { color: batteryBannerAccent }]}>{batteryBannerSecondary}</Text>
+                            </View>
+                            <TouchableOpacity
+                                activeOpacity={0.7}
+                                onPress={() => openBoxControls(trackedBoxId)}
+                                style={[styles.batteryBannerAction, { borderColor: batteryBannerAccent }]}
+                            >
+                                <Text style={[styles.batteryBannerActionText, { color: batteryBannerAccent }]}>Details</Text>
+                            </TouchableOpacity>
+                        </View>
+                        <View style={[styles.batteryBannerBar, { backgroundColor: c.search }]}> 
+                            <View style={[styles.batteryBannerFill, { width: `${batteryBannerPercent}%`, backgroundColor: batteryBannerAccent }]} />
+                        </View>
+                    </View>
+                )}
                 {/* EC-18: Tamper Alert Banner */}
                 {tamperState?.detected && (
                     <View style={[styles.tamperBanner, { backgroundColor: c.redBg, borderWidth: 1, borderColor: c.redText }]}>
@@ -3759,6 +3770,62 @@ const styles = StyleSheet.create({
     },
     bannerText: {
         fontSize: 12,
+    },
+    batteryBanner: {
+        marginHorizontal: 16,
+        marginBottom: 16,
+        borderRadius: 14,
+        borderWidth: 1,
+        padding: 14,
+    },
+    batteryBannerRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 12,
+    },
+    batteryBadge: {
+        width: 28,
+        height: 28,
+        borderRadius: 10,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    batteryBannerTitle: {
+        fontFamily: 'Inter_700Bold',
+        fontSize: 12,
+        letterSpacing: 0.8,
+        textTransform: 'uppercase',
+    },
+    batteryBannerText: {
+        fontSize: 12,
+        marginTop: 2,
+    },
+    batteryBannerHint: {
+        fontSize: 11,
+        marginTop: 2,
+        opacity: 0.85,
+    },
+    batteryBannerAction: {
+        paddingHorizontal: 10,
+        paddingVertical: 6,
+        borderRadius: 999,
+        borderWidth: 1,
+    },
+    batteryBannerActionText: {
+        fontFamily: 'Inter_600SemiBold',
+        fontSize: 10,
+        letterSpacing: 0.6,
+        textTransform: 'uppercase',
+    },
+    batteryBannerBar: {
+        height: 6,
+        borderRadius: 4,
+        overflow: 'hidden',
+        marginTop: 10,
+    },
+    batteryBannerFill: {
+        height: '100%',
+        borderRadius: 4,
     },
     warningBanner: {
         flexDirection: 'row',

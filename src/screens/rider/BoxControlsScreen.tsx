@@ -1265,17 +1265,6 @@ export default function BoxControlsScreen() {
                     </Surface>
                 )}
 
-                {/* EC-77: Admin Override Alert Banner */}
-                {isPaired && adminOverrideState?.active && !adminOverrideState.processed && (
-                    <Surface style={[styles.alertBanner, { backgroundColor: c.redBg, borderLeftWidth: 4, borderLeftColor: c.redText }]} elevation={isDarkMode ? 0 : 4}>
-                        <MaterialCommunityIcons name="lock-open-alert" size={24} color={c.redText} />
-                        <View style={{ flex: 1, marginLeft: 12 }}>
-                            <Text style={[styles.alertTitle, { color: c.redText }]}>ADMIN OVERRIDE</Text>
-                            <Text style={[styles.alertText, { color: c.textSec }]}>{getOverrideNotificationMessage(adminOverrideState)}</Text>
-                        </View>
-                    </Surface>
-                )}
-
                 {/* EC-18: Tamper Alert Banner */}
                 {isPaired && tamperState?.detected && (
                     <Surface style={[styles.alertBanner, { backgroundColor: c.redBg, borderLeftWidth: 4, borderLeftColor: c.redText }]} elevation={isDarkMode ? 0 : 4}>
