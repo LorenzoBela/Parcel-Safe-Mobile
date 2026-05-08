@@ -1115,7 +1115,9 @@ export interface CameraState {
     last_upload_delivery_id?: string;
     last_upload_object_path?: string;
     last_upload_public_url?: string;
+    last_upload_role?: 'preview' | 'full' | string;
     last_upload_timestamp?: number;
+    last_upload_uploaded_at?: number;
     severity?: 'LOW' | 'MEDIUM' | 'HIGH';
     message?: string;
 }
@@ -1144,9 +1146,18 @@ export interface PhotoAuditState {
     latest_photo_url?: string;
     latest_photo_object_path?: string;
     latest_photo_uploaded_at?: number;
+    latest_photo_preview_url?: string;
+    latest_photo_preview_object_path?: string;
+    latest_photo_preview_uploaded_at?: number;
 }
 
 export interface DeliveryProofState {
+    status?: string;
+    picked_up_at?: number | string;
+    delivered_at?: number | string;
+    proof_photo_preview_url?: string;
+    proof_photo_preview_object_path?: string;
+    proof_photo_preview_uploaded_at?: number;
     proof_photo_url?: string;
     proof_photo_object_path?: string;
     proof_photo_uploaded_at?: number;

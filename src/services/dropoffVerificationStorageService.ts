@@ -8,8 +8,11 @@ export interface DropoffVerificationSnapshot {
     cameraFailed: boolean;
     hardwareSuccess: boolean;
     fallbackPhotoUri: string | null;
+    hardwarePreviewUrl?: string | null;
+    auditPreviewUrl?: string | null;
     hardwareProofUrl: string | null;
     auditProofUrl: string | null;
+    previewVersion?: number;
     proofVersion: number;
     manualModeEnabled: boolean;
     savedAt: number;

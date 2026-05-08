@@ -189,18 +189,6 @@ export async function uploadDeliveryProofPhoto(params: {
             proof_photo_storage_provider: 'supabase',
         });
 
-        // Best-effort: also mirror into Supabase deliveries table if it exists there.
-        // This keeps web/admin views consistent when they’re using Supabase.
-        if (supabase) {
-            await supabase
-                .from('deliveries')
-                .update({
-                    proof_photo_url: url,
-                    delivered_at: new Date().toISOString()
-                })
-                .or(`id.eq.${deliveryId},tracking_number.eq.${deliveryId}`);
-        }
-
         return { success: true, url };
     } catch (error) {
         console.error('[ProofPhoto] Exception during upload:', error);
@@ -212,7 +200,7 @@ export async function uploadDeliveryProofPhoto(params: {
 }
 
 /**
- * Upload a pickup proof photo to Supabase Storage and log to Firebase + Supabase.
+ * Upload a pickup proof photo to Supabase Storage and log to Firebase.
  * Same pattern as uploadDeliveryProofPhoto but stored under pickup/ prefix.
  */
 export async function uploadPickupPhoto(params: {
@@ -269,17 +257,6 @@ export async function uploadPickupPhoto(params: {
             proof_photo_storage_provider: 'supabase', // Also mark provider here for consistency
         });
 
-        // Mirror into Supabase deliveries table
-        if (supabase) {
-            await supabase
-                .from('deliveries')
-                .update({
-                    pickup_photo_url: url,
-                    picked_up_at: new Date().toISOString()
-                })
-                .or(`id.eq.${deliveryId},tracking_number.eq.${deliveryId}`);
-        }
-
         return { success: true, url };
     } catch (error) {
         console.error('[ProofPhoto] Exception during pickup upload:', error);
@@ -292,7 +269,7 @@ export async function uploadPickupPhoto(params: {
 
 /**
  * Upload a return-verification photo (sender face capture) to Supabase Storage.
- * Stored under returns/{boxId}/ and mirrored to Firebase + Supabase deliveries table.
+ * Stored under returns/{boxId}/ and mirrored to Firebase.
  * Called by ReturnPackageScreen as part of the EC-32 return completion chain.
  */
 export async function uploadReturnPhoto(params: {
@@ -346,13 +323,6 @@ export async function uploadReturnPhoto(params: {
             return_photo_storage_path: data.path,
             return_photo_storage_provider: 'supabase',
         });
-
-        if (supabase) {
-            await supabase
-                .from('deliveries')
-                .update({ return_photo_url: url })
-                .or(`id.eq.${deliveryId},tracking_number.eq.${deliveryId}`);
-        }
 
         return { success: true, url };
     } catch (error) {

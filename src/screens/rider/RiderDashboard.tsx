@@ -111,6 +111,51 @@ const formatFixedNumber = (value: unknown, digits: number, fallback = '--'): str
     return numeric == null ? fallback : numeric.toFixed(digits);
 };
 
+const GPS_ANOMALY_ALERT_COOLDOWN_MS = 2 * 60 * 1000;
+const GPS_ANOMALY_MIN_DELTA_SECONDS = 2;
+const GPS_ANOMALY_MAX_DELTA_SECONDS = 5 * 60;
+const GPS_ANOMALY_MIN_DISTANCE_METERS = 150;
+const GPS_ANOMALY_MAX_ACCEPTABLE_ACCURACY_M = 80;
+const GPS_ANOMALY_CONFIRMATION_COUNT = 2;
+
+const normalizeLocationTimestamp = (timestamp: unknown): number | null => {
+    const numeric = toFiniteNumberOrNull(timestamp);
+    if (numeric == null || numeric <= 0) return null;
+    return numeric < 1e12 ? numeric * 1000 : numeric;
+};
+
+const getLocationTimestampMs = (location: LocationData): number | null => {
+    return normalizeLocationTimestamp(location.server_timestamp) ?? normalizeLocationTimestamp(location.timestamp);
+};
+
+const isReliableGpsAnomalySample = (location: LocationData): boolean => {
+    const accuracy = toFiniteNumberOrNull(location.accuracy);
+    const hdop = toFiniteNumberOrNull(location.hdop);
+
+    if (accuracy != null && accuracy > GPS_ANOMALY_MAX_ACCEPTABLE_ACCURACY_M) {
+        return false;
+    }
+
+    // HDOP roughly maps to horizontal confidence. Values above 5 are common
+    // during urban-canyon/indoor drift and should not trigger spoofing alerts.
+    if (hdop != null && hdop > 5) {
+        return false;
+    }
+
+    return true;
+};
+
+const distanceMetersBetween = (from: LocationData, to: LocationData): number => {
+    const R = 6371000;
+    const dLat = (to.latitude - from.latitude) * Math.PI / 180;
+    const dLon = (to.longitude - from.longitude) * Math.PI / 180;
+    const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+        Math.cos(from.latitude * Math.PI / 180) * Math.cos(to.latitude * Math.PI / 180) *
+        Math.sin(dLon / 2) * Math.sin(dLon / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return R * c;
+};
+
 import {
     subscribeToRiderRequests,
     subscribeToDelivery,
@@ -595,6 +640,8 @@ export default function RiderDashboard() {
     const [gpsSpoofWarning, setGpsSpoofWarning] = useState(false);
     const [lastGpsLocation, setLastGpsLocation] = useState<LocationData | null>(null);
     const lastGpsLocationRef = useRef<LocationData | null>(null);
+    const gpsAnomalyStreakRef = useRef(0);
+    const lastGpsAnomalyAlertRef = useRef(0);
 
     // EC-46: Clock Skew Warning
     const [clockSkewWarning, setClockSkewWarning] = useState(false);
@@ -1313,24 +1360,40 @@ export default function RiderDashboard() {
         // EC-08: Subscribe to GPS location for spoofing detection
         const unsubscribeLocation = boxIdForMonitoring ? subscribeToLocation(boxIdForMonitoring, (location) => {
             if (location && lastGpsLocationRef.current) {
-                // Calculate distance using Haversine approximation
-                const R = 6371000;
-                const dLat = (location.latitude - lastGpsLocationRef.current.latitude) * Math.PI / 180;
-                const dLon = (location.longitude - lastGpsLocationRef.current.longitude) * Math.PI / 180;
-                const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-                    Math.cos(lastGpsLocationRef.current.latitude * Math.PI / 180) * Math.cos(location.latitude * Math.PI / 180) *
-                    Math.sin(dLon / 2) * Math.sin(dLon / 2);
-                const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-                const distanceMeters = R * c;
+                const previous = lastGpsLocationRef.current;
+                const currentTimestamp = getLocationTimestampMs(location);
+                const previousTimestamp = getLocationTimestampMs(previous);
+                const sourceChanged = location.source !== previous.source;
+                const samplesAreReliable = isReliableGpsAnomalySample(location) && isReliableGpsAnomalySample(previous);
 
-                const timeDelta = (location.timestamp - lastGpsLocationRef.current.timestamp) / 1000;
-                if (timeDelta > 0 && isSpeedAnomaly(distanceMeters, timeDelta)) {
-                    setGpsSpoofWarning(true);
-                    PremiumAlert.alert(
-                        '⚠️ GPS Anomaly Detected',
-                        'Unusual location jump detected. This may indicate GPS issues or spoofing.',
-                        [{ text: 'Dismiss', onPress: () => setGpsSpoofWarning(false) }]
-                    );
+                if (!currentTimestamp || !previousTimestamp || sourceChanged || !samplesAreReliable) {
+                    gpsAnomalyStreakRef.current = 0;
+                } else {
+                    const timeDelta = (currentTimestamp - previousTimestamp) / 1000;
+                    const distanceMeters = distanceMetersBetween(previous, location);
+                    const canEvaluateSpeed =
+                        timeDelta >= GPS_ANOMALY_MIN_DELTA_SECONDS &&
+                        timeDelta <= GPS_ANOMALY_MAX_DELTA_SECONDS &&
+                        distanceMeters >= GPS_ANOMALY_MIN_DISTANCE_METERS;
+
+                    if (canEvaluateSpeed && isSpeedAnomaly(distanceMeters, timeDelta)) {
+                        gpsAnomalyStreakRef.current += 1;
+                        const now = Date.now();
+                        if (
+                            gpsAnomalyStreakRef.current >= GPS_ANOMALY_CONFIRMATION_COUNT &&
+                            now - lastGpsAnomalyAlertRef.current >= GPS_ANOMALY_ALERT_COOLDOWN_MS
+                        ) {
+                            lastGpsAnomalyAlertRef.current = now;
+                            setGpsSpoofWarning(true);
+                            PremiumAlert.alert(
+                                'GPS Anomaly Detected',
+                                'Repeated unusual location jumps were detected. If you are moving normally, keep riding and the app will continue using verified fixes.',
+                                [{ text: 'Dismiss', onPress: () => setGpsSpoofWarning(false) }]
+                            );
+                        }
+                    } else {
+                        gpsAnomalyStreakRef.current = 0;
+                    }
                 }
 
                 // EC-46: Check for clock skew

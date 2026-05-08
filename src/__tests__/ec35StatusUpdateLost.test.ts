@@ -9,8 +9,11 @@ import {
     getRetryDelay,
     isRetryDue,
     isMaxRetriesExceeded,
+    buildRetryTransitionMetadata,
+    statusUpdateService,
     StatusUpdateEntry,
 } from '../services/statusUpdateService';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 describe('EC-35: Status Update Lost', () => {
     describe('getRetryDelay', () => {
@@ -134,6 +137,73 @@ describe('EC-35: Status Update Lost', () => {
             expect(EC35_CONFIG.MAX_QUEUE_ENTRIES).toBe(10);
             expect(EC35_CONFIG.MAX_RETRIES).toBe(5);
             expect(EC35_CONFIG.BASE_RETRY_MS).toBe(1000);
+        });
+    });
+
+    describe('Retry Metadata', () => {
+        it('should preserve photo metadata when replaying a completed status update', () => {
+            const entry: StatusUpdateEntry = {
+                queueId: 'status-queue-1',
+                deliveryId: 'DEL-001',
+                boxId: 'BOX-001',
+                status: 'COMPLETED',
+                metadata: {
+                    proof_photo_url: 'https://example.test/proof.jpg',
+                    proof_photo_uploaded_at: 1710000000000,
+                    completed_at: 1710000000000,
+                },
+                queuedAt: 1000000,
+                lastAttemptAt: 1000000,
+                retryCount: 1,
+                synced: false,
+            };
+
+            expect(buildRetryTransitionMetadata(entry)).toEqual({
+                proof_photo_url: 'https://example.test/proof.jpg',
+                proof_photo_uploaded_at: 1710000000000,
+                completed_at: 1710000000000,
+                retrySource: 'mobile_retry',
+                boxId: 'BOX-001',
+                queueId: 'status-queue-1',
+            });
+        });
+
+        it('should merge newer photo metadata into an existing entry even when the queue is full', async () => {
+            const fullQueue: StatusUpdateEntry[] = Array.from({ length: EC35_CONFIG.MAX_QUEUE_ENTRIES }, (_, index) => ({
+                queueId: `status-queue-${index}`,
+                deliveryId: index === 0 ? 'DEL-001' : `DEL-${index}`,
+                boxId: 'BOX-001',
+                status: 'IN_TRANSIT',
+                metadata: index === 0 ? { pickup_photo_url: 'https://example.test/pickup.jpg' } : undefined,
+                queuedAt: 1000000,
+                lastAttemptAt: 1000000,
+                retryCount: 0,
+                synced: false,
+            }));
+
+            (AsyncStorage.getItem as jest.Mock).mockResolvedValueOnce(JSON.stringify(fullQueue));
+
+            const queued = await statusUpdateService.queueStatusUpdate('DEL-001', 'BOX-001', 'COMPLETED', {
+                proof_photo_url: 'https://example.test/proof.jpg',
+                proof_photo_uploaded_at: 1710000000000,
+                completed_at: 1710000000000,
+            });
+
+            expect(queued).toBe(true);
+            const savedQueue = JSON.parse((AsyncStorage.setItem as jest.Mock).mock.calls[0][1]);
+            expect(savedQueue).toHaveLength(EC35_CONFIG.MAX_QUEUE_ENTRIES);
+            expect(savedQueue[0]).toEqual(
+                expect.objectContaining({
+                    deliveryId: 'DEL-001',
+                    status: 'COMPLETED',
+                    metadata: {
+                        pickup_photo_url: 'https://example.test/pickup.jpg',
+                        proof_photo_url: 'https://example.test/proof.jpg',
+                        proof_photo_uploaded_at: 1710000000000,
+                        completed_at: 1710000000000,
+                    },
+                }),
+            );
         });
     });
 });

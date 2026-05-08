@@ -65,6 +65,7 @@ export interface StatusUpdateEntry {
     deliveryId: string;
     boxId: string;
     status: DeliveryStatus;
+    metadata?: Record<string, unknown>;
     queuedAt: number;
     lastAttemptAt: number;
     retryCount: number;
@@ -100,6 +101,17 @@ export function isMaxRetriesExceeded(entry: StatusUpdateEntry): boolean {
     return entry.retryCount >= EC35_CONFIG.MAX_RETRIES && !entry.synced;
 }
 
+export function buildRetryTransitionMetadata(entry: StatusUpdateEntry): Record<string, unknown> {
+    return {
+        ...(entry.metadata || {}),
+        retrySource: 'mobile_retry',
+        boxId: entry.boxId,
+        queueId: entry.queueId,
+    };
+}
+
+class PermanentTransitionRejection extends Error { }
+
 /**
  * Status Update Queue Service
  */
@@ -132,22 +144,21 @@ class StatusUpdateService {
     async queueStatusUpdate(
         deliveryId: string,
         boxId: string = 'UNKNOWN_BOX',
-        status: DeliveryStatus
+        status: DeliveryStatus,
+        metadata?: Record<string, unknown>
     ): Promise<boolean> {
         try {
             const queue = await this.getQueue();
-
-            // Check max entries
-            if (queue.length >= EC35_CONFIG.MAX_QUEUE_ENTRIES) {
-                console.warn('[EC35] Queue full, rejecting entry');
-                return false;
-            }
 
             // Check for duplicate
             const existing = queue.find(e => e.deliveryId === deliveryId && !e.synced);
             if (existing) {
                 // Update existing entry
                 existing.status = status;
+                existing.metadata = {
+                    ...(existing.metadata || {}),
+                    ...(metadata || {}),
+                };
                 existing.lastAttemptAt = Date.now();
                 captureHandledMessage('status_queue_updated', {
                     queue_uuid: existing.queueId || 'unknown',
@@ -156,12 +167,19 @@ class StatusUpdateService {
                     idempotency_result: 'updated',
                 });
             } else {
+                // Check max entries
+                if (queue.length >= EC35_CONFIG.MAX_QUEUE_ENTRIES) {
+                    console.warn('[EC35] Queue full, rejecting entry');
+                    return false;
+                }
+
                 // Add new entry
                 const entry: StatusUpdateEntry = {
                     queueId: generateQueueUuid('status'),
                     deliveryId,
                     boxId,
                     status,
+                    metadata,
                     queuedAt: Date.now(),
                     lastAttemptAt: Date.now(),
                     retryCount: 0,
@@ -235,15 +253,21 @@ class StatusUpdateService {
                                 body: JSON.stringify({
                                     deliveryId: entry.deliveryId,
                                     toStatus: entry.status,
-                                    metadata: {
-                                        retrySource: 'mobile_retry',
-                                        boxId: entry.boxId,
-                                        queueId: entry.queueId,
-                                    },
+                                    metadata: buildRetryTransitionMetadata(entry),
                                 }),
                             });
-                            transitionOk = response.ok;
-                        } catch {
+                            if (response.ok) {
+                                transitionOk = true;
+                            } else if (response.status >= 500) {
+                                throw new Error(`transition-api-${response.status}`);
+                            } else {
+                                const responseText = await response.text().catch(() => '');
+                                throw new PermanentTransitionRejection(`transition-api-rejected-${response.status}:${responseText}`);
+                            }
+                        } catch (error) {
+                            if (error instanceof PermanentTransitionRejection) {
+                                throw error;
+                            }
                             // API unreachable, fall through to direct write
                         }
                     }
@@ -266,6 +290,21 @@ class StatusUpdateService {
                     results.success++;
                     console.log('[EC35] Status synced:', entry.deliveryId);
                 } catch (error) {
+                    if (error instanceof PermanentTransitionRejection) {
+                        entry.retryCount = EC35_CONFIG.MAX_RETRIES;
+                        entry.lastAttemptAt = currentTime;
+                        entry.error = error.message;
+                        captureHandledError(error, {
+                            queue_uuid: entry.queueId || 'unknown',
+                            action_type: 'status_update',
+                            flush_stage: 'process_sync',
+                            idempotency_result: 'permanent_rejection',
+                        });
+                        results.failed++;
+                        console.error('[EC35] Permanent transition rejection:', entry.deliveryId);
+                        continue;
+                    }
+
                     entry.retryCount++;
                     entry.lastAttemptAt = currentTime;
                     entry.error = String(error);

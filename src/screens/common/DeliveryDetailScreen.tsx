@@ -186,9 +186,15 @@ export default function DeliveryDetailScreen() {
             if (!proof) return;
             setDeliveryData((prev: any) => ({
                 ...prev,
+                ...(proof.status ? { status: proof.status } : {}),
+                ...(proof.picked_up_at ? { picked_up_at: proof.picked_up_at } : {}),
+                ...(proof.delivered_at ? { delivered_at: proof.delivered_at } : {}),
                 ...(proof.pickup_photo_url ? { pickup_photo_url: proof.pickup_photo_url } : {}),
                 ...(proof.proof_photo_url ? { proof_photo_url: proof.proof_photo_url } : {}),
                 ...(proof.return_photo_url ? { return_photo_url: proof.return_photo_url } : {}),
+                ...(proof.pickup_photo_uploaded_at ? { pickup_photo_uploaded_at: proof.pickup_photo_uploaded_at } : {}),
+                ...(proof.proof_photo_uploaded_at ? { proof_photo_uploaded_at: proof.proof_photo_uploaded_at } : {}),
+                ...(proof.return_photo_uploaded_at ? { return_photo_uploaded_at: proof.return_photo_uploaded_at } : {}),
             }));
             if (typeof proof.pickup_photo_uploaded_at === 'number') {
                 setPickupPhotoVersion(proof.pickup_photo_uploaded_at);
@@ -227,18 +233,18 @@ export default function DeliveryDetailScreen() {
     };
 
     const pickupImageUri = useMemo(
-        () => withCacheBust(deliveryData.pickupImage || deliveryData.pickup_photo_url, pickupPhotoVersion || deliveryData.picked_up_at || deliveryData.updated_at),
-        [deliveryData.pickupImage, deliveryData.pickup_photo_url, deliveryData.picked_up_at, deliveryData.updated_at, pickupPhotoVersion]
+        () => withCacheBust(deliveryData.pickupImage || deliveryData.pickup_photo_url, pickupPhotoVersion || deliveryData.pickup_photo_uploaded_at || deliveryData.picked_up_at || deliveryData.updated_at),
+        [deliveryData.pickupImage, deliveryData.pickup_photo_url, deliveryData.pickup_photo_uploaded_at, deliveryData.picked_up_at, deliveryData.updated_at, pickupPhotoVersion]
     );
 
     const proofImageUri = useMemo(
-        () => withCacheBust(deliveryData.proof_photo_url || deliveryData.image, proofPhotoVersion || deliveryData.delivered_at || deliveryData.updated_at),
-        [deliveryData.proof_photo_url, deliveryData.image, deliveryData.delivered_at, deliveryData.updated_at, proofPhotoVersion]
+        () => withCacheBust(deliveryData.proof_photo_url || deliveryData.image, proofPhotoVersion || deliveryData.proof_photo_uploaded_at || deliveryData.delivered_at || deliveryData.updated_at),
+        [deliveryData.proof_photo_url, deliveryData.image, deliveryData.proof_photo_uploaded_at, deliveryData.delivered_at, deliveryData.updated_at, proofPhotoVersion]
     );
 
     const returnImageUri = useMemo(
-        () => withCacheBust(deliveryData.return_photo_url, returnPhotoVersion || deliveryData.updated_at),
-        [deliveryData.return_photo_url, deliveryData.updated_at, returnPhotoVersion]
+        () => withCacheBust(deliveryData.return_photo_url, returnPhotoVersion || deliveryData.return_photo_uploaded_at || deliveryData.updated_at),
+        [deliveryData.return_photo_url, deliveryData.return_photo_uploaded_at, deliveryData.updated_at, returnPhotoVersion]
     );
 
     // Get pickup and dropoff coordinates from delivery object (or fetched data)

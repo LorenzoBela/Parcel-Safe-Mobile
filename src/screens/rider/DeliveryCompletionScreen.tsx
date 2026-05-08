@@ -155,6 +155,7 @@ export default function DeliveryCompletionScreen() {
                 pickup_confirmed_fallback: true,
                 in_transit_at: Date.now(),
                 pickup_photo_url: uploadResult.url,
+                pickup_photo_uploaded_at: Date.now(),
             });
             if (!ok) {
                 PremiumAlert.alert('Failed', 'Could not update pickup status.');
@@ -201,6 +202,8 @@ export default function DeliveryCompletionScreen() {
 
         setIsSaving(true);
         try {
+            let resolvedProofPhotoUrl = proofPhotoUrl;
+
             if (!isPickedUp) {
                 const pickupOk = await updateDeliveryStatus(deliveryId!, 'IN_TRANSIT', {
                     picked_up_at: Date.now(),
@@ -241,11 +244,15 @@ export default function DeliveryCompletionScreen() {
                     return;
                 } else {
                     setProofPhotoUrl(uploadResult.url || null);
+                    resolvedProofPhotoUrl = uploadResult.url || null;
                 }
             }
 
+            const completedAt = Date.now();
             const completed = await updateDeliveryStatus(deliveryId!, 'COMPLETED', {
-                completed_at: Date.now(),
+                completed_at: completedAt,
+                proof_photo_url: resolvedProofPhotoUrl,
+                proof_photo_uploaded_at: completedAt,
             });
 
             if (!completed) {

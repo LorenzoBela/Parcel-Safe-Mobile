@@ -171,6 +171,7 @@ export default function PickupVerification({
                 picked_up_at: Date.now(),
                 in_transit_at: Date.now(),
                 pickup_photo_url: uploadResult.url || null,
+                pickup_photo_uploaded_at: Date.now(),
             });
 
             if (!success) {

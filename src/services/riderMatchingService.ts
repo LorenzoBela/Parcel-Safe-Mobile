@@ -2065,6 +2065,16 @@ export async function updateDeliveryStatus(
         if (!response.ok) {
             const errText = await response.text().catch(() => '');
             console.error('[updateDeliveryStatus] Transition API rejected:', response.status, errText);
+            if (response.status >= 500) {
+                const fields = additionalFields || {};
+                const candidateBoxId =
+                    (typeof (fields as any).boxId === 'string' && (fields as any).boxId) ||
+                    (typeof (fields as any).box_id === 'string' && (fields as any).box_id) ||
+                    (typeof (fields as any).status_retry_box_id === 'string' && (fields as any).status_retry_box_id) ||
+                    'UNKNOWN_BOX';
+
+                await statusUpdateService.queueStatusUpdate(deliveryId, candidateBoxId, status, fields);
+            }
             return false;
         }
 
@@ -2103,7 +2113,7 @@ export async function updateDeliveryStatus(
                 (typeof (fields as any).status_retry_box_id === 'string' && (fields as any).status_retry_box_id) ||
                 'UNKNOWN_BOX';
 
-            await statusUpdateService.queueStatusUpdate(deliveryId, candidateBoxId, status);
+            await statusUpdateService.queueStatusUpdate(deliveryId, candidateBoxId, status, fields);
         } catch (queueError) {
             console.error('[EC35] Failed to queue status update:', queueError);
         }

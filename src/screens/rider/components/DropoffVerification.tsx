@@ -1,15 +1,16 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import { View, StyleSheet, Alert, Linking, Image } from 'react-native';
+import { View, StyleSheet, Linking, Image, ActivityIndicator } from 'react-native';
 import { Text, Card, Button, IconButton, Switch } from 'react-native-paper';
 import * as ImagePicker from 'expo-image-picker';
 import SwipeConfirmButton from '../../../components/SwipeConfirmButton';
 import { uploadDeliveryProofPhoto } from '../../../services/proofPhotoService';
 import { updateDeliveryStatus } from '../../../services/riderMatchingService';
-import { subscribeToDeliveryProof, DeliveryProofState, subscribeToPhotoAuditLog, subscribeToBoxState, BoxState, subscribeToCamera, CameraState, subscribeToLockEvents, LockEvent, updateBoxState, getDeliveryProofSnapshot, getPhotoAuditLogSnapshot, getLockEventSnapshot, getBoxStateSnapshot } from '../../../services/firebaseClient';
+import { subscribeToDeliveryProof, subscribeToPhotoAuditLog, subscribeToBoxState, BoxState, subscribeToCamera, CameraState, subscribeToLockEvents, LockEvent, updateBoxState, getDeliveryProofSnapshot, getPhotoAuditLogSnapshot, getLockEventSnapshot, getBoxStateSnapshot } from '../../../services/firebaseClient';
 import { loadDropoffVerificationSnapshot, saveDropoffVerificationSnapshot, clearDropoffVerificationSnapshot } from '../../../services/dropoffVerificationStorageService';
 import { enqueueBoxCommand, flushQueuedBoxCommands, markLatestSentCommandAcked } from '../../../services/boxCommandQueueService';
 import { PremiumAlert } from '../../../services/PremiumAlertService';
 import { useAppTheme } from '../../../context/ThemeContext';
+import { getDropoffProofGate } from '../../../services/dropoffProofGateService';
 
 // Import MapboxWrapper for geofence preview map
 import MapboxGL, { isMapboxNativeAvailable, StyleURL } from '../../../components/map/MapboxWrapper';
@@ -25,6 +26,11 @@ function formatDistance(meters: number | null | undefined): string {
         return `${(meters / 1000).toFixed(1)}km`;
     }
     return `${meters}m`;
+}
+
+function withProofCacheBust(url: string | null, version: number): string | null {
+    if (!url) return null;
+    return `${url}${url.includes('?') ? '&' : '?'}t=${version || 1}`;
 }
 
 // ───────────── Geofence Circle GeoJSON Builder ─────────────
@@ -91,8 +97,11 @@ type DropoffVerificationCacheState = {
     cameraFailed: boolean;
     hardwareSuccess: boolean;
     fallbackPhotoUri: string | null;
+    hardwarePreviewUrl: string | null;
+    auditPreviewUrl: string | null;
     hardwareProofUrl: string | null;
     auditProofUrl: string | null;
+    previewVersion: number;
     proofVersion: number;
     manualModeEnabled: boolean;
 };
@@ -162,9 +171,18 @@ export default function DropoffVerification({
     };
     const [fallbackPhotoUri, setFallbackPhotoUri] = useState<string | null>(null);
     const [hardwareSuccess, setHardwareSuccess] = useState(false);
+    const [hardwarePreviewUrl, setHardwarePreviewUrl] = useState<string | null>(null);
+    const [auditPreviewUrl, setAuditPreviewUrl] = useState<string | null>(null);
     const [hardwareProofUrl, setHardwareProofUrl] = useState<string | null>(null);
     const [auditProofUrl, setAuditProofUrl] = useState<string | null>(null);
+    const [previewVersion, setPreviewVersion] = useState<number>(0);
     const [proofVersion, setProofVersion] = useState<number>(0);
+    const [previewProofLoaded, setPreviewProofLoaded] = useState(false);
+    const [previewProofFailed, setPreviewProofFailed] = useState(false);
+    const [hardwareProofLoaded, setHardwareProofLoaded] = useState(false);
+    const [hardwareProofFailed, setHardwareProofFailed] = useState(false);
+    const [fallbackPhotoLoaded, setFallbackPhotoLoaded] = useState(false);
+    const [proofWaitTimedOut, setProofWaitTimedOut] = useState(false);
     const [manualModeEnabled, setManualModeEnabled] = useState(false);
     const [manualCommandLoading, setManualCommandLoading] = useState(false);
     const [otpConfirmedByCloud, setOtpConfirmedByCloud] = useState(false);
@@ -176,6 +194,7 @@ export default function DropoffVerification({
     // ━━━ SECURITY GATE: Box must confirm OTP before completion is possible ━━━
     const [boxOtpValidated, setBoxOtpValidated] = useState(false);
     const [cameraFailed, setCameraFailed] = useState(false);
+    const [cameraState, setCameraState] = useState<CameraState | null>(null);
     const [boxState, setBoxState] = useState<BoxState | null>(null);
 
     // ━━━ LOCK EVENTS: Real-time OTP + Face Detection from hardware ━━━
@@ -190,14 +209,47 @@ export default function DropoffVerification({
     const lastCloudSignalAtRef = useRef<number>(Date.now());
     const recoveryInFlightRef = useRef<boolean>(false);
     const retryExhausted = lockEvent?.face_retry_exhausted === true || lockEvent?.fallback_required === true;
+    const lowLightFallbackRequired = retryExhausted && lockEvent?.failure_reason === 'LOW_LIGHT';
+    const effectivePreviewProofUrl = hardwarePreviewUrl || auditPreviewUrl;
     const effectiveHardwareProofUrl = hardwareProofUrl || auditProofUrl;
-    const hasHardwareProof = !!effectiveHardwareProofUrl;
     const hasFallbackProof = !!fallbackPhotoUri;
-    const hasAnyProof = hasHardwareProof || hasFallbackProof;
-    const fallbackModeActive = retryExhausted || cameraFailed;
-    const displayedHardwareProofUrl = effectiveHardwareProofUrl
-        ? `${effectiveHardwareProofUrl}${effectiveHardwareProofUrl.includes('?') ? '&' : '?'}t=${proofVersion || Date.now()}`
-        : null;
+    const fallbackModeActive = retryExhausted || cameraFailed || lowLightFallbackRequired;
+    const displayedPreviewProofUrl = withProofCacheBust(effectivePreviewProofUrl, previewVersion);
+    const displayedHardwareProofUrl = withProofCacheBust(effectiveHardwareProofUrl, proofVersion);
+    const displayedProofUrl =
+        displayedHardwareProofUrl && (hardwareProofLoaded || !displayedPreviewProofUrl || !previewProofLoaded)
+            ? displayedHardwareProofUrl
+            : displayedPreviewProofUrl;
+    const displayedProofIsFull = displayedProofUrl === displayedHardwareProofUrl;
+    const hiddenFullProofUrl =
+        displayedHardwareProofUrl && displayedPreviewProofUrl && previewProofLoaded && !hardwareProofLoaded
+            ? displayedHardwareProofUrl
+            : null;
+    const showFinalProofProgress = previewProofLoaded && !hardwareProofLoaded && !fallbackPhotoLoaded;
+    const finalProofProgress = effectiveHardwareProofUrl ? 85 : 60;
+    const finalProofProgressTitle = effectiveHardwareProofUrl
+        ? (hardwareProofFailed
+            ? 'Final proof uploaded. Keeping preview visible.'
+            : 'Final proof uploaded. Loading high-quality photo...')
+        : (cameraState?.last_upload_role === 'full'
+            ? 'Final proof upload is in progress...'
+            : 'Preview ready. Final proof is uploading...');
+    const finalProofProgressBody = effectiveHardwareProofUrl
+        ? 'The high-quality ESP-CAM photo is replacing this preview as soon as it renders.'
+        : 'This photo is only the quick preview. The ESP-CAM is sending the final uploaded version through LTE now.';
+    const proofRenderFailed =
+        (displayedHardwareProofUrl ? hardwareProofFailed : false) ||
+        (displayedPreviewProofUrl ? previewProofFailed : false);
+    const proofGate = getDropoffProofGate({
+        otpConfirmedByCloud,
+        espPreviewRendered: previewProofLoaded,
+        espFullProofRendered: hardwareProofLoaded,
+        fallbackPhotoRendered: fallbackPhotoLoaded,
+        hasFallbackPhoto: hasFallbackProof,
+        fallbackModeActive,
+        proofWaitTimedOut,
+        proofRenderFailed,
+    });
 
     const markOtpVerified = useCallback(() => {
         setBoxOtpValidated(true);
@@ -232,8 +284,11 @@ export default function DropoffVerification({
             setCameraFailed(cached.cameraFailed);
             setHardwareSuccess(cached.hardwareSuccess);
             setFallbackPhotoUri(cached.fallbackPhotoUri);
+            setHardwarePreviewUrl(cached.hardwarePreviewUrl ?? null);
+            setAuditPreviewUrl(cached.auditPreviewUrl ?? null);
             setHardwareProofUrl(cached.hardwareProofUrl);
             setAuditProofUrl(cached.auditProofUrl);
+            setPreviewVersion(cached.previewVersion ?? 0);
             setProofVersion(cached.proofVersion);
             setManualModeEnabled(cached.manualModeEnabled);
             if (cached.boxOtpValidated) {
@@ -260,8 +315,11 @@ export default function DropoffVerification({
             cameraFailed,
             hardwareSuccess,
             fallbackPhotoUri,
+            hardwarePreviewUrl,
+            auditPreviewUrl,
             hardwareProofUrl,
             auditProofUrl,
+            previewVersion,
             proofVersion,
             manualModeEnabled,
         };
@@ -275,8 +333,11 @@ export default function DropoffVerification({
         cameraFailed,
         hardwareSuccess,
         fallbackPhotoUri,
+        hardwarePreviewUrl,
+        auditPreviewUrl,
         hardwareProofUrl,
         auditProofUrl,
+        previewVersion,
         proofVersion,
         manualModeEnabled,
     ]);
@@ -334,11 +395,31 @@ export default function DropoffVerification({
                 markHardwareVerified();
             }
 
+            if (proof?.proof_photo_preview_url) {
+                setHardwarePreviewUrl(proof.proof_photo_preview_url);
+                setPreviewVersion(
+                    typeof proof.proof_photo_preview_uploaded_at === 'number'
+                        ? proof.proof_photo_preview_uploaded_at
+                        : Date.now()
+                );
+                markHardwareVerified();
+            }
+
             if (!proof?.proof_photo_url && photoAudit?.latest_photo_url) {
                 setAuditProofUrl(photoAudit.latest_photo_url);
                 setProofVersion(
                     typeof photoAudit.latest_photo_uploaded_at === 'number'
                         ? photoAudit.latest_photo_uploaded_at
+                        : Date.now()
+                );
+                markHardwareVerified();
+            }
+
+            if (!proof?.proof_photo_preview_url && photoAudit?.latest_photo_preview_url) {
+                setAuditPreviewUrl(photoAudit.latest_photo_preview_url);
+                setPreviewVersion(
+                    typeof photoAudit.latest_photo_preview_uploaded_at === 'number'
+                        ? photoAudit.latest_photo_preview_uploaded_at
                         : Date.now()
                 );
                 markHardwareVerified();
@@ -441,11 +522,46 @@ export default function DropoffVerification({
     }, [canProcessOtpSignals, deliveryId, boxId]);
 
     useEffect(() => {
-        if (!displayedHardwareProofUrl) return;
-        Image.prefetch(displayedHardwareProofUrl).catch(() => {
+        setPreviewProofLoaded(false);
+        setPreviewProofFailed(false);
+    }, [displayedPreviewProofUrl]);
+
+    useEffect(() => {
+        setHardwareProofLoaded(false);
+        setHardwareProofFailed(false);
+    }, [displayedHardwareProofUrl]);
+
+    useEffect(() => {
+        setFallbackPhotoLoaded(false);
+    }, [fallbackPhotoUri]);
+
+    useEffect(() => {
+        if (!displayedProofUrl) return;
+        Image.prefetch(displayedProofUrl).catch(() => {
             // Best-effort warm-up only.
         });
-    }, [displayedHardwareProofUrl]);
+    }, [displayedProofUrl]);
+
+    useEffect(() => {
+        setProofWaitTimedOut(false);
+        if (!otpConfirmedByCloud || proofGate.visibleProofLoaded) return;
+        if (!(hardwareSuccess || faceDetected || boxOtpValidated)) return;
+
+        const timeout = setTimeout(() => {
+            setProofWaitTimedOut(true);
+        }, 12000);
+
+        return () => clearTimeout(timeout);
+    }, [
+        deliveryId,
+        otpConfirmedByCloud,
+        hardwareSuccess,
+        faceDetected,
+        boxOtpValidated,
+        displayedPreviewProofUrl,
+        displayedHardwareProofUrl,
+        proofGate.visibleProofLoaded,
+    ]);
 
     // Monitor box state for OTP validation
     useEffect(() => {
@@ -510,6 +626,15 @@ export default function DropoffVerification({
         // Monitor delivery proof for hardware camera success
         const unsubscribeProof = subscribeToDeliveryProof(deliveryId, (proof) => {
             lastCloudSignalAtRef.current = Date.now();
+            if (canProcessOtpSignals && proof && proof.proof_photo_preview_url) {
+                setHardwarePreviewUrl(proof.proof_photo_preview_url);
+                if (typeof proof.proof_photo_preview_uploaded_at === 'number') {
+                    setPreviewVersion(proof.proof_photo_preview_uploaded_at);
+                } else {
+                    setPreviewVersion(Date.now());
+                }
+                markHardwareVerified();
+            }
             if (canProcessOtpSignals && proof && proof.proof_photo_url) {
                 setHardwareProofUrl(proof.proof_photo_url);
                 if (typeof proof.proof_photo_uploaded_at === 'number') {
@@ -524,19 +649,31 @@ export default function DropoffVerification({
         // Fallback source: firmware writes latest photo URL under audit_logs/{deliveryId}
         const unsubscribePhotoAudit = subscribeToPhotoAuditLog(deliveryId, (audit) => {
             lastCloudSignalAtRef.current = Date.now();
-            if (!canProcessOtpSignals || !audit?.latest_photo_url) return;
-            setAuditProofUrl(audit.latest_photo_url);
-            if (typeof audit.latest_photo_uploaded_at === 'number') {
-                setProofVersion(audit.latest_photo_uploaded_at);
-            } else {
-                setProofVersion(Date.now());
+            if (!canProcessOtpSignals || !audit) return;
+            if (audit.latest_photo_preview_url) {
+                setAuditPreviewUrl(audit.latest_photo_preview_url);
+                if (typeof audit.latest_photo_preview_uploaded_at === 'number') {
+                    setPreviewVersion(audit.latest_photo_preview_uploaded_at);
+                } else {
+                    setPreviewVersion(Date.now());
+                }
+                markHardwareVerified();
             }
-            markHardwareVerified();
+            if (audit.latest_photo_url) {
+                setAuditProofUrl(audit.latest_photo_url);
+                if (typeof audit.latest_photo_uploaded_at === 'number') {
+                    setProofVersion(audit.latest_photo_uploaded_at);
+                } else {
+                    setProofVersion(Date.now());
+                }
+                markHardwareVerified();
+            }
         });
 
         // Monitor camera state for failures
         const unsubscribeCamera = subscribeToCamera(boxId, (camState) => {
             lastCloudSignalAtRef.current = Date.now();
+            setCameraState(camState);
             if (camState && (camState.status === 'FAILED' || camState.status === 'HARDWARE_ERROR')) {
                 setCameraFailed(true);
             }
@@ -702,11 +839,11 @@ export default function DropoffVerification({
             return;
         }
 
-        if (!hasAnyProof) {
+        if (!proofGate.visibleProofLoaded) {
             if (retryExhausted) {
-                PremiumAlert.alert('Fallback Required', 'Camera failed all retry attempts. Capture a fallback photo before completing delivery.');
+                PremiumAlert.alert('Fallback Required', 'Camera could not produce a visible proof. Capture a fallback photo before completing delivery.');
             } else if (hardwareSuccess) {
-                PremiumAlert.alert('Proof Photo Pending', 'Face verification succeeded, but the hardware photo is still not available. Please wait a few seconds or capture a fallback photo.');
+                PremiumAlert.alert('Proof Photo Pending', 'Face verification succeeded, but the proof photo is not visible yet. Please wait a moment.');
             } else {
                 PremiumAlert.alert('Cannot Complete', 'Hardware verification pending. If the box camera failed, please capture a fallback photo.');
             }
@@ -715,9 +852,9 @@ export default function DropoffVerification({
 
         setIsLoading(true);
         try {
-            let resolvedProofUrl: string | null = effectiveHardwareProofUrl || null;
+            let resolvedProofUrl: string | null = effectiveHardwareProofUrl || effectivePreviewProofUrl || null;
 
-            if (fallbackPhotoUri && !hardwareProofUrl) {
+            if (fallbackPhotoUri && fallbackPhotoLoaded && !hardwareProofLoaded && !previewProofLoaded) {
                 const uploadResult = await uploadDeliveryProofPhoto({
                     deliveryId,
                     boxId,
@@ -744,9 +881,12 @@ export default function DropoffVerification({
                 }
             }
 
+            const completedAt = Date.now();
             const statusSaved = await updateDeliveryStatus(deliveryId, 'COMPLETED', {
-                completed_at: Date.now(),
+                completed_at: completedAt,
                 proof_photo_url: resolvedProofUrl,
+                proof_photo_uploaded_at: completedAt,
+                proof_photo_preview_url: effectivePreviewProofUrl || null,
                 box_id: boxId,
             });
 
@@ -764,11 +904,11 @@ export default function DropoffVerification({
 
     // ━━━ Determine handover card status message ━━━
     const getHandoverStatusMessage = (): { text: string; color: string; bgColor: string } => {
-        if (hardwareSuccess && hasHardwareProof) {
-            return { text: '✅ Box unlocked! OTP verified & face detected.', color: c.successText, bgColor: c.successBg };
+        if (hardwareSuccess && proofGate.visibleProofLoaded) {
+            return { text: '✅ Box unlocked! OTP verified and proof photo is visible.', color: c.successText, bgColor: c.successBg };
         }
-        if (boxOtpValidated && hardwareSuccess && !hasHardwareProof) {
-            return { text: '📷 Face verification passed. Waiting for hardware proof photo upload, or capture fallback photo now.', color: c.blueText, bgColor: c.blueBg };
+        if (boxOtpValidated && hardwareSuccess && !proofGate.visibleProofLoaded) {
+            return { text: '📷 Face verification passed. Waiting for proof photo preview to render.', color: c.blueText, bgColor: c.blueBg };
         }
         if (boxOtpValidated && fallbackPhotoUri && boxReportedUnlocked) {
             return { text: '✅ Fallback photo verified and unlock confirmed. Ready to complete.', color: c.successText, bgColor: c.successBg };
@@ -814,9 +954,9 @@ export default function DropoffVerification({
     };
 
     // Can the rider swipe to complete?
-    const canSwipe = otpConfirmedByCloud && (hasHardwareProof || (fallbackModeActive && hasFallbackProof));
+    const canSwipe = proofGate.canSwipe;
     // Can the rider see the fallback photo button?
-    const showFallbackButton = fallbackModeActive || (boxOtpValidated && !hasHardwareProof);
+    const showFallbackButton = proofGate.fallbackAllowed;
     const canManualControl = manualModeEnabled && isInsideGeoFence && otpConfirmedByCloud && faceConfirmedByCloud;
     const isSyncPending = otpSyncPending || faceSyncPending;
     const lockAckCommand = (boxState as any)?.command_ack_command;
@@ -840,11 +980,11 @@ export default function DropoffVerification({
                         : 'Inside drop-off zone. Syncing the box now.';
 
     const getCompactHandoverStatusText = (): string => {
-        if (hardwareSuccess && hasHardwareProof) {
-            return 'Box unlocked and proof photo received. Ready to complete.';
+        if (hardwareSuccess && proofGate.visibleProofLoaded) {
+            return 'Box unlocked and visible proof photo received. Ready to complete.';
         }
-        if (boxOtpValidated && hardwareSuccess && !hasHardwareProof) {
-            return 'Box unlocked. Waiting for the proof photo upload.';
+        if (boxOtpValidated && hardwareSuccess && !proofGate.visibleProofLoaded) {
+            return 'Box unlocked. Waiting for the proof photo preview.';
         }
         if (boxOtpValidated && fallbackPhotoUri && boxReportedUnlocked) {
             return 'Fallback photo captured and unlock confirmed. Ready to complete.';
@@ -1177,19 +1317,75 @@ export default function DropoffVerification({
 
                         <View style={[styles.proofPanel, { borderColor: c.borderHard, backgroundColor: c.badgeBg }]}>
                             <Text style={[styles.proofTitle, { color: c.textTitle }]}>Verification Photo</Text>
-                            {hasHardwareProof && displayedHardwareProofUrl ? (
+                            {displayedProofUrl ? (
                                 <>
                                     <Image
-                                        source={{ uri: displayedHardwareProofUrl }}
+                                        source={{ uri: displayedProofUrl }}
                                         style={[styles.proofImage, { backgroundColor: c.borderHard }]}
                                         resizeMode="cover"
                                         progressiveRenderingEnabled
+                                        onLoad={() => {
+                                            if (displayedProofIsFull) {
+                                                setHardwareProofLoaded(true);
+                                                setHardwareProofFailed(false);
+                                            } else {
+                                                setPreviewProofLoaded(true);
+                                                setPreviewProofFailed(false);
+                                            }
+                                        }}
+                                        onError={() => {
+                                            if (displayedProofIsFull) {
+                                                setHardwareProofFailed(true);
+                                            } else {
+                                                setPreviewProofFailed(true);
+                                            }
+                                        }}
                                     />
-                                    <Text style={[styles.proofHintSuccess, { color: c.successText }]}>ESP-CAM proof received. You can now swipe to complete.</Text>
+                                    {hiddenFullProofUrl && (
+                                        <Image
+                                            source={{ uri: hiddenFullProofUrl }}
+                                            style={styles.hiddenProofImage}
+                                            resizeMode="cover"
+                                            progressiveRenderingEnabled
+                                            onLoad={() => {
+                                                setHardwareProofLoaded(true);
+                                                setHardwareProofFailed(false);
+                                            }}
+                                            onError={() => setHardwareProofFailed(true)}
+                                        />
+                                    )}
+                                    <Text style={[styles.proofHintSuccess, { color: proofGate.visibleProofLoaded ? c.successText : c.textLabel }]}>
+                                        {proofGate.visibleProofLoaded
+                                            ? (displayedProofIsFull && hardwareProofLoaded
+                                                ? 'Full ESP-CAM proof is visible. You can now swipe to complete.'
+                                                : 'ESP-CAM proof preview is visible. You can now swipe while the full photo finishes.')
+                                            : 'Loading proof image preview...'}
+                                    </Text>
+                                    {showFinalProofProgress && (
+                                        <View style={[styles.finalProofNotice, { borderColor: c.borderHard, backgroundColor: c.card }]}>
+                                            <ActivityIndicator size="small" color={c.blueText} />
+                                            <View style={styles.finalProofNoticeText}>
+                                                <Text style={[styles.finalProofNoticeTitle, { color: c.textTitle }]}>
+                                                    {finalProofProgressTitle}
+                                                </Text>
+                                                <Text style={[styles.finalProofNoticeBody, { color: c.textLabel }]}>
+                                                    {finalProofProgressBody}
+                                                </Text>
+                                                <View style={[styles.finalProofProgressTrack, { backgroundColor: c.borderHard }]}>
+                                                    <View
+                                                        style={[
+                                                            styles.finalProofProgressFill,
+                                                            { width: `${finalProofProgress}%`, backgroundColor: c.blueText },
+                                                        ]}
+                                                    />
+                                                </View>
+                                            </View>
+                                        </View>
+                                    )}
                                 </>
                             ) : (
                                 <Text style={[styles.proofHintPending, { color: c.textLabel }]}>
-                                    Waiting for ESP-CAM proof image to appear before swipe completion.
+                                    Waiting for ESP-CAM proof preview to appear before swipe completion.
                                 </Text>
                             )}
                         </View>
@@ -1206,9 +1402,20 @@ export default function DropoffVerification({
                                     {fallbackPhotoUri ? 'Retake fallback photo' : 'Capture fallback photo'}
                                 </Button>
                                 {fallbackPhotoUri && (
-                                    <Text style={{ marginTop: 6, color: c.successText, textAlign: 'center', fontSize: 13 }}>
-                                        Fallback photo captured. You may now complete delivery.
-                                    </Text>
+                                    <>
+                                        <Image
+                                            source={{ uri: fallbackPhotoUri }}
+                                            style={[styles.fallbackImage, { backgroundColor: c.borderHard }]}
+                                            resizeMode="cover"
+                                            onLoad={() => setFallbackPhotoLoaded(true)}
+                                            onError={() => setFallbackPhotoLoaded(false)}
+                                        />
+                                        <Text style={{ marginTop: 6, color: fallbackPhotoLoaded ? c.successText : c.textLabel, textAlign: 'center', fontSize: 13 }}>
+                                            {fallbackPhotoLoaded
+                                                ? 'Fallback photo is visible. You may now complete delivery.'
+                                                : 'Loading fallback photo preview before completion.'}
+                                        </Text>
+                                    </>
                                 )}
                             </View>
                         )}
@@ -1310,6 +1517,19 @@ const styles = StyleSheet.create({
         borderRadius: 8,
         backgroundColor: '#e2e8f0',
     },
+    hiddenProofImage: {
+        position: 'absolute',
+        width: 1,
+        height: 1,
+        opacity: 0,
+    },
+    fallbackImage: {
+        width: '100%',
+        height: 160,
+        borderRadius: 8,
+        marginTop: 10,
+        backgroundColor: '#e2e8f0',
+    },
     proofHintPending: {
         color: '#475569',
         fontSize: 12,
@@ -1323,6 +1543,37 @@ const styles = StyleSheet.create({
         fontFamily: 'Inter_600SemiBold',
     },
     // ──── Geofence Map Preview ────
+    finalProofNotice: {
+        marginTop: 10,
+        flexDirection: 'row',
+        alignItems: 'center',
+        borderWidth: 1,
+        borderRadius: 8,
+        padding: 10,
+    },
+    finalProofNoticeText: {
+        flex: 1,
+        marginLeft: 10,
+    },
+    finalProofNoticeTitle: {
+        fontSize: 12,
+        fontFamily: 'Inter_700Bold',
+    },
+    finalProofNoticeBody: {
+        marginTop: 2,
+        fontSize: 12,
+        lineHeight: 16,
+    },
+    finalProofProgressTrack: {
+        height: 4,
+        borderRadius: 999,
+        overflow: 'hidden',
+        marginTop: 8,
+    },
+    finalProofProgressFill: {
+        height: '100%',
+        borderRadius: 999,
+    },
     mapContainer: {
         height: 180,
         borderRadius: 12,

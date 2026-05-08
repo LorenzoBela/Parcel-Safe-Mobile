@@ -86,7 +86,7 @@ export function normalizeDeliveryHistoryRow(row: any): DeliveryHistoryItem {
         pickup_lng: row.pickup_lng ?? null,
         dropoff_lat: row.dropoff_lat ?? null,
         dropoff_lng: row.dropoff_lng ?? null,
-        image: row.proof_of_delivery_url || row.image_url || null,
+        image: row.proof_photo_url || row.proof_of_delivery_url || row.image_url || null,
         pickupImage: row.pickup_photo_url || null,
         distance: row.distance_text || (row.distance ? `${row.distance.toFixed(1)} km` : 'N/A'),
     };
