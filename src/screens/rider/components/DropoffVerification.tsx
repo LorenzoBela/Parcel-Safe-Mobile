@@ -5,7 +5,7 @@ import * as ImagePicker from 'expo-image-picker';
 import SwipeConfirmButton from '../../../components/SwipeConfirmButton';
 import { uploadDeliveryProofPhoto } from '../../../services/proofPhotoService';
 import { updateDeliveryStatus } from '../../../services/riderMatchingService';
-import { subscribeToDeliveryProof, subscribeToPhotoAuditLog, subscribeToBoxState, BoxState, subscribeToCamera, CameraState, subscribeToLockEvents, LockEvent, updateBoxState, getDeliveryProofSnapshot, getPhotoAuditLogSnapshot, getLockEventSnapshot, getBoxStateSnapshot } from '../../../services/firebaseClient';
+import { subscribeToDeliveryProof, subscribeToPhotoAuditLog, subscribeToBoxState, BoxState, subscribeToCamera, CameraState, subscribeToLockEvents, LockEvent, updateBoxState, getDeliveryProofSnapshot, getPhotoAuditLogSnapshot, getLockEventSnapshot, getBoxStateSnapshot, subscribeToPhotoUploadState, PhotoUploadState } from '../../../services/firebaseClient';
 import { loadDropoffVerificationSnapshot, saveDropoffVerificationSnapshot, clearDropoffVerificationSnapshot } from '../../../services/dropoffVerificationStorageService';
 import { enqueueBoxCommand, flushQueuedBoxCommands, markLatestSentCommandAcked } from '../../../services/boxCommandQueueService';
 import { PremiumAlert } from '../../../services/PremiumAlertService';
@@ -195,6 +195,7 @@ export default function DropoffVerification({
     const [boxOtpValidated, setBoxOtpValidated] = useState(false);
     const [cameraFailed, setCameraFailed] = useState(false);
     const [cameraState, setCameraState] = useState<CameraState | null>(null);
+    const [photoUploadState, setPhotoUploadState] = useState<PhotoUploadState | null>(null);
     const [boxState, setBoxState] = useState<BoxState | null>(null);
 
     // ━━━ LOCK EVENTS: Real-time OTP + Face Detection from hardware ━━━
@@ -226,17 +227,29 @@ export default function DropoffVerification({
             ? displayedHardwareProofUrl
             : null;
     const showFinalProofProgress = previewProofLoaded && !hardwareProofLoaded && !fallbackPhotoLoaded;
-    const finalProofProgress = effectiveHardwareProofUrl ? 85 : 60;
+    const liveUploadProgress =
+        photoUploadState &&
+        photoUploadState.delivery_id === deliveryId &&
+        photoUploadState.status !== 'COMPLETED'
+            ? Math.max(0, Math.min(100, photoUploadState.progress_percent || 0))
+            : null;
+    const finalProofProgress = liveUploadProgress ?? (effectiveHardwareProofUrl ? 85 : 60);
     const finalProofProgressTitle = effectiveHardwareProofUrl
         ? (hardwareProofFailed
             ? 'Final proof uploaded. Keeping preview visible.'
             : 'Final proof uploaded. Loading high-quality photo...')
-        : (cameraState?.last_upload_role === 'full'
+        : (photoUploadState?.status === 'FAILED'
+            ? 'Final proof upload failed. Waiting for retry...'
+            : photoUploadState?.status === 'UPLOADING'
+                ? `Final proof upload ${finalProofProgress}%`
+                : cameraState?.last_upload_role === 'full'
             ? 'Final proof upload is in progress...'
             : 'Preview ready. Final proof is uploading...');
     const finalProofProgressBody = effectiveHardwareProofUrl
         ? 'The high-quality ESP-CAM photo is replacing this preview as soon as it renders.'
-        : 'This photo is only the quick preview. The ESP-CAM is sending the final uploaded version through LTE now.';
+        : (photoUploadState?.status === 'FAILED' && photoUploadState.error_message
+            ? photoUploadState.error_message
+            : 'This photo is only the quick preview. The ESP-CAM is sending the final uploaded version through LTE now.');
     const proofRenderFailed =
         (displayedHardwareProofUrl ? hardwareProofFailed : false) ||
         (displayedPreviewProofUrl ? previewProofFailed : false);
@@ -679,6 +692,17 @@ export default function DropoffVerification({
             }
         });
 
+        const unsubscribePhotoUpload = subscribeToPhotoUploadState(boxId, (uploadState) => {
+            lastCloudSignalAtRef.current = Date.now();
+            setPhotoUploadState(uploadState);
+            if (!uploadState || uploadState.delivery_id !== deliveryId) return;
+            if (uploadState.status === 'COMPLETED') {
+                markHardwareVerified();
+            } else if (uploadState.status === 'FAILED') {
+                setCameraFailed(true);
+            }
+        });
+
         // ━━━ Monitor lock events for OTP + face detection results ━━━
         const unsubscribeLockEvents = subscribeToLockEvents(boxId, (event) => {
             lastCloudSignalAtRef.current = Date.now();
@@ -722,6 +746,7 @@ export default function DropoffVerification({
             unsubscribeProof();
             unsubscribePhotoAudit();
             unsubscribeCamera();
+            unsubscribePhotoUpload();
             unsubscribeLockEvents();
         };
     }, [
@@ -1384,9 +1409,34 @@ export default function DropoffVerification({
                                     )}
                                 </>
                             ) : (
-                                <Text style={[styles.proofHintPending, { color: c.textLabel }]}>
-                                    Waiting for ESP-CAM proof preview to appear before swipe completion.
-                                </Text>
+                                <>
+                                    <Text style={[styles.proofHintPending, { color: c.textLabel }]}>
+                                        Waiting for ESP-CAM proof preview to appear before swipe completion.
+                                    </Text>
+                                    {liveUploadProgress !== null && (
+                                        <View style={[styles.finalProofNotice, { borderColor: c.borderHard, backgroundColor: c.card }]}>
+                                            <ActivityIndicator size="small" color={c.blueText} />
+                                            <View style={styles.finalProofNoticeText}>
+                                                <Text style={[styles.finalProofNoticeTitle, { color: c.textTitle }]}>
+                                                    {photoUploadState?.status === 'FAILED'
+                                                        ? 'ESP-CAM upload failed. Waiting for retry...'
+                                                        : `ESP-CAM upload ${liveUploadProgress}%`}
+                                                </Text>
+                                                <Text style={[styles.finalProofNoticeBody, { color: c.textLabel }]}>
+                                                    {photoUploadState?.error_message || 'The box has detected the face and is relaying the proof photo through LTE.'}
+                                                </Text>
+                                                <View style={[styles.finalProofProgressTrack, { backgroundColor: c.borderHard }]}>
+                                                    <View
+                                                        style={[
+                                                            styles.finalProofProgressFill,
+                                                            { width: `${liveUploadProgress}%`, backgroundColor: c.blueText },
+                                                        ]}
+                                                    />
+                                                </View>
+                                            </View>
+                                        </View>
+                                    )}
+                                </>
                             )}
                         </View>
 

@@ -157,8 +157,11 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { PremiumAlert } from '../../services/PremiumAlertService';
 
 const BATTERY_HANDOFF_TIMEOUT_MS = 15 * 60 * 1000;
+const PHONE_PICKUP_CLEAR_INSIDE_MAX_M = 40;
+const PHONE_PICKUP_CLEAR_INSIDE_RATIO = 0.8;
 const PHONE_DROPOFF_CLEAR_INSIDE_MAX_M = 40;
 const PHONE_DROPOFF_CLEAR_INSIDE_RATIO = 0.8;
+const PICKUP_PHONE_DISTANCE_INTERVAL_M = 1;
 const DROPOFF_PHONE_DISTANCE_INTERVAL_M = 1;
 const DEFAULT_PHONE_DISTANCE_INTERVAL_M = 5;
 const MANUAL_REFRESH_PHONE_TIMEOUT_MS = 10000;
@@ -169,6 +172,12 @@ const DROPOFF_ARRIVAL_CONFIRMATION_RETRY_MS = 4000;
 const DROPOFF_ARRIVAL_RETRYABLE_STATUSES = new Set(['IN_TRANSIT', 'PICKED_UP', 'ARRIVED']);
 const DROPOFF_ARRIVAL_CONFIRMED_STATUSES = new Set(['ARRIVED', 'COMPLETED']);
 const SAME_PICKUP_DROPOFF_RADIUS_M = 25;
+
+type GeofenceTarget = 'pickup' | 'dropoff' | 'return_pickup';
+
+function isPickupLikeGeofenceTarget(target: GeofenceTarget): boolean {
+    return target === 'pickup' || target === 'return_pickup';
+}
 
 function formatRemainingMinutesSeconds(remainingMs: number): string {
     const clamped = Math.max(0, remainingMs);
@@ -234,7 +243,7 @@ export default function ArrivalScreen() {
     const [geofence, setGeofence] = useState<GeofenceConfig>(
         createDefaultGeofence(params.targetLat, params.targetLng)
     );
-    const [geofenceTarget, setGeofenceTarget] = useState<'pickup' | 'dropoff' | 'return_pickup'>('pickup');
+    const [geofenceTarget, setGeofenceTarget] = useState<GeofenceTarget>('pickup');
     const [distanceMeters, setDistanceMeters] = useState<number | null>(null);
     const [manualRefreshBusy, setManualRefreshBusy] = useState(false);
     const [dropoffArrivalRetryTick, setDropoffArrivalRetryTick] = useState(0);
@@ -264,15 +273,16 @@ export default function ArrivalScreen() {
             now
         );
         const geometricResult = checkGeofence(position, geofence);
+        const isPickupTarget = isPickupLikeGeofenceTarget(geofenceTarget);
         const clearInsideRadiusM = Math.min(
-            geofence.radiusMeters * PHONE_DROPOFF_CLEAR_INSIDE_RATIO,
-            PHONE_DROPOFF_CLEAR_INSIDE_MAX_M
+            geofence.radiusMeters * (isPickupTarget ? PHONE_PICKUP_CLEAR_INSIDE_RATIO : PHONE_DROPOFF_CLEAR_INSIDE_RATIO),
+            isPickupTarget ? PHONE_PICKUP_CLEAR_INSIDE_MAX_M : PHONE_DROPOFF_CLEAR_INSIDE_MAX_M
         );
-        const isClearDropoffFix =
-            geofenceTarget === 'dropoff' &&
+        const isClearInsideFix =
+            (isPickupTarget || geofenceTarget === 'dropoff') &&
             geometricResult.isInside &&
             nextState.rawDistanceM <= clearInsideRadiusM;
-        const effectiveState: GeofenceStabilityState = isClearDropoffFix && nextState.stableState !== 'INSIDE'
+        const effectiveState: GeofenceStabilityState = isClearInsideFix && nextState.stableState !== 'INSIDE'
             ? {
                 ...nextState,
                 stableState: 'INSIDE',
@@ -928,7 +938,9 @@ export default function ArrivalScreen() {
                     timeInterval: 2000,
                     distanceInterval: geofenceTarget === 'dropoff'
                         ? DROPOFF_PHONE_DISTANCE_INTERVAL_M
-                        : DEFAULT_PHONE_DISTANCE_INTERVAL_M,
+                        : (isPickupLikeGeofenceTarget(geofenceTarget)
+                            ? PICKUP_PHONE_DISTANCE_INTERVAL_M
+                            : DEFAULT_PHONE_DISTANCE_INTERVAL_M),
                 },
                 (location) => {
                     applyPhonePosition(location.coords, 25);
@@ -1084,7 +1096,7 @@ export default function ArrivalScreen() {
             clearTimeout(masterSwitchDebounceRef.current);
         }
 
-        const debounceMs = geofenceTarget === 'dropoff' ? 250 : 500;
+        const debounceMs = geofenceTarget === 'dropoff' || isPickupLikeGeofenceTarget(geofenceTarget) ? 250 : 500;
         masterSwitchDebounceRef.current = setTimeout(() => {
             const nextInside = isPhoneInside && (isBoxOffline || isBoxInside || isPhoneOnlyFallback);
             if (nextInside !== masterDecisionRef.current) {
@@ -1106,7 +1118,7 @@ export default function ArrivalScreen() {
     // is stuck (neither offline nor inside), activate phone-only fallback.
     // This safeguards against the debounce/hysteresis gap that blocks pickup indefinitely.
     useEffect(() => {
-        const PHONE_ONLY_FALLBACK_MS = geofenceTarget === 'dropoff' ? 7000 : 15000;
+        const PHONE_ONLY_FALLBACK_MS = geofenceTarget === 'dropoff' || isPickupLikeGeofenceTarget(geofenceTarget) ? 7000 : 15000;
 
         if (isPhoneInside && !isBoxOffline && !isBoxInside && !isPhoneOnlyFallback) {
             // Phone is inside but box status is stuck — start fallback countdown
