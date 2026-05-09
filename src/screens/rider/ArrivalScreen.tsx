@@ -1372,10 +1372,45 @@ export default function ArrivalScreen() {
                     text: 'Return',
                     style: 'destructive',
                     onPress: async () => {
-                        const newState = initiateReturn(waitTimerState, Date.now());
-                        setWaitTimerState(newState);
-                        await writeWaitTimerToFirebase(newState);
-                        navigation.navigate('RiderApp');
+                        setIsLoading(true);
+                        try {
+                            const result = await requestCancellation({
+                                deliveryId: params.deliveryId,
+                                boxId: params.boxId,
+                                reason: CancellationReason.CUSTOMER_UNAVAILABLE,
+                                reasonDetails: 'Dropoff unavailable after customer-not-home wait timer expired.',
+                                riderId: riderId || '',
+                                riderName: params.riderName,
+                                currentStatus: deliveryStatus || params.status || 'ARRIVED',
+                            });
+
+                            if (!result.success) {
+                                PremiumAlert.alert('Return Failed', result.error || 'Unable to start return-to-sender. Please retry.');
+                                return;
+                            }
+
+                            const newState = initiateReturn(waitTimerState, Date.now());
+                            setWaitTimerState(newState);
+                            await writeWaitTimerToFirebase(newState);
+                            setDeliveryStatus('RETURNING');
+
+                            navigation.navigate('CancellationConfirmation', {
+                                deliveryId: params.deliveryId,
+                                returnOtp: result.returnOtp,
+                                reason: CancellationReason.CUSTOMER_UNAVAILABLE,
+                                reasonDetails: 'Dropoff unavailable after customer-not-home wait timer expired.',
+                                senderName: params.senderName || 'Sender',
+                                pickupAddress: params.pickupAddress || params.targetAddress,
+                                pickupLat: params.pickupLat,
+                                pickupLng: params.pickupLng,
+                                boxId: params.boxId,
+                                isPickedUp: true,
+                            });
+                        } catch (err) {
+                            PremiumAlert.alert('Return Failed', 'An unexpected error occurred while starting the return.');
+                        } finally {
+                            setIsLoading(false);
+                        }
                     }
                 }
             ]
@@ -1455,21 +1490,25 @@ export default function ArrivalScreen() {
                 reasonDetails: details,
                 riderId: riderId || '',
                 riderName: params.riderName,
-                currentStatus: params.status || 'ARRIVED',
+                currentStatus: deliveryStatus || params.status || 'ARRIVED',
             });
 
             if (result.success) {
                 setShowCancelModal(false);
+                if (['IN_TRANSIT', 'ARRIVED', 'RETURNING', 'TAMPERED'].includes(deliveryStatus)) {
+                    setDeliveryStatus('RETURNING');
+                }
                 navigation.navigate('CancellationConfirmation', {
                     deliveryId: params.deliveryId,
                     returnOtp: result.returnOtp,
                     reason: reason,
                     reasonDetails: details,
-                    senderName: 'Customer', // Would come from delivery data
+                    senderName: params.senderName || 'Sender',
                     pickupAddress: params.pickupAddress || params.targetAddress,
                     pickupLat: params.pickupLat,
                     pickupLng: params.pickupLng,
-                    isPickedUp: ['IN_TRANSIT', 'ARRIVED', 'COMPLETED', 'RETURNING', 'TAMPERED'].includes(params.status || 'PENDING'),
+                    boxId: params.boxId,
+                    isPickedUp: ['IN_TRANSIT', 'ARRIVED', 'COMPLETED', 'RETURNING', 'TAMPERED'].includes(deliveryStatus || params.status || 'PENDING'),
                 });
             } else {
                 PremiumAlert.alert('Cancellation Failed', result.error || 'Unknown error');

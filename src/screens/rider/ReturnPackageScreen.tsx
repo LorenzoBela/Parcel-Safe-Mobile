@@ -6,7 +6,7 @@
  * The Return OTP is entered by the sender on the physical box — not on this screen.
  */
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
     View, StyleSheet, ScrollView, Alert, Linking, Platform, Image,
 } from 'react-native';
@@ -64,7 +64,6 @@ function buildGeofenceCircleGeoJSON(
 
 interface RouteParams {
     deliveryId: string;
-    returnOtp: string;
     pickupAddress: string;
     senderName: string;
     pickupLat?: number;
@@ -121,7 +120,7 @@ export default function ReturnPackageScreen() {
     const [riderLng, setRiderLng] = useState(0);
     const [riderHeading, setRiderHeading] = useState(0);
     const [riderSpeed, setRiderSpeed] = useState(0);
-    const [localPhoneHeading, setLocalPhoneHeading] = useState<number | null>(null);
+    const localPhoneHeadingRef = useRef<number | null>(null);
 
     const headingSmoother = useHeadingSmoothing();
 
@@ -134,7 +133,9 @@ export default function ReturnPackageScreen() {
     );
 
     // ── Hardware box state (primary photo source) ──
-    const [hardwareSuccess, setHardwareSuccess] = useState(false);    const [hardwareProofUrl, setHardwareProofUrl] = useState<string | null>(null);    const [cameraFailed, setCameraFailed] = useState(false);
+    const [hardwareSuccess, setHardwareSuccess] = useState(false);
+    const [hardwareProofUrl, setHardwareProofUrl] = useState<string | null>(null);
+    const [cameraFailed, setCameraFailed] = useState(false);
     const [boxOtpValidated, setBoxOtpValidated] = useState(false);
     const [faceDetected, setFaceDetected] = useState(false);
     const [lockEvent, setLockEvent] = useState<LockEvent | null>(null);
@@ -281,7 +282,7 @@ export default function ReturnPackageScreen() {
                 const { status } = await Location.getForegroundPermissionsAsync();
                 if (status === 'granted') {
                     headingSub = await Location.watchHeadingAsync((data) => {
-                        setLocalPhoneHeading(data.trueHeading !== -1 ? data.trueHeading : data.magHeading);
+                        localPhoneHeadingRef.current = data.trueHeading !== -1 ? data.trueHeading : data.magHeading;
                     }).catch(err => {
                         if (__DEV__) console.warn('Heading watcher failed (Simulator?):', err);
                         return null;
@@ -528,7 +529,7 @@ export default function ReturnPackageScreen() {
                                     <AnimatedRiderMarker
                                         latitude={riderLat}
                                         longitude={riderLng}
-                                        rotation={headingSmoother.smooth(riderHeading, riderSpeed, localPhoneHeading)}
+                                        rotation={headingSmoother.smooth(riderHeading, riderSpeed, localPhoneHeadingRef.current)}
                                     />
                                 )}
                             </MapboxGL.MapView>

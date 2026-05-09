@@ -549,27 +549,106 @@ export function subscribeToAllHardware(
 
 export type TheftState = 'NORMAL' | 'SUSPICIOUS' | 'STOLEN' | 'LOCKDOWN' | 'RECOVERED';
 
+const STOLEN_LOCATION_HISTORY_LIMIT = 288;
+
 /**
  * Admin helper to update theft status and lockdown marker for a box.
  */
 export async function setTheftState(boxId: string, state: TheftState): Promise<void> {
     const db = getFirebaseDatabase();
-    const hardwareRef = ref(db, `hardware/${boxId}`);
-    await update(hardwareRef, {
-        theft_state: state,
-        'tamper/lockdown': state === 'LOCKDOWN',
-        last_updated: serverTimestamp(),
+    const now = Date.now();
+    const isActiveTheft = state === 'SUSPICIOUS' || state === 'STOLEN' || state === 'LOCKDOWN';
+    const currentLocation = await fetchBoxLocationOnce(boxId);
+    const theftSnapshot = await get(ref(db, `boxes/${boxId}/theft_status`));
+    const currentStatus = theftSnapshot.val() as TheftStatus | null;
+    const existingHistory = Array.isArray(currentStatus?.location_history) ? currentStatus.location_history : [];
+    const currentPoint = currentLocation ? {
+        lat: currentLocation.latitude,
+        lng: currentLocation.longitude,
+        timestamp: now,
+    } : null;
+
+    const updates: Record<string, any> = {
+        [`hardware/${boxId}/theft_state`]: state,
+        [`hardware/${boxId}/tamper/lockdown`]: state === 'LOCKDOWN',
+        [`hardware/${boxId}/tamper/detected`]: isActiveTheft ? true : false,
+        [`hardware/${boxId}/last_updated`]: serverTimestamp(),
+        [`hardware/${boxId}/lockdown`]: state === 'LOCKDOWN' ? true : null,
+        [`boxes/${boxId}/theft_status/state`]: state,
+        [`boxes/${boxId}/theft_status/is_stolen`]: isActiveTheft,
+        [`boxes/${boxId}/theft_status/lockdown_active`]: state === 'LOCKDOWN',
+        [`boxes/${boxId}/theft_status/recovery_photos`]: [],
+    };
+
+    if (isActiveTheft) {
+        updates[`boxes/${boxId}/theft_status/reported_by`] = currentStatus?.reported_by || 'admin';
+        updates[`boxes/${boxId}/theft_status/reported_at`] = currentStatus?.reported_at || now;
+        updates[`boxes/${boxId}/theft_status/notes`] = currentStatus?.notes || `Marked ${state.toLowerCase()} by admin mobile app`;
+        updates[`boxes/${boxId}/theft_status/last_known_location`] = {
+            lat: currentLocation?.latitude ?? currentStatus?.last_known_location?.lat ?? 0,
+            lng: currentLocation?.longitude ?? currentStatus?.last_known_location?.lng ?? 0,
+            heading: currentLocation?.heading ?? currentStatus?.last_known_location?.heading ?? 0,
+            speed: currentLocation?.speed ?? currentStatus?.last_known_location?.speed ?? 0,
+        };
+        updates[`boxes/${boxId}/theft_status/location_history`] = currentPoint
+            ? [...existingHistory, currentPoint].slice(-STOLEN_LOCATION_HISTORY_LIMIT)
+            : existingHistory;
+        if (state === 'LOCKDOWN') {
+            updates[`boxes/${boxId}/theft_status/lockdown_at`] = now;
+        }
+    } else {
+        updates[`boxes/${boxId}/theft_status/reported_by`] = '';
+        updates[`boxes/${boxId}/theft_status/reported_at`] = 0;
+        updates[`boxes/${boxId}/theft_status/last_known_location`] = { lat: 0, lng: 0, heading: 0, speed: 0 };
+        updates[`boxes/${boxId}/theft_status/location_history`] = [];
+        updates[`boxes/${boxId}/theft_status/lockdown_at`] = null;
+        updates[`boxes/${boxId}/theft_status/notes`] = state === 'RECOVERED' ? 'Recovered by admin mobile app' : '';
+    }
+
+    await update(ref(db), updates);
+}
+
+export async function recordStolenBoxLocation(boxId: string, location: LocationData): Promise<void> {
+    const latitude = toFiniteNumberOrNull(location.latitude);
+    const longitude = toFiniteNumberOrNull(location.longitude);
+    if (latitude == null || longitude == null) return;
+
+    const db = getFirebaseDatabase();
+    const theftRef = ref(db, `boxes/${boxId}/theft_status`);
+    const snapshot = await get(theftRef);
+    const status = snapshot.val() as TheftStatus | null;
+    if (!status?.is_stolen) return;
+
+    const timestamp = toFiniteNumberOrNull(location.timestamp) ?? Date.now();
+    const nextPoint = { lat: latitude, lng: longitude, timestamp };
+    const existingHistory = Array.isArray(status.location_history) ? status.location_history : [];
+    const lastPoint = existingHistory[existingHistory.length - 1];
+    const movedEnough = !lastPoint
+        || Math.abs(lastPoint.lat - nextPoint.lat) > 0.00001
+        || Math.abs(lastPoint.lng - nextPoint.lng) > 0.00001
+        || Math.abs(lastPoint.timestamp - nextPoint.timestamp) > 30_000;
+
+    await update(theftRef, {
+        last_known_location: {
+            lat: latitude,
+            lng: longitude,
+            heading: location.compassHeading ?? location.heading ?? 0,
+            speed: location.speed ?? 0,
+        },
+        location_history: movedEnough
+            ? [...existingHistory, nextPoint].slice(-STOLEN_LOCATION_HISTORY_LIMIT)
+            : existingHistory,
     });
 }
 
 export async function clearTamperStatus(boxId: string): Promise<void> {
     const db = getFirebaseDatabase();
-    const tamperRef = ref(db, `hardware/${boxId}/tamper`);
-    await set(tamperRef, null);
-    
-    // Also clear theft_state lock
-    const theftRef = ref(db, `hardware/${boxId}/theft_state`);
-    await set(theftRef, null);
+    await update(ref(db, `hardware/${boxId}`), {
+        tamper: null,
+        lockdown: null,
+        theft_state: 'NORMAL',
+        last_updated: serverTimestamp(),
+    });
 
     // Write a clear_tamper command for the proxy to read and reset TheftGuard
     const cmdRef = ref(db, `hardware/${boxId}/clear_tamper`);
@@ -2325,6 +2404,7 @@ export async function reportBoxStolen(
         }],
         lockdown_active: true,
         lockdown_at: timestamp,
+        recovery_photos: [],
         notes: notes || 'Reported stolen by rider via app'
     } as TheftStatus);
 
@@ -2346,7 +2426,11 @@ export async function reportBoxStolen(
     await set(heartbeatRef, serverTimestamp());
 
     // 4. Write lockdown flag to the hardware node the firmware reads
-    await set(ref(db, `hardware/${boxId}/lockdown`), true);
+    await update(ref(db, `hardware/${boxId}`), {
+        lockdown: true,
+        theft_state: 'LOCKDOWN',
+        last_updated: serverTimestamp(),
+    });
 
     // 5. Dispatch push notification (fire-and-forget, imported lazily to avoid circular dep)
     try {

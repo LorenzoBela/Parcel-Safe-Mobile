@@ -19,6 +19,7 @@ import {
     onValue,
     off,
     set,
+    update,
     serverTimestamp,
 } from 'firebase/database';
 import { getFirebaseDatabase } from './firebaseClient';
@@ -221,17 +222,30 @@ export async function reportTheft(
             state: 'STOLEN',
             is_stolen: true,
             reported_by: riderUid,
-            reported_at: serverTimestamp(),
+            reported_at: Date.now(),
             last_known_location: {
                 lat: currentLocation?.latitude || 0,
                 lng: currentLocation?.longitude || 0,
                 heading: currentLocation?.heading || 0,
                 speed: currentLocation?.speed || 0,
             },
-            location_history: [],
-            lockdown_active: false,
+            location_history: currentLocation ? [{
+                lat: currentLocation.latitude,
+                lng: currentLocation.longitude,
+                timestamp: Date.now(),
+            }] : [],
+            lockdown_active: true,
+            lockdown_at: Date.now(),
             recovery_photos: [],
             notes: notes || 'Reported by rider via mobile app',
+        });
+
+        await update(ref(db, `hardware/${boxId}`), {
+            lockdown: true,
+            theft_state: 'LOCKDOWN',
+            'tamper/detected': true,
+            'tamper/lockdown': true,
+            last_updated: serverTimestamp(),
         });
 
         console.log(`[EC-81] Theft reported for box ${boxId} by rider ${riderUid}`);

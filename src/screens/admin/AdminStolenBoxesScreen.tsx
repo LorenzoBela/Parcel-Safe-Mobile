@@ -1,17 +1,22 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, FlatList, RefreshControl, StyleSheet, View } from 'react-native';
 import { Button, Text } from 'react-native-paper';
 import { MapboxGL, setAccessToken, setTelemetryEnabled } from '../../components/map/MapboxWrapper';
 import {
     HardwareByBoxId,
     LocationsByBoxId,
+    recordStolenBoxLocation,
     setTheftState,
     subscribeToAllHardware,
     subscribeToAllLocations,
+    subscribeToStolenBoxes,
+    TheftStatus,
     TheftState,
+    LocationData,
 } from '../../services/firebaseClient';
 import { useAppTheme } from '../../context/ThemeContext';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { updateAdminStolenBox, AdminStolenBoxAction } from '../../services/adminApiService';
 
 const ALERT_STATES = new Set(['SUSPICIOUS', 'STOLEN', 'LOCKDOWN']);
 const MAPBOX_TOKEN = process.env.EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN;
@@ -26,6 +31,9 @@ type StolenRow = {
     lat?: number;
     lng?: number;
     updatedAt?: number;
+    batteryPct?: number;
+    batteryLockPct?: number;
+    source: 'theft_status' | 'hardware';
 };
 
 function hasCoordinates(item: { lat?: number; lng?: number }): item is { lat: number; lng: number } {
@@ -89,6 +97,7 @@ export default function AdminStolenBoxesScreen() {
 
     const [hardware, setHardware] = useState<HardwareByBoxId | null>(null);
     const [locations, setLocations] = useState<LocationsByBoxId | null>(null);
+    const [stolenBoxes, setStolenBoxes] = useState<Record<string, TheftStatus> | null>(null);
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
     const [refreshTick, setRefreshTick] = useState(0);
@@ -99,6 +108,7 @@ export default function AdminStolenBoxesScreen() {
     const [cameraCenter, setCameraCenter] = useState<[number, number]>(DEFAULT_CENTER);
     const [cameraZoom, setCameraZoom] = useState(12);
     const [trackHistory, setTrackHistory] = useState<Record<string, [number, number][]>>({});
+    const lastRecordedLocationRef = useRef<Record<string, { lat: number; lng: number; timestamp: number }>>({});
 
     useEffect(() => {
         setLoading(true);
@@ -114,9 +124,13 @@ export default function AdminStolenBoxesScreen() {
         const unsubLoc = subscribeToAllLocations((snapshot) => {
             setLocations(snapshot);
         });
+        const unsubStolen = subscribeToStolenBoxes((snapshot) => {
+            setStolenBoxes(snapshot);
+        });
         return () => {
             unsubHw();
             unsubLoc();
+            unsubStolen();
         };
     }, [refreshTick]);
 
@@ -128,8 +142,27 @@ export default function AdminStolenBoxesScreen() {
     };
 
     const rows = useMemo<StolenRow[]>(() => {
-        const source = hardware || {};
-        return Object.entries(source)
+        const byId = new Map<string, StolenRow>();
+
+        Object.entries(stolenBoxes || {}).forEach(([boxId, status]) => {
+            const loc = locations?.[boxId];
+            const hw = hardware?.[boxId];
+            const statusLocation = status.last_known_location;
+            byId.set(boxId, {
+                boxId,
+                state: String(status.state || 'STOLEN').toUpperCase(),
+                locked: Boolean(status.lockdown_active || hw?.tamper?.lockdown),
+                tampered: Boolean(hw?.tamper?.detected),
+                lat: loc?.latitude ?? statusLocation?.lat,
+                lng: loc?.longitude ?? statusLocation?.lng,
+                updatedAt: typeof loc?.timestamp === 'number' ? loc.timestamp : status.reported_at,
+                batteryPct: hw?.batt_pct,
+                batteryLockPct: hw?.batt_b_pct,
+                source: 'theft_status',
+            });
+        });
+
+        Object.entries(hardware || {})
             .map(([boxId, hw]) => {
                 const theftState = String(hw.theft_state || 'NORMAL').toUpperCase();
                 const locked = Boolean(hw.tamper?.lockdown);
@@ -144,11 +177,45 @@ export default function AdminStolenBoxesScreen() {
                     lat: loc?.latitude,
                     lng: loc?.longitude,
                     updatedAt: typeof loc?.timestamp === 'number' ? loc.timestamp : hw.last_updated,
+                    batteryPct: hw.batt_pct,
+                    batteryLockPct: hw.batt_b_pct,
+                    source: 'hardware' as const,
                 };
             })
             .filter((item) => ALERT_STATES.has(item.state) || item.locked || item.tampered)
-            .sort((a, b) => a.boxId.localeCompare(b.boxId));
-    }, [hardware, locations]);
+            .forEach((item) => {
+                if (!byId.has(item.boxId)) {
+                    byId.set(item.boxId, item);
+                }
+            });
+
+        return Array.from(byId.values()).sort((a, b) => a.boxId.localeCompare(b.boxId));
+    }, [hardware, locations, stolenBoxes]);
+
+    useEffect(() => {
+        rows.forEach((row) => {
+            if (!hasCoordinates(row)) return;
+
+            const loc = locations?.[row.boxId];
+            const timestamp = typeof loc?.timestamp === 'number' ? loc.timestamp : Date.now();
+            const last = lastRecordedLocationRef.current[row.boxId];
+            const shouldRecord = !last
+                || Math.abs(last.lat - row.lat) > 0.00001
+                || Math.abs(last.lng - row.lng) > 0.00001
+                || Math.abs(last.timestamp - timestamp) > 30_000;
+
+            if (!shouldRecord) return;
+
+            lastRecordedLocationRef.current[row.boxId] = { lat: row.lat, lng: row.lng, timestamp };
+            recordStolenBoxLocation(row.boxId, {
+                ...(loc || {}),
+                latitude: row.lat,
+                longitude: row.lng,
+                timestamp,
+                source: loc?.source || 'hardware'
+            } as LocationData).catch(() => undefined);
+        });
+    }, [locations, rows]);
 
     const selectedRow = useMemo(
         () => rows.find((item) => item.boxId === selectedBoxId) || null,
@@ -184,7 +251,7 @@ export default function AdminStolenBoxesScreen() {
     useEffect(() => {
         if (!selectedRowKey || !Number.isFinite(selectedLat) || !Number.isFinite(selectedLng)) return;
 
-        const nextPoint: [number, number] = [selectedLng, selectedLat];
+        const nextPoint: [number, number] = [selectedLng!, selectedLat!];
         setTrackHistory((prev) => {
             const existing = prev[selectedRowKey] || [];
             const last = existing[existing.length - 1];
@@ -201,7 +268,7 @@ export default function AdminStolenBoxesScreen() {
         if (!Number.isFinite(selectedLat) || !Number.isFinite(selectedLng)) return;
         if (!followSelected) return;
 
-        setCameraCenter([selectedLng, selectedLat]);
+        setCameraCenter([selectedLng!, selectedLat!]);
         setCameraZoom(15);
     }, [followSelected, selectedLat, selectedLng]);
 
@@ -251,6 +318,21 @@ export default function AdminStolenBoxesScreen() {
         setBusyId(boxId);
         setError(null);
         try {
+            const actionByState: Partial<Record<TheftState, AdminStolenBoxAction>> = {
+                STOLEN: 'MARK_STOLEN',
+                LOCKDOWN: 'LOCKDOWN',
+                NORMAL: 'CLEAR_STOLEN_RESTORE',
+                RECOVERED: 'CLEAR_STOLEN_RESTORE',
+            };
+            const apiAction = actionByState[state];
+            if (apiAction) {
+                try {
+                    await updateAdminStolenBox(boxId, apiAction, `Updated from mobile admin stolen-box screen`);
+                    return;
+                } catch (apiError) {
+                    console.warn('[AdminStolenBoxes] API update failed, falling back to Firebase:', apiError);
+                }
+            }
             await setTheftState(boxId, state);
         } catch (e: any) {
             setError(e?.message || 'Failed to update theft state');
@@ -424,6 +506,9 @@ export default function AdminStolenBoxesScreen() {
                             <Text style={[styles.meta, { color: c.textSec }]}>Lockdown: {item.locked ? 'ACTIVE' : 'INACTIVE'}</Text>
                             <Text style={[styles.meta, { color: c.textSec }]}>Last Seen: {formatLastSeen(item.updatedAt)}</Text>
                             <Text style={[styles.meta, { color: c.textSec }]}>Location: {hasCoordinates(item) ? `${item.lat.toFixed(5)}, ${item.lng.toFixed(5)}` : 'N/A'}</Text>
+                            <Text style={[styles.meta, { color: c.textSec }]}>
+                                Battery: MCU {item.batteryPct != null ? `${Math.round(item.batteryPct)}%` : '--'} / Lock {item.batteryLockPct != null ? `${Math.round(item.batteryLockPct)}%` : '--'}
+                            </Text>
 
                             <View style={styles.actions}>
                                 <Button
@@ -448,6 +533,17 @@ export default function AdminStolenBoxesScreen() {
                                 >
                                     Lockdown
                                 </Button>
+                                {item.state !== 'STOLEN' && item.state !== 'LOCKDOWN' ? (
+                                    <Button
+                                        mode="outlined"
+                                        compact
+                                        onPress={() => applyState(item.boxId, 'STOLEN')}
+                                        disabled={busyId === item.boxId}
+                                        style={styles.actionBtn}
+                                    >
+                                        Mark Stolen
+                                    </Button>
+                                ) : null}
                                 <Button
                                     mode="outlined"
                                     compact

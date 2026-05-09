@@ -699,6 +699,19 @@ export async function listTrackingHistorySessions(days = 30): Promise<TrackingHi
     return Array.isArray(result.sessions) ? result.sessions : [];
 }
 
+export type AdminStolenBoxAction = 'MARK_STOLEN' | 'LOCKDOWN' | 'LIFT_LOCKDOWN' | 'CLEAR_STOLEN_RESTORE';
+
+export async function updateAdminStolenBox(
+    boxId: string,
+    action: AdminStolenBoxAction,
+    note?: string,
+): Promise<{ success: boolean; boxId: string; state: string }> {
+    return adminRequest<{ success: boolean; boxId: string; state: string }>('/api/admin/stolen-boxes', {
+        method: 'PATCH',
+        body: JSON.stringify({ boxId, action, note }),
+    });
+}
+
 async function getAdminAnalyticsReportFallback(query: AdminAnalyticsQuery = {}): Promise<AdminAnalyticsResponse> {
     if (!supabase) {
         throw new Error('Supabase not configured');

@@ -29,6 +29,7 @@ interface RouteParams {
     pickupAddress?: string;
     pickupLat?: number;
     pickupLng?: number;
+    boxId?: string;
     isPickedUp?: boolean;
 }
 
@@ -50,6 +51,7 @@ export default function CancellationConfirmationScreen() {
         pickupAddress = 'Return to pickup location',
         pickupLat,
         pickupLng,
+        boxId,
         isPickedUp = false,
     } = params || {};
 
@@ -74,6 +76,7 @@ export default function CancellationConfirmationScreen() {
             senderName,
             pickupLat,
             pickupLng,
+            boxId,
         });
     };
 

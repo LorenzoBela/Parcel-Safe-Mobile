@@ -260,7 +260,7 @@ export async function requestCancellation(
     });
 
     // Determine if the order was already picked up
-    const isPickedUp = request.currentStatus && ['PICKED_UP', 'IN_TRANSIT', 'ARRIVED'].includes(request.currentStatus.toUpperCase());
+    const isPickedUp = request.currentStatus && ['PICKED_UP', 'PICKEDUP', 'IN_TRANSIT', 'ARRIVED', 'RETURNING', 'TAMPERED'].includes(request.currentStatus.toUpperCase());
     const newStatus = isPickedUp ? 'RETURNING' : 'CANCELLED';
 
     // EC-32 Bridge: mirror return state into /hardware/{boxId} for the LilyGO proxy.

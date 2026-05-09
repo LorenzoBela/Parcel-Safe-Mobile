@@ -1862,6 +1862,7 @@ export default function RiderDashboard() {
                         reasonDetails: details,
                         senderName: nextDelivery.customer,
                         pickupAddress: nextDelivery.address,
+                        boxId: boxIdForMonitoring,
                         isPickedUp: ['IN_TRANSIT', 'ARRIVED', 'COMPLETED', 'RETURNING', 'TAMPERED'].includes(nextDelivery.status),
                     });
                 } else {
