@@ -84,6 +84,7 @@ export default function SearchingRiderScreen() {
         snappedPickupLng,
         snappedDropoffLat,
         snappedDropoffLng,
+        samePickupDropoff = false,
     } = route.params || {};
 
     useEffect(() => {
@@ -165,6 +166,7 @@ export default function SearchingRiderScreen() {
                 snappedPickupLng,
                 snappedDropoffLat,
                 snappedDropoffLng,
+                samePickupDropoff: Boolean(samePickupDropoff),
             };
 
             // Create the booking in Firebase ONLY if it's new

@@ -166,6 +166,12 @@ export default function JobDetailScreen() {
 
     const handleStartTrip = () => {
         const isPickup = !['PICKED_UP', 'IN_TRANSIT', 'ARRIVED', 'COMPLETED'].includes(jobData.status);
+        const samePickupDropoff =
+            Number.isFinite(jobData.pickupLat) &&
+            Number.isFinite(jobData.pickupLng) &&
+            Number.isFinite(jobData.dropoffLat) &&
+            Number.isFinite(jobData.dropoffLng) &&
+            getDistanceKm(jobData.pickupLat, jobData.pickupLng, jobData.dropoffLat, jobData.dropoffLng) <= 0.025;
 
         navigation.navigate('Arrival', {
             deliveryId: jobData.id,
@@ -185,6 +191,7 @@ export default function JobDetailScreen() {
             dropoffLat: jobData.snappedDropoffLat ?? jobData.dropoffLat,
             dropoffLng: jobData.snappedDropoffLng ?? jobData.dropoffLng,
             dropoffAddress: jobData.address,
+            samePickupDropoff,
         });
     };
     // Helper to ensure time is in PH format

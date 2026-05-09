@@ -25,6 +25,21 @@ const getDistance = (lat1: number, lon1: number, lat2: number, lon2: number) => 
     return R * c;
 };
 
+const SAME_PICKUP_DROPOFF_RADIUS_M = 25;
+
+const isSamePickupDropoffSite = (
+    pickup: { latitude: number; longitude: number } | null,
+    dropoff: { latitude: number; longitude: number } | null
+) => {
+    if (!pickup || !dropoff) return false;
+    return getDistance(
+        pickup.latitude,
+        pickup.longitude,
+        dropoff.latitude,
+        dropoff.longitude
+    ) <= SAME_PICKUP_DROPOFF_RADIUS_M;
+};
+
 // Fallback initial region (Manila)
 const INITIAL_REGION = {
     latitude: 14.5995,
@@ -102,7 +117,7 @@ export default function BookServiceScreen() {
 
     useEffect(() => {
         const fetchFreshName = async () => {
-            if (!userId) return;
+            if (!userId || !supabase) return;
             try {
                 const { data } = await supabase
                     .from('profiles')
@@ -177,6 +192,7 @@ export default function BookServiceScreen() {
         route: any;
         snappedPickupCoords?: [number, number]; // [lng, lat] from Mapbox waypoints
         snappedDropoffCoords?: [number, number];
+        samePickupDropoff?: boolean;
     } | null>(null);
     const [loadingRoute, setLoadingRoute] = useState(false);
 
@@ -865,7 +881,27 @@ export default function BookServiceScreen() {
     };
 
     const calculateRoute = async () => {
-        if (!pickupCoords || !dropoffCoords || !MAPBOX_TOKEN) {
+        if (!pickupCoords || !dropoffCoords) {
+            setRouteData(null);
+            return;
+        }
+
+        if (isSamePickupDropoffSite(pickupCoords, dropoffCoords)) {
+            const cost = calculateFare(0, 0).total;
+            setRouteData({
+                distance: 0,
+                duration: 0,
+                cost,
+                route: null,
+                snappedPickupCoords: [pickupCoords.longitude, pickupCoords.latitude],
+                snappedDropoffCoords: [dropoffCoords.longitude, dropoffCoords.latitude],
+                samePickupDropoff: true,
+            });
+            setLoadingRoute(false);
+            return;
+        }
+
+        if (!MAPBOX_TOKEN) {
             setRouteData(null);
             return;
         }
@@ -908,6 +944,7 @@ export default function BookServiceScreen() {
                     route: route.geometry,
                     snappedPickupCoords: data.waypoints?.[0]?.location,
                     snappedDropoffCoords: data.waypoints?.[1]?.location,
+                    samePickupDropoff: false,
                 });
             }
         } catch (error) {
@@ -942,6 +979,14 @@ export default function BookServiceScreen() {
                     setIsMapVisible(true);
                     // fitBounds fires on the next effect run when isMapVisible becomes true
                 }
+                return;
+            }
+            if (routeData.samePickupDropoff) {
+                cameraRef.current?.setCamera({
+                    centerCoordinate: [pickupCoords.longitude, pickupCoords.latitude],
+                    zoomLevel: 17,
+                    animationDuration: 600,
+                });
                 return;
             }
             const minLng = Math.min(pickupCoords.longitude, dropoffCoords.longitude);
@@ -1025,6 +1070,7 @@ export default function BookServiceScreen() {
             estimatedCost: routeData?.cost,
             distance: routeData?.distance, // EC-Fix: Added
             duration: routeData?.duration, // EC-Fix: Added
+            samePickupDropoff: Boolean(routeData?.samePickupDropoff),
             customerName: customerName, // EC-Fix: Pass customer name for rider preview
             senderName,
             senderPhone,

@@ -269,6 +269,7 @@ export interface BookingRequest {
     snappedPickupLng?: number;
     snappedDropoffLat?: number;
     snappedDropoffLng?: number;
+    samePickupDropoff?: boolean;
 }
 
 export interface DeliveryRecord {
@@ -292,6 +293,7 @@ export interface DeliveryRecord {
     snapped_pickup_lng?: number;
     snapped_dropoff_lat?: number;
     snapped_dropoff_lng?: number;
+    same_pickup_dropoff?: boolean;
     accepted_at?: number;
     updated_at?: number;
     proof_photo_url?: string;
@@ -590,6 +592,7 @@ async function _createPendingBookingLegacyClientSide(request: BookingRequest): P
             snapped_pickup_lng: request.snappedPickupLng ?? null,
             snapped_dropoff_lat: request.snappedDropoffLat ?? null,
             snapped_dropoff_lng: request.snappedDropoffLng ?? null,
+            same_pickup_dropoff: Boolean(request.samePickupDropoff),
         });
 
         await set(ref(db, `/share_tokens/${shareToken}`), {
@@ -681,6 +684,7 @@ export async function createPendingBooking(request: BookingRequest): Promise<boo
                 snappedPickupLng: request.snappedPickupLng ?? null,
                 snappedDropoffLat: request.snappedDropoffLat ?? null,
                 snappedDropoffLng: request.snappedDropoffLng ?? null,
+                samePickupDropoff: Boolean(request.samePickupDropoff),
                 shareToken: request.shareToken,
             }),
         });
@@ -1304,6 +1308,7 @@ async function _acceptOrderLegacyClientSide(
             updated_at: acceptedAt,
             estimated_fare: booking.estimated_fare || 0,
             otp_code: resolvedOtp, // EC-Fix: Store OTP in Firebase delivery node too
+            same_pickup_dropoff: Boolean(booking.same_pickup_dropoff),
         };
 
         if (booking.snapped_pickup_lat) deliveryRecord.snapped_pickup_lat = booking.snapped_pickup_lat;
@@ -1325,6 +1330,7 @@ async function _acceptOrderLegacyClientSide(
                     target_lng: booking.dropoff_lng || 0,
                     pickup_lat: booking.pickup_lat || 0,
                     pickup_lng: booking.pickup_lng || 0,
+                    same_pickup_dropoff: Boolean(booking.same_pickup_dropoff),
                 });
                 console.log(`[RiderMatching] Written OTP='${resolvedOtp}' + pickup/dropoff coords to hardware/${normalizedBoxId}`);
             } catch (hwErr) {

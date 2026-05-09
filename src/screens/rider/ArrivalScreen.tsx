@@ -30,6 +30,7 @@ import {
 // Geofence utilities (extracted from removed addressUpdateService)
 import {
     checkGeofence,
+    calculateDistanceMeters,
     createDefaultGeofence,
     GeofenceConfig,
 } from '../../utils/geoUtils';
@@ -148,6 +149,7 @@ interface RouteParams {
     dropoffLat?: number;
     dropoffLng?: number;
     dropoffAddress?: string;
+    samePickupDropoff?: boolean;
     status?: string;
 }
 
@@ -166,6 +168,7 @@ const DROPOFF_ARRIVAL_RETRY_MS = 2500;
 const DROPOFF_ARRIVAL_CONFIRMATION_RETRY_MS = 4000;
 const DROPOFF_ARRIVAL_RETRYABLE_STATUSES = new Set(['IN_TRANSIT', 'PICKED_UP', 'ARRIVED']);
 const DROPOFF_ARRIVAL_CONFIRMED_STATUSES = new Set(['ARRIVED', 'COMPLETED']);
+const SAME_PICKUP_DROPOFF_RADIUS_M = 25;
 
 function formatRemainingMinutesSeconds(remainingMs: number): string {
     const clamped = Math.max(0, remainingMs);
@@ -657,6 +660,16 @@ export default function ArrivalScreen() {
     const isDropoffPhase = geofenceTarget !== 'pickup';
     const hasPickupCoords = Number.isFinite(params.pickupLat) && Number.isFinite(params.pickupLng);
     const hasDropoffCoords = Number.isFinite(params.dropoffLat) && Number.isFinite(params.dropoffLng);
+    const isSamePickupDropoff = Boolean(params.samePickupDropoff) || (
+        hasPickupCoords &&
+        hasDropoffCoords &&
+        calculateDistanceMeters(
+            params.pickupLat as number,
+            params.pickupLng as number,
+            params.dropoffLat as number,
+            params.dropoffLng as number
+        ) <= SAME_PICKUP_DROPOFF_RADIUS_M
+    );
 
     useEffect(() => {
         let mounted = true;
@@ -2215,8 +2228,33 @@ export default function ArrivalScreen() {
                             currentHeading={headingSmoother.smooth(currentPosition.heading, currentPosition.speed, localPhoneHeading)}
                             geofenceRadiusM={geofence.radiusMeters}
                             onPickupConfirmed={() => {
-                                // The Firebase listener will pick up the 'IN_TRANSIT' status change
-                                // and automatically switch to DropoffVerification. No navigation needed.
+                                if (!isSamePickupDropoff) {
+                                    return;
+                                }
+
+                                const arrivedAtNow = Date.now();
+                                updateDeliveryStatus(params.deliveryId, 'ARRIVED', {
+                                    arrived_at: arrivedAtNow,
+                                    arrival_source: 'same_pickup_dropoff_fast_path',
+                                    boxId: params.boxId,
+                                }).then((ok) => {
+                                    if (!ok) return;
+                                    setDeliveryStatus('ARRIVED');
+                                    setArrivedAt((prev) => prev ?? arrivedAtNow);
+                                    dropoffArrivalPersistedRef.current = true;
+                                    requestBoxContextRefresh(params.boxId, 'same_pickup_dropoff_arrived').catch(() => { });
+
+                                    if (currentPosition.lat !== 0 || currentPosition.lng !== 0) {
+                                        writePhoneLocation(
+                                            params.boxId,
+                                            currentPosition.lat,
+                                            currentPosition.lng,
+                                            currentPosition.speed,
+                                            currentPosition.heading,
+                                            localPhoneHeading
+                                        ).catch(() => { });
+                                    }
+                                });
                             }}
 
                             onNavigate={handleNavigate}
