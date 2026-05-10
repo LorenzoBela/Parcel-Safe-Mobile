@@ -51,7 +51,6 @@ interface PickupVerificationProps {
 
     onPickupConfirmed: () => void;
     onNavigate: () => void;
-    onShowBleModal?: () => void;
     deliveryOtp?: string;
 }
 
@@ -98,7 +97,6 @@ export default function PickupVerification({
     geofenceRadiusM = 50,
     onPickupConfirmed,
     onNavigate,
-    onShowBleModal,
     deliveryOtp,
 }: PickupVerificationProps) {
     const { isDarkMode } = useAppTheme();
@@ -294,315 +292,191 @@ export default function PickupVerification({
 
     return (
         <View style={styles.container}>
-            <Card mode="elevated" style={[styles.statusCard, { backgroundColor: c.card }, isInsideGeoFence ? styles.borderSuccess : styles.borderError]}>
-                <Card.Content>
-                    <View style={styles.statusHeader}>
-                        <Text variant="titleMedium" style={{ fontFamily: 'Inter_700Bold', color: c.textTitle }}>
-                            Pickup Zone
-                        </Text>
-                        {distanceMeters !== null && (
-                            <View style={[styles.distanceBadge, { backgroundColor: c.badgeBg }]}>
-                                <Text style={[styles.distanceText, { color: c.badgeText }]}>
-                                    {distanceMeters > 999
-                                        ? `${(distanceMeters / 1000).toFixed(1)} km away`
-                                        : `${distanceMeters}m away`}
-                                </Text>
+            {/* Header Status Block */}
+            <View style={styles.modernHeader}>
+                <View style={[styles.modernHeaderIcon, { backgroundColor: isInsideGeoFence ? c.successBg : c.errorBg }]}>
+                    <Text style={{ fontSize: 24 }}>{isInsideGeoFence ? '📍' : '🧭'}</Text>
+                </View>
+                <View style={{ flex: 1, marginLeft: 16 }}>
+                    <Text style={[styles.modernHeaderTitle, { color: c.textTitle }]}>Pickup Zone</Text>
+                    <Text style={[styles.modernHeaderSubtitle, { color: isInsideGeoFence ? c.successText : c.errorText }]}>
+                        {isInsideGeoFence ? 'You are inside the zone' : distanceMeters !== null ? `${formatDistance(distanceMeters)} away` : 'Locating...'}
+                    </Text>
+                </View>
+            </View>
+
+            {/* Check Badges */}
+            <View style={styles.checksContainer}>
+                <View style={[styles.minimalCheckBadge, { backgroundColor: isPhoneInside ? c.successBg : c.errorBg }]}>
+                    <Text style={{ fontSize: 12, color: isPhoneInside ? c.successText : c.errorText, fontFamily: 'Inter_600SemiBold' }}>
+                        {isPhoneInside ? '✓ Phone GPS' : '✗ Phone GPS'}
+                    </Text>
+                </View>
+                <View style={[styles.minimalCheckBadge, { backgroundColor: isBoxOffline ? c.warningBg : (isBoxInside ? c.successBg : c.errorBg) }]}>
+                    <Text style={{ fontSize: 12, color: isBoxOffline ? c.warningText : (isBoxInside ? c.successText : c.errorText), fontFamily: 'Inter_600SemiBold' }}>
+                        {isBoxOffline ? '? Box Offline' : (isBoxInside ? '✓ Smart Box' : '✗ Smart Box')}
+                    </Text>
+                </View>
+            </View>
+
+            {/* Phone-Only Fallback Banner */}
+            {isPhoneOnlyFallback && (
+                <View style={[styles.fallbackBanner, { backgroundColor: c.warningBg }]}>
+                    <Text style={[styles.fallbackBannerText, { color: c.warningText }]}>
+                        📱 Phone-only mode — Box GPS unavailable. Proceeding with phone location only.
+                    </Text>
+                </View>
+            )}
+
+            {/* Map Preview */}
+            {mapAvailable && targetLat !== 0 && (
+                <View style={styles.mapContainer}>
+                    <MapboxGL.MapView
+                        style={styles.map}
+                        styleURL={isDarkMode ? StyleURL.Dark : StyleURL.Light}
+                        logoEnabled={false}
+                        attributionEnabled={false}
+                        scrollEnabled={false}
+                        zoomEnabled={false}
+                        pitchEnabled={false}
+                        rotateEnabled={false}
+                    >
+                        <MapboxGL.Camera
+                            centerCoordinate={[targetLng, targetLat]}
+                            zoomLevel={16}
+                            animationMode="none"
+                        />
+                        <MapboxGL.ShapeSource id="geofence-circle" shape={geofenceCircle}>
+                            <MapboxGL.FillLayer
+                                id="geofence-fill"
+                                style={{
+                                    fillColor: isInsideGeoFence ? 'rgba(34,197,94,0.15)' : 'rgba(239,68,68,0.12)',
+                                    fillOutlineColor: isInsideGeoFence ? '#22c55e' : '#ef4444',
+                                }}
+                            />
+                        </MapboxGL.ShapeSource>
+                        <MapboxGL.MarkerView id="pickup-target" coordinate={[targetLng, targetLat]}>
+                            <View style={styles.targetMarker}><Text style={styles.targetMarkerText}>📦</Text></View>
+                        </MapboxGL.MarkerView>
+                        {hasRiderPosition && currentLat != null && currentLng != null && (
+                            <AnimatedRiderMarker
+                                latitude={currentLat}
+                                longitude={currentLng}
+                                rotation={currentHeading ?? undefined}
+                                isSelected={isPhoneInside}
+                            />
+                        )}
+                    </MapboxGL.MapView>
+                </View>
+            )}
+
+            {/* Location & Sender Details Block */}
+            <View style={[styles.detailsBlock, { backgroundColor: isDarkMode ? '#18181b' : '#fafafa', borderColor: c.border }]}>
+                <View style={styles.locationHeaderRow}>
+                    <View style={{ flex: 1, paddingRight: 16 }}>
+                        <Text style={[styles.sectionLabel, { color: c.textLabel }]}>PICKUP LOCATION</Text>
+                        <Text style={[styles.detailText, { color: c.textTitle }]}>{targetAddress}</Text>
+                    </View>
+                    <IconButton icon="navigation-variant" size={24} mode="contained" containerColor={isDarkMode ? '#27272a' : '#f4f4f5'} iconColor={isDarkMode ? '#e4e4e7' : '#18181b'} onPress={onNavigate} style={{ margin: 0 }} />
+                </View>
+
+                {senderName ? (
+                    <View style={[styles.senderRow, { borderTopColor: c.border }]}>
+                        <View style={{ flex: 1 }}>
+                            <Text style={[styles.sectionLabel, { color: c.textLabel }]}>SENDER</Text>
+                            <Text style={[styles.detailText, { color: c.textTitle }]}>{senderName}</Text>
+                            {senderPhone ? <Text style={{ fontSize: 13, color: c.textLabel, marginTop: 2 }}>{senderPhone}</Text> : null}
+                        </View>
+                        {senderPhone && (
+                            <View style={styles.actionButtons}>
+                                <IconButton icon="message-text" size={20} iconColor={c.textTitle} mode="contained-tonal" containerColor={isDarkMode ? '#27272a' : '#f4f4f5'} onPress={() => Linking.openURL(`sms:${senderPhone}`)} style={{ margin: 0 }} />
+                                <IconButton icon="phone" size={20} iconColor={c.textTitle} mode="contained-tonal" containerColor={isDarkMode ? '#27272a' : '#f4f4f5'} onPress={() => Linking.openURL(`tel:${senderPhone}`)} style={{ margin: 0 }} />
                             </View>
                         )}
                     </View>
+                ) : null}
 
-                    <View style={styles.checksContainer}>
-                        <View style={styles.checkItem}>
-                            <View style={[styles.checkCircle, { borderColor: c.card }, isPhoneInside ? styles.bgSuccess : styles.bgError]}>
-                                <Text style={styles.checkIcon}>{isPhoneInside ? '✓' : '✗'}</Text>
-                            </View>
-                            <Text style={[styles.checkLabel, { color: c.textLabel }]}>Phone GPS</Text>
-                        </View>
-
-                        <View style={[styles.checkDivider, { backgroundColor: c.border }]} />
-
-                        <View style={styles.checkItem}>
-                            <View style={[
-                                styles.checkCircle,
-                                { borderColor: c.card },
-                                isBoxOffline ? styles.bgWarning : (isBoxInside ? styles.bgSuccess : styles.bgError)
-                            ]}>
-                                <Text style={styles.checkIcon}>
-                                    {isBoxOffline ? '?' : (isBoxInside ? '✓' : '✗')}
-                                </Text>
-                            </View>
-                            <Text style={[styles.checkLabel, { color: c.textLabel }]}>{isBoxOffline ? 'Box Offline' : 'Smart Box'}</Text>
-                        </View>
+                {deliveryNotes ? (
+                    <View style={[styles.notesRow, { backgroundColor: isDarkMode ? '#27272a' : '#f4f4f5' }]}>
+                        <Text style={[styles.sectionLabel, { color: c.textLabel }]}>DELIVERY NOTES</Text>
+                        <Text style={{ fontSize: 14, color: c.textTitle, marginTop: 4 }}>{deliveryNotes}</Text>
                     </View>
+                ) : null}
+            </View>
 
-                    {/* EC-FIX: Phone-Only Fallback Banner */}
-                    {isPhoneOnlyFallback && (
-                        <View style={[styles.fallbackBanner, { backgroundColor: c.warningBg }]}>
-                            <Text style={[styles.fallbackBannerText, { color: c.warningText }]}>
-                                📱 Phone-only mode — Box GPS unavailable. Proceeding with phone location only.
-                            </Text>
-                        </View>
-                    )}
-
-                    <View style={[styles.statusMessageContainer, { backgroundColor: isInsideGeoFence ? c.successBg : c.errorBg }]}>
-                        <Text style={[styles.statusMessageText, { color: isInsideGeoFence ? c.successText : c.errorText }]}>
-                            {isInsideGeoFence
-                                ? 'Arrived at Sender. Capture photo to proceed.'
-                                : 'Move closer to the pickup point.'}
-                        </Text>
-                    </View>
-
-                    {/* ──── Geofence Map Preview ──── */}
-                    {mapAvailable && targetLat !== 0 && (
-                        <View style={styles.mapContainer}>
-                            <MapboxGL.MapView
-                                style={styles.map}
-                                styleURL={isDarkMode ? StyleURL.Dark : StyleURL.Light}
-                                logoEnabled={false}
-                                attributionEnabled={false}
-                                scrollEnabled={false}
-                                zoomEnabled={false}
-                                pitchEnabled={false}
-                                rotateEnabled={false}
-                            >
-                                <MapboxGL.Camera
-                                    centerCoordinate={[targetLng, targetLat]}
-                                    zoomLevel={16}
-                                    animationMode="none"
-                                />
-
-                                {/* Geofence circle */}
-                                <MapboxGL.ShapeSource id="geofence-circle" shape={geofenceCircle}>
-                                    <MapboxGL.FillLayer
-                                        id="geofence-fill"
-                                        style={{
-                                            fillColor: isInsideGeoFence ? 'rgba(34,197,94,0.15)' : 'rgba(239,68,68,0.12)',
-                                            fillOutlineColor: isInsideGeoFence ? '#22c55e' : '#ef4444',
-                                        }}
-                                    />
-                                </MapboxGL.ShapeSource>
-
-                                {/* Pickup target marker — using MarkerView for reliable rendering */}
-                                <MapboxGL.MarkerView
-                                    id="pickup-target"
-                                    coordinate={[targetLng, targetLat]}
-                                >
-                                    <View style={styles.targetMarker}>
-                                        <Text style={styles.targetMarkerText}>📦</Text>
-                                    </View>
-                                </MapboxGL.MarkerView>
-
-                                {/* Rider live position — same Rider.jpg icon as tracking pages */}
-                                {hasRiderPosition && currentLat != null && currentLng != null && (
-                                    <AnimatedRiderMarker
-                                        latitude={currentLat}
-                                        longitude={currentLng}
-                                        rotation={currentHeading ?? undefined}
-                                        isSelected={isPhoneInside}
-                                    />
-                                )}
-                            </MapboxGL.MapView>
-
-                            {/* Distance overlay */}
-                            {distanceMeters !== null && (
-                                <View style={[styles.mapDistanceOverlay, { backgroundColor: isDarkMode ? 'rgba(0,0,0,0.7)' : 'rgba(255,255,255,0.85)' }]}>
-                                    <Text style={[styles.mapDistanceText, { color: isInsideGeoFence ? '#22c55e' : c.text }]}>
-                                        {isInsideGeoFence ? '✓ Inside Zone' : `${formatDistance(distanceMeters)} to zone`}
-                                    </Text>
-                                </View>
-                            )}
-                        </View>
-                    )}
-
-                    {/* Text-based proximity fallback when map isn't available */}
-                    {!mapAvailable && hasRiderPosition && distanceMeters !== null && (
-                        <View style={[styles.proximityFallback, { backgroundColor: c.badgeBg, borderColor: c.border }]}>
-                            <Text style={{ fontSize: 24, marginBottom: 4 }}>
-                                {isInsideGeoFence ? '📍' : '🧭'}
-                            </Text>
-                            <Text style={[styles.proximityText, { color: c.text }]}>
-                                {isInsideGeoFence
-                                    ? 'You are inside the pickup zone'
-                                    : `${formatDistance(distanceMeters)} from pickup zone (${formatDistance(geofenceRadiusM)} radius)`
-                                }
-                            </Text>
-                        </View>
-                    )}
-
-                    <View style={[styles.addressRow, { borderTopColor: c.borderHard }]}>
-                        <View style={{ flex: 1 }}>
-                            <Text style={[styles.addressLabel, { color: c.textLabel }]}>PICKUP LOCATION</Text>
-                            <Text numberOfLines={2} style={[styles.address, { color: c.text }]}>{targetAddress}</Text>
-
-                            {senderName ? (
-                                <View style={{ marginTop: 12 }}>
-                                    <Text style={[styles.addressLabel, { color: c.textLabel }]}>SENDER</Text>
-                                    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                                        <Text style={[styles.address, { color: c.text, flex: 1, marginRight: 8 }]}>{senderName}{senderPhone ? ` • ${senderPhone}` : ''}</Text>
-                                        {senderPhone && (
-                                            <View style={{ flexDirection: 'row' }}>
-                                                <IconButton icon="phone" size={20} mode="contained-tonal" iconColor="#1976D2" onPress={() => Linking.openURL(`tel:${senderPhone}`)} style={{ margin: 0, marginRight: 8 }} />
-                                                <IconButton icon="message-text" size={20} mode="contained-tonal" iconColor="#1976D2" onPress={() => Linking.openURL(`sms:${senderPhone}`)} style={{ margin: 0 }} />
-                                            </View>
-                                        )}
-                                    </View>
-                                </View>
-                            ) : null}
-
-                            {deliveryNotes ? (
-                                <View style={{ marginTop: 12, padding: 8, backgroundColor: isDarkMode ? '#334155' : '#f1f5f9', borderRadius: 6 }}>
-                                    <Text style={[styles.addressLabel, { color: isDarkMode ? '#cbd5e1' : '#475569' }]}>DELIVERY NOTES</Text>
-                                    <Text style={[styles.address, { color: isDarkMode ? '#f8fafc' : '#334155' }]}>{deliveryNotes}</Text>
-                                </View>
-                            ) : null}
-                        </View>
-                        <View style={styles.navActions}>
-                            <IconButton icon="navigation" mode="contained" containerColor="#E3F2FD" iconColor="#1976D2" size={24} onPress={onNavigate} />
-                        </View>
-                    </View>
-                </Card.Content>
-            </Card>
-
-            <Card style={[styles.actionCard, { backgroundColor: c.card, padding: 0, overflow: 'hidden' }]}>
-                {/* Section Header */}
-                <View style={{ padding: 16, borderBottomWidth: 1, borderBottomColor: c.borderHard, backgroundColor: isDarkMode ? '#18181b' : '#fafafa' }}>
-                    <Text style={[styles.actionTitle, { color: c.textTitle, marginBottom: 0 }]}>Package Photo Verification</Text>
-                    <Text style={{ fontSize: 13, color: c.textLabel, marginTop: 2 }}>Capture package condition at pickup</Text>
+            {/* Verification & Action Block */}
+            <View style={[styles.verificationBlock, { backgroundColor: isDarkMode ? '#18181b' : '#fafafa', borderColor: c.border }]}>
+                <View style={styles.verificationHeader}>
+                    <Text style={[styles.verificationTitle, { color: c.textTitle }]}>Package Verification</Text>
+                    <Text style={{ fontSize: 13, color: c.textLabel, marginTop: 2 }}>Capture condition at pickup</Text>
                 </View>
                 
-                <Card.Content style={{ paddingTop: 16 }}>
-                    <View>
-                        {/* ── Photo Thumbnail Preview ── */}
-                        {pickupPhotoUri ? (
-                            <View style={{ marginBottom: 16, alignItems: 'center' }}>
-                                <View style={{ 
-                                    borderRadius: 16, 
-                                    overflow: 'hidden', 
-                                    borderWidth: 2, 
-                                    borderColor: isDarkMode ? '#064e3b' : '#dcfce7', 
-                                    width: '100%', 
-                                    backgroundColor: isDarkMode ? '#000' : '#f8f9fa' 
-                                }}>
-                                    <Image source={{ uri: pickupPhotoUri }} style={{ width: '100%', height: 220 }} resizeMode="cover" />
-                                    <View style={{ position: 'absolute', bottom: 0, left: 0, right: 0, padding: 12, backgroundColor: 'rgba(0,0,0,0.65)', flexDirection: 'row', alignItems: 'center', justifyContent: 'center' }}>
-                                        <Text style={{ color: '#fff', fontSize: 13, fontFamily: 'Inter_600SemiBold' }}>✅ Photo Verified & Ready</Text>
-                                    </View>
+                <View style={{ padding: 16 }}>
+                    {pickupPhotoUri ? (
+                        <View style={styles.photoContainer}>
+                            <View style={[styles.photoPreviewWrapper, { borderColor: isDarkMode ? '#064e3b' : '#dcfce7', backgroundColor: isDarkMode ? '#000' : '#f8f9fa' }]}>
+                                <Image source={{ uri: pickupPhotoUri }} style={styles.photoImage} resizeMode="cover" />
+                                <View style={styles.photoVerifiedOverlay}>
+                                    <Text style={styles.photoVerifiedText}>✅ Photo Verified</Text>
                                 </View>
-                                <Button
-                                    mode="text"
-                                    icon="camera-retake"
-                                    onPress={handleCapturePickupPhoto}
-                                    disabled={!isInsideGeoFence || isLoading}
-                                    textColor={c.hintText}
-                                    style={{ marginTop: 8 }}
-                                >
-                                    Retake Photo
-                                </Button>
                             </View>
-                        ) : (
-                            <View style={{ 
-                                marginBottom: 16, 
-                                alignItems: 'center', 
-                                justifyContent: 'center', 
-                                padding: 24, 
-                                borderRadius: 16, 
-                                borderWidth: 2, 
-                                borderStyle: 'dashed', 
-                                borderColor: isInsideGeoFence ? (isDarkMode ? '#3f3f46' : '#d4d4d8') : (isDarkMode ? '#27272a' : '#e5e7eb'), 
-                                backgroundColor: isDarkMode ? '#18181b' : '#fafafa', 
-                                width: '100%' 
-                            }}>
-                                <IconButton icon="camera-plus" size={48} iconColor={isInsideGeoFence ? (isDarkMode ? '#d4d4d8' : '#71717a') : (isDarkMode ? '#3f3f46' : '#d4d4d8')} />
-                                <Text style={{ color: isInsideGeoFence ? c.textTitle : c.hintText, textAlign: 'center', fontFamily: 'Inter_600SemiBold', marginBottom: 12 }}>
-                                    {isInsideGeoFence ? 'Capture Package Condition' : 'Approach to unlock camera'}
-                                </Text>
-                                <Button
-                                    mode="contained"
-                                    icon="camera"
-                                    onPress={handleCapturePickupPhoto}
-                                    disabled={!isInsideGeoFence || isLoading}
-                                    buttonColor={isDarkMode ? '#27272a' : '#18181b'}
-                                    textColor="#fff"
-                                    style={{ borderRadius: 8 }}
-                                >
-                                    Open Camera
-                                </Button>
-                            </View>
-                        )}
-
-                        {/* ── Upload Failed — Retry ── */}
-                        {uploadFailed && pickupPhotoUri && (
-                            <View style={{ marginTop: 10, padding: 12, borderRadius: 12, backgroundColor: c.errorBg, borderWidth: 1, borderColor: c.errorText }}>
-                                <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
-                                    <Text style={{ fontSize: 16, marginRight: 6 }}>⚠️</Text>
-                                    <Text style={{ fontSize: 13, color: c.errorText, fontFamily: 'Inter_700Bold' }}>Upload Failed</Text>
-                                </View>
-                                <Text style={{ fontSize: 12, color: c.errorText, marginBottom: 12 }}>{uploadError}</Text>
-                                <Button
-                                    mode="contained"
-                                    icon="refresh"
-                                    onPress={handleRetryUpload}
-                                    loading={isLoading}
-                                    disabled={isLoading}
-                                    buttonColor="#ef4444"
-                                    textColor="#fff"
-                                    style={{ borderRadius: 8 }}
-                                >
-                                    Retry Upload
-                                </Button>
-                            </View>
-                        )}
-                        <View style={{ marginTop: 16 }}>
-                            <SwipeConfirmButton
-                                label="Swipe to Pick Up"
-                                onConfirm={handlePickupSwipe}
-                                disabled={!isInsideGeoFence || !pickupPhotoUri || isLoading || uploadFailed}
-                            />
+                            <Button mode="text" icon="camera-retake" onPress={handleCapturePickupPhoto} disabled={!isInsideGeoFence || isLoading} textColor={c.hintText} style={{ marginTop: 8 }}>
+                                Retake Photo
+                            </Button>
                         </View>
-                    </View>
-                </Card.Content>
-            </Card>
+                    ) : (
+                        <View style={[styles.photoEmptyState, { borderColor: isInsideGeoFence ? c.borderHard : c.border }]}>
+                            <IconButton icon="camera-plus" size={48} iconColor={isInsideGeoFence ? c.textLabel : c.hintText} />
+                            <Text style={[styles.photoEmptyStateText, { color: isInsideGeoFence ? c.textTitle : c.hintText }]}>
+                                {isInsideGeoFence ? 'Capture Package Condition' : 'Approach to unlock camera'}
+                            </Text>
+                            <Button mode="contained" icon="camera" onPress={handleCapturePickupPhoto} disabled={!isInsideGeoFence || isLoading} buttonColor={isDarkMode ? '#27272a' : '#18181b'} textColor="#fff" style={{ borderRadius: 8 }}>
+                                Open Camera
+                            </Button>
+                        </View>
+                    )}
 
-            {/* ━━━ Smart Box Control Card (Minimalist) ━━━ */}
-            <View style={{ marginTop: 24, paddingHorizontal: 4 }}>
-                {/* Header section without heavy background */}
-                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
+                    {uploadFailed && pickupPhotoUri && (
+                        <View style={[styles.errorBanner, { backgroundColor: c.errorBg, borderColor: c.errorText }]}>
+                            <Text style={[styles.errorBannerText, { color: c.errorText }]}>⚠️ Upload Failed: {uploadError}</Text>
+                            <Button mode="contained" icon="refresh" onPress={handleRetryUpload} loading={isLoading} disabled={isLoading} buttonColor="#ef4444" textColor="#fff" style={{ borderRadius: 8, marginTop: 8 }}>
+                                Retry
+                            </Button>
+                        </View>
+                    )}
+
+                    <View style={{ marginTop: 16 }}>
+                        <SwipeConfirmButton label="Swipe to Pick Up" onConfirm={handlePickupSwipe} disabled={!isInsideGeoFence || !pickupPhotoUri || isLoading || uploadFailed} />
+                    </View>
+                </View>
+            </View>
+
+            {/* Smart Box Controls */}
+            <View style={styles.boxControlSection}>
+                <View style={styles.boxControlHeader}>
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                         <Text style={{ fontSize: 18 }}>📦</Text>
-                        <Text style={[styles.actionTitle, { color: c.textTitle, marginBottom: 0, fontSize: 16 }]}>Box Control</Text>
+                        <Text style={[styles.boxControlTitle, { color: c.textTitle }]}>Box Control</Text>
                     </View>
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                        <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: boxState ? (isDarkMode ? '#34d399' : '#10b981') : (isDarkMode ? '#f87171' : '#ef4444') }} />
-                        <Text style={{ fontSize: 12, fontFamily: 'Inter_600SemiBold', color: boxState ? (isDarkMode ? '#d1fae5' : '#047857') : (isDarkMode ? '#fecaca' : '#b91c1c') }}>
+                        <View style={[styles.connectionDot, { backgroundColor: boxState ? c.successText : c.errorText }]} />
+                        <Text style={[styles.connectionText, { color: boxState ? c.successText : c.errorText }]}>
                             {boxState ? 'Connected' : 'Offline'}
                         </Text>
                     </View>
                 </View>
 
-                {/* BLE Transfer Button (Subtle text button if available) */}
-                {onShowBleModal && (
-                    <Button
-                        mode="text"
-                        icon="bluetooth"
-                        onPress={onShowBleModal}
-                        disabled={!isInsideGeoFence}
-                        style={{ alignSelf: 'flex-start', marginLeft: -8, marginBottom: 8 }}
-                        textColor={c.textTitle}
-                    >
-                        BLE Offline Transfer
-                    </Button>
-                )}
 
-                {/* Manual Controls Block - ultra clean */}
+
                 {isInsideGeoFence ? (
                     <View style={{ marginTop: 8 }}>
-                        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 12, borderTopWidth: 1, borderTopColor: c.border }}>
-                            <Text style={{ fontSize: 14, fontFamily: 'Inter_600SemiBold', color: c.textTitle }}>Manual override</Text>
+                        <View style={[styles.manualOverrideRow, { borderTopColor: c.border }]}>
+                            <Text style={[styles.manualOverrideText, { color: c.textTitle }]}>Manual override</Text>
                             <Switch value={manualModeEnabled} onValueChange={setManualModeEnabled} color={isDarkMode ? '#f4f4f5' : '#18181b'} trackColor={{ false: isDarkMode ? '#3f3f46' : '#e4e4e7', true: isDarkMode ? '#f4f4f5' : '#18181b' }} thumbColor={isDarkMode ? '#18181b' : '#ffffff'} />
                         </View>
 
                         {manualModeEnabled && (
-                            <View style={{ paddingTop: 16, paddingBottom: 8 }}>
+                            <View style={{ paddingTop: 16 }}>
                                 <View style={{ flexDirection: 'row', gap: 12 }}>
                                     <Button
                                         mode={boxState?.status === 'UNLOCKING' ? 'contained' : 'outlined'}
@@ -610,7 +484,7 @@ export default function PickupVerification({
                                         onPress={() => handleManualBoxCommand('UNLOCKING')}
                                         disabled={!canManualControl || manualCommandLoading || boxState?.status === 'UNLOCKING'}
                                         loading={manualCommandLoading && boxState?.status === 'UNLOCKING'}
-                                        style={{ flex: 1, borderRadius: 8, borderColor: isDarkMode ? '#3f3f46' : '#e4e4e7' }}
+                                        style={[styles.boxButton, { borderColor: isDarkMode ? '#3f3f46' : '#e4e4e7' }]}
                                         buttonColor={boxState?.status === 'UNLOCKING' ? (isDarkMode ? '#f4f4f5' : '#18181b') : 'transparent'}
                                         textColor={boxState?.status === 'UNLOCKING' ? (isDarkMode ? '#000' : '#fff') : c.textTitle}
                                     >
@@ -622,7 +496,7 @@ export default function PickupVerification({
                                         onPress={() => handleManualBoxCommand('LOCKED')}
                                         disabled={!canManualControl || manualCommandLoading || boxState?.status === 'LOCKED'}
                                         loading={manualCommandLoading && boxState?.status !== 'UNLOCKING'}
-                                        style={{ flex: 1, borderRadius: 8, borderColor: isDarkMode ? '#3f3f46' : '#e4e4e7' }}
+                                        style={[styles.boxButton, { borderColor: isDarkMode ? '#3f3f46' : '#e4e4e7' }]}
                                         buttonColor={boxState?.status === 'LOCKED' ? (isDarkMode ? '#f4f4f5' : '#18181b') : 'transparent'}
                                         textColor={boxState?.status === 'LOCKED' ? (isDarkMode ? '#000' : '#fff') : c.textTitle}
                                     >
@@ -630,28 +504,21 @@ export default function PickupVerification({
                                     </Button>
                                 </View>
 
-                                {/* Minimalist alerts */}
                                 {lockAwaitingClose && (
-                                    <Text style={{ marginTop: 16, fontSize: 13, color: c.warningText, fontFamily: 'Inter_500Medium', textAlign: 'center' }}>
-                                        {lockAwaitingCloseNeedsAssist
-                                            ? '⚠️ Press # on keypad, then push lid down'
-                                            : '⚠️ Push lid down to secure lock'}
+                                    <Text style={[styles.boxAlertText, { color: c.warningText }]}>
+                                        {lockAwaitingCloseNeedsAssist ? '⚠️ Press # on keypad, then push lid down' : '⚠️ Push lid down to secure lock'}
                                     </Text>
                                 )}
 
                                 {lockCloseConfirmed && (
-                                    <Text style={{ marginTop: 16, fontSize: 13, color: c.successText, fontFamily: 'Inter_500Medium', textAlign: 'center' }}>
-                                        ✓ Box is physically secured
-                                    </Text>
+                                    <Text style={[styles.boxAlertText, { color: c.successText }]}>✓ Box is physically secured</Text>
                                 )}
                             </View>
                         )}
                     </View>
                 ) : (
-                    <View style={{ paddingVertical: 16, borderTopWidth: 1, borderTopColor: c.border }}>
-                        <Text style={{ fontSize: 13, color: c.hintText }}>
-                            Controls unlock automatically upon arrival.
-                        </Text>
+                    <View style={[styles.autoControlsMsg, { borderTopColor: c.border }]}>
+                        <Text style={{ fontSize: 13, color: c.hintText }}>Controls unlock automatically upon arrival.</Text>
                     </View>
                 )}
             </View>
@@ -662,112 +529,54 @@ export default function PickupVerification({
 const styles = StyleSheet.create({
     container: {
         flex: 1,
+        paddingBottom: 24,
     },
-    statusCard: {
-        marginBottom: 20,
-        borderRadius: 16,
-        borderWidth: 2,
-        elevation: 3,
-        backgroundColor: 'white',
-    },
-    borderSuccess: { borderColor: '#22c55e' },
-    borderError: { borderColor: '#ef4444' },
-    statusHeader: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        marginBottom: 16,
-    },
-    distanceBadge: {
-        backgroundColor: '#F3F4F6',
-        paddingHorizontal: 10,
-        paddingVertical: 4,
-        borderRadius: 12,
-    },
-    distanceText: {
-        fontSize: 12,
-        fontFamily: 'Inter_700Bold',
-        color: '#4B5563',
-    },
-    checksContainer: {
+    modernHeader: {
         flexDirection: 'row',
         alignItems: 'center',
-        justifyContent: 'center',
         marginBottom: 20,
     },
-    checkItem: {
-        alignItems: 'center',
-        width: 100,
-    },
-    checkCircle: {
+    modernHeaderIcon: {
         width: 48,
         height: 48,
         borderRadius: 24,
         alignItems: 'center',
         justifyContent: 'center',
-        marginBottom: 8,
-        borderWidth: 2,
-        borderColor: 'white',
-        elevation: 2,
     },
-    checkIcon: {
-        fontSize: 24,
-        color: 'white',
+    modernHeaderTitle: {
+        fontSize: 18,
         fontFamily: 'Inter_700Bold',
+        marginBottom: 2,
     },
-    bgSuccess: { backgroundColor: '#22c55e' },
-    bgError: { backgroundColor: '#ef4444' },
-    bgWarning: { backgroundColor: '#F59E0B' },
-    checkLabel: {
-        fontSize: 12,
-        color: '#555',
-        fontFamily: 'Inter_600SemiBold',
+    modernHeaderSubtitle: {
+        fontSize: 14,
+        fontFamily: 'Inter_500Medium',
     },
-    checkDivider: {
-        height: 2,
-        width: 30,
-        backgroundColor: '#E5E7EB',
-        marginHorizontal: 10,
-        top: -14,
+    checksContainer: {
+        flexDirection: 'row',
+        gap: 12,
+        marginBottom: 20,
     },
-    statusMessageContainer: {
+    minimalCheckBadge: {
+        paddingHorizontal: 12,
+        paddingVertical: 6,
+        borderRadius: 8,
+    },
+    fallbackBanner: {
         padding: 12,
         borderRadius: 8,
-        marginBottom: 16,
-        alignItems: 'center',
-    },
-    bgSubtleSuccess: { backgroundColor: '#DCFCE7' },
-    bgSubtleError: { backgroundColor: '#FEE2E2' },
-    statusMessageText: {
-        textAlign: 'center',
-        fontSize: 13,
-        fontFamily: 'Inter_600SemiBold',
-    },
-    textSuccess: { color: '#15803d' },
-    textError: { color: '#B91C1C' },
-
-    // ──── Phone-Only Fallback Banner ────
-    fallbackBanner: {
-        padding: 10,
-        borderRadius: 8,
-        marginBottom: 12,
-        flexDirection: 'row',
-        alignItems: 'center',
+        marginBottom: 20,
     },
     fallbackBannerText: {
-        fontSize: 12,
+        fontSize: 13,
         fontFamily: 'Inter_600SemiBold',
         textAlign: 'center',
-        flex: 1,
     },
-
-    // ──── Geofence Map Preview ────
     mapContainer: {
-        height: 180,
-        borderRadius: 12,
+        height: 160,
+        borderRadius: 16,
         overflow: 'hidden',
-        marginBottom: 16,
-        position: 'relative',
+        marginBottom: 24,
     },
     map: {
         flex: 1,
@@ -781,89 +590,159 @@ const styles = StyleSheet.create({
     targetMarkerText: {
         fontSize: 24,
     },
-    riderMarkerOuter: {
-        width: 40,
-        height: 40,
-        borderRadius: 20,
-        backgroundColor: 'white',
-        alignItems: 'center',
-        justifyContent: 'center',
-        borderWidth: 2.5,
-        borderColor: '#0f172a',
+    detailsBlock: {
+        borderRadius: 16,
+        borderWidth: 1,
+        marginBottom: 24,
         overflow: 'hidden',
-        // Shadow for depth
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.3,
-        shadowRadius: 4,
-        elevation: 6,
     },
-    riderMarkerOuterInside: {
-        borderColor: '#22c55e',
+    locationHeaderRow: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        padding: 16,
     },
-    riderMarkerImage: {
-        width: 35,
-        height: 35,
-        borderRadius: 17.5,
+    sectionLabel: {
+        fontSize: 11,
+        fontFamily: 'Inter_700Bold',
+        marginBottom: 4,
+        letterSpacing: 0.5,
     },
-    mapDistanceOverlay: {
-        position: 'absolute',
-        bottom: 8,
-        left: 8,
-        paddingHorizontal: 10,
-        paddingVertical: 4,
-        borderRadius: 8,
+    detailText: {
+        fontSize: 15,
+        fontFamily: 'Inter_600SemiBold',
+        lineHeight: 22,
     },
-    mapDistanceText: {
-        fontSize: 12,
+    senderRow: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        padding: 16,
+        borderTopWidth: 1,
+    },
+    actionButtons: {
+        flexDirection: 'row',
+        gap: 8,
+    },
+    notesRow: {
+        padding: 16,
+    },
+    verificationBlock: {
+        borderRadius: 16,
+        borderWidth: 1,
+        marginBottom: 24,
+        overflow: 'hidden',
+    },
+    verificationHeader: {
+        padding: 16,
+        borderBottomWidth: 1,
+        borderBottomColor: 'rgba(150,150,150,0.1)',
+    },
+    verificationTitle: {
+        fontSize: 16,
         fontFamily: 'Inter_700Bold',
     },
-
-    // ──── Text Proximity Fallback (no native map) ────
-    proximityFallback: {
-        padding: 16,
-        borderRadius: 10,
+    photoContainer: {
         marginBottom: 16,
         alignItems: 'center',
-        borderWidth: 1,
     },
-    proximityText: {
+    photoPreviewWrapper: {
+        borderRadius: 16,
+        overflow: 'hidden',
+        borderWidth: 2,
+        width: '100%',
+    },
+    photoImage: {
+        width: '100%',
+        height: 220,
+    },
+    photoVerifiedOverlay: {
+        position: 'absolute',
+        bottom: 0,
+        left: 0,
+        right: 0,
+        padding: 12,
+        backgroundColor: 'rgba(0,0,0,0.65)',
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    photoVerifiedText: {
+        color: '#fff',
         fontSize: 13,
         fontFamily: 'Inter_600SemiBold',
+    },
+    photoEmptyState: {
+        marginBottom: 16,
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: 24,
+        borderRadius: 16,
+        borderWidth: 2,
+        borderStyle: 'dashed',
+        width: '100%',
+    },
+    photoEmptyStateText: {
+        textAlign: 'center',
+        fontFamily: 'Inter_600SemiBold',
+        marginBottom: 12,
+    },
+    errorBanner: {
+        marginTop: 10,
+        padding: 12,
+        borderRadius: 12,
+        borderWidth: 1,
+    },
+    errorBannerText: {
+        fontSize: 13,
+        fontFamily: 'Inter_700Bold',
+    },
+    boxControlSection: {
+        paddingHorizontal: 4,
+    },
+    boxControlHeader: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        marginBottom: 16,
+    },
+    boxControlTitle: {
+        fontSize: 16,
+        fontFamily: 'Inter_700Bold',
+    },
+    connectionDot: {
+        width: 6,
+        height: 6,
+        borderRadius: 3,
+    },
+    connectionText: {
+        fontSize: 12,
+        fontFamily: 'Inter_600SemiBold',
+    },
+    manualOverrideRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        paddingVertical: 12,
+        borderTopWidth: 1,
+    },
+    manualOverrideText: {
+        fontSize: 14,
+        fontFamily: 'Inter_600SemiBold',
+    },
+    boxButton: {
+        flex: 1,
+        borderRadius: 8,
+        borderWidth: 1,
+    },
+    boxAlertText: {
+        marginTop: 16,
+        fontSize: 13,
+        fontFamily: 'Inter_500Medium',
         textAlign: 'center',
     },
-
-    addressRow: {
-        flexDirection: 'row',
-        alignItems: 'center',
+    autoControlsMsg: {
+        paddingVertical: 16,
         borderTopWidth: 1,
-        borderTopColor: '#f0f0f0',
-        paddingTop: 12,
-    },
-    addressLabel: {
-        fontSize: 10,
-        color: '#888',
-        fontFamily: 'Inter_700Bold',
-        marginBottom: 2,
-    },
-    address: {
-        fontSize: 14,
-        color: '#333',
-    },
-    navActions: {
-        flexDirection: 'row',
-        alignItems: 'center',
-    },
-    actionCard: {
-        backgroundColor: 'white',
-        borderRadius: 12,
-        elevation: 1,
-        marginBottom: 20,
-    },
-    actionTitle: {
-        fontSize: 14,
-        fontFamily: 'Inter_700Bold',
-        color: '#1a1a1a',
-        marginBottom: 4,
     },
 });

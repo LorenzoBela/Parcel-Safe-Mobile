@@ -348,7 +348,7 @@ export const CONFIG = {
     ZOMBIE_STALE_THRESHOLD_MS: 180000, // 3 minutes
 };
 
-const ANDROID_FGS_RETRY_BACKOFF_MS = 30000; // 30 s — short enough to recover quickly after the OS reinitialises SharedPreferences
+const ANDROID_FGS_RETRY_BACKOFF_MS = 10000; // 10 s — faster recovery retry window
 const ANDROID_FGS_SHARED_PREFS_NPE_REGEX = /SharedPreferences\.getAll\(\).*null object reference/i;
 
 // ==================== Types ====================
@@ -1073,11 +1073,28 @@ class BackgroundLocationManager {
 
             // Delay before first attempt on Android to let SharedPreferences initialise.
             if (Platform.OS === 'android') {
-                await new Promise(resolve => setTimeout(resolve, 500));
+                // Pre-initialize the foreground service to trigger SharedPreferences setup
+                try {
+                    if (Notifications?.setNotificationChannelAsync) {
+                        const expoLocationChannelId = `${Application.applicationId}:${CONFIG.TASK_NAME}`;
+                        await Notifications.setNotificationChannelAsync(expoLocationChannelId, {
+                            name: 'Live Delivery Tracking',
+                            importance: Notifications.AndroidImportance.MAX,
+                            lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
+                            bypassDnd: true,
+                            sound: null,
+                            enableVibrate: false,
+                        });
+                    }
+                } catch (e) {
+                    console.warn('[EC-15] Pre-init notification channel failed (non-fatal):', e);
+                }
+                
+                await new Promise(resolve => setTimeout(resolve, 1000)); // Let SharedPreferences settle
             }
 
-            const MAX_NATIVE_ATTEMPTS = Platform.OS === 'android' ? 3 : 1;
-            const RETRY_DELAYS_MS = [0, 1500, 3000]; // delay BEFORE attempt #2, #3
+            const MAX_NATIVE_ATTEMPTS = Platform.OS === 'android' ? 5 : 1; // Increased from 3 to 5 attempts
+            const RETRY_DELAYS_MS = [0, 500, 1500, 2500, 4000]; // delay BEFORE attempt #2-#5, exponential backoff
             let lastLocationError: any = null;
 
             for (let attempt = 1; attempt <= MAX_NATIVE_ATTEMPTS; attempt++) {
@@ -1115,7 +1132,7 @@ class BackgroundLocationManager {
                 }
 
                 console.error('[EC-15] All native BGS start attempts failed:', lastLocationError);
-                console.warn(`[EC-15] Entering foreground-only mode. Will retry native BGS in ${Math.round(ANDROID_FGS_RETRY_BACKOFF_MS / 1000)}s.`);
+                console.warn(`[EC-15] Entering foreground-only mode with ${Math.round(ANDROID_FGS_RETRY_BACKOFF_MS / 1000)}s backoff before retry.`);
 
                 this.updateState({
                     status: 'RUNNING',

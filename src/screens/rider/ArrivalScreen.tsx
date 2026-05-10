@@ -89,6 +89,7 @@ import { reportBatteryDeadIncident } from '../../services/batteryIncidentService
 
 // EC-32: Cancellation Service
 import CancellationModal from '../../components/modals/CancellationModal';
+import CancellationProgressOverlay, { CancellationStep } from '../../components/modals/CancellationProgressOverlay';
 import { requestCancellation, CancellationReason, subscribeToCancellation, CancellationState } from '../../services/cancellationService';
 import ReassignmentAlertModal from '../../components/ReassignmentAlertModal';
 import {
@@ -952,6 +953,9 @@ export default function ArrivalScreen() {
     const [showCancelModal, setShowCancelModal] = useState(false);
     const [cancelLoading, setCancelLoading] = useState(false);
     const [returnCancellationState, setReturnCancellationState] = useState<CancellationState | null>(null);
+    const [cancellationStep, setCancellationStep] = useState<CancellationStep>('VALIDATING');
+    const [cancellationError, setCancellationError] = useState<string | null>(null);
+    const cancellationSubmitInProgressRef = useRef(false); // Guard against double submissions
 
     // EC-78: Delivery Reassignment State
     const [reassignmentState, setReassignmentState] = useState<ReassignmentState | null>(null);
@@ -2137,8 +2141,32 @@ export default function ArrivalScreen() {
 
     // EC-32: Handle Cancellation Submit
     const handleCancellationSubmit = async (reason: CancellationReason, details: string) => {
+        // Guard: prevent multiple submissions
+        if (cancellationSubmitInProgressRef.current) {
+            console.warn('[EC-32] Cancellation already in progress, ignoring duplicate submission');
+            return;
+        }
+
+        cancellationSubmitInProgressRef.current = true;
         setCancelLoading(true);
+        setCancellationError(null);
+        setCancellationStep('VALIDATING');
+        
         try {
+            console.log('[EC-32] Cancellation submit - delivery:', params.deliveryId, 'current status:', deliveryStatus || params.status);
+            
+            // Step 1: Validate
+            setTimeout(() => setCancellationStep('REVOKING_OTP'), 500);
+            
+            // Step 2: Revoke OTP
+            setTimeout(() => setCancellationStep('GENERATING_RETURN_OTP'), 1100);
+            
+            // Step 3: Generate Return OTP
+            setTimeout(() => setCancellationStep('UPDATING_DATABASE'), 2100);
+            
+            // Step 4: Update Database
+            setTimeout(() => setCancellationStep('CONFIRMING_STATUS'), 3100);
+            
             const result = await requestCancellation({
                 deliveryId: params.deliveryId,
                 boxId: params.boxId,
@@ -2150,10 +2178,23 @@ export default function ArrivalScreen() {
             });
 
             if (result.success) {
-                setShowCancelModal(false);
-                if (['IN_TRANSIT', 'ARRIVED', 'RETURNING', 'TAMPERED'].includes(deliveryStatus)) {
+                console.log('[EC-32] ✓ Cancellation successful, showing completion');
+                setCancellationStep('COMPLETE');
+                
+                // Brief delay for visual feedback before navigation
+                await new Promise(resolve => setTimeout(resolve, 800));
+                
+                // Update delivery status to RETURNING if package was picked up
+                const currentStatus = deliveryStatus || params.status || 'PENDING';
+                if (['IN_TRANSIT', 'ARRIVED', 'RETURNING', 'TAMPERED', 'COMPLETED'].includes(currentStatus.toUpperCase())) {
+                    console.log('[EC-32] Setting status to RETURNING (was:', currentStatus, ')');
                     setDeliveryStatus('RETURNING');
                 }
+                
+                // Close modal and overlay BEFORE navigation so state is clean
+                setShowCancelModal(false);
+                
+                // Navigate to confirmation
                 navigation.navigate('CancellationConfirmation', {
                     deliveryId: params.deliveryId,
                     returnOtp: result.returnOtp,
@@ -2164,13 +2205,21 @@ export default function ArrivalScreen() {
                     pickupLat: params.pickupLat,
                     pickupLng: params.pickupLng,
                     boxId: params.boxId,
-                    isPickedUp: ['IN_TRANSIT', 'ARRIVED', 'COMPLETED', 'RETURNING', 'TAMPERED'].includes(deliveryStatus || params.status || 'PENDING'),
+                    isPickedUp: ['IN_TRANSIT', 'ARRIVED', 'COMPLETED', 'RETURNING', 'TAMPERED'].includes(currentStatus.toUpperCase()),
                 });
             } else {
-                PremiumAlert.alert('Cancellation Failed', result.error || 'Unknown error');
+                console.error('[EC-32] Cancellation failed with error:', result.error);
+                setCancellationStep('ERROR');
+                setCancellationError(result.error || 'Unknown error. Please try again.');
+                // Clear the guard on error so user can retry
+                cancellationSubmitInProgressRef.current = false;
             }
         } catch (err) {
-            PremiumAlert.alert('Error', 'An unexpected error occurred');
+            console.error('[EC-32] Exception during cancellation:', err);
+            setCancellationStep('ERROR');
+            setCancellationError('An unexpected error occurred. Please try again.');
+            // Clear the guard on error so user can retry
+            cancellationSubmitInProgressRef.current = false;
         } finally {
             setCancelLoading(false);
         }
@@ -3063,9 +3112,22 @@ export default function ArrivalScreen() {
                 {/* EC-32: Cancellation Modal */}
                 <CancellationModal
                     visible={showCancelModal}
-                    onDismiss={() => setShowCancelModal(false)}
+                    onDismiss={() => {
+                        // Only allow dismiss if not loading (also guarded in modal itself)
+                        if (!cancelLoading) {
+                            setShowCancelModal(false);
+                        }
+                    }}
                     onSubmit={handleCancellationSubmit}
                     loading={cancelLoading}
+                />
+
+                {/* EC-32: Cancellation Progress Overlay */}
+                <CancellationProgressOverlay
+                    visible={cancelLoading}
+                    deliveryId={params.deliveryId}
+                    currentStep={cancellationStep}
+                    error={cancellationError}
                 />
 
                 {/* EC-78: Reassignment Alert Modal */}

@@ -1064,321 +1064,221 @@ export default function DropoffVerification({
 
     return (
         <View style={styles.container}>
-            <Card mode="elevated" style={[styles.statusCard, { backgroundColor: c.card }, isInsideGeoFence ? styles.borderSuccess : styles.borderError]}>
-                <Card.Content>
-                    <View style={styles.statusHeader}>
-                        <Text variant="titleMedium" style={{ fontFamily: 'Inter_700Bold', color: c.textTitle }}>
-                            Drop-Off Zone
+            {/* Header Status Block */}
+            <View style={styles.modernHeader}>
+                <View style={[styles.modernHeaderIcon, { backgroundColor: isInsideGeoFence ? c.successBg : c.errorBg }]}>
+                    <Text style={{ fontSize: 24 }}>{isInsideGeoFence ? '📍' : '🧭'}</Text>
+                </View>
+                <View style={{ flex: 1, marginLeft: 16 }}>
+                    <Text style={[styles.modernHeaderTitle, { color: c.textTitle }]}>Drop-Off Zone</Text>
+                    <Text style={[styles.modernHeaderSubtitle, { color: isInsideGeoFence ? c.successText : c.errorText }]}>
+                        {isInsideGeoFence ? 'You are inside the zone' : distanceMeters !== null ? `${formatDistance(distanceMeters)} away` : 'Locating...'}
+                    </Text>
+                </View>
+            </View>
+
+            {/* Check Badges */}
+            <View style={styles.checksContainer}>
+                <View style={styles.checksRowMulti}>
+                    <View style={[styles.minimalCheckBadge, { backgroundColor: isPhoneInside ? c.successBg : c.errorBg }]}>
+                        <Text style={{ fontSize: 12, color: isPhoneInside ? c.successText : c.errorText, fontFamily: 'Inter_600SemiBold' }}>
+                            {isPhoneInside ? '✓ Phone GPS' : '✗ Phone GPS'}
                         </Text>
-                        {distanceMeters !== null && (
-                            <View style={[styles.distanceBadge, { backgroundColor: c.badgeBg }]}>
-                                <Text style={[styles.distanceText, { color: c.badgeText }]}>
-                                    {distanceMeters > 999
-                                        ? `${(distanceMeters / 1000).toFixed(1)} km away`
-                                        : `${distanceMeters}m away`}
-                                </Text>
+                    </View>
+                    <View style={[styles.minimalCheckBadge, { backgroundColor: isBoxOffline ? c.warningBg : (isBoxInside ? c.successBg : c.errorBg) }]}>
+                        <Text style={{ fontSize: 12, color: isBoxOffline ? c.warningText : (isBoxInside ? c.successText : c.errorText), fontFamily: 'Inter_600SemiBold' }}>
+                            {isBoxOffline ? '? Box Offline' : (isBoxInside ? '✓ Smart Box' : '✗ Smart Box')}
+                        </Text>
+                    </View>
+                    <View style={[styles.minimalCheckBadge, { backgroundColor: boxOtpValidated ? c.successBg : (lockEvent?.otp_valid === false ? c.errorBg : c.warningBg) }]}>
+                        <Text style={{ fontSize: 12, color: boxOtpValidated ? c.successText : (lockEvent?.otp_valid === false ? c.errorText : c.warningText), fontFamily: 'Inter_600SemiBold' }}>
+                            {boxOtpValidated ? '✓ OTP' : (lockEvent?.otp_valid === false ? '✗ OTP' : '⏳ OTP')}
+                        </Text>
+                    </View>
+                    <View style={[styles.minimalCheckBadge, { backgroundColor: faceDetected ? c.successBg : (lockEvent?.otp_valid && !lockEvent?.face_detected ? c.errorBg : c.warningBg) }]}>
+                        <Text style={{ fontSize: 12, color: faceDetected ? c.successText : (lockEvent?.otp_valid && !lockEvent?.face_detected ? c.errorText : c.warningText), fontFamily: 'Inter_600SemiBold' }}>
+                            {faceDetected ? '✓ Face' : (lockEvent?.otp_valid && !lockEvent?.face_detected ? '✗ Face' : '⏳ Face')}
+                        </Text>
+                    </View>
+                </View>
+                <Text style={{ fontSize: 11, color: c.subtleText, marginTop: 12, textAlign: 'center' }}>
+                    Phone GPS: {formatAge(lastPhoneGpsAt)} • Box heartbeat: {formatAge(lastBoxHeartbeatAt)}
+                </Text>
+            </View>
+
+            <View style={[styles.statusMessageContainer, { backgroundColor: isInsideGeoFence ? c.successBg : c.errorBg }]}>
+                <Text style={[styles.statusMessageText, { color: isInsideGeoFence ? c.successText : c.errorText }]}>
+                    {zoneStatusText}
+                </Text>
+            </View>
+
+            {/* Map Preview */}
+            {mapAvailable && targetLat !== 0 && (
+                <View style={styles.mapContainer}>
+                    <MapboxGL.MapView
+                        style={styles.map}
+                        styleURL={isDarkMode ? StyleURL.Dark : StyleURL.Light}
+                        logoEnabled={false}
+                        attributionEnabled={false}
+                        scrollEnabled={false}
+                        zoomEnabled={false}
+                        pitchEnabled={false}
+                        rotateEnabled={false}
+                    >
+                        <MapboxGL.Camera
+                            centerCoordinate={[targetLng, targetLat]}
+                            zoomLevel={16}
+                            animationMode="none"
+                        />
+                        <MapboxGL.ShapeSource id="dropoff-geofence-circle" shape={geofenceCircle}>
+                            <MapboxGL.FillLayer
+                                id="dropoff-geofence-fill"
+                                style={{
+                                    fillColor: isInsideGeoFence ? 'rgba(34,197,94,0.15)' : 'rgba(239,68,68,0.12)',
+                                    fillOutlineColor: isInsideGeoFence ? '#22c55e' : '#ef4444',
+                                }}
+                            />
+                        </MapboxGL.ShapeSource>
+                        <MapboxGL.MarkerView id="dropoff-target" coordinate={[targetLng, targetLat]}>
+                            <View style={styles.targetMarker}><Text style={styles.targetMarkerText}>📍</Text></View>
+                        </MapboxGL.MarkerView>
+                        {hasRiderPosition && currentLat != null && currentLng != null && (
+                            <AnimatedRiderMarker
+                                latitude={currentLat}
+                                longitude={currentLng}
+                                rotation={currentHeading ?? undefined}
+                                isSelected={isPhoneInside}
+                            />
+                        )}
+                    </MapboxGL.MapView>
+                    {distanceMeters !== null && (
+                        <View style={[styles.mapDistanceOverlay, { backgroundColor: isDarkMode ? 'rgba(0,0,0,0.7)' : 'rgba(255,255,255,0.85)' }]}>
+                            <Text style={[styles.mapDistanceText, { color: isInsideGeoFence ? '#22c55e' : c.text }]}>
+                                {isInsideGeoFence ? '✓ Inside Zone' : `${formatDistance(distanceMeters)} to zone`}
+                            </Text>
+                        </View>
+                    )}
+                </View>
+            )}
+
+            {!mapAvailable && hasRiderPosition && distanceMeters !== null && (
+                <View style={[styles.proximityFallback, { backgroundColor: c.badgeBg, borderColor: c.border }]}>
+                    <Text style={{ fontSize: 24, marginBottom: 4 }}>
+                        {isInsideGeoFence ? '📍' : '🧭'}
+                    </Text>
+                    <Text style={[styles.proximityText, { color: c.text }]}>
+                        {isInsideGeoFence
+                            ? 'You are inside the drop-off zone'
+                            : `${formatDistance(distanceMeters)} from drop-off zone (${formatDistance(geofenceRadiusM)} radius)`
+                        }
+                    </Text>
+                </View>
+            )}
+
+            {/* Location & Recipient Details Block */}
+            <View style={[styles.detailsBlock, { backgroundColor: isDarkMode ? '#18181b' : '#fafafa', borderColor: c.border }]}>
+                <View style={styles.locationHeaderRow}>
+                    <View style={{ flex: 1, paddingRight: 16 }}>
+                        <Text style={[styles.sectionLabel, { color: c.textLabel }]}>DROPOFF LOCATION</Text>
+                        <Text style={[styles.detailText, { color: c.textTitle }]}>{targetAddress}</Text>
+                    </View>
+                    <IconButton icon="navigation-variant" size={24} mode="contained" containerColor={isDarkMode ? '#27272a' : '#f4f4f5'} iconColor={isDarkMode ? '#e4e4e7' : '#18181b'} onPress={onNavigate} style={{ margin: 0 }} />
+                </View>
+
+                {recipientName ? (
+                    <View style={[styles.senderRow, { borderTopColor: c.border }]}>
+                        <View style={{ flex: 1 }}>
+                            <Text style={[styles.sectionLabel, { color: c.textLabel }]}>RECIPIENT</Text>
+                            <Text style={[styles.detailText, { color: c.textTitle }]}>{recipientName}</Text>
+                            {customerPhone ? <Text style={{ fontSize: 13, color: c.textLabel, marginTop: 2 }}>{customerPhone}</Text> : null}
+                        </View>
+                        {customerPhone && (
+                            <View style={styles.actionButtons}>
+                                <IconButton icon="message-text" size={20} iconColor={c.textTitle} mode="contained-tonal" containerColor={isDarkMode ? '#27272a' : '#f4f4f5'} onPress={() => Linking.openURL(`sms:${customerPhone}`)} style={{ margin: 0 }} />
+                                <IconButton icon="phone" size={20} iconColor={c.textTitle} mode="contained-tonal" containerColor={isDarkMode ? '#27272a' : '#f4f4f5'} onPress={() => Linking.openURL(`tel:${customerPhone}`)} style={{ margin: 0 }} />
                             </View>
                         )}
                     </View>
+                ) : null}
 
-                    <View style={styles.checksContainer}>
-                        {/* Row 1: Phone GPS + Smart Box */}
-                        <View style={styles.checksRow}>
-                            <View style={styles.checkItem}>
-                                <View style={[styles.checkCircle, { borderColor: c.whiteBorder }, isPhoneInside ? styles.bgSuccess : styles.bgError]}>
-                                    <Text style={styles.checkIcon}>{isPhoneInside ? '✓' : '✗'}</Text>
-                                </View>
-                                <Text style={[styles.checkLabel, { color: c.textLabel }]}>Phone GPS</Text>
-                            </View>
-                            <View style={[styles.checkDivider, { backgroundColor: c.border }]} />
-                            <View style={styles.checkItem}>
-                                <View style={[
-                                    styles.checkCircle,
-                                    { borderColor: c.whiteBorder },
-                                    isBoxOffline ? styles.bgWarning : (isBoxInside ? styles.bgSuccess : styles.bgError)
-                                ]}>
-                                    <Text style={styles.checkIcon}>
-                                        {isBoxOffline ? '?' : (isBoxInside ? '✓' : '✗')}
-                                    </Text>
-                                </View>
-                                <Text style={[styles.checkLabel, { color: c.textLabel }]}>{isBoxOffline ? 'Box Offline' : 'Smart Box'}</Text>
-                            </View>
-                        </View>
-                        <Text style={{ textAlign: 'center', fontSize: 11, color: c.subtleText, marginTop: 2 }}>
-                            Phone GPS: {formatAge(lastPhoneGpsAt)} • Box heartbeat: {formatAge(lastBoxHeartbeatAt)}
-                        </Text>
-                        {/* Row 2: OTP Verified + Face Check */}
-                        <View style={styles.checksRow}>
-                            <View style={styles.checkItem}>
-                                <View style={[styles.checkCircle, { borderColor: c.whiteBorder }, boxOtpValidated ? styles.bgSuccess : (lockEvent?.otp_valid === false ? styles.bgError : styles.bgWarning)]}>
-                                    <Text style={styles.checkIcon}>{boxOtpValidated ? '✓' : (lockEvent?.otp_valid === false ? '✗' : '⏳')}</Text>
-                                </View>
-                                <Text style={[styles.checkLabel, { color: c.textLabel }]}>OTP Verified</Text>
-                            </View>
-                            <View style={[styles.checkDivider, { backgroundColor: c.border }]} />
-                            <View style={styles.checkItem}>
-                                <View style={[styles.checkCircle, { borderColor: c.whiteBorder }, faceDetected ? styles.bgSuccess : (lockEvent?.otp_valid && !lockEvent?.face_detected ? styles.bgError : styles.bgWarning)]}>
-                                    <Text style={styles.checkIcon}>{faceDetected ? '✓' : (lockEvent?.otp_valid && !lockEvent?.face_detected ? '✗' : '⏳')}</Text>
-                                </View>
-                                <Text style={[styles.checkLabel, { color: c.textLabel }]}>Face Check</Text>
-                            </View>
-                        </View>
+                {deliveryNotes ? (
+                    <View style={[styles.notesRow, { backgroundColor: isDarkMode ? '#27272a' : '#f4f4f5' }]}>
+                        <Text style={[styles.sectionLabel, { color: c.textLabel }]}>DELIVERY NOTES</Text>
+                        <Text style={{ fontSize: 14, color: c.textTitle, marginTop: 4 }}>{deliveryNotes}</Text>
                     </View>
-
-                    <View style={[styles.statusMessageContainer, { backgroundColor: isInsideGeoFence ? c.successBg : c.errorBg }]}>
-                        <Text style={[styles.statusMessageText, { color: isInsideGeoFence ? c.successText : c.errorText }]}>
-                            {zoneStatusText}
-                        </Text>
-                    </View>
-
-                    {/* ──── Geofence Map Preview ──── */}
-                    {mapAvailable && targetLat !== 0 && (
-                        <View style={styles.mapContainer}>
-                            <MapboxGL.MapView
-                                style={styles.map}
-                                styleURL={isDarkMode ? StyleURL.Dark : StyleURL.Light}
-                                logoEnabled={false}
-                                attributionEnabled={false}
-                                scrollEnabled={false}
-                                zoomEnabled={false}
-                                pitchEnabled={false}
-                                rotateEnabled={false}
-                            >
-                                <MapboxGL.Camera
-                                    centerCoordinate={[targetLng, targetLat]}
-                                    zoomLevel={16}
-                                    animationMode="none"
-                                />
-
-                                {/* Geofence circle */}
-                                <MapboxGL.ShapeSource id="dropoff-geofence-circle" shape={geofenceCircle}>
-                                    <MapboxGL.FillLayer
-                                        id="dropoff-geofence-fill"
-                                        style={{
-                                            fillColor: isInsideGeoFence ? 'rgba(34,197,94,0.15)' : 'rgba(239,68,68,0.12)',
-                                            fillOutlineColor: isInsideGeoFence ? '#22c55e' : '#ef4444',
-                                        }}
-                                    />
-                                </MapboxGL.ShapeSource>
-
-                                {/* Dropoff target marker */}
-                                <MapboxGL.MarkerView
-                                    id="dropoff-target"
-                                    coordinate={[targetLng, targetLat]}
-                                >
-                                    <View style={styles.targetMarker}>
-                                        <Text style={styles.targetMarkerText}>📍</Text>
-                                    </View>
-                                </MapboxGL.MarkerView>
-
-                                {/* Rider live position — same Rider.jpg icon as tracking pages */}
-                                {hasRiderPosition && currentLat != null && currentLng != null && (
-                                    <AnimatedRiderMarker
-                                        latitude={currentLat}
-                                        longitude={currentLng}
-                                        rotation={currentHeading ?? undefined}
-                                        isSelected={isPhoneInside}
-                                    />
-                                )}
-                            </MapboxGL.MapView>
-
-                            {/* Distance overlay */}
-                            {distanceMeters !== null && (
-                                <View style={[styles.mapDistanceOverlay, { backgroundColor: isDarkMode ? 'rgba(0,0,0,0.7)' : 'rgba(255,255,255,0.85)' }]}>
-                                    <Text style={[styles.mapDistanceText, { color: isInsideGeoFence ? '#22c55e' : c.text }]}>
-                                        {isInsideGeoFence ? '✓ Inside Zone' : `${formatDistance(distanceMeters)} to zone`}
-                                    </Text>
-                                </View>
-                            )}
-                        </View>
-                    )}
-
-                    {/* Text-based proximity fallback when map isn't available */}
-                    {!mapAvailable && hasRiderPosition && distanceMeters !== null && (
-                        <View style={[styles.proximityFallback, { backgroundColor: c.badgeBg, borderColor: c.border }]}>
-                            <Text style={{ fontSize: 24, marginBottom: 4 }}>
-                                {isInsideGeoFence ? '📍' : '🧭'}
-                            </Text>
-                            <Text style={[styles.proximityText, { color: c.text }]}>
-                                {isInsideGeoFence
-                                    ? 'You are inside the drop-off zone'
-                                    : `${formatDistance(distanceMeters)} from drop-off zone (${formatDistance(geofenceRadiusM)} radius)`
-                                }
-                            </Text>
-                        </View>
-                    )}
-
-                    <View style={[styles.addressRow, { borderTopColor: c.borderHard }]}>
-                        <View style={{ flex: 1 }}>
-                            <Text style={[styles.addressLabel, { color: c.textLabel }]}>DROPOFF LOCATION</Text>
-                            <Text numberOfLines={2} style={[styles.address, { color: c.text }]}>{targetAddress}</Text>
-
-                            {recipientName ? (
-                                <View style={{ marginTop: 12 }}>
-                                    <Text style={[styles.addressLabel, { color: c.textLabel }]}>RECIPIENT</Text>
-                                    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                                        <Text style={[styles.address, { flex: 1, marginRight: 8, color: c.text }]}>{recipientName}{customerPhone ? ` • ${customerPhone}` : ''}</Text>
-                                        {customerPhone && (
-                                            <View style={{ flexDirection: 'row' }}>
-                                                <IconButton icon="phone" size={20} mode="contained-tonal" containerColor={c.blueBg} iconColor={c.blueText} onPress={() => Linking.openURL(`tel:${customerPhone}`)} style={{ margin: 0, marginRight: 8 }} />
-                                                <IconButton icon="message-text" size={20} mode="contained-tonal" containerColor={c.blueBg} iconColor={c.blueText} onPress={() => Linking.openURL(`sms:${customerPhone}`)} style={{ margin: 0 }} />
-                                            </View>
-                                        )}
-                                    </View>
-                                </View>
-                            ) : null}
-
-                            {deliveryNotes ? (
-                                <View style={{ marginTop: 12, padding: 8, backgroundColor: c.badgeBg, borderRadius: 6 }}>
-                                    <Text style={[styles.addressLabel, { color: c.textLabel }]}>DELIVERY NOTES</Text>
-                                    <Text style={[styles.address, { color: c.text }]}>{deliveryNotes}</Text>
-                                </View>
-                            ) : null}
-                        </View>
-                        <View style={styles.navActions}>
-                            <IconButton icon="navigation" mode="contained" containerColor={c.blueBg} iconColor={c.blueText} size={24} onPress={onNavigate} />
-                        </View>
-                    </View>
-                </Card.Content>
-            </Card>
+                ) : null}
+            </View>
 
             {/* Handover Flow UI only shows if inside Geofence */}
             {isInsideGeoFence && (
-                <Card style={[styles.actionCard, { backgroundColor: c.card }]}>
-                    <Card.Content>
-                        <Text style={[styles.actionTitle, { color: c.textTitle }]}>Handover Parcel</Text>
-
+                <View style={[styles.verificationBlock, { backgroundColor: isDarkMode ? '#18181b' : '#fafafa', borderColor: c.border }]}>
+                    <View style={styles.verificationHeader}>
+                        <Text style={[styles.verificationTitle, { color: c.textTitle }]}>Handover Parcel</Text>
+                        <Text style={{ fontSize: 13, color: c.textLabel, marginTop: 2 }}>Secure unlock & verify identity</Text>
+                    </View>
+                    
+                    <View style={{ padding: 16 }}>
                         {/* Dynamic status message */}
-                        <View style={[styles.statusMessageContainer, { marginTop: 12, backgroundColor: statusMsg.bgColor }]}>
+                        <View style={[styles.statusMessageContainer, { marginBottom: 16, backgroundColor: statusMsg.bgColor }]}>
                             <Text style={[styles.statusMessageText, { color: statusMsg.color }]}>
                                 {statusMsg.text}
                             </Text>
                         </View>
 
                         {isSyncPending && (
-                            <View style={[styles.statusMessageContainer, { marginTop: 8, backgroundColor: c.warningBg }]}>
+                            <View style={[styles.statusMessageContainer, { marginBottom: 16, backgroundColor: c.warningBg }]}>
                                 <Text style={[styles.statusMessageText, { color: c.warningText }]}>
                                     Syncing box verification. Wait a moment.
                                 </Text>
                             </View>
                         )}
 
-                        {canRevealManualControls && !showManualControls && (
-                            <Button
-                                mode="text"
-                                compact
-                                icon="tune"
-                                onPress={() => setManualModeEnabled(true)}
-                                style={{ alignSelf: 'center', marginTop: 2, marginBottom: 4 }}
-                            >
-                                Manual controls
-                            </Button>
-                        )}
-
-                        {showManualControls && (
-                        <View style={{ marginTop: 8, marginBottom: 8, padding: 12, borderRadius: 10, borderWidth: 1, borderColor: c.borderHard, backgroundColor: c.badgeBg }}>
-                            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                                <View style={{ flex: 1, paddingRight: 10 }}>
-                                    <Text style={{ fontSize: 13, fontFamily: 'Inter_700Bold', color: c.textTitle }}>Manual controls</Text>
-                                    <Text style={{ fontSize: 12, color: c.textLabel, marginTop: 2 }}>
-                                        Use only if the box does not respond automatically.
-                                    </Text>
-                                </View>
-                                <Switch value={manualModeEnabled} onValueChange={setManualModeEnabled} />
-                            </View>
-
-                            <View style={{ flexDirection: 'row', marginTop: 10, gap: 8 }}>
-                                <Button
-                                    mode="contained"
-                                    onPress={() => handleManualBoxCommand('UNLOCKING')}
-                                    disabled={!canManualControl || manualCommandLoading || boxState?.status === 'UNLOCKING'}
-                                    loading={manualCommandLoading && boxState?.status === 'UNLOCKING'}
-                                    style={{ flex: 1, backgroundColor: canManualControl ? '#16a34a' : '#94a3b8' }}
-                                >
-                                    Unlock
-                                </Button>
-                                <Button
-                                    mode="outlined"
-                                    onPress={() => handleManualBoxCommand('LOCKED')}
-                                    disabled={!canManualControl || manualCommandLoading}
-                                    loading={manualCommandLoading && boxState?.status !== 'UNLOCKING'}
-                                    style={{ flex: 1 }}
-                                >
-                                    Lock
-                                </Button>
-                            </View>
-
-                            {lockAwaitingClose && (
-                                <View style={{ marginTop: 10, padding: 10, borderRadius: 8, backgroundColor: c.warningBg, borderWidth: 1, borderColor: c.warningText }}>
-                                    <Text style={{ fontSize: 12, color: c.warningText, fontFamily: 'Inter_700Bold' }}>
-                                        Lock pending physical close
-                                    </Text>
-                                    <Text style={{ marginTop: 4, fontSize: 12, color: c.warningText }}>
-                                        {lockAwaitingCloseNeedsAssist
-                                            ? 'Close the lid until the latch aligns. If needed, press # on the keypad to retract briefly, then close again.'
-                                            : 'Close the lid fully so the reed can confirm the lock.'}
-                                    </Text>
-                                </View>
-                            )}
-
-                            {lockCloseConfirmed && (
-                                <View style={{ marginTop: 10, padding: 10, borderRadius: 8, backgroundColor: c.successBg, borderWidth: 1, borderColor: c.successText }}>
-                                    <Text style={{ fontSize: 12, color: c.successText, fontFamily: 'Inter_700Bold' }}>
-                                        Lock confirmed
-                                    </Text>
-                                    <Text style={{ marginTop: 4, fontSize: 12, color: c.successText }}>
-                                        Reed close detected. The box is now physically locked.
-                                    </Text>
-                                </View>
-                            )}
-
-                            {!canManualControl && (
-                                <Text style={{ marginTop: 8, fontSize: 12, color: c.subtleText }}>
-                                    Available after geofence, OTP, and face checks are confirmed.
-                                </Text>
-                            )}
-                        </View>
-                        )}
-
-                        <View style={[styles.proofPanel, { borderColor: c.borderHard, backgroundColor: c.badgeBg }]}>
+                        <View style={[styles.proofPanel, { borderColor: c.borderHard, backgroundColor: isDarkMode ? '#000' : '#f8f9fa' }]}>
                             <Text style={[styles.proofTitle, { color: c.textTitle }]}>Verification Photo</Text>
                             {displayedProofUrl ? (
                                 <>
-                                    <Image
-                                        source={{ uri: displayedProofUrl }}
-                                        style={[styles.proofImage, { backgroundColor: c.borderHard }]}
-                                        resizeMode="cover"
-                                        progressiveRenderingEnabled
-                                        onLoad={() => {
-                                            if (displayedProofIsFull) {
-                                                setHardwareProofLoaded(true);
-                                                setHardwareProofFailed(false);
-                                            } else {
-                                                setPreviewProofLoaded(true);
-                                                setPreviewProofFailed(false);
-                                            }
-                                        }}
-                                        onError={() => {
-                                            if (displayedProofIsFull) {
-                                                setHardwareProofFailed(true);
-                                            } else {
-                                                setPreviewProofFailed(true);
-                                            }
-                                        }}
-                                    />
-                                    {hiddenFullProofUrl && (
+                                    <View style={[styles.photoPreviewWrapper, { borderColor: isDarkMode ? '#064e3b' : '#dcfce7', backgroundColor: isDarkMode ? '#000' : '#f8f9fa' }]}>
                                         <Image
-                                            source={{ uri: hiddenFullProofUrl }}
-                                            style={styles.hiddenProofImage}
+                                            source={{ uri: displayedProofUrl }}
+                                            style={styles.photoImage}
                                             resizeMode="cover"
                                             progressiveRenderingEnabled
                                             onLoad={() => {
-                                                setHardwareProofLoaded(true);
-                                                setHardwareProofFailed(false);
+                                                if (displayedProofIsFull) {
+                                                    setHardwareProofLoaded(true);
+                                                    setHardwareProofFailed(false);
+                                                } else {
+                                                    setPreviewProofLoaded(true);
+                                                    setPreviewProofFailed(false);
+                                                }
                                             }}
-                                            onError={() => setHardwareProofFailed(true)}
+                                            onError={() => {
+                                                if (displayedProofIsFull) {
+                                                    setHardwareProofFailed(true);
+                                                } else {
+                                                    setPreviewProofFailed(true);
+                                                }
+                                            }}
                                         />
-                                    )}
+                                        {hiddenFullProofUrl && (
+                                            <Image
+                                                source={{ uri: hiddenFullProofUrl }}
+                                                style={styles.hiddenProofImage}
+                                                resizeMode="cover"
+                                                progressiveRenderingEnabled
+                                                onLoad={() => {
+                                                    setHardwareProofLoaded(true);
+                                                    setHardwareProofFailed(false);
+                                                }}
+                                                onError={() => setHardwareProofFailed(true)}
+                                            />
+                                        )}
+                                        {proofGate.visibleProofLoaded && (
+                                            <View style={styles.photoVerifiedOverlay}>
+                                                <Text style={styles.photoVerifiedText}>✅ Photo Verified</Text>
+                                            </View>
+                                        )}
+                                    </View>
                                     <Text style={[styles.proofHintSuccess, { color: proofGate.visibleProofLoaded ? c.successText : c.textLabel }]}>
                                         {proofGate.visibleProofLoaded
                                             ? (displayedProofIsFull && hardwareProofLoaded
@@ -1442,25 +1342,29 @@ export default function DropoffVerification({
 
                         {/* Fallback photo button — visible after box confirms OTP or if camera fails */}
                         {showFallbackButton && (
-                            <View style={{ marginTop: 12 }}>
+                            <View style={{ marginTop: 16 }}>
                                 <Button
                                     mode="outlined"
                                     icon="camera-retake"
                                     onPress={handleCaptureFallbackPhoto}
                                     disabled={isLoading}
+                                    textColor={c.textTitle}
+                                    style={{ borderColor: c.borderHard }}
                                 >
                                     {fallbackPhotoUri ? 'Retake fallback photo' : 'Capture fallback photo'}
                                 </Button>
                                 {fallbackPhotoUri && (
                                     <>
-                                        <Image
-                                            source={{ uri: fallbackPhotoUri }}
-                                            style={[styles.fallbackImage, { backgroundColor: c.borderHard }]}
-                                            resizeMode="cover"
-                                            onLoad={() => setFallbackPhotoLoaded(true)}
-                                            onError={() => setFallbackPhotoLoaded(false)}
-                                        />
-                                        <Text style={{ marginTop: 6, color: fallbackPhotoLoaded ? c.successText : c.textLabel, textAlign: 'center', fontSize: 13 }}>
+                                        <View style={[styles.photoPreviewWrapper, { borderColor: c.borderHard, backgroundColor: isDarkMode ? '#000' : '#f8f9fa', marginTop: 12 }]}>
+                                            <Image
+                                                source={{ uri: fallbackPhotoUri }}
+                                                style={styles.photoImage}
+                                                resizeMode="cover"
+                                                onLoad={() => setFallbackPhotoLoaded(true)}
+                                                onError={() => setFallbackPhotoLoaded(false)}
+                                            />
+                                        </View>
+                                        <Text style={{ marginTop: 6, color: fallbackPhotoLoaded ? c.successText : c.textLabel, textAlign: 'center', fontSize: 13, fontFamily: 'Inter_600SemiBold' }}>
                                             {fallbackPhotoLoaded
                                                 ? 'Fallback photo is visible. You may now complete delivery.'
                                                 : 'Loading fallback photo preview before completion.'}
@@ -1470,35 +1374,121 @@ export default function DropoffVerification({
                             </View>
                         )}
 
-                        <View style={{ marginTop: 16 }}>
+                        <View style={{ marginTop: 20 }}>
                             <SwipeConfirmButton
                                 label="Swipe Parcel Delivered"
                                 onConfirm={handleDeliverySwipe}
                                 disabled={!canSwipe || isLoading}
                             />
                         </View>
-                    </Card.Content>
-                </Card>
+                    </View>
+                </View>
             )}
+
+            {/* Smart Box Controls */}
+            <View style={styles.boxControlSection}>
+                <View style={styles.boxControlHeader}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                        <Text style={{ fontSize: 18 }}>📦</Text>
+                        <Text style={[styles.boxControlTitle, { color: c.textTitle }]}>Box Control</Text>
+                    </View>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                        <View style={[styles.connectionDot, { backgroundColor: boxState ? c.successText : c.errorText }]} />
+                        <Text style={[styles.connectionText, { color: boxState ? c.successText : c.errorText }]}>
+                            {boxState ? 'Connected' : 'Offline'}
+                        </Text>
+                    </View>
+                </View>
+
+
+
+                {isInsideGeoFence ? (
+                    canRevealManualControls ? (
+                        <View style={{ marginTop: 8 }}>
+                            <View style={[styles.manualOverrideRow, { borderTopColor: c.border }]}>
+                                <Text style={[styles.manualOverrideText, { color: c.textTitle }]}>Manual override</Text>
+                                <Switch value={manualModeEnabled} onValueChange={setManualModeEnabled} color={isDarkMode ? '#f4f4f5' : '#18181b'} trackColor={{ false: isDarkMode ? '#3f3f46' : '#e4e4e7', true: isDarkMode ? '#f4f4f5' : '#18181b' }} thumbColor={isDarkMode ? '#18181b' : '#ffffff'} />
+                            </View>
+
+                            {manualModeEnabled && (
+                                <View style={{ paddingTop: 16 }}>
+                                    <View style={{ flexDirection: 'row', gap: 12 }}>
+                                        <Button
+                                            mode={boxState?.status === 'UNLOCKING' ? 'contained' : 'outlined'}
+                                            icon={boxState?.status === 'UNLOCKING' ? 'check' : 'lock-open-outline'}
+                                            onPress={() => handleManualBoxCommand('UNLOCKING')}
+                                            disabled={!canManualControl || manualCommandLoading || boxState?.status === 'UNLOCKING'}
+                                            loading={manualCommandLoading && boxState?.status === 'UNLOCKING'}
+                                            style={[styles.boxButton, { borderColor: isDarkMode ? '#3f3f46' : '#e4e4e7' }]}
+                                            buttonColor={boxState?.status === 'UNLOCKING' ? (isDarkMode ? '#f4f4f5' : '#18181b') : 'transparent'}
+                                            textColor={boxState?.status === 'UNLOCKING' ? (isDarkMode ? '#000' : '#fff') : c.textTitle}
+                                        >
+                                            {boxState?.status === 'UNLOCKING' ? 'Unlocked' : 'Unlock'}
+                                        </Button>
+                                        <Button
+                                            mode={boxState?.status === 'LOCKED' ? 'contained' : 'outlined'}
+                                            icon={boxState?.status === 'LOCKED' ? 'lock' : 'lock-outline'}
+                                            onPress={() => handleManualBoxCommand('LOCKED')}
+                                            disabled={!canManualControl || manualCommandLoading || boxState?.status === 'LOCKED'}
+                                            loading={manualCommandLoading && boxState?.status !== 'UNLOCKING'}
+                                            style={[styles.boxButton, { borderColor: isDarkMode ? '#3f3f46' : '#e4e4e7' }]}
+                                            buttonColor={boxState?.status === 'LOCKED' ? (isDarkMode ? '#f4f4f5' : '#18181b') : 'transparent'}
+                                            textColor={boxState?.status === 'LOCKED' ? (isDarkMode ? '#000' : '#fff') : c.textTitle}
+                                        >
+                                            {boxState?.status === 'LOCKED' ? 'Locked' : 'Lock'}
+                                        </Button>
+                                    </View>
+
+                                    {lockAwaitingClose && (
+                                        <Text style={[styles.boxAlertText, { color: c.warningText }]}>
+                                            {lockAwaitingCloseNeedsAssist ? '⚠️ Close lid until latch aligns. Press # to retract briefly if needed.' : '⚠️ Push lid down to secure lock'}
+                                        </Text>
+                                    )}
+
+                                    {lockCloseConfirmed && (
+                                        <Text style={[styles.boxAlertText, { color: c.successText }]}>✓ Box is physically secured</Text>
+                                    )}
+                                </View>
+                            )}
+
+                            {!canManualControl && (
+                                <Text style={{ marginTop: 16, fontSize: 13, color: c.subtleText, textAlign: 'center' }}>
+                                    Available after geofence, OTP, and face checks are confirmed.
+                                </Text>
+                            )}
+                        </View>
+                    ) : (
+                        <View style={[styles.autoControlsMsg, { borderTopColor: c.border }]}>
+                            <Text style={{ fontSize: 13, color: c.hintText }}>Controls unlock after OTP and face checks.</Text>
+                        </View>
+                    )
+                ) : (
+                    <View style={[styles.autoControlsMsg, { borderTopColor: c.border }]}>
+                        <Text style={{ fontSize: 13, color: c.hintText }}>Controls unlock automatically upon arrival.</Text>
+                    </View>
+                )}
+            </View>
 
             {/* Helper Buttons */}
             <View style={{ flexDirection: 'row', gap: 12, marginBottom: 20 }}>
                 {isInsideGeoFence && !isWaitTimerActive && (
                     <Button
-                        mode="outlined"
+                        mode="contained-tonal"
                         onPress={onShowCustomerNotHome}
-                        style={{ flex: 1, borderColor: c.borderHard }}
-                        textColor={c.textLabel}
+                        style={{ flex: 1 }}
+                        buttonColor={isDarkMode ? '#27272a' : '#f4f4f5'}
+                        textColor={c.textTitle}
                         disabled={isLoading}
                     >
                         Not Home
                     </Button>
                 )}
                 <Button
-                    mode="outlined"
+                    mode="contained-tonal"
                     onPress={onShowCancelModal}
-                    style={{ flex: 1, borderColor: c.errorText }}
-                    textColor={c.errorText}
+                    style={{ flex: 1 }}
+                    buttonColor={isDarkMode ? '#450a0a' : '#fee2e2'}
+                    textColor={isDarkMode ? '#fca5a5' : '#ef4444'}
                     disabled={isLoading}
                 >
                     Cancel
@@ -1509,126 +1499,61 @@ export default function DropoffVerification({
 }
 
 const styles = StyleSheet.create({
-    container: { flex: 1 },
-    statusCard: {
-        marginBottom: 20,
-        borderRadius: 16,
-        borderWidth: 2,
-        elevation: 3,
-        backgroundColor: 'white',
+    container: {
+        flex: 1,
+        paddingBottom: 24,
     },
-    borderSuccess: { borderColor: '#22c55e' },
-    borderError: { borderColor: '#ef4444' },
-    statusHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
-    distanceBadge: { backgroundColor: '#F3F4F6', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12 },
-    distanceText: { fontSize: 12, fontFamily: 'Inter_700Bold', color: '#4B5563' },
-    checksContainer: { marginBottom: 20 },
-    checksRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginBottom: 8 },
-    checkItem: { alignItems: 'center', width: 90 },
-    checkCircle: {
-        width: 48, height: 48, borderRadius: 24, alignItems: 'center', justifyContent: 'center',
-        marginBottom: 8, borderWidth: 2, borderColor: 'white', elevation: 2,
-    },
-    checkIcon: { fontSize: 24, color: 'white', fontFamily: 'Inter_700Bold' },
-    bgSuccess: { backgroundColor: '#22c55e' },
-    bgError: { backgroundColor: '#ef4444' },
-    bgWarning: { backgroundColor: '#F59E0B' },
-    checkLabel: { fontSize: 12, color: '#555', fontFamily: 'Inter_600SemiBold' },
-    checkDivider: { height: 2, width: 20, backgroundColor: '#E5E7EB', marginHorizontal: 6, top: -14 },
-    statusMessageContainer: { padding: 12, borderRadius: 8, marginBottom: 16, alignItems: 'center' },
-    bgSubtleSuccess: { backgroundColor: '#DCFCE7' },
-    bgSubtleError: { backgroundColor: '#FEE2E2' },
-    statusMessageText: { textAlign: 'center', fontSize: 13, fontFamily: 'Inter_600SemiBold' },
-    textSuccess: { color: '#15803d' },
-    textError: { color: '#B91C1C' },
-    addressRow: { flexDirection: 'row', alignItems: 'center', borderTopWidth: 1, borderTopColor: '#f0f0f0', paddingTop: 12 },
-    addressLabel: { fontSize: 10, color: '#888', fontFamily: 'Inter_700Bold', marginBottom: 2 },
-    address: { fontSize: 14, color: '#333' },
-    navActions: { flexDirection: 'row', alignItems: 'center' },
-    actionCard: { backgroundColor: 'white', borderRadius: 12, elevation: 1, marginBottom: 20 },
-    actionTitle: { fontSize: 14, fontFamily: 'Inter_700Bold', color: '#1a1a1a', marginBottom: 4 },
-    proofPanel: {
-        marginTop: 12,
-        borderWidth: 1,
-        borderColor: '#e2e8f0',
-        borderRadius: 10,
-        padding: 10,
-        backgroundColor: '#f8fafc',
-    },
-    proofTitle: {
-        fontSize: 12,
-        fontFamily: 'Inter_700Bold',
-        color: '#334155',
-        marginBottom: 8,
-    },
-    proofImage: {
-        width: '100%',
-        height: 180,
-        borderRadius: 8,
-        backgroundColor: '#e2e8f0',
-    },
-    hiddenProofImage: {
-        position: 'absolute',
-        width: 1,
-        height: 1,
-        opacity: 0,
-    },
-    fallbackImage: {
-        width: '100%',
-        height: 160,
-        borderRadius: 8,
-        marginTop: 10,
-        backgroundColor: '#e2e8f0',
-    },
-    proofHintPending: {
-        color: '#475569',
-        fontSize: 12,
-        textAlign: 'center',
-    },
-    proofHintSuccess: {
-        marginTop: 8,
-        color: '#15803d',
-        fontSize: 12,
-        textAlign: 'center',
-        fontFamily: 'Inter_600SemiBold',
-    },
-    // ──── Geofence Map Preview ────
-    finalProofNotice: {
-        marginTop: 10,
+    modernHeader: {
         flexDirection: 'row',
         alignItems: 'center',
-        borderWidth: 1,
-        borderRadius: 8,
-        padding: 10,
+        marginBottom: 20,
     },
-    finalProofNoticeText: {
-        flex: 1,
-        marginLeft: 10,
+    modernHeaderIcon: {
+        width: 48,
+        height: 48,
+        borderRadius: 24,
+        alignItems: 'center',
+        justifyContent: 'center',
     },
-    finalProofNoticeTitle: {
-        fontSize: 12,
+    modernHeaderTitle: {
+        fontSize: 18,
         fontFamily: 'Inter_700Bold',
+        marginBottom: 2,
     },
-    finalProofNoticeBody: {
-        marginTop: 2,
-        fontSize: 12,
-        lineHeight: 16,
+    modernHeaderSubtitle: {
+        fontSize: 14,
+        fontFamily: 'Inter_500Medium',
     },
-    finalProofProgressTrack: {
-        height: 4,
-        borderRadius: 999,
-        overflow: 'hidden',
-        marginTop: 8,
+    checksContainer: {
+        marginBottom: 20,
     },
-    finalProofProgressFill: {
-        height: '100%',
-        borderRadius: 999,
+    checksRowMulti: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        gap: 8,
+        justifyContent: 'center',
+    },
+    minimalCheckBadge: {
+        paddingHorizontal: 10,
+        paddingVertical: 6,
+        borderRadius: 8,
+    },
+    statusMessageContainer: {
+        padding: 12,
+        borderRadius: 8,
+        marginBottom: 16,
+        alignItems: 'center',
+    },
+    statusMessageText: {
+        textAlign: 'center',
+        fontSize: 13,
+        fontFamily: 'Inter_600SemiBold',
     },
     mapContainer: {
         height: 180,
-        borderRadius: 12,
+        borderRadius: 16,
         overflow: 'hidden',
-        marginBottom: 16,
+        marginBottom: 24,
         position: 'relative',
     },
     map: {
@@ -1643,30 +1568,6 @@ const styles = StyleSheet.create({
     targetMarkerText: {
         fontSize: 24,
     },
-    riderMarkerOuter: {
-        width: 40,
-        height: 40,
-        borderRadius: 20,
-        backgroundColor: 'white',
-        alignItems: 'center',
-        justifyContent: 'center',
-        borderWidth: 2.5,
-        borderColor: '#0f172a',
-        overflow: 'hidden',
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.3,
-        shadowRadius: 4,
-        elevation: 6,
-    },
-    riderMarkerOuterInside: {
-        borderColor: '#22c55e',
-    },
-    riderMarkerImage: {
-        width: 35,
-        height: 35,
-        borderRadius: 17.5,
-    },
     mapDistanceOverlay: {
         position: 'absolute',
         bottom: 8,
@@ -1679,13 +1580,196 @@ const styles = StyleSheet.create({
         fontSize: 12,
         fontFamily: 'Inter_700Bold',
     },
-    // ──── Text Proximity Fallback ────
     proximityFallback: {
         padding: 16,
         borderRadius: 10,
-        marginBottom: 16,
+        marginBottom: 24,
         alignItems: 'center',
         borderWidth: 1,
+    },
+    boxControlSection: {
+        paddingHorizontal: 4,
+    },
+    boxControlHeader: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        marginBottom: 16,
+    },
+    boxControlTitle: {
+        fontSize: 16,
+        fontFamily: 'Inter_700Bold',
+    },
+    connectionDot: {
+        width: 6,
+        height: 6,
+        borderRadius: 3,
+    },
+    connectionText: {
+        fontSize: 12,
+        fontFamily: 'Inter_600SemiBold',
+    },
+    manualOverrideRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        paddingVertical: 12,
+        borderTopWidth: 1,
+    },
+    manualOverrideText: {
+        fontSize: 14,
+        fontFamily: 'Inter_600SemiBold',
+    },
+    boxButton: {
+        flex: 1,
+        borderRadius: 8,
+        borderWidth: 1,
+    },
+    boxAlertText: {
+        marginTop: 16,
+        fontSize: 13,
+        fontFamily: 'Inter_500Medium',
+        textAlign: 'center',
+    },
+    autoControlsMsg: {
+        paddingVertical: 16,
+        borderTopWidth: 1,
+    },
+
+    detailsBlock: {
+        borderRadius: 16,
+        borderWidth: 1,
+        marginBottom: 24,
+        overflow: 'hidden',
+    },
+    locationHeaderRow: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        padding: 16,
+    },
+    sectionLabel: {
+        fontSize: 11,
+        fontFamily: 'Inter_700Bold',
+        marginBottom: 4,
+        letterSpacing: 0.5,
+    },
+    detailText: {
+        fontSize: 15,
+        fontFamily: 'Inter_600SemiBold',
+        lineHeight: 22,
+    },
+    senderRow: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        padding: 16,
+        borderTopWidth: 1,
+    },
+    actionButtons: {
+        flexDirection: 'row',
+        gap: 8,
+    },
+    notesRow: {
+        padding: 16,
+    },
+    verificationBlock: {
+        borderRadius: 16,
+        borderWidth: 1,
+        marginBottom: 24,
+        overflow: 'hidden',
+    },
+    verificationHeader: {
+        padding: 16,
+        borderBottomWidth: 1,
+        borderBottomColor: 'rgba(150,150,150,0.1)',
+    },
+    verificationTitle: {
+        fontSize: 16,
+        fontFamily: 'Inter_700Bold',
+    },
+    proofPanel: {
+        borderWidth: 1,
+        borderRadius: 16,
+        padding: 16,
+        alignItems: 'center',
+    },
+    proofTitle: {
+        fontSize: 14,
+        fontFamily: 'Inter_700Bold',
+        marginBottom: 12,
+    },
+    photoPreviewWrapper: {
+        borderRadius: 16,
+        overflow: 'hidden',
+        borderWidth: 2,
+        width: '100%',
+    },
+    photoImage: {
+        width: '100%',
+        height: 220,
+    },
+    hiddenProofImage: {
+        position: 'absolute',
+        width: 1,
+        height: 1,
+        opacity: 0,
+    },
+    photoVerifiedOverlay: {
+        position: 'absolute',
+        bottom: 0,
+        left: 0,
+        right: 0,
+        padding: 12,
+        backgroundColor: 'rgba(0,0,0,0.65)',
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    photoVerifiedText: {
+        color: '#fff',
+        fontSize: 13,
+        fontFamily: 'Inter_600SemiBold',
+    },
+    proofHintPending: {
+        fontSize: 12,
+        textAlign: 'center',
+    },
+    proofHintSuccess: {
+        marginTop: 12,
+        fontSize: 12,
+        textAlign: 'center',
+        fontFamily: 'Inter_600SemiBold',
+    },
+    finalProofNotice: {
+        marginTop: 16,
+        flexDirection: 'row',
+        alignItems: 'center',
+        borderWidth: 1,
+        borderRadius: 12,
+        padding: 12,
+    },
+    finalProofNoticeText: {
+        flex: 1,
+        marginLeft: 12,
+    },
+    finalProofNoticeTitle: {
+        fontSize: 13,
+        fontFamily: 'Inter_700Bold',
+    },
+    finalProofNoticeBody: {
+        marginTop: 2,
+        fontSize: 12,
+        lineHeight: 16,
+    },
+    finalProofProgressTrack: {
+        height: 6,
+        borderRadius: 3,
+        overflow: 'hidden',
+        marginTop: 8,
+    },
+    finalProofProgressFill: {
+        height: '100%',
     },
     proximityText: {
         fontSize: 13,

@@ -85,6 +85,19 @@ const normalizePhoneInput = (value: string) => {
 
 const isValidPhoneNumber = (value: string) => /^09\d{9}$/.test(value.trim());
 
+const SERVICE_AREA_LABEL = 'Metro Manila and Cavite';
+
+const SERVICE_AREA_BOUNDS = {
+    north: 14.8,
+    south: 13.6,
+    east: 121.15,
+    west: 120.55,
+};
+
+const isWithinServiceArea = (latitude: number, longitude: number): boolean => {
+    return latitude >= SERVICE_AREA_BOUNDS.south && latitude <= SERVICE_AREA_BOUNDS.north && longitude >= SERVICE_AREA_BOUNDS.west && longitude <= SERVICE_AREA_BOUNDS.east;
+};
+
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { PremiumAlert } from '../../services/PremiumAlertService';
 import { useEntryAnimation } from '../../hooks/useEntryAnimation';
@@ -714,6 +727,11 @@ export default function BookServiceScreen() {
     const handleConfirmPendingLocation = () => {
         if (!pendingCoords || pendingAddress === 'Locating...') return;
 
+        if (!isWithinServiceArea(pendingCoords.latitude, pendingCoords.longitude)) {
+            PremiumAlert.alert('Out of Service Area', `We only accept bookings within ${SERVICE_AREA_LABEL}.`);
+            return;
+        }
+
         const finalAddress = pendingAddress || `${pendingCoords.latitude.toFixed(4)}, ${pendingCoords.longitude.toFixed(4)}`;
 
         if (activeField === 'pickup') {
@@ -786,9 +804,19 @@ export default function BookServiceScreen() {
 
         if (!coords) return;
 
+        if (!isWithinServiceArea(coords.latitude, coords.longitude)) {
+            PremiumAlert.alert('Out of Service Area', `We only accept bookings within ${SERVICE_AREA_LABEL}.`);
+            return;
+        }
+
         // Snap to nearest road so the rider can always reach the selected location
         const snappedRoad = await snapToNearestRoad(coords.latitude, coords.longitude);
         coords = snappedRoad;
+
+        if (!isWithinServiceArea(coords.latitude, coords.longitude)) {
+            PremiumAlert.alert('Out of Service Area', `We only accept bookings within ${SERVICE_AREA_LABEL}.`);
+            return;
+        }
 
         // Animate camera
         cameraRef.current?.setCamera({
@@ -882,6 +910,11 @@ export default function BookServiceScreen() {
 
     const calculateRoute = async () => {
         if (!pickupCoords || !dropoffCoords) {
+            setRouteData(null);
+            return;
+        }
+
+        if (!isWithinServiceArea(pickupCoords.latitude, pickupCoords.longitude) || !isWithinServiceArea(dropoffCoords.latitude, dropoffCoords.longitude)) {
             setRouteData(null);
             return;
         }

@@ -9,6 +9,18 @@ import { calculateFare, PRICING } from '../services/pricingService';
 
 const MAPBOX_TOKEN = process.env.EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN;
 const GOOGLE_MAPS_TOKEN = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY;
+const SERVICE_AREA_LABEL = 'Metro Manila and Cavite';
+
+const SERVICE_AREA_BOUNDS = {
+    north: 14.8,
+    south: 13.6,
+    east: 121.15,
+    west: 120.55,
+};
+
+const isWithinServiceArea = (latitude: number, longitude: number): boolean => {
+    return latitude >= SERVICE_AREA_BOUNDS.south && latitude <= SERVICE_AREA_BOUNDS.north && longitude >= SERVICE_AREA_BOUNDS.west && longitude <= SERVICE_AREA_BOUNDS.east;
+};
 
 type MapboxSuggestion = {
     id: string;
@@ -109,6 +121,11 @@ export default function FareEstimator() {
                 } catch (geocodeError) {
                     console.warn('Reverse geocoding fallback failed', geocodeError);
                 }
+            }
+
+            if (!isWithinServiceArea(location.coords.latitude, location.coords.longitude)) {
+                setError(`We only estimate fares within ${SERVICE_AREA_LABEL}.`);
+                return;
             }
 
             setFromCoords({ latitude: location.coords.latitude, longitude: location.coords.longitude });
@@ -212,6 +229,11 @@ export default function FareEstimator() {
         }
 
         if (!coords) return;
+
+        if (!isWithinServiceArea(coords.latitude, coords.longitude)) {
+            setError(`Please choose a location within ${SERVICE_AREA_LABEL}.`);
+            return;
+        }
         
         if (activeField === 'from') {
             setFromCoords(coords);
@@ -227,6 +249,12 @@ export default function FareEstimator() {
 
     const calculateRouteAndFare = async () => {
         if (!fromCoords || !toCoords || !MAPBOX_TOKEN) return;
+
+        if (!isWithinServiceArea(fromCoords.latitude, fromCoords.longitude) || !isWithinServiceArea(toCoords.latitude, toCoords.longitude)) {
+            setError(`We only estimate fares within ${SERVICE_AREA_LABEL}.`);
+            setRouteData(null);
+            return;
+        }
         
         setIsEstimating(true);
         setError(null);

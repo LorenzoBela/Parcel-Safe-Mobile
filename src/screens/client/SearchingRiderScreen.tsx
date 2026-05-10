@@ -17,6 +17,7 @@ import { generateShareToken } from '../../utils/tokenUtils';
 import {
     startOngoingNotification,
 } from '../../services/pushNotificationService';
+import CancellationProgressOverlay, { CancellationStep } from '../../components/modals/CancellationProgressOverlay';
 import useAuthStore from '../../store/authStore';
 import { PremiumAlert } from '../../services/PremiumAlertService';
 import { useEntryAnimation } from '../../hooks/useEntryAnimation';
@@ -55,6 +56,9 @@ export default function SearchingRiderScreen() {
     const [shareToken] = useState(existingShareToken || generateShareToken());
 
     const [notifiedRidersCount, setNotifiedRidersCount] = useState(0);
+    const [cancelInProgress, setCancelInProgress] = useState(false);
+    const [cancellationStep, setCancellationStep] = useState<CancellationStep>('VALIDATING');
+    const [cancellationError, setCancellationError] = useState<string | null>(null);
     const authedUserId = useAuthStore((state: any) => state.user?.userId) as string | undefined;
 
     // Animation constants
@@ -280,14 +284,39 @@ export default function SearchingRiderScreen() {
                     // EC-Fix: Cancel the booking in backend to prevent auto-resume loop
                     onPress: async () => {
                         try {
+                            setCancelInProgress(true);
+                            setCancellationError(null);
+                            setCancellationStep('VALIDATING');
+                            
                             if (bookingId) {
                                 console.log(`[Booking] User cancelled booking ${bookingId}`);
-                                await cancelBooking(bookingId);
+                                
+                                // Simulate progress steps
+                                setTimeout(() => setCancellationStep('REVOKING_OTP'), 500);
+                                setTimeout(() => setCancellationStep('GENERATING_RETURN_OTP'), 1100);
+                                setTimeout(() => setCancellationStep('UPDATING_DATABASE'), 2100);
+                                setTimeout(() => setCancellationStep('CONFIRMING_STATUS'), 3100);
+                                
+                                const result = await cancelBooking(bookingId);
+                                
+                                if (result) {
+                                    console.log(`[Booking] Booking cancelled successfully`);
+                                    setCancellationStep('COMPLETE');
+                                    
+                                    // Wait for completion animation
+                                    await new Promise(resolve => setTimeout(resolve, 800));
+                                    navigation.goBack();
+                                } else {
+                                    setCancellationStep('ERROR');
+                                    setCancellationError('Failed to cancel booking. Please try again.');
+                                    setCancelInProgress(false);
+                                }
                             }
                         } catch (error) {
                             console.error(`[Booking] Error cancelling booking: ${error}`);
-                        } finally {
-                            navigation.goBack();
+                            setCancellationStep('ERROR');
+                            setCancellationError(error instanceof Error ? error.message : 'An error occurred while cancelling');
+                            setCancelInProgress(false);
                         }
                     }
                 },
@@ -457,6 +486,14 @@ export default function SearchingRiderScreen() {
                     </Button>
                 )}
             </View>
+
+            {/* Cancellation Progress Overlay */}
+            <CancellationProgressOverlay
+                visible={cancelInProgress}
+                deliveryId={bookingId}
+                currentStep={cancellationStep}
+                error={cancellationError}
+            />
         </View>
     );
 }

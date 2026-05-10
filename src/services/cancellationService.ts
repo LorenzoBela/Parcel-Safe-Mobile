@@ -24,6 +24,10 @@ const API_BASE_URL = (
 export const RETURN_OTP_VALIDITY_MS = 86400000; // 24 hours
 export const RETURN_OTP_LENGTH = 6;
 
+// Deduplication: track recent cancellation requests to prevent double-submission
+const recentCancellationRequests = new Map<string, number>();
+const DEDUP_WINDOW_MS = 2000; // 2 second dedup window
+
 // ==================== Enums ====================
 export enum CancellationReason {
   CUSTOMER_UNAVAILABLE = 'CUSTOMER_UNAVAILABLE',
@@ -204,11 +208,24 @@ export function formatCancellationReason(reason: CancellationReason): string {
 export async function requestCancellation(
   request: CancellationRequest
 ): Promise<CancellationResult> {
+  // ---- Deduplication: prevent double submissions within 2 seconds ----
+  const now = Date.now();
+  const lastRequestTime = recentCancellationRequests.get(request.deliveryId);
+  if (lastRequestTime && (now - lastRequestTime) < DEDUP_WINDOW_MS) {
+    console.warn('[EC-32] Duplicate cancellation request for', request.deliveryId, '- rejected');
+    return { success: false, error: 'Cancellation already in progress. Please wait.' };
+  }
+  recentCancellationRequests.set(request.deliveryId, now);
+
   // Validate request
   const validation = validateCancellationRequest(request);
   if (!validation.valid) {
+    console.warn('[EC-32] Cancellation validation failed:', validation.error);
+    recentCancellationRequests.delete(request.deliveryId); // clear on validation failure
     return { success: false, error: validation.error };
   }
+
+  console.log('[EC-32] Starting cancellation for delivery:', request.deliveryId, 'status:', request.currentStatus, 'reason:', request.reason);
 
   const database = getFirebaseDatabase();
   const currentTime = Date.now();
@@ -286,35 +303,52 @@ export async function requestCancellation(
     // Supabase drifted. The outer catch handles transient errors and surfaces
     // them to the rider so they can retry.
     const token = await getAccessToken();
+    console.log('[EC-32] Auth token obtained, calling transition API with newStatus:', newStatus);
+    
+    const transitionPayload = {
+      deliveryId: request.deliveryId,
+      toStatus: newStatus,
+      cancellationReason: formatCancellationReason(request.reason),
+      metadata: { reasonDetails: request.reasonDetails, returnOtp },
+    };
+    console.log('[EC-32] Transition payload:', transitionPayload);
+    
     const response = await fetch(`${API_BASE_URL}/api/deliveries/transition`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${token}`,
       },
-      body: JSON.stringify({
-        deliveryId: request.deliveryId,
-        toStatus: newStatus,
-        cancellationReason: formatCancellationReason(request.reason),
-        metadata: { reasonDetails: request.reasonDetails, returnOtp },
-      }),
+      body: JSON.stringify(transitionPayload),
     });
 
     if (!response.ok) {
-      const errText = await response.text().catch(() => '');
+      let errText = '';
+      try {
+        const errorData = await response.json();
+        errText = errorData.error || JSON.stringify(errorData);
+      } catch {
+        errText = await response.text().catch(() => '');
+      }
       console.error('[EC-32] Transition API rejected cancellation:', response.status, errText);
+      console.error('[EC-32] Failed transition payload was:', transitionPayload);
       return {
         success: false,
         error: errText || `Cancellation rejected by server (${response.status}).`,
       };
     }
 
+    console.log('[EC-32] ✓ Cancellation succeeded! Transition API returned OK');
+    // Keep the request in the dedup map so any rapid retries are rejected
+    // (map will naturally expire after DEDUP_WINDOW_MS)
     return {
       success: true,
       returnOtp: returnOtp,
     };
   } catch (error) {
     console.error('[EC-32] Cancellation failed:', error);
+    // Clear on error so user can retry
+    recentCancellationRequests.delete(request.deliveryId);
     return {
       success: false,
       error: error instanceof Error ? error.message : 'Cancellation failed',
