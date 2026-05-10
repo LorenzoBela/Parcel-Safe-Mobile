@@ -3423,11 +3423,13 @@ export default function RiderDashboard() {
                                         deliveryNotes: (nextDelivery as any).delivery_notes || (activeDelivery as any)?.delivery_notes,
                                         riderName: riderName,
                                         pickupAddress: nextDelivery.pickupAddress,
-                                        pickupLat: nextDelivery.pickupLat,
-                                        pickupLng: nextDelivery.pickupLng,
+                                        pickupLat: nextDelivery.snappedPickupLat ?? nextDelivery.pickupLat,
+                                        pickupLng: nextDelivery.snappedPickupLng ?? nextDelivery.pickupLng,
                                         dropoffAddress: nextDelivery.address,
-                                        dropoffLat: nextDelivery.dropoffLat,
-                                        dropoffLng: nextDelivery.dropoffLng,
+                                        dropoffLat: nextDelivery.snappedDropoffLat ?? nextDelivery.dropoffLat,
+                                        dropoffLng: nextDelivery.snappedDropoffLng ?? nextDelivery.dropoffLng,
+                                        // EC-FIX: Pass status so ArrivalScreen initializes geofenceTarget correctly
+                                        status: activeDelivery.status,
                                     });
                                 }}>
                                     <Animated.View style={[{ width: '100%', marginBottom: 12 }, startTripPress.style]}>

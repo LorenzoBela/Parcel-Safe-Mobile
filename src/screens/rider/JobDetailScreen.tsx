@@ -192,6 +192,8 @@ export default function JobDetailScreen() {
             dropoffLng: jobData.snappedDropoffLng ?? jobData.dropoffLng,
             dropoffAddress: jobData.address,
             samePickupDropoff,
+            // EC-FIX: Pass status so ArrivalScreen initializes geofenceTarget correctly
+            status: jobData.status,
         });
     };
     // Helper to ensure time is in PH format

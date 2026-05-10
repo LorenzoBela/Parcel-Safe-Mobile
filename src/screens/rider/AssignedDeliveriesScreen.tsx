@@ -502,7 +502,9 @@ export default function AssignedDeliveriesScreen() {
                                         dropoffLat: item.snappedDropoffLat ?? item.dropoffLat,
                                         dropoffLng: item.snappedDropoffLng ?? item.dropoffLng,
                                         dropoffAddress: item.address,
-                                        riderName: (useAuthStore.getState() as any).user?.fullName || 'Rider'
+                                        riderName: (useAuthStore.getState() as any).user?.fullName || 'Rider',
+                                        // EC-FIX: Pass status so ArrivalScreen initializes geofenceTarget correctly
+                                        status: item.status,
                                     });
                                 }}
                                 activeOpacity={0.8}

@@ -148,7 +148,7 @@ export async function uploadDeliveryProofPhoto(params: {
 
         // Read file as Base64 to bypass fetch(blob) network issues on Android
         const base64 = await FileSystem.readAsStringAsync(uploadUri, {
-            encoding: 'base64', // Use string literal to avoid type errors
+            encoding: 'base64',
         });
         const arrayBuffer = base64ToUint8Array(base64);
 
@@ -202,6 +202,7 @@ export async function uploadDeliveryProofPhoto(params: {
 /**
  * Upload a pickup proof photo to Supabase Storage and log to Firebase.
  * Same pattern as uploadDeliveryProofPhoto but stored under pickup/ prefix.
+ * Includes auto-retry on auth failures (stale session after backgrounding).
  */
 export async function uploadPickupPhoto(params: {
     deliveryId: string;
@@ -210,61 +211,81 @@ export async function uploadPickupPhoto(params: {
 }): Promise<{ success: boolean; url?: string; error?: string }> {
     const { deliveryId, boxId, localUri } = params;
 
-    try {
-        const compression = await compressImage(localUri);
-        const uploadUri = compression.success ? compression.compressedUri : localUri;
+    // Inner attempt — extracted to allow a single auto-retry on auth failure.
+    const attempt = async (label: string): Promise<{ success: boolean; url?: string; error?: string }> => {
+        try {
+            const compression = await compressImage(localUri);
+            const uploadUri = compression.success ? compression.compressedUri : localUri;
 
-        // Read file as Base64 to bypass fetch(blob) network issues on Android
-        const base64 = await FileSystem.readAsStringAsync(uploadUri, {
-            encoding: 'base64', // Use string literal to avoid type errors
-        });
-        const arrayBuffer = base64ToUint8Array(base64);
+            const base64 = await FileSystem.readAsStringAsync(uploadUri, {
+                encoding: 'base64',
+            });
+            const arrayBuffer = base64ToUint8Array(base64);
 
-        // Ensure auth is synced before upload — abort early if session is invalid
-        const sessionOk = await syncStorageSession();
-        if (!sessionOk) {
-            console.error('[ProofPhoto] Aborting pickup photo upload: no authenticated session.');
-            return { success: false, error: 'Authentication session not available. Please sign in and try again.' };
-        }
-        const storage = getStorageClient();
+            const sessionOk = await syncStorageSession();
+            if (!sessionOk) {
+                console.error(`[ProofPhoto] Aborting pickup photo upload (${label}): no authenticated session.`);
+                return { success: false, error: 'Authentication session not available. Please sign in and try again.' };
+            }
+            const storage = getStorageClient();
 
-        const fileName = `${deliveryId}_${Date.now()}.jpg`;
-        const objectPath = `pickup/${boxId}/${fileName}`;
+            const fileName = `${deliveryId}_${Date.now()}.jpg`;
+            const objectPath = `pickup/${boxId}/${fileName}`;
 
-        const { data, error } = await storage.storage
-            .from(PROOF_PHOTOS_BUCKET)
-            .upload(objectPath, arrayBuffer, {
-                contentType: 'image/jpeg',
-                upsert: false,
+            const { data, error } = await storage.storage
+                .from(PROOF_PHOTOS_BUCKET)
+                .upload(objectPath, arrayBuffer, {
+                    contentType: 'image/jpeg',
+                    upsert: false,
+                });
+
+            if (error || !data?.path) {
+                console.error(`[ProofPhoto] Pickup upload failed (${label}):`, error);
+                return { success: false, error: error?.message || 'Upload failed' };
+            }
+
+            const { data: urlData } = storage.storage
+                .from(PROOF_PHOTOS_BUCKET)
+                .getPublicUrl(data.path);
+
+            const url = urlData.publicUrl;
+
+            const db = getFirebaseDatabase();
+            await update(dbRef(db, `/deliveries/${deliveryId}`), {
+                pickup_photo_url: url,
+                pickup_photo_uploaded_at: Date.now(),
+                pickup_photo_storage_path: data.path,
+                proof_photo_storage_provider: 'supabase',
             });
 
-        if (error || !data?.path) {
-            console.error('[ProofPhoto] Pickup upload failed:', error);
-            return { success: false, error: error?.message || 'Upload failed' };
+            return { success: true, url };
+        } catch (error) {
+            console.error(`[ProofPhoto] Exception during pickup upload (${label}):`, error);
+            return {
+                success: false,
+                error: error instanceof Error ? error.message : String(error),
+            };
         }
+    };
 
-        const { data: urlData } = storage.storage
-            .from(PROOF_PHOTOS_BUCKET)
-            .getPublicUrl(data.path);
+    // First attempt
+    const firstResult = await attempt('attempt-1');
+    if (firstResult.success) return firstResult;
 
-        const url = urlData.publicUrl;
+    // Auto-retry on auth failures: force-clear cached storage client
+    const errMsg = (firstResult.error || '').toLowerCase();
+    const isAuthError =
+        errMsg.includes('401') || errMsg.includes('403') ||
+        errMsg.includes('auth') || errMsg.includes('session') ||
+        errMsg.includes('jwt') || errMsg.includes('token');
 
-        const db = getFirebaseDatabase();
-        await update(dbRef(db, `/deliveries/${deliveryId}`), {
-            pickup_photo_url: url,
-            pickup_photo_uploaded_at: Date.now(),
-            pickup_photo_storage_path: data.path,
-            proof_photo_storage_provider: 'supabase', // Also mark provider here for consistency
-        });
-
-        return { success: true, url };
-    } catch (error) {
-        console.error('[ProofPhoto] Exception during pickup upload:', error);
-        return {
-            success: false,
-            error: error instanceof Error ? error.message : String(error),
-        };
+    if (isAuthError) {
+        console.warn('[ProofPhoto] Auth failure detected. Forcing session refresh and retrying...');
+        storageClient = null;
+        return attempt('retry-after-auth-refresh');
     }
+
+    return firstResult;
 }
 
 /**

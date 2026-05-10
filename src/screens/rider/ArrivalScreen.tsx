@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { View, StyleSheet, Alert, ScrollView, Platform, Linking, Animated, ActivityIndicator, AppState, AppStateStatus } from 'react-native';
 import { useEntryAnimation } from '../../hooks/useEntryAnimation';
 import { Text, Button, Card, TextInput, Portal, Modal, IconButton } from 'react-native-paper';
@@ -151,6 +151,7 @@ interface RouteParams {
     dropoffAddress?: string;
     samePickupDropoff?: boolean;
     status?: string;
+    otpCode?: string;
 }
 
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -159,8 +160,11 @@ import { PremiumAlert } from '../../services/PremiumAlertService';
 const BATTERY_HANDOFF_TIMEOUT_MS = 15 * 60 * 1000;
 const PHONE_PICKUP_CLEAR_INSIDE_MAX_M = 40;
 const PHONE_PICKUP_CLEAR_INSIDE_RATIO = 0.8;
-const PHONE_DROPOFF_CLEAR_INSIDE_MAX_M = 40;
-const PHONE_DROPOFF_CLEAR_INSIDE_RATIO = 0.8;
+// EC-FIX v2: Tightened from 40m/0.8 to 15m/0.3 — at dropoff, a single GPS
+// reading must be within 15m of center to bypass the 3-reading hysteresis.
+// This prevents a single inaccurate phone GPS fix from instantly triggering ARRIVED.
+const PHONE_DROPOFF_CLEAR_INSIDE_MAX_M = 15;
+const PHONE_DROPOFF_CLEAR_INSIDE_RATIO = 0.3;
 const PICKUP_PHONE_DISTANCE_INTERVAL_M = 1;
 const DROPOFF_PHONE_DISTANCE_INTERVAL_M = 1;
 const DEFAULT_PHONE_DISTANCE_INTERVAL_M = 5;
@@ -172,6 +176,17 @@ const DROPOFF_ARRIVAL_CONFIRMATION_RETRY_MS = 4000;
 const DROPOFF_ARRIVAL_RETRYABLE_STATUSES = new Set(['IN_TRANSIT', 'PICKED_UP', 'ARRIVED']);
 const DROPOFF_ARRIVAL_CONFIRMED_STATUSES = new Set(['ARRIVED', 'COMPLETED']);
 const SAME_PICKUP_DROPOFF_RADIUS_M = 25;
+// EC-FIX: Cooldown period after geofence target switch to prevent stale GPS
+// evaluations from the old geofence center causing premature ARRIVED.
+const GEOFENCE_TRANSITION_COOLDOWN_MS = 2000;
+// EC-FIX v2: Maximum acceptable GPS accuracy (meters) for dropoff geofence
+// decisions. Readings with worse accuracy are ignored to prevent false arrivals.
+const DROPOFF_MAX_ACCEPTABLE_ACCURACY_M = 30;
+// Ignore stale phone fixes so cached pickup coordinates cannot keep the rider
+// marked inside the zone after they have moved away.
+const PHONE_GPS_MAX_FIX_AGE_MS = 10000;
+// Treat old box fixes as stale so delayed readings cannot keep the rider inside.
+const BOX_GPS_MAX_FIX_AGE_MS = 15000;
 
 type GeofenceTarget = 'pickup' | 'dropoff' | 'return_pickup';
 
@@ -184,2204 +199,6 @@ function formatRemainingMinutesSeconds(remainingMs: number): string {
     const minutes = Math.floor(clamped / 60000);
     const seconds = Math.floor((clamped % 60000) / 1000);
     return `${minutes}:${seconds.toString().padStart(2, '0')}`;
-}
-
-export default function ArrivalScreen() {
-    const navigation = useNavigation<any>();
-    const route = useRoute();
-    const params = route.params as RouteParams | undefined;
-    const insets = useSafeAreaInsets();
-    const { isDarkMode } = useAppTheme();
-    const c = {
-        background: isDarkMode ? '#121212' : '#f8f9fa',
-        text: isDarkMode ? '#ffffff' : '#1a1a1a',
-        modalBg: isDarkMode ? '#1e1e1e' : 'white',
-        modalText: isDarkMode ? '#e4e4e7' : '#666',
-        card: isDarkMode ? '#1e1e1e' : '#ffffff',
-        border: isDarkMode ? '#27272a' : '#e5e7eb',
-    };
-
-    if (!params?.deliveryId || !params?.boxId) {
-        return (
-            <View style={[styles.container, { justifyContent: 'center', padding: 24, backgroundColor: c.background }]}>
-                <Text variant="titleMedium" style={{ marginBottom: 12, color: c.text }}>
-                    Missing delivery context.
-                </Text>
-                <Button mode="contained" onPress={() => navigation.goBack()}>
-                    Go Back
-                </Button>
-            </View>
-        );
-    }
-
-    // Geofence State
-    // EC-XX: Dual-Check Geofence State
-    const [isInsideGeoFence, setIsInsideGeoFence] = useState(false); // Master switch (Phone && (Box || Offline || Fallback))
-    const [isPhoneInside, setIsPhoneInside] = useState(false);
-    const [isBoxInside, setIsBoxInside] = useState(false);
-    const [isBoxOffline, setIsBoxOffline] = useState(false);
-    const [isPhoneOnlyFallback, setIsPhoneOnlyFallback] = useState(false); // EC-FIX: Phone-only fallback when box is stuck
-    const [boxLocationLastSeen, setBoxLocationLastSeen] = useState<number>(0);
-    const [phoneLocationLastSeen, setPhoneLocationLastSeen] = useState<number>(0);
-    const [boxLocationSubscriptionEpoch, setBoxLocationSubscriptionEpoch] = useState(0);
-    const phoneGeofenceStateRef = useRef<GeofenceStabilityState>(createInitialState());
-    const boxGeofenceStateRef = useRef<GeofenceStabilityState>(createInitialState());
-    const masterSwitchDebounceRef = useRef<NodeJS.Timeout | null>(null);
-    const masterDecisionRef = useRef<boolean>(false);
-    const boxOfflineRef = useRef<boolean>(false);
-    const boxOfflineTransitionStartRef = useRef<number>(0);
-    const boxFirstLoadReceivedRef = useRef<boolean>(false); // Tracks whether we've received first box location callback
-    const phoneInsideSinceRef = useRef<number>(0); // Tracks when phone first entered geofence
-
-    const [currentPosition, setCurrentPosition] = useState({ lat: 0, lng: 0, accuracy: 25, heading: 0, speed: 0 });
-    const [localPhoneHeading, setLocalPhoneHeading] = useState<number | null>(null);
-    const headingSmoother = useHeadingSmoothing();
-
-    // EC-FIX: GPS Acquisition Gate — show a loading screen until phone GPS is acquired
-    const [gpsAcquired, setGpsAcquired] = useState(false);
-    const gpsAcquireTimerRef = useRef<NodeJS.Timeout | null>(null);
-    const [geofence, setGeofence] = useState<GeofenceConfig>(
-        createDefaultGeofence(params.targetLat, params.targetLng)
-    );
-    const [geofenceTarget, setGeofenceTarget] = useState<GeofenceTarget>('pickup');
-    const [distanceMeters, setDistanceMeters] = useState<number | null>(null);
-    const [manualRefreshBusy, setManualRefreshBusy] = useState(false);
-    const [dropoffArrivalRetryTick, setDropoffArrivalRetryTick] = useState(0);
-
-    const applyPhonePosition = useCallback((coords: { latitude: number; longitude: number; accuracy: number | null; heading: number | null; speed: number | null }, fallbackAccuracy: number) => {
-        const position = {
-            lat: coords.latitude,
-            lng: coords.longitude,
-            accuracy: coords.accuracy ?? fallbackAccuracy,
-            heading: coords.heading ?? 0,
-            speed: coords.speed ?? 0,
-        };
-        setCurrentPosition(position);
-
-        const now = Date.now();
-        const quality = {
-            hdop: Math.max(0.8, Math.min(8, (position.accuracy || fallbackAccuracy) / 6)),
-            satellites: (position.accuracy || fallbackAccuracy) <= 20 ? 8 : ((position.accuracy || fallbackAccuracy) <= 40 ? 6 : 4),
-            timestamp: now,
-        };
-        const nextState = updateGeofenceState(
-            phoneGeofenceStateRef.current,
-            { lat: position.lat, lng: position.lng },
-            { latitude: geofence.centerLat, longitude: geofence.centerLng },
-            quality,
-            null,
-            now
-        );
-        const geometricResult = checkGeofence(position, geofence);
-        const isPickupTarget = isPickupLikeGeofenceTarget(geofenceTarget);
-        const clearInsideRadiusM = Math.min(
-            geofence.radiusMeters * (isPickupTarget ? PHONE_PICKUP_CLEAR_INSIDE_RATIO : PHONE_DROPOFF_CLEAR_INSIDE_RATIO),
-            isPickupTarget ? PHONE_PICKUP_CLEAR_INSIDE_MAX_M : PHONE_DROPOFF_CLEAR_INSIDE_MAX_M
-        );
-        const isClearInsideFix =
-            (isPickupTarget || geofenceTarget === 'dropoff') &&
-            geometricResult.isInside &&
-            nextState.rawDistanceM <= clearInsideRadiusM;
-        const effectiveState: GeofenceStabilityState = isClearInsideFix && nextState.stableState !== 'INSIDE'
-            ? {
-                ...nextState,
-                stableState: 'INSIDE',
-                rawState: 'INSIDE',
-                hysteresisCount: Math.max(nextState.hysteresisCount, 3),
-                lastStableChangeMs: now,
-            }
-            : nextState;
-
-        phoneGeofenceStateRef.current = effectiveState;
-        setIsPhoneInside(effectiveState.stableState === 'INSIDE');
-        setDistanceMeters(geometricResult.distanceMeters);
-        setPhoneLocationLastSeen(now);
-    }, [geofence, geofenceTarget]);
-
-    // EC-FIX: Derive gpsAcquired — phone GPS is required, box is best-effort (4s timeout)
-    useEffect(() => {
-        if (gpsAcquired) return; // Once acquired, never revert
-
-        const hasPhoneGps = currentPosition.lat !== 0 || currentPosition.lng !== 0;
-        const hasBoxData = boxFirstLoadReceivedRef.current;
-
-        if (hasPhoneGps && (hasBoxData || isBoxOffline)) {
-            setGpsAcquired(true);
-            return;
-        }
-
-        // If phone GPS arrived but box is still pending, wait up to 4s then proceed
-        if (hasPhoneGps && !hasBoxData && !isBoxOffline) {
-            if (!gpsAcquireTimerRef.current) {
-                gpsAcquireTimerRef.current = setTimeout(() => {
-                    setGpsAcquired(true);
-                }, 4000);
-            }
-        }
-
-        // 8s hard timeout — proceed with whatever we have
-        const hardTimeout = setTimeout(() => {
-            setGpsAcquired(true);
-        }, 8000);
-
-        return () => {
-            clearTimeout(hardTimeout);
-            if (gpsAcquireTimerRef.current) {
-                clearTimeout(gpsAcquireTimerRef.current);
-                gpsAcquireTimerRef.current = null;
-            }
-        };
-    }, [currentPosition.lat, currentPosition.lng, isBoxOffline, gpsAcquired]);
-
-    // EC-11: Customer Not Home State
-    const [waitTimerState, setWaitTimerState] = useState<WaitTimerState>(
-        initWaitTimerState(params.deliveryId, params.boxId)
-    );
-    const [timerNowMs, setTimerNowMs] = useState(() => Date.now());
-    const [displayTime, setDisplayTime] = useState('5:00');
-    const [arrivalPhotoUri, setArrivalPhotoUri] = useState<string | null>(null);
-    const [isLoading, setIsLoading] = useState(false);
-    const timerTickTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-    const appStateRef = useRef<AppStateStatus>(AppState.currentState);
-
-    // Grace Period & No-Show State
-    const [arrivedAt, setArrivedAt] = useState<number | null>(null);
-    const [gracePeriodDisplay, setGracePeriodDisplay] = useState<string>('10:00');
-    const [gracePeriodExpired, setGracePeriodExpired] = useState(false);
-    const [noShowLoading, setNoShowLoading] = useState(false);
-    const [batteryIncidentReportedAt, setBatteryIncidentReportedAt] = useState<number | null>(null);
-    const [batteryTimeoutDisplay, setBatteryTimeoutDisplay] = useState('15:00');
-    const [reportingBatteryIncident, setReportingBatteryIncident] = useState(false);
-
-    // EC-04: OTP Lockout State
-    const [lockoutState, setLockoutState] = useState<LockoutState | null>(null);
-    const [lockoutCountdown, setLockoutCountdown] = useState('');
-
-    // EC-03: Battery State
-    const [batteryState, setBatteryState] = useState<DualBatteryState | null>(null);
-    const batteryMainPct = batteryState?.main?.percentage;
-    const batteryLockPct = batteryState?.secondary?.percentage;
-    const mainLow = Boolean(batteryState?.main?.lowBatteryWarning);
-    const lockLow = Boolean(batteryState?.secondary?.lowBatteryWarning);
-    const mainCritical = Boolean(batteryState?.main?.criticalBatteryWarning);
-    const lockCritical = Boolean(batteryState?.secondary?.criticalBatteryWarning);
-    const hasBatteryLow = mainLow || lockLow;
-    const hasBatteryCritical = mainCritical || lockCritical;
-    const batterySummary = [
-        batteryMainPct != null ? `MCU ${Math.round(batteryMainPct)}%` : null,
-        batteryLockPct != null ? `Lock ${Math.round(batteryLockPct)}%` : null,
-    ].filter(Boolean).join(' / ');
-    const batteryAlertSummary = [
-        (mainCritical || mainLow) && batteryMainPct != null ? `MCU ${Math.round(batteryMainPct)}%` : null,
-        (lockCritical || lockLow) && batteryLockPct != null ? `Lock ${Math.round(batteryLockPct)}%` : null,
-    ].filter(Boolean).join(' / ') || batterySummary;
-
-    // EC-18: Tamper State
-    const [tamperState, setTamperState] = useState<TamperState | null>(null);
-
-    // EC-15: Background Location State
-    const [bgLocationState, setBgLocationState] = useState<BackgroundLocationState | null>(null);
-
-    // EC-97: Low-Light State
-    const [lowLightState, setLowLightState] = useState<LowLightState | null>(null);
-    const tamperDeliveryFlaggedRef = useRef(false);
-    const tamperAlertShownRef = useRef(false);
-    const pickupArrivalNotifSentRef = useRef(false);
-    const dropoffArrivalSyncInFlightRef = useRef(false);
-    const dropoffArrivalPersistedRef = useRef(false);
-    const dropoffArrivalRetryTimerRef = useRef<NodeJS.Timeout | null>(null);
-
-    // Lock Events (OTP + Face Detection from hardware)
-    const [lockEvent, setLockEvent] = useState<LockEvent | null>(null);
-    const lockEventNotifiedRef = useRef(false);
-
-    // EC-02: BLE Transfer State
-    const [showBleModal, setShowBleModal] = useState(false);
-    const [bleStatus, setBleStatus] = useState<'idle' | 'scanning' | 'connecting' | 'transferring' | 'success' | 'error'>('idle');
-    const [bleMessage, setBleMessage] = useState('');
-
-    // EC-32: Cancellation State
-    const [showCancelModal, setShowCancelModal] = useState(false);
-    const [cancelLoading, setCancelLoading] = useState(false);
-    const [returnCancellationState, setReturnCancellationState] = useState<CancellationState | null>(null);
-
-    // EC-78: Delivery Reassignment State
-    const [reassignmentState, setReassignmentState] = useState<ReassignmentState | null>(null);
-    const [showReassignmentModal, setShowReassignmentModal] = useState(false);
-    const authedUserId = useAuthStore((state: any) => state.user?.userId) as string | undefined;
-    const riderId = authedUserId;
-    const [deliveryStatus, setDeliveryStatus] = useState<string>('ASSIGNED');
-
-    const clearDropoffArrivalRetry = useCallback(() => {
-        if (dropoffArrivalRetryTimerRef.current) {
-            clearTimeout(dropoffArrivalRetryTimerRef.current);
-            dropoffArrivalRetryTimerRef.current = null;
-        }
-    }, []);
-
-    const scheduleDropoffArrivalRetry = useCallback((delayMs = DROPOFF_ARRIVAL_RETRY_MS) => {
-        if (dropoffArrivalPersistedRef.current) return;
-        clearDropoffArrivalRetry();
-        dropoffArrivalRetryTimerRef.current = setTimeout(() => {
-            dropoffArrivalRetryTimerRef.current = null;
-            dropoffArrivalSyncInFlightRef.current = false;
-            setDropoffArrivalRetryTick((prev) => prev + 1);
-        }, delayMs);
-    }, [clearDropoffArrivalRetry]);
-
-    useEffect(() => clearDropoffArrivalRetry, [clearDropoffArrivalRetry]);
-
-    const scheduleNextTimerTick = useCallback(() => {
-        if (timerTickTimeoutRef.current) {
-            clearTimeout(timerTickTimeoutRef.current);
-            timerTickTimeoutRef.current = null;
-        }
-
-        const now = Date.now();
-        const delay = Math.max(250, 1000 - (now % 1000) + 10);
-
-        timerTickTimeoutRef.current = setTimeout(() => {
-            setTimerNowMs(Date.now());
-            if (appStateRef.current === 'active') {
-                scheduleNextTimerTick();
-            }
-        }, delay);
-    }, []);
-
-    // Single app-aware ticker for all countdowns; avoids multiple long-lived intervals.
-    useEffect(() => {
-        setTimerNowMs(Date.now());
-        scheduleNextTimerTick();
-
-        const appStateSub = AppState.addEventListener('change', (nextState: AppStateStatus) => {
-            appStateRef.current = nextState;
-            if (nextState === 'active') {
-                setTimerNowMs(Date.now());
-                scheduleNextTimerTick();
-            } else if (timerTickTimeoutRef.current) {
-                clearTimeout(timerTickTimeoutRef.current);
-                timerTickTimeoutRef.current = null;
-            }
-        });
-
-        return () => {
-            appStateSub.remove();
-            if (timerTickTimeoutRef.current) {
-                clearTimeout(timerTickTimeoutRef.current);
-                timerTickTimeoutRef.current = null;
-            }
-        };
-    }, [scheduleNextTimerTick]);
-
-    // EC-15: Background location starts automatically when screen mounts
-    useEffect(() => {
-        if (!isBackgroundLocationRunning()) {
-            startBackgroundLocation(params.boxId);
-        }
-        // EC-15: Switch to ARRIVAL phase for maximum GPS precision near destination
-        setTrackingPhase('ARRIVAL');
-
-        // Subscribe to background location state
-        const unsubscribeBgLocation = subscribeToBackgroundLocationState(setBgLocationState);
-
-        // EC-04: Subscribe to OTP lockout state
-        const unsubscribeLockout = subscribeToLockout(params.boxId, (state) => {
-            setLockoutState(state);
-            if (state?.active) {
-                PremiumAlert.alert(
-                    '🔒 OTP Lockout Active',
-                    `Too many failed OTP attempts. Box is locked for ${Math.ceil((state.expires_at - Date.now()) / 60000)} minutes.`,
-                    [{ text: 'OK' }]
-                );
-            }
-        });
-
-        // EC-03: Subscribe to battery state
-        const unsubscribeBattery = subscribeToBattery(params.boxId, (state) => {
-            setBatteryState(state);
-            const isCritical = Boolean(
-                state?.main?.criticalBatteryWarning || state?.secondary?.criticalBatteryWarning
-            );
-            if (isCritical) {
-                const summary = [
-                    state?.main?.percentage != null ? `MCU ${Math.round(state.main.percentage)}%` : null,
-                    state?.secondary?.percentage != null ? `Lock ${Math.round(state.secondary.percentage)}%` : null,
-                ].filter(Boolean).join(' / ');
-                PremiumAlert.alert(
-                    '⚠️ Critical Battery',
-                    `Box battery is critically low${summary ? ` (${summary})` : ''}. Complete delivery quickly!`,
-                    [{ text: 'OK' }]
-                );
-            }
-        });
-
-        // EC-18: Subscribe to tamper state
-        const unsubscribeTamper = subscribeToTamper(params.boxId, (state) => {
-            setTamperState(state);
-            if (state?.detected) {
-                if (!tamperDeliveryFlaggedRef.current) {
-                    tamperDeliveryFlaggedRef.current = true;
-                    updateDeliveryStatus(params.deliveryId, 'TAMPERED', {
-                        tampered_at: Date.now(),
-                        tamper_lockdown: Boolean(state.lockdown),
-                    });
-                }
-                if (!tamperAlertShownRef.current) {
-                    tamperAlertShownRef.current = true;
-                    PremiumAlert.alert(
-                        'Security Hold',
-                        'A security incident was detected and controls are temporarily paused. Please contact support and follow incident workflow.',
-                        [{ text: 'Contact Support', style: 'destructive' }]
-                    );
-                }
-            } else {
-                tamperAlertShownRef.current = false;
-            }
-        });
-
-        // EC-97: Subscribe to low-light state
-        const unsubscribeLowLight = subscribeToLowLight(params.boxId, (state) => {
-            setLowLightState(state);
-            if (state && isLowLightFallbackRequired(state)) {
-                PremiumAlert.alert(
-                    '📷 Low Light Condition',
-                    'Camera cannot detect face due to poor lighting. Alternative verification will be required.',
-                    [{ text: 'OK' }]
-                );
-            }
-        });
-
-        // Lock Events: Subscribe to OTP + Face Detection results from hardware
-        const unsubscribeLockEvent = subscribeToLockEvents(params.boxId, (event) => {
-            setLockEvent(event);
-            if (event && !lockEventNotifiedRef.current) {
-                lockEventNotifiedRef.current = true;
-                if (event.unlocked) {
-                    // OTP valid + face detected → box unlocked
-                    showStatusNotification(
-                        '🔓 Box Unlocked',
-                        'OTP verified & face detected — box has been unlocked successfully.',
-                        { deliveryId: params.deliveryId, type: 'LOCK_EVENT' }
-                    );
-                    PremiumAlert.alert(
-                        '🔓 Box Unlocked',
-                        'The recipient has verified the OTP and their face was captured. The box is now open.',
-                        [{ text: 'OK' }]
-                    );
-                } else if (event.otp_valid && !event.face_detected) {
-                    // OTP correct but no face
-                    showStatusNotification(
-                        '👤 Face Not Detected',
-                        'OTP was correct but no face detected. Box remains locked.',
-                        { deliveryId: params.deliveryId, type: 'LOCK_EVENT' }
-                    );
-                } else if (!event.otp_valid) {
-                    // Wrong OTP entered
-                    showStatusNotification(
-                        '🔒 Invalid OTP',
-                        'An incorrect OTP was entered on the box keypad.',
-                        { deliveryId: params.deliveryId, type: 'LOCK_EVENT' }
-                    );
-                }
-                // Reset after a brief delay to allow re-notification on next event
-                setTimeout(() => { lockEventNotifiedRef.current = false; }, 5000);
-            }
-        });
-
-        return () => {
-            unsubscribeBgLocation();
-            unsubscribeLockout();
-            unsubscribeBattery();
-            unsubscribeTamper();
-            unsubscribeLowLight();
-            unsubscribeLockEvent();
-        };
-    }, [params.boxId, params.deliveryId]);
-
-    const [deliveryOtp, setDeliveryOtp] = useState<string | null>(null);
-
-    // Subscribe to cancellation state so we can resume return process if rider comes back
-    useEffect(() => {
-        const unsubscribe = subscribeToCancellation(params.deliveryId, (state) => {
-            setReturnCancellationState(state);
-        });
-        return () => unsubscribe();
-    }, [params.deliveryId]);
-
-    useEffect(() => {
-        const unsubscribe = subscribeToDelivery(params.deliveryId, (delivery) => {
-            if (!delivery?.status) {
-                return;
-            }
-            setDeliveryStatus(delivery.status);
-
-            if (DROPOFF_ARRIVAL_CONFIRMED_STATUSES.has(delivery.status)) {
-                dropoffArrivalPersistedRef.current = true;
-                dropoffArrivalSyncInFlightRef.current = false;
-                clearDropoffArrivalRetry();
-            } else if (DROPOFF_ARRIVAL_RETRYABLE_STATUSES.has(delivery.status)) {
-                dropoffArrivalPersistedRef.current = false;
-            }
-
-            // Track arrived_at timestamp for grace period
-            if (delivery.status === 'ARRIVED') {
-                const rawArrivedAt = delivery.arrived_at ?? delivery.updated_at;
-                if (rawArrivedAt) {
-                    const ts = typeof rawArrivedAt === 'number'
-                        ? rawArrivedAt
-                        : new Date(rawArrivedAt).getTime();
-                    if (Number.isFinite(ts)) {
-                        setArrivedAt((prev) => prev ?? ts);
-                    }
-                }
-            }
-
-            // EC-Fix: sync OTP code from Firebase (now stored in delivery node)
-            if (delivery.otp_code) {
-                setDeliveryOtp(delivery.otp_code);
-            }
-        });
-
-        // Fetch OTP from Supabase (fallback and initial load)
-        const fetchOtp = async () => {
-            try {
-                const { supabase } = await import('../../services/supabaseClient');
-                if (supabase) {
-                    const { data } = await supabase
-                        .from('deliveries')
-                        .select('otp_code')
-                        .eq('id', params.deliveryId)
-                        .single();
-                    if (data?.otp_code) {
-                        setDeliveryOtp(data.otp_code);
-                    }
-                }
-            } catch (e) {
-                console.error('[ArrivalScreen] Failed to fetch OTP:', e);
-            }
-        };
-        fetchOtp();
-
-        return unsubscribe;
-    }, [params.deliveryId, clearDropoffArrivalRetry]);
-
-    const isReturning = ['RETURNING', 'TAMPERED'].includes(deliveryStatus);
-    const isPickupConfirmed = ['IN_TRANSIT', 'ARRIVED', 'COMPLETED', 'RETURNING', 'TAMPERED'].includes(deliveryStatus);
-    const isDropoffPhase = geofenceTarget !== 'pickup';
-    const hasPickupCoords = Number.isFinite(params.pickupLat) && Number.isFinite(params.pickupLng);
-    const hasDropoffCoords = Number.isFinite(params.dropoffLat) && Number.isFinite(params.dropoffLng);
-    const isSamePickupDropoff = Boolean(params.samePickupDropoff) || (
-        hasPickupCoords &&
-        hasDropoffCoords &&
-        calculateDistanceMeters(
-            params.pickupLat as number,
-            params.pickupLng as number,
-            params.dropoffLat as number,
-            params.dropoffLng as number
-        ) <= SAME_PICKUP_DROPOFF_RADIUS_M
-    );
-
-    useEffect(() => {
-        let mounted = true;
-
-        const hydrateSnapshot = async () => {
-            const snapshot = await loadRiderSessionSnapshot();
-            if (!mounted || !snapshot) return;
-            if (snapshot.deliveryId !== params.deliveryId || snapshot.boxId !== params.boxId) return;
-
-            if (snapshot.geofenceTarget === 'dropoff' && hasDropoffCoords) {
-                setGeofence(createDefaultGeofence(params.dropoffLat as number, params.dropoffLng as number));
-                setGeofenceTarget('dropoff');
-            } else if (hasPickupCoords) {
-                setGeofence(createDefaultGeofence(params.pickupLat as number, params.pickupLng as number));
-                setGeofenceTarget(snapshot.geofenceTarget === 'return_pickup' ? 'return_pickup' : 'pickup');
-            }
-
-            setBoxLocationLastSeen(snapshot.lastBoxHeartbeatAt || 0);
-            setPhoneLocationLastSeen(snapshot.lastPhoneGpsAt || 0);
-            if (typeof snapshot.lastDistanceMeters === 'number') {
-                setDistanceMeters(snapshot.lastDistanceMeters);
-            }
-        };
-
-        hydrateSnapshot();
-
-        return () => {
-            mounted = false;
-        };
-    }, [
-        params.deliveryId,
-        params.boxId,
-        params.pickupLat,
-        params.pickupLng,
-        params.dropoffLat,
-        params.dropoffLng,
-        hasPickupCoords,
-        hasDropoffCoords,
-    ]);
-
-    useEffect(() => {
-        const uiPhase = !isPickupConfirmed
-            ? 'pickup'
-            : isReturning
-                ? 'return_pickup'
-                : (waitTimerState.status === 'WAITING' || waitTimerState.status === 'EXPIRED')
-                    ? 'customer_wait'
-                    : deliveryStatus === 'ARRIVED'
-                        ? 'dropoff_arrived'
-                        : deliveryStatus === 'COMPLETED'
-                            ? 'completed'
-                            : 'dropoff';
-
-        saveRiderSessionSnapshot({
-            lastActiveDeliveryId: params.deliveryId,
-            deliveryId: params.deliveryId,
-            boxId: params.boxId,
-            geofenceTarget,
-            uiPhase,
-            lastDistanceMeters: distanceMeters,
-            lastBoxHeartbeatAt: boxLocationLastSeen,
-            lastPhoneGpsAt: phoneLocationLastSeen,
-        });
-
-        if (deliveryStatus === 'COMPLETED' || deliveryStatus === 'CANCELLED') {
-            clearRiderSessionSnapshot();
-        }
-    }, [
-        params.deliveryId,
-        params.boxId,
-        geofenceTarget,
-        deliveryStatus,
-        distanceMeters,
-        boxLocationLastSeen,
-        phoneLocationLastSeen,
-        isPickupConfirmed,
-        isReturning,
-        waitTimerState.status,
-    ]);
-
-    // ━━━ Grace Period Timer Effect ━━━
-    // Only starts when rider is physically inside the DROPOFF geofence.
-    // isInsideGeoFence at this point references the dropoff zone (geofenceTarget === 'dropoff')
-    // so the timer never ticks while the rider is still at the pickup location.
-    useEffect(() => {
-        if (!isDropoffPhase || !isInsideGeoFence || deliveryStatus !== 'ARRIVED' || !arrivedAt) return;
-
-        // Write grace period to Firebase once for admin visibility
-        import('../../services/firebaseClient').then(({ getFirebaseDatabase }) => {
-            writeGracePeriodToFirebase(getFirebaseDatabase(), params.deliveryId, arrivedAt).catch(() => { });
-        });
-    }, [isDropoffPhase, isInsideGeoFence, deliveryStatus, arrivedAt, params.deliveryId]);
-
-    useEffect(() => {
-        if (!isDropoffPhase || !isInsideGeoFence || deliveryStatus !== 'ARRIVED' || !arrivedAt) return;
-
-        setGracePeriodDisplay(formatGracePeriodRemaining(arrivedAt));
-        setGracePeriodExpired(isGracePeriodExpired(arrivedAt));
-    }, [isDropoffPhase, isInsideGeoFence, deliveryStatus, arrivedAt, timerNowMs]);
-
-    useEffect(() => {
-        if (!isDropoffPhase) {
-            setArrivedAt(null);
-            setGracePeriodDisplay('10:00');
-            setGracePeriodExpired(false);
-            setBatteryIncidentReportedAt(null);
-            setBatteryTimeoutDisplay('15:00');
-        }
-    }, [isDropoffPhase]);
-
-    useEffect(() => {
-        if (!isDropoffPhase || deliveryStatus !== 'ARRIVED' || !batteryIncidentReportedAt) return;
-
-        const remaining = BATTERY_HANDOFF_TIMEOUT_MS - (timerNowMs - batteryIncidentReportedAt);
-        setBatteryTimeoutDisplay(formatRemainingMinutesSeconds(remaining));
-    }, [isDropoffPhase, deliveryStatus, batteryIncidentReportedAt, timerNowMs]);
-
-    // ━━━ No-Show Handler ━━━
-    const handleMarkNoShow = async () => {
-        if (!arrivedAt || !riderId) return;
-
-        if (!isGracePeriodExpired(arrivedAt)) {
-            PremiumAlert.alert('Grace Period Active', 'You must wait for the full grace period before marking a no-show.');
-            return;
-        }
-
-        PremiumAlert.alert(
-            'Confirm No-Show',
-            'This will cancel the delivery and apply a penalty to the customer. This action cannot be undone.',
-            [
-                { text: 'Cancel', style: 'cancel' },
-                {
-                    text: 'Confirm No-Show',
-                    style: 'destructive',
-                    onPress: async () => {
-                        setNoShowLoading(true);
-                        const result = await markNoShow(params.deliveryId, riderId);
-                        setNoShowLoading(false);
-
-                        if (result.success) {
-                            PremiumAlert.alert(
-                                '✅ No-Show Confirmed',
-                                'The delivery has been cancelled. You are now available for new orders.',
-                                [{ text: 'OK', onPress: () => navigation.goBack() }]
-                            );
-                        } else {
-                            PremiumAlert.alert('Error', result.error || 'Failed to mark no-show. Please try again.');
-                        }
-                    },
-                },
-            ]
-        );
-    };
-
-    const handleReportBatteryIncident = async () => {
-        if (!params.boxId || !params.deliveryId || reportingBatteryIncident) return;
-
-        setReportingBatteryIncident(true);
-        const ok = await reportBatteryDeadIncident({
-            boxId: params.boxId,
-            deliveryId: params.deliveryId,
-            stage: 'DROPOFF',
-            note: `Rider reported battery handoff risk while ARRIVED at ${new Date().toISOString()}`,
-        });
-        setReportingBatteryIncident(false);
-
-        if (ok) {
-            if (!batteryIncidentReportedAt) {
-                setBatteryIncidentReportedAt(Date.now());
-            }
-            PremiumAlert.alert(
-                'Battery Incident Reported',
-                'Customer, rider, and admin have been notified. Continue manual handoff and complete within the timeout window.'
-            );
-        } else {
-            PremiumAlert.alert(
-                'Report Failed',
-                'Could not report battery incident right now. Check network and try again.'
-            );
-        }
-    };
-
-    // Dynamically switch geofence target when transitioning from pickup to dropoff
-    useEffect(() => {
-        // Reset geofence stabilizers when destination target changes.
-        phoneGeofenceStateRef.current = createInitialState();
-        boxGeofenceStateRef.current = createInitialState();
-        masterDecisionRef.current = false;
-        boxOfflineRef.current = false;
-        boxOfflineTransitionStartRef.current = 0;
-        // EC-FIX: Also reset the new fallback tracking refs
-        boxFirstLoadReceivedRef.current = false;
-        phoneInsideSinceRef.current = 0;
-        setIsPhoneOnlyFallback(false);
-        // EC-FIX: Clear stale distance so the old geofence's distance
-        // doesn't bleed into the new target (e.g. pickup distance showing in dropoff phase)
-        setDistanceMeters(null);
-
-        if (isPickupConfirmed && isReturning && hasPickupCoords) {
-            setGeofence(createDefaultGeofence(params.pickupLat as number, params.pickupLng as number));
-            setGeofenceTarget('return_pickup');
-            // Reset stale inside-state so the old pickup check doesn't bleed into the new geofence
-            setIsInsideGeoFence(false);
-            setIsPhoneInside(false);
-            setIsBoxInside(false);
-            return;
-        }
-
-        if (isPickupConfirmed && !isReturning && hasDropoffCoords) {
-            setGeofence(createDefaultGeofence(params.dropoffLat as number, params.dropoffLng as number));
-            setGeofenceTarget('dropoff');
-            // Reset stale inside-state — rider is still at pickup, not dropoff yet.
-            // Without this reset, DropoffVerification's auto-arrive fires immediately
-            // because isInsideGeoFence is still true from the last pickup-geofence check.
-            setIsInsideGeoFence(false);
-            setIsPhoneInside(false);
-            setIsBoxInside(false);
-            return;
-        }
-
-        if (!isPickupConfirmed && hasPickupCoords) {
-            setGeofence(createDefaultGeofence(params.pickupLat as number, params.pickupLng as number));
-            setGeofenceTarget('pickup');
-            return;
-        }
-
-        // If target coords are invalid/missing, fail safe to avoid accidental ARRIVED at wrong location.
-        setGeofenceTarget('pickup');
-        setIsInsideGeoFence(false);
-        setIsPhoneInside(false);
-        setIsBoxInside(false);
-    }, [isPickupConfirmed, isReturning, hasPickupCoords, hasDropoffCoords, params.pickupLat, params.pickupLng, params.dropoffLat, params.dropoffLng]);
-
-    // 1. Track PHONE Location (The "Golden Rule")
-    useEffect(() => {
-        let subscription: Location.LocationSubscription | null = null;
-
-        const startPhoneTracking = async () => {
-            const { status } = await Location.requestForegroundPermissionsAsync();
-            if (status !== 'granted') {
-                PremiumAlert.alert('Permission Denied', 'Phone location is required to verify arrival.');
-                return;
-            }
-
-            // Fast relock after resume/lockscreen: keep high-accuracy warm briefly.
-            startForegroundGpsWarmWindow(25000).catch(() => { });
-
-            // Now that we have a loading gate, we no longer need to seed with fast/inaccurate 
-            // cached locations (which caused the 'bouncing' effect the user noticed).
-            // We directly wait for the continuous high-accuracy watch to yield its first accurate fix.
-
-            // Stage 3: High-accuracy continuous GPS watch for precise ongoing checks.
-            subscription = await Location.watchPositionAsync(
-                {
-                    accuracy: Location.Accuracy.High,
-                    timeInterval: 2000,
-                    distanceInterval: geofenceTarget === 'dropoff'
-                        ? DROPOFF_PHONE_DISTANCE_INTERVAL_M
-                        : (isPickupLikeGeofenceTarget(geofenceTarget)
-                            ? PICKUP_PHONE_DISTANCE_INTERVAL_M
-                            : DEFAULT_PHONE_DISTANCE_INTERVAL_M),
-                },
-                (location) => {
-                    applyPhonePosition(location.coords, 25);
-                }
-            );
-        };
-
-        startPhoneTracking();
-
-        return () => {
-            if (subscription) {
-                subscription.remove();
-            }
-        };
-    }, [geofence, geofenceTarget, applyPhonePosition]);
-
-    // Device Compass Heading (Foreground)
-    useEffect(() => {
-        let headingSub: Location.LocationSubscription | null = null;
-        const startHeadingWatcher = async () => {
-            try {
-                const { status } = await Location.getForegroundPermissionsAsync();
-                if (status === 'granted') {
-                    headingSub = await Location.watchHeadingAsync((data) => {
-                        setLocalPhoneHeading(data.trueHeading !== -1 ? data.trueHeading : data.magHeading);
-                    }).catch(err => {
-                        if (__DEV__) console.warn('Heading watcher failed (Simulator?):', err);
-                        return null;
-                    });
-                }
-            } catch (err) {
-                if (__DEV__) console.warn('Failed to start heading watcher:', err);
-            }
-        };
-        startHeadingWatcher();
-        return () => {
-            if (headingSub) headingSub.remove();
-        };
-    }, []);
-
-    // 2. Track BOX Location (The "Secondary Check")
-    // EC-FIX: Improved offline detection — null data = immediate offline (no debounce),
-    // stale data = debounced offline transition.
-    useEffect(() => {
-        const OFFLINE_SWITCH_DEBOUNCE_MS = 5000;
-
-        /** Mark box as immediately offline (skip debounce) — used when data is null/missing */
-        const markOfflineImmediate = () => {
-            if (!boxOfflineRef.current) {
-                boxOfflineRef.current = true;
-                setIsBoxOffline(true);
-                boxOfflineTransitionStartRef.current = 0;
-            }
-        };
-
-        /** Debounced offline state transition — used for stale data */
-        const updateOfflineState = (desiredOffline: boolean, now: number) => {
-            if (desiredOffline === boxOfflineRef.current) {
-                boxOfflineTransitionStartRef.current = 0;
-                return;
-            }
-
-            if (boxOfflineTransitionStartRef.current === 0) {
-                boxOfflineTransitionStartRef.current = now;
-                return;
-            }
-
-            if (now - boxOfflineTransitionStartRef.current >= OFFLINE_SWITCH_DEBOUNCE_MS) {
-                boxOfflineRef.current = desiredOffline;
-                setIsBoxOffline(desiredOffline);
-                boxOfflineTransitionStartRef.current = 0;
-            }
-        };
-
-        const unsubscribeLocation = subscribeToLocation(params.boxId, (location) => {
-            const now = Date.now();
-            boxFirstLoadReceivedRef.current = true;
-
-            // EC-FIX: No location data at all → box has never reported GPS → immediate offline.
-            // Previously this went through the 5s debounce, which blocked pickup for 5+ seconds
-            // even when the box was clearly powered off.
-            if (!location) {
-                markOfflineImmediate();
-                return;
-            }
-
-            const dataTimestamp = location.server_timestamp || location.timestamp || 0;
-            const isStale = (now - dataTimestamp) > 120000; // 2 minutes
-
-            setBoxLocationLastSeen(dataTimestamp);
-
-            // EC-FIX: If data is extremely stale (> 5 min), also skip debounce.
-            // This handles the case where box was online hours ago but is clearly down now.
-            if ((now - dataTimestamp) > 300000) {
-                markOfflineImmediate();
-                return;
-            }
-
-            updateOfflineState(isStale, now);
-
-            if (!isStale) {
-                const position = {
-                    lat: location.latitude,
-                    lng: location.longitude,
-                    accuracy: 15, // Assume acceptable accuracy for Box GPS
-                };
-
-                const nextState = updateGeofenceState(
-                    boxGeofenceStateRef.current,
-                    { lat: position.lat, lng: position.lng },
-                    { latitude: geofence.centerLat, longitude: geofence.centerLng },
-                    { hdop: 1.5, satellites: 8, timestamp: now },
-                    null,
-                    now
-                );
-                boxGeofenceStateRef.current = nextState;
-                setIsBoxInside(nextState.stableState === 'INSIDE');
-            }
-        });
-
-        // EC-FIX: If the Firebase listener fires with no data on mount (box node doesn't exist),
-        // that callback already marks offline immediately. But if the subscription itself is slow
-        // to fire, set a safety timeout to mark offline after 3s if no callback received.
-        const safetyTimeout = setTimeout(() => {
-            if (!boxFirstLoadReceivedRef.current) {
-                markOfflineImmediate();
-            }
-        }, 3000);
-
-        return () => {
-            clearTimeout(safetyTimeout);
-            unsubscribeLocation();
-        };
-    }, [geofence, params.boxId, boxLocationSubscriptionEpoch]);
-
-    // Listener watchdog: if box stream goes stale while marked online, resubscribe.
-    useEffect(() => {
-        const interval = setInterval(() => {
-            if (!boxLocationLastSeen || isBoxOffline) return;
-            const ageMs = Date.now() - boxLocationLastSeen;
-            if (ageMs > 45000) {
-                setBoxLocationSubscriptionEpoch((prev) => prev + 1);
-            }
-        }, 12000);
-
-        return () => clearInterval(interval);
-    }, [boxLocationLastSeen, isBoxOffline]);
-
-    // 3. The "Master Switch" (Dual Check Logic)
-    // EC-FIX: Now includes phone-only fallback path
-    useEffect(() => {
-        if (masterSwitchDebounceRef.current) {
-            clearTimeout(masterSwitchDebounceRef.current);
-        }
-
-        const debounceMs = geofenceTarget === 'dropoff' || isPickupLikeGeofenceTarget(geofenceTarget) ? 250 : 500;
-        masterSwitchDebounceRef.current = setTimeout(() => {
-            const nextInside = isPhoneInside && (isBoxOffline || isBoxInside || isPhoneOnlyFallback);
-            if (nextInside !== masterDecisionRef.current) {
-                masterDecisionRef.current = nextInside;
-                setIsInsideGeoFence(nextInside);
-            }
-        }, debounceMs);
-
-        return () => {
-            if (masterSwitchDebounceRef.current) {
-                clearTimeout(masterSwitchDebounceRef.current);
-                masterSwitchDebounceRef.current = null;
-            }
-        };
-    }, [geofenceTarget, isPhoneInside, isBoxInside, isBoxOffline, isPhoneOnlyFallback]);
-
-    // 3b. EC-FIX: Phone-Only Fallback Timer
-    // If phone has been stably inside the geofence for 15 seconds but box status
-    // is stuck (neither offline nor inside), activate phone-only fallback.
-    // This safeguards against the debounce/hysteresis gap that blocks pickup indefinitely.
-    useEffect(() => {
-        const PHONE_ONLY_FALLBACK_MS = geofenceTarget === 'dropoff' || isPickupLikeGeofenceTarget(geofenceTarget) ? 7000 : 15000;
-
-        if (isPhoneInside && !isBoxOffline && !isBoxInside && !isPhoneOnlyFallback) {
-            // Phone is inside but box status is stuck — start fallback countdown
-            if (phoneInsideSinceRef.current === 0) {
-                phoneInsideSinceRef.current = Date.now();
-            }
-
-            const timer = setTimeout(() => {
-                // Double-check conditions still hold after timeout
-                if (phoneInsideSinceRef.current > 0 && !boxOfflineRef.current) {
-                    console.log(`[ArrivalScreen] EC-FIX: Phone-only fallback activated - box status stuck for ${PHONE_ONLY_FALLBACK_MS}ms`);
-                    setIsPhoneOnlyFallback(true);
-                }
-            }, PHONE_ONLY_FALLBACK_MS);
-
-            return () => clearTimeout(timer);
-        }
-
-        // Reset fallback timer if phone leaves geofence or box comes online
-        if (!isPhoneInside) {
-            phoneInsideSinceRef.current = 0;
-            if (isPhoneOnlyFallback) setIsPhoneOnlyFallback(false);
-        }
-        if (isBoxOffline || isBoxInside) {
-            phoneInsideSinceRef.current = 0;
-            // Don't clear fallback here — it's no longer needed but clearing could cause flicker.
-            // The master switch will use the correct path (isBoxOffline or isBoxInside) instead.
-        }
-    }, [geofenceTarget, isPhoneInside, isBoxOffline, isBoxInside, isPhoneOnlyFallback]);
-
-    // 3c. Dropoff arrival sync
-    // Push ARRIVED and refresh the box as soon as the dropoff geofence is confirmed.
-    useEffect(() => {
-        const shouldSyncDropoffArrival =
-            geofenceTarget === 'dropoff' &&
-            isInsideGeoFence &&
-            !dropoffArrivalPersistedRef.current &&
-            DROPOFF_ARRIVAL_RETRYABLE_STATUSES.has(deliveryStatus);
-
-        if (!shouldSyncDropoffArrival) {
-            if (geofenceTarget !== 'dropoff' || !isInsideGeoFence || dropoffArrivalPersistedRef.current) {
-                dropoffArrivalSyncInFlightRef.current = false;
-                clearDropoffArrivalRetry();
-            }
-            return;
-        }
-
-        if (dropoffArrivalSyncInFlightRef.current) return;
-        dropoffArrivalSyncInFlightRef.current = true;
-        clearDropoffArrivalRetry();
-
-        const arrivedAtNow = Date.now();
-        const hasPhoneFix = currentPosition.lat !== 0 || currentPosition.lng !== 0;
-
-        const statusUpdate = updateDeliveryStatus(params.deliveryId, 'ARRIVED', {
-            arrived_at: arrivedAtNow,
-            arrival_source: 'rider_app_dropoff_geofence',
-            boxId: params.boxId,
-        }).then((ok) => {
-            if (!ok) throw new Error('ARRIVED transition failed');
-            return ok;
-        });
-        const syncTasks: Promise<unknown>[] = [
-            statusUpdate,
-            statusUpdate.then(() => requestBoxContextRefresh(params.boxId, 'dropoff_arrived')),
-        ];
-
-        if (hasPhoneFix) {
-            syncTasks.push(writePhoneLocation(
-                params.boxId,
-                currentPosition.lat,
-                currentPosition.lng,
-                currentPosition.speed,
-                currentPosition.heading,
-                localPhoneHeading
-            ));
-        }
-
-        Promise.allSettled(syncTasks).then((results) => {
-            if (results[0]?.status === 'rejected') {
-                console.warn('[ArrivalScreen] Dropoff ARRIVED sync failed', results[0].reason);
-                dropoffArrivalSyncInFlightRef.current = false;
-                scheduleDropoffArrivalRetry();
-                setBoxLocationSubscriptionEpoch((prev) => prev + 1);
-                return;
-            }
-
-            setDeliveryStatus('ARRIVED');
-            setArrivedAt((prev) => prev ?? arrivedAtNow);
-
-            if (!dropoffArrivalPersistedRef.current) {
-                scheduleDropoffArrivalRetry(DROPOFF_ARRIVAL_CONFIRMATION_RETRY_MS);
-            }
-
-            if (results[1]?.status === 'rejected') {
-                console.warn('[ArrivalScreen] Dropoff box context refresh failed', results[1].reason);
-            }
-            setBoxLocationSubscriptionEpoch((prev) => prev + 1);
-        });
-    }, [
-        geofenceTarget,
-        isInsideGeoFence,
-        deliveryStatus,
-        params.deliveryId,
-        params.boxId,
-        currentPosition.lat,
-        currentPosition.lng,
-        currentPosition.speed,
-        currentPosition.heading,
-        localPhoneHeading,
-        clearDropoffArrivalRetry,
-        scheduleDropoffArrivalRetry,
-        dropoffArrivalRetryTick,
-    ]);
-
-    // 4. Pickup Arrival Notification — fires once when rider first enters pickup geofence
-    useEffect(() => {
-        if (
-            geofenceTarget === 'pickup' &&
-            isInsideGeoFence &&
-            !pickupArrivalNotifSentRef.current &&
-            params.customerPhone &&
-            params.riderName
-        ) {
-            pickupArrivalNotifSentRef.current = true;
-            sendPickupArrivalNotification(
-                params.deliveryId,
-                params.customerPhone,
-                params.riderName
-            ).catch(() => { /* non-blocking */ });
-        }
-        // Reset if rider leaves before confirming pickup (allows re-fire on re-entry)
-        if (geofenceTarget === 'pickup' && !isInsideGeoFence) {
-            pickupArrivalNotifSentRef.current = false;
-        }
-    }, [geofenceTarget, isInsideGeoFence, params.customerPhone, params.riderName, params.deliveryId]);
-
-    // EC-04: Lockout countdown timer
-    useEffect(() => {
-        if (!lockoutState?.active) {
-            setLockoutCountdown('');
-            return;
-        }
-
-        const remaining = lockoutState.expires_at - timerNowMs;
-        setLockoutCountdown(remaining <= 0 ? 'Expired' : formatRemainingMinutesSeconds(remaining));
-    }, [lockoutState, timerNowMs]);
-
-    // Timer update effect
-    useEffect(() => {
-        if (waitTimerState.status !== 'WAITING') return;
-
-        setDisplayTime(getFormattedRemainingTime(waitTimerState, timerNowMs));
-
-        if (isWaitTimerExpired(waitTimerState, timerNowMs)) {
-            setWaitTimerState(prev => ({ ...prev, status: 'EXPIRED' }));
-        }
-    }, [waitTimerState, timerNowMs]);
-
-    // EC-11: Start wait timer (Customer Not Home)
-    const handleCustomerNotHome = async () => {
-        setIsLoading(true);
-
-        let photoUri: string | null = null;
-
-        // Capture arrival photo
-        try {
-            const photoResult = await ImagePicker.launchCameraAsync({
-                mediaTypes: ImagePicker.MediaTypeOptions.Images,
-                quality: 0.6,
-                allowsEditing: false,
-            });
-
-            if (!photoResult.canceled && photoResult.assets?.[0]) {
-                photoUri = photoResult.assets[0].uri;
-                setArrivalPhotoUri(photoUri);
-            }
-        } catch (e) {
-            console.log('[ArrivalScreen] Camera error:', e);
-        }
-
-        // Start wait timer (with or without photo)
-        let newState = startWaitTimer(waitTimerState, Date.now());
-
-        if (photoUri) {
-            newState = recordArrivalPhoto(newState, photoUri);
-        }
-
-        // Send notification to customer
-        if (params.customerPhone && params.riderName) {
-            const notified = await sendDriverWaitingNotification(
-                params.deliveryId,
-                params.customerPhone,
-                params.riderName
-            );
-            if (notified) {
-                newState = recordNotificationSent(newState, Date.now());
-            }
-        }
-
-        setWaitTimerState(newState);
-        await writeWaitTimerToFirebase(newState);
-        setIsLoading(false);
-    };
-
-    // EC-11: Customer arrived during wait
-    const handleCustomerArrived = async () => {
-        if (!isPickupConfirmed) {
-            return;
-        }
-
-        const newState = markCustomerArrived(waitTimerState);
-        setWaitTimerState(newState);
-        writeWaitTimerToFirebase(newState);
-        navigation.navigate('DeliveryCompletion', {
-            deliveryId: params.deliveryId,
-            boxId: params.boxId,
-        });
-    };
-
-    const handleProceedToHandover = async () => {
-        if (!isPickupConfirmed) {
-            return;
-        }
-
-        if (isInsideGeoFence && !['ARRIVED', 'COMPLETED'].includes(deliveryStatus)) {
-            await updateDeliveryStatus(params.deliveryId, 'ARRIVED', {
-                arrived_at: Date.now(),
-            });
-        }
-
-        navigation.navigate('DeliveryCompletion', {
-            deliveryId: params.deliveryId,
-            boxId: params.boxId,
-        });
-    };
-
-    // EC-11: Return with package
-    const handleReturn = async () => {
-        if (!canInitiateReturn(waitTimerState, Date.now())) {
-            PremiumAlert.alert('Please Wait', 'You must wait the full 5 minutes before returning.');
-            return;
-        }
-
-        PremiumAlert.alert(
-            'Confirm Return',
-            'Are you sure you want to return with the package? The customer will be notified.',
-            [
-                { text: 'Cancel', style: 'cancel' },
-                {
-                    text: 'Return',
-                    style: 'destructive',
-                    onPress: async () => {
-                        setIsLoading(true);
-                        try {
-                            const result = await requestCancellation({
-                                deliveryId: params.deliveryId,
-                                boxId: params.boxId,
-                                reason: CancellationReason.CUSTOMER_UNAVAILABLE,
-                                reasonDetails: 'Dropoff unavailable after customer-not-home wait timer expired.',
-                                riderId: riderId || '',
-                                riderName: params.riderName,
-                                currentStatus: deliveryStatus || params.status || 'ARRIVED',
-                            });
-
-                            if (!result.success) {
-                                PremiumAlert.alert('Return Failed', result.error || 'Unable to start return-to-sender. Please retry.');
-                                return;
-                            }
-
-                            const newState = initiateReturn(waitTimerState, Date.now());
-                            setWaitTimerState(newState);
-                            await writeWaitTimerToFirebase(newState);
-                            setDeliveryStatus('RETURNING');
-
-                            navigation.navigate('CancellationConfirmation', {
-                                deliveryId: params.deliveryId,
-                                returnOtp: result.returnOtp,
-                                reason: CancellationReason.CUSTOMER_UNAVAILABLE,
-                                reasonDetails: 'Dropoff unavailable after customer-not-home wait timer expired.',
-                                senderName: params.senderName || 'Sender',
-                                pickupAddress: params.pickupAddress || params.targetAddress,
-                                pickupLat: params.pickupLat,
-                                pickupLng: params.pickupLng,
-                                boxId: params.boxId,
-                                isPickedUp: true,
-                            });
-                        } catch (err) {
-                            PremiumAlert.alert('Return Failed', 'An unexpected error occurred while starting the return.');
-                        } finally {
-                            setIsLoading(false);
-                        }
-                    }
-                }
-            ]
-        );
-    };
-
-    // EC-02: BLE OTP Transfer
-    const handleBleTransfer = async () => {
-        if (!deliveryOtp) {
-            PremiumAlert.alert('OTP Unavailable', 'Could not retrieve the delivery OTP. Please try again.');
-            return;
-        }
-
-        setShowBleModal(true);
-        setBleStatus('scanning');
-        setBleMessage('Scanning for nearby box...');
-
-        try {
-            const result = await bleOtpService.sendOtpToBox(
-                params.boxId,
-                deliveryOtp,
-                params.deliveryId,
-                {
-                    onScanStart: () => {
-                        setBleStatus('scanning');
-                        setBleMessage('Scanning for nearby Smart Box...');
-                    },
-                    onDeviceFound: (device) => {
-                        setBleMessage(`Found: ${device.name}`);
-                    },
-                    onConnecting: (name) => {
-                        setBleStatus('connecting');
-                        setBleMessage(`Connecting to ${name}...`);
-                    },
-                    onTransferring: () => {
-                        setBleStatus('transferring');
-                        setBleMessage('Transferring OTP...');
-                    },
-                    onSuccess: (name) => {
-                        setBleStatus('success');
-                        setBleMessage(`OTP sent to ${name} successfully!`);
-                    },
-                    onError: (error) => {
-                        setBleStatus('error');
-                        setBleMessage(error);
-                    }
-                }
-            );
-
-            if (!result.success) {
-                setBleStatus('error');
-                setBleMessage(result.message);
-            }
-        } catch (error) {
-            setBleStatus('error');
-            setBleMessage('BLE transfer failed');
-        }
-    };
-
-    const closeBleModal = () => {
-        setShowBleModal(false);
-        setBleStatus('idle');
-        setBleMessage('');
-        bleOtpService.stopScan();
-    };
-
-
-
-    // EC-32: Handle Cancellation Submit
-    const handleCancellationSubmit = async (reason: CancellationReason, details: string) => {
-        setCancelLoading(true);
-        try {
-            const result = await requestCancellation({
-                deliveryId: params.deliveryId,
-                boxId: params.boxId,
-                reason,
-                reasonDetails: details,
-                riderId: riderId || '',
-                riderName: params.riderName,
-                currentStatus: deliveryStatus || params.status || 'ARRIVED',
-            });
-
-            if (result.success) {
-                setShowCancelModal(false);
-                if (['IN_TRANSIT', 'ARRIVED', 'RETURNING', 'TAMPERED'].includes(deliveryStatus)) {
-                    setDeliveryStatus('RETURNING');
-                }
-                navigation.navigate('CancellationConfirmation', {
-                    deliveryId: params.deliveryId,
-                    returnOtp: result.returnOtp,
-                    reason: reason,
-                    reasonDetails: details,
-                    senderName: params.senderName || 'Sender',
-                    pickupAddress: params.pickupAddress || params.targetAddress,
-                    pickupLat: params.pickupLat,
-                    pickupLng: params.pickupLng,
-                    boxId: params.boxId,
-                    isPickedUp: ['IN_TRANSIT', 'ARRIVED', 'COMPLETED', 'RETURNING', 'TAMPERED'].includes(deliveryStatus || params.status || 'PENDING'),
-                });
-            } else {
-                PremiumAlert.alert('Cancellation Failed', result.error || 'Unknown error');
-            }
-        } catch (err) {
-            PremiumAlert.alert('Error', 'An unexpected error occurred');
-        } finally {
-            setCancelLoading(false);
-        }
-    };
-
-    // EC-78: Subscribe to Reassignment Updates
-    useEffect(() => {
-        // Use params.boxId if available, or fallback to 'BOX_001' for demo
-        const targetBoxId = params.boxId || 'BOX_001';
-        const unsubscribe = subscribeToReassignment(targetBoxId, (state) => {
-            setReassignmentState(state);
-        });
-        return unsubscribe;
-    }, [params.boxId]);
-
-    // EC-78: Handle Reassignment Modal and Timer
-    useEffect(() => {
-        if (reassignmentState && isReassignmentPending(reassignmentState)) {
-            const type = getReassignmentType(reassignmentState, riderId || '');
-            if (type) {
-                setShowReassignmentModal(true);
-                // Start auto-ack timer associated with this screen's context
-                const cleanup = startAutoAckTimer(params.boxId || 'BOX_001', riderId || '', reassignmentState, () => {
-                    handlePostAcknowledge(type);
-                });
-                return cleanup;
-            }
-        } else {
-            setShowReassignmentModal(false);
-        }
-    }, [reassignmentState, riderId, params.boxId]);
-
-    const handleReassignmentAcknowledge = async () => {
-        if (reassignmentState) {
-            await acknowledgeReassignment(params.boxId || 'BOX_001', riderId || '');
-            const type = getReassignmentType(reassignmentState, riderId || '');
-            handlePostAcknowledge(type);
-        }
-    };
-
-    const handlePostAcknowledge = (type: 'outgoing' | 'incoming' | null) => {
-        setShowReassignmentModal(false);
-        if (type === 'outgoing') {
-            // Delivery reassigned AWAY from this rider
-            PremiumAlert.alert(
-                'Delivery Reassigned',
-                'This delivery has been assigned to another rider. Returning to dashboard.',
-                [{ text: 'OK', onPress: () => navigation.navigate('RiderApp') }]
-            );
-        }
-    };
-
-    // Render different UI based on wait timer state
-    const renderWaitingUI = () => (
-        <Card style={[styles.waitCard, isDarkMode && { backgroundColor: '#451a03', borderColor: '#b45309' }]}>
-            <Card.Content>
-                <View style={styles.timerContainer}>
-                    <Text style={[styles.timerLabel, isDarkMode && { color: '#fbbf24' }]}>WAITING FOR CUSTOMER</Text>
-                    <Text style={[styles.timerDisplay, isDarkMode && { color: '#f59e0b' }]}>{displayTime}</Text>
-                    <Text style={[styles.timerSubtext, isDarkMode && { color: '#fcd34d' }]}>
-                        {waitTimerState.status === 'EXPIRED'
-                            ? 'Timer expired - You may return'
-                            : 'Customer has been notified'}
-                    </Text>
-                </View>
-
-                {arrivalPhotoUri && (
-                    <View style={styles.photoPreview}>
-                        <Text style={styles.photoLabel}>📷 Arrival photo captured</Text>
-                    </View>
-                )}
-
-                <View style={styles.waitActions}>
-                    <Button
-                        mode="contained"
-                        onPress={handleCustomerArrived}
-                        style={[styles.button, { backgroundColor: '#22c55e' }]}
-                        icon="check"
-                    >
-                        Customer Arrived
-                    </Button>
-
-                    <Button
-                        mode="contained"
-                        onPress={handleReturn}
-                        disabled={!canInitiateReturn(waitTimerState, Date.now())}
-                        style={[styles.button, { backgroundColor: '#ef4444' }]}
-                        icon="keyboard-return"
-                    >
-                        Return with Package
-                    </Button>
-                </View>
-            </Card.Content>
-        </Card>
-    );
-
-    const handleNavigate = () => {
-        // Resolve target coords based on the current geofence phase
-        let navLat: number | undefined;
-        let navLng: number | undefined;
-        let navAddress: string | undefined;
-
-        if (geofenceTarget === 'dropoff') {
-            navLat = params?.dropoffLat;
-            navLng = params?.dropoffLng;
-            navAddress = params?.dropoffAddress || params?.targetAddress;
-        } else if (geofenceTarget === 'return_pickup') {
-            navLat = params?.pickupLat;
-            navLng = params?.pickupLng;
-            navAddress = params?.pickupAddress || params?.targetAddress;
-        } else {
-            // pickup phase — use pickupLat/Lng if available, fall back to targetLat/Lng
-            navLat = params?.pickupLat || params?.targetLat;
-            navLng = params?.pickupLng || params?.targetLng;
-            navAddress = params?.pickupAddress || params?.targetAddress;
-        }
-
-        const hasCoords = navLat && navLng && (navLat !== 0 || navLng !== 0);
-        const label = navAddress || 'Destination';
-        const encodedLabel = encodeURIComponent(label);
-
-        const openWithFallback = async (primaryUrl: string, fallbackUrl: string) => {
-            try {
-                const supported = await Linking.canOpenURL(primaryUrl);
-                if (supported) {
-                    await Linking.openURL(primaryUrl);
-                } else {
-                    await Linking.openURL(fallbackUrl);
-                }
-            } catch (error) {
-                console.error('[ArrivalScreen handleNavigate] Failed to open maps:', error);
-                try {
-                    const browserUrl = hasCoords
-                        ? `https://www.google.com/maps/dir/?api=1&destination=${navLat},${navLng}&travelmode=driving`
-                        : `https://www.google.com/maps/search/?api=1&query=${encodedLabel}`;
-                    await Linking.openURL(browserUrl);
-                } catch (browserError) {
-                    console.error('[ArrivalScreen handleNavigate] Browser fallback also failed:', browserError);
-                }
-            }
-        };
-
-        if (hasCoords) {
-            const latLng = `${navLat},${navLng}`;
-            const primaryUrl = Platform.select({
-                ios: `maps:?ll=${latLng}&q=${encodedLabel}`,
-                android: `google.navigation:q=${latLng}&mode=d`,
-            })!;
-            const fallbackUrl = Platform.select({
-                ios: `https://maps.apple.com/?ll=${latLng}&q=${encodedLabel}`,
-                android: `geo:${latLng}?q=${latLng}(${encodedLabel})`,
-            })!;
-            openWithFallback(primaryUrl, fallbackUrl);
-        } else if (label) {
-            const primaryUrl = Platform.select({
-                ios: `maps:0,0?q=${encodedLabel}`,
-                android: `google.navigation:q=${encodedLabel}&mode=d`,
-            })!;
-            const fallbackUrl = Platform.select({
-                ios: `https://maps.apple.com/?q=${encodedLabel}`,
-                android: `geo:0,0?q=${encodedLabel}`,
-            })!;
-            openWithFallback(primaryUrl, fallbackUrl);
-        }
-    };
-
-    const handleManualRefresh = useCallback(async () => {
-        if (manualRefreshBusy) return;
-        setManualRefreshBusy(true);
-
-        try {
-            phoneGeofenceStateRef.current = createInitialState();
-            boxGeofenceStateRef.current = createInitialState();
-            masterDecisionRef.current = false;
-            phoneInsideSinceRef.current = 0;
-            setIsPhoneOnlyFallback(false);
-
-            if (!isBackgroundLocationRunning()) {
-                startBackgroundLocation(params.boxId).catch((err) => {
-                    console.warn('[ArrivalScreen] Background location restart failed', err);
-                });
-            }
-            setTrackingPhase('ARRIVAL');
-            startForegroundGpsWarmWindow(15000).catch(() => { });
-
-            const phoneRefresh = (async () => {
-                const permission = await Location.getForegroundPermissionsAsync();
-                let hasPermission = permission.status === 'granted';
-
-                if (!hasPermission) {
-                    const requested = await Location.requestForegroundPermissionsAsync();
-                    hasPermission = requested.status === 'granted';
-                }
-
-                if (!hasPermission) {
-                    throw new Error('Phone location permission not granted');
-                }
-
-                const hasRecentCurrentPosition =
-                    (currentPosition.lat !== 0 || currentPosition.lng !== 0) &&
-                    Date.now() - phoneLocationLastSeen <= MANUAL_REFRESH_CACHED_PHONE_MAX_AGE_MS;
-
-                if (hasRecentCurrentPosition) {
-                    applyPhonePosition({
-                        latitude: currentPosition.lat,
-                        longitude: currentPosition.lng,
-                        accuracy: currentPosition.accuracy,
-                        heading: currentPosition.heading,
-                        speed: currentPosition.speed,
-                    }, 25);
-                }
-
-                let loc: Location.LocationObject;
-                try {
-                    loc = await Promise.race([
-                        Location.getCurrentPositionAsync({
-                            accuracy: Location.Accuracy.High,
-                        }),
-                        new Promise<never>((_, reject) => {
-                            setTimeout(() => reject(new Error('Phone GPS refresh timed out')), MANUAL_REFRESH_PHONE_TIMEOUT_MS);
-                        }),
-                    ]) as Location.LocationObject;
-                } catch (error) {
-                    const lastKnown = await Location.getLastKnownPositionAsync({
-                        maxAge: MANUAL_REFRESH_CACHED_PHONE_MAX_AGE_MS,
-                        requiredAccuracy: MANUAL_REFRESH_LAST_KNOWN_ACCURACY_M,
-                    });
-
-                    if (!lastKnown) {
-                        throw error;
-                    }
-
-                    loc = lastKnown;
-                }
-
-                applyPhonePosition(loc.coords, 25);
-                await writePhoneLocation(
-                    params.boxId,
-                    loc.coords.latitude,
-                    loc.coords.longitude,
-                    loc.coords.speed ?? 0,
-                    loc.coords.heading ?? 0,
-                    localPhoneHeading
-                );
-            })();
-
-            const [boxResult, phoneResult] = await Promise.allSettled([
-                requestBoxContextRefresh(params.boxId, 'arrival_refresh'),
-                phoneRefresh,
-            ]);
-
-            setBoxLocationSubscriptionEpoch((prev) => prev + 1);
-
-            if (boxResult.status === 'rejected') {
-                console.warn('[ArrivalScreen] Manual refresh box GPS request failed', boxResult.reason);
-            }
-
-            if (phoneResult.status === 'rejected') {
-                console.warn('[ArrivalScreen] Manual refresh phone GPS failed', phoneResult.reason);
-            }
-
-            if (geofenceTarget === 'dropoff' && isInsideGeoFence && !dropoffArrivalPersistedRef.current) {
-                dropoffArrivalSyncInFlightRef.current = false;
-                clearDropoffArrivalRetry();
-                setDropoffArrivalRetryTick((prev) => prev + 1);
-            }
-        } finally {
-            setManualRefreshBusy(false);
-        }
-    }, [
-        manualRefreshBusy,
-        params.boxId,
-        applyPhonePosition,
-        currentPosition,
-        phoneLocationLastSeen,
-        localPhoneHeading,
-        geofenceTarget,
-        isInsideGeoFence,
-        clearDropoffArrivalRetry,
-    ]);
-
-    // EC-12: Render System Status (Horizontal Scroll)
-    const renderSystemStatus = () => {
-        const statuses = [];
-
-        // Tamper (Always Critical - Keep as full banner above, but also show here if we want, or skip)
-        // Leaving Tamper as full banner because it's a security emergency.
-
-        // Lockout
-        if (lockoutState?.active) {
-            statuses.push(
-                <Card key="lockout" style={[styles.statusPill, styles.statusPillError]}>
-                    <View style={styles.pillContent}>
-                        <Text style={styles.pillIcon}>🔒</Text>
-                        <View>
-                            <Text style={[styles.pillTitle, styles.textError]}>LOCKED</Text>
-                            <Text style={[styles.pillText, styles.textError]}>{lockoutCountdown}</Text>
-                        </View>
-                    </View>
-                </Card>
-            );
-        }
-
-        // Battery
-        if (hasBatteryLow) {
-            const isCritical = hasBatteryCritical;
-            statuses.push(
-                <Card key="battery" style={[styles.statusPill, isCritical ? styles.statusPillError : styles.statusPillWarning]}>
-                    <View style={styles.pillContent}>
-                        <Text style={styles.pillIcon}>{isCritical ? '🔴' : '🟡'}</Text>
-                        <View>
-                            <Text style={[styles.pillTitle, isCritical ? styles.textError : styles.textWarning]}>
-                                {isCritical ? 'CRITICAL' : 'LOW POWER'}
-                            </Text>
-                            <Text style={[styles.pillText, isCritical ? styles.textError : styles.textWarning]}>
-                                {batteryAlertSummary || '--'}
-                            </Text>
-                        </View>
-                    </View>
-                </Card>
-            );
-        }
-
-        // GPS
-        if (bgLocationState && bgLocationState.status !== 'RUNNING') {
-            statuses.push(
-                <Card key="gps" style={[styles.statusPill, styles.statusPillInfo]}>
-                    <View style={styles.pillContent}>
-                        <Text style={styles.pillIcon}>📍</Text>
-                        <View>
-                            <Text style={[styles.pillTitle, styles.textInfo]}>GPS PAUSED</Text>
-                            <Text style={[styles.pillText, styles.textInfo]}>Check Settings</Text>
-                        </View>
-                    </View>
-                </Card>
-            );
-        }
-
-        // Low Light
-        if (lowLightState?.isLowLight) {
-            const isCritical = lowLightState.fallbackRequired;
-            statuses.push(
-                <Card key="light" style={[styles.statusPill, isCritical ? styles.statusPillError : styles.statusPillWarning]}>
-                    <View style={styles.pillContent}>
-                        <Text style={styles.pillIcon}>{isCritical ? '📷' : '🌙'}</Text>
-                        <View>
-                            <Text style={[styles.pillTitle, isCritical ? styles.textError : styles.textWarning]}>
-                                {isCritical ? 'FALLBACK' : 'LOW LIGHT'}
-                            </Text>
-                            <Text style={[styles.pillText, isCritical ? styles.textError : styles.textWarning]}>
-                                {isCritical ? 'FaceID N/A' : 'Flash On'}
-                            </Text>
-                        </View>
-                    </View>
-                </Card>
-            );
-        }
-
-        if (statuses.length === 0) return null;
-
-        return (
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.systemStatusContainer} contentContainerStyle={styles.systemStatusContent}>
-                {statuses}
-            </ScrollView>
-        );
-    };
-
-    const screenAnim = useEntryAnimation(0);
-
-    // ──── GPS Acquisition Loading Gate ────
-    if (!gpsAcquired) {
-        const hasPhoneGps = currentPosition.lat !== 0 || currentPosition.lng !== 0;
-        const hasBoxData = boxFirstLoadReceivedRef.current;
-        return (
-            <View style={[styles.container, { backgroundColor: c.background, justifyContent: 'center', alignItems: 'center', padding: 32 }]}>
-                <View style={{ alignItems: 'center', marginBottom: 32 }}>
-                    <ActivityIndicator size="large" color={isDarkMode ? '#60a5fa' : '#2563eb'} style={{ marginBottom: 20 }} />
-                    <Text variant="headlineSmall" style={{ color: c.text, fontFamily: 'Inter_700Bold', marginBottom: 8 }}>
-                        Acquiring GPS Signal
-                    </Text>
-                    <Text variant="bodyMedium" style={{ color: isDarkMode ? '#a1a1aa' : '#6b7280', textAlign: 'center' }}>
-                        Locking onto your position for accurate geofence detection...
-                    </Text>
-                </View>
-
-                <View style={[styles.gpsGateCard, { backgroundColor: c.card, borderColor: c.border }]}>
-                    <View style={styles.gpsGateRow}>
-                        <Text style={{ fontSize: 18 }}>{hasPhoneGps ? '✅' : '📡'}</Text>
-                        <Text variant="bodyMedium" style={{ color: c.text, flex: 1, marginLeft: 12 }}>
-                            Phone GPS
-                        </Text>
-                        <Text variant="bodySmall" style={{ color: hasPhoneGps ? '#22c55e' : (isDarkMode ? '#a1a1aa' : '#9ca3af') }}>
-                            {hasPhoneGps ? 'Locked' : 'Acquiring...'}
-                        </Text>
-                    </View>
-
-                    <View style={[styles.gpsGateDivider, { backgroundColor: c.border }]} />
-
-                    <View style={styles.gpsGateRow}>
-                        <Text style={{ fontSize: 18 }}>{hasBoxData ? '✅' : (isBoxOffline ? '⚠️' : '📦')}</Text>
-                        <Text variant="bodyMedium" style={{ color: c.text, flex: 1, marginLeft: 12 }}>
-                            Smart Box
-                        </Text>
-                        <Text variant="bodySmall" style={{ color: hasBoxData ? '#22c55e' : (isBoxOffline ? '#f59e0b' : (isDarkMode ? '#a1a1aa' : '#9ca3af')) }}>
-                            {hasBoxData ? 'Connected' : (isBoxOffline ? 'Offline' : 'Connecting...')}
-                        </Text>
-                    </View>
-                </View>
-            </View>
-        );
-    }
-
-    return (
-        <ScrollView style={[styles.container, { backgroundColor: c.background }]} contentContainerStyle={[styles.content, { paddingTop: Math.max(insets.top, 20), paddingBottom: insets.bottom + 20 }]}>
-            <Animated.View style={screenAnim.style}>
-                {/* Critical Security Alerts (Full Width) */}
-                {tamperState?.detected && (
-                    <Card style={styles.tamperBanner}>
-                        <Card.Content style={styles.bannerContent}>
-                            <Text style={styles.bannerIcon}>🚨</Text>
-                            <View style={{ flex: 1 }}>
-                                <Text style={styles.tamperTitle}>SECURITY ALERT</Text>
-                                <Text style={styles.tamperText}>Box tamper detected - Lockdown active</Text>
-                            </View>
-                        </Card.Content>
-                    </Card>
-                )}
-
-                {/* System Status Pills */}
-                {renderSystemStatus()}
-
-                <Text variant="headlineMedium" style={[styles.pageTitle, { color: c.text }]}>
-                    Arrival & Verification
-                </Text>
-
-                <View style={styles.refreshRow}>
-                    <Button
-                        mode="contained"
-                        icon="refresh"
-                        onPress={handleManualRefresh}
-                        loading={manualRefreshBusy}
-                        disabled={manualRefreshBusy}
-                        buttonColor={isDarkMode ? '#0f172a' : '#111827'}
-                        textColor="#f8fafc"
-                        style={styles.refreshButton}
-                    >
-                        Refresh Status
-                    </Button>
-                </View>
-
-                {/* Status Modals & Top Alerts */}
-                {lockoutState?.active && (
-                    <View style={[styles.statusMessageContainer, styles.bgSubtleError, { marginTop: 16 }]}>
-                        <Text style={[styles.statusMessageText, styles.textError]}>
-                            🔒 Smart Box is locked out. Wait {Math.max(0, Math.ceil((lockoutState.expires_at - timerNowMs) / 60000))} minutes.
-                        </Text>
-                    </View>
-                )}
-                {hasBatteryCritical && (
-                    <View style={[styles.statusMessageContainer, styles.bgSubtleError, { marginTop: 16 }]}>
-                        <Text style={[styles.statusMessageText, styles.textError]}>
-                            ⚠️ Smart Box Battery Critical ({batteryAlertSummary || '--'})
-                        </Text>
-                    </View>
-                )}
-                {tamperState?.detected && (
-                    <View style={[styles.statusMessageContainer, styles.bgSubtleError, { marginTop: 16 }]}>
-                        <Text style={[styles.statusMessageText, styles.textError]}>
-                            🚨 TAMPER DETECTED! Box is in lockdown. Contact support.
-                        </Text>
-                    </View>
-                )}
-
-                {/* Grace Period Countdown Card */}
-                {isDropoffPhase && deliveryStatus === 'ARRIVED' && arrivedAt && (
-                    <Card style={[
-                        styles.gracePeriodCard,
-                        { backgroundColor: c.card, borderColor: c.border },
-                        gracePeriodExpired ? styles.gracePeriodExpired : styles.gracePeriodActive
-                    ]}>
-                        <Card.Content>
-                            <View style={styles.gracePeriodHeader}>
-                                <Text style={styles.gracePeriodIcon}>
-                                    {gracePeriodExpired ? '⏰' : '⏳'}
-                                </Text>
-                                <View style={{ flex: 1 }}>
-                                    <Text style={[styles.gracePeriodTitle, { color: c.text }]}>
-                                        {gracePeriodExpired ? 'Grace Period Expired' : 'Grace Period Active'}
-                                    </Text>
-                                    <Text style={[styles.gracePeriodSubtext, { color: isDarkMode ? '#a1a1aa' : '#6b7280' }]}>
-                                        {gracePeriodExpired
-                                            ? 'Customer did not appear. You may mark as No-Show.'
-                                            : 'Waiting for customer to arrive at location...'}
-                                    </Text>
-                                </View>
-                                <View style={[styles.gracePeriodTimerBox, { backgroundColor: c.card, borderColor: c.border }]}>
-                                    <Text style={[
-                                        styles.gracePeriodTimer,
-                                        gracePeriodExpired && { color: '#dc2626' }
-                                    ]}>
-                                        {gracePeriodDisplay}
-                                    </Text>
-                                    <Text style={styles.gracePeriodTimerLabel}>
-                                        {gracePeriodExpired ? 'EXPIRED' : 'remaining'}
-                                    </Text>
-                                </View>
-                            </View>
-
-                            {gracePeriodExpired && (
-                                <Button
-                                    mode="contained"
-                                    onPress={handleMarkNoShow}
-                                    loading={noShowLoading}
-                                    disabled={noShowLoading}
-                                    buttonColor="#dc2626"
-                                    textColor="white"
-                                    style={{ marginTop: 12, borderRadius: 8 }}
-                                    icon="account-cancel"
-                                >
-                                    Mark as Customer No-Show
-                                </Button>
-                            )}
-                        </Card.Content>
-                    </Card>
-                )}
-
-                {isDropoffPhase && deliveryStatus === 'ARRIVED' && hasBatteryCritical && (
-                    <Card style={[styles.batteryIncidentCard, { backgroundColor: c.card, borderColor: c.border }]}>
-                        <Card.Content>
-                            <View style={styles.batteryIncidentHeader}>
-                                <Text style={styles.batteryIncidentIcon}>🔋</Text>
-                                <View style={{ flex: 1 }}>
-                                    <Text style={[styles.batteryIncidentTitle, { color: c.text }]}>Battery Handoff Incident</Text>
-                                    <Text style={[styles.batteryIncidentSubtext, { color: isDarkMode ? '#a1a1aa' : '#6b7280' }]}>
-                                        Report once if handoff is blocked by power loss. Auto-cancel SLA is 15 minutes.
-                                    </Text>
-                                </View>
-                                <View style={[styles.batteryIncidentTimerBox, { backgroundColor: c.card, borderColor: c.border }]}>
-                                    <Text style={styles.batteryIncidentTimer}>{batteryIncidentReportedAt ? batteryTimeoutDisplay : '15:00'}</Text>
-                                    <Text style={styles.batteryIncidentTimerLabel}>{batteryIncidentReportedAt ? 'remaining' : 'window'}</Text>
-                                </View>
-                            </View>
-
-                            <Button
-                                mode={batteryIncidentReportedAt ? 'outlined' : 'contained'}
-                                onPress={handleReportBatteryIncident}
-                                loading={reportingBatteryIncident}
-                                disabled={reportingBatteryIncident}
-                                buttonColor={batteryIncidentReportedAt ? undefined : '#dc2626'}
-                                textColor={batteryIncidentReportedAt ? undefined : 'white'}
-                                style={{ marginTop: 12, borderRadius: 8 }}
-                                icon={batteryIncidentReportedAt ? 'check-circle' : 'alert-circle'}
-                            >
-                                {batteryIncidentReportedAt ? 'Incident Reported (Tap to Re-send)' : 'Report Battery Incident'}
-                            </Button>
-                        </Card.Content>
-                    </Card>
-                )}
-
-                {(waitTimerState.status === 'WAITING' || waitTimerState.status === 'EXPIRED') ? (
-                    renderWaitingUI()
-                ) : (
-                    isPickupConfirmed ? (
-                        isReturning ? (
-                            // ── EC-32: Return Journey Card ──────────────────────────────────────────
-                            <Card style={{ margin: 16, borderRadius: 0, borderWidth: 3, borderColor: '#000', backgroundColor: '#fff', overflow: 'hidden' }} elevation={0}>
-                                {/* Map Preview */}
-                                <View style={{ height: 160, width: '100%', backgroundColor: '#000', position: 'relative' }}>
-                                    {isMapboxNativeAvailable() && currentPosition.lat !== 0 && params.pickupLng && params.pickupLat ? (
-                                        <MapboxGL.MapView
-                                            style={{ flex: 1 }}
-                                            logoEnabled={false}
-                                            compassEnabled={false}
-                                            scaleBarEnabled={false}
-                                            attributionEnabled={false}
-                                            scrollEnabled={false}
-                                            pitchEnabled={false}
-                                            rotateEnabled={false}
-                                            zoomEnabled={false}
-                                            styleURL={isDarkMode ? StyleURL.Dark : StyleURL.Street}
-                                        >
-                                            <MapboxGL.Camera
-                                                zoomLevel={16}
-                                                centerCoordinate={[params.pickupLng, params.pickupLat]}
-                                                animationMode="flyTo"
-                                            />
-
-                                            {/* 1. The Geofence Zone Circle */}
-                                            <MapboxGL.ShapeSource id="return-geofence" shape={buildGeofenceCircleGeoJSON(params.pickupLng, params.pickupLat, 50)}>
-                                                <MapboxGL.FillLayer
-                                                    id="return-geofence-fill"
-                                                    style={{
-                                                        fillColor: isInsideGeoFence ? '#4CAF50' : '#2196F3',
-                                                        fillOpacity: 0.2,
-                                                    }}
-                                                />
-                                                <MapboxGL.LineLayer
-                                                    id="return-geofence-line"
-                                                    style={{
-                                                        lineColor: isInsideGeoFence ? '#4CAF50' : '#2196F3',
-                                                        lineWidth: 2,
-                                                    }}
-                                                />
-                                            </MapboxGL.ShapeSource>
-
-                                            {/* 2. The Return Target Point Marker */}
-                                            <MapboxGL.PointAnnotation id="return-target" coordinate={[params.pickupLng, params.pickupLat]}>
-                                                <View style={{
-                                                    width: 28, height: 28, borderRadius: 14,
-                                                    alignItems: 'center', justifyContent: 'center',
-                                                    borderWidth: 2, borderColor: 'white',
-                                                    backgroundColor: isInsideGeoFence ? '#4CAF50' : '#2196F3',
-                                                    shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.3, shadowRadius: 3, elevation: 4
-                                                }}>
-                                                    <Text style={{ color: 'white', fontSize: 16 }}>↩️</Text>
-                                                </View>
-                                            </MapboxGL.PointAnnotation>
-
-                                            {/* 3. Rider Current Position */}
-                                            {currentPosition.lat != null && currentPosition.lng != null && (
-                                                <AnimatedRiderMarker
-                                                    latitude={currentPosition.lat}
-                                                    longitude={currentPosition.lng}
-                                                    rotation={headingSmoother.smooth(currentPosition.heading, currentPosition.speed, localPhoneHeading)}
-                                                    speed={currentPosition.speed}
-                                                />
-                                            )}
-                                        </MapboxGL.MapView>
-                                    ) : (
-                                        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: isDarkMode ? '#27272a' : '#f4f4f5' }}>
-                                            {currentPosition.lat === 0 ? (
-                                                <>
-                                                    <ActivityIndicator size="small" color="#4CAF50" />
-                                                    <Text style={{ marginTop: 8, color: isDarkMode ? '#a1a1aa' : '#71717a' }}>Acquiring GPS...</Text>
-                                                </>
-                                            ) : (
-                                                <Text style={{ fontSize: 32 }}>📍</Text>
-                                            )}
-                                        </View>
-                                    )}
-
-                                    {distanceMeters !== null && (
-                                        <View style={{
-                                            position: 'absolute', top: 12, right: 12,
-                                            paddingHorizontal: 10, paddingVertical: 4, borderRadius: 16,
-                                            alignItems: 'center', justifyContent: 'center', borderWidth: 1,
-                                            backgroundColor: c.card, borderColor: isDarkMode ? '#3f3f46' : '#e4e4e7',
-                                            shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 4, elevation: 3
-                                        }}>
-                                            <Text variant="labelMedium" style={{ fontFamily: 'Inter_700Bold', color: c.text }}>
-                                                {distanceMeters < 1000 ? `${Math.round(distanceMeters)}m` : `${(distanceMeters / 1000).toFixed(1)}km`}
-                                            </Text>
-                                            <Text variant="labelSmall" style={{ color: isDarkMode ? '#a1a1aa' : '#71717a' }}>away</Text>
-                                        </View>
-                                    )}
-                                </View>
-
-                                {/* Destination Info & Buttons below map */}
-                                <Card.Content style={{ paddingTop: 16 }}>
-                                    <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>
-                                        <Text variant="titleMedium" style={{ fontFamily: 'Inter_700Bold', flex: 1, color: c.text }}>Return Journey</Text>
-                                        <View style={{ backgroundColor: '#2196F3', width: 28, height: 28, borderRadius: 6, alignItems: 'center', justifyContent: 'center' }}>
-                                            <Text style={{ color: 'white', fontSize: 16 }}>↩️</Text>
-                                        </View>
-                                    </View>
-                                    <Text variant="bodySmall" style={{ color: isDarkMode ? '#a1a1aa' : '#666', marginBottom: 4 }}>Return destination</Text>
-                                    <Text variant="bodyMedium" style={{ fontFamily: 'Inter_600SemiBold', marginBottom: 16, color: c.text }}>
-                                        {params.pickupAddress || params.targetAddress}
-                                    </Text>
-
-                                    <Button
-                                        mode="outlined"
-                                        icon="navigation"
-                                        onPress={handleNavigate}
-                                        style={{ marginBottom: 12, borderRadius: 8 }}
-                                    >
-                                        Navigate to Pickup
-                                    </Button>
-                                    <Button
-                                        mode="contained"
-                                        icon="package-variant-closed"
-                                        onPress={() => {
-                                            if (returnCancellationState?.returnOtp) {
-                                                navigation.navigate('ReturnPackage', {
-                                                    deliveryId: params.deliveryId,
-                                                    returnOtp: returnCancellationState.returnOtp,
-                                                    pickupAddress: params.pickupAddress || params.targetAddress,
-                                                    senderName: params.senderName || 'Sender',
-                                                    pickupLat: params.pickupLat,
-                                                    pickupLng: params.pickupLng,
-                                                    boxId: params.boxId,
-                                                });
-                                            } else {
-                                                navigation.navigate('CancellationConfirmation', {
-                                                    deliveryId: params.deliveryId,
-                                                    returnOtp: '------',
-                                                    reason: CancellationReason.OTHER,
-                                                    senderName: params.senderName || 'Sender',
-                                                    pickupAddress: params.pickupAddress || params.targetAddress,
-                                                    pickupLat: params.pickupLat,
-                                                    pickupLng: params.pickupLng,
-                                                    isPickedUp: ['IN_TRANSIT', 'ARRIVED', 'COMPLETED', 'RETURNING', 'TAMPERED'].includes(params.status || 'PENDING'),
-                                                });
-                                            }
-                                        }}
-                                        style={{ borderRadius: 8 }}
-                                    >
-                                        Continue Return Process
-                                    </Button>
-                                </Card.Content>
-                            </Card>
-                        ) : (
-                            <DropoffVerification
-                                deliveryId={params.deliveryId}
-                                boxId={params.boxId}
-                                targetAddress={params.dropoffAddress || params.targetAddress}
-                                targetLat={params.dropoffLat || params.targetLat}
-                                targetLng={params.dropoffLng || params.targetLng}
-                                recipientName={params.recipientName}
-                                customerPhone={params.customerPhone}
-                                deliveryNotes={params.deliveryNotes}
-                                deliveryStatus={deliveryStatus}
-                                isInsideGeoFence={isInsideGeoFence}
-                                distanceMeters={distanceMeters}
-                                isPhoneInside={isPhoneInside}
-                                isBoxInside={isBoxInside}
-                                isBoxOffline={isBoxOffline}
-                                lastBoxHeartbeatAt={boxLocationLastSeen}
-                                lastPhoneGpsAt={phoneLocationLastSeen}
-                                currentLat={currentPosition.lat}
-                                currentLng={currentPosition.lng}
-                                currentHeading={headingSmoother.smooth(currentPosition.heading, currentPosition.speed, localPhoneHeading)}
-                                geofenceRadiusM={geofence.radiusMeters}
-                                onDeliveryCompleted={() => navigation.goBack()}
-
-                                onNavigate={handleNavigate}
-                                onShowBleModal={handleBleTransfer}
-                                onShowCancelModal={() => setShowCancelModal(true)}
-                                onShowCustomerNotHome={handleCustomerNotHome}
-                                isWaitTimerActive={false}
-                                canAutoArrive={geofenceTarget !== 'pickup'}
-                            />
-                        )
-                    ) : (
-                        <PickupVerification
-                            deliveryId={params.deliveryId}
-                            boxId={params.boxId}
-                            targetAddress={params.pickupAddress || params.targetAddress}
-                            targetLat={params.pickupLat || params.targetLat}
-                            targetLng={params.pickupLng || params.targetLng}
-                            senderName={params.senderName}
-                            senderPhone={params.senderPhone}
-                            deliveryNotes={params.deliveryNotes}
-                            isInsideGeoFence={isInsideGeoFence}
-                            distanceMeters={distanceMeters}
-                            isPhoneInside={isPhoneInside}
-                            isBoxInside={isBoxInside}
-                            isBoxOffline={isBoxOffline}
-                            isPhoneOnlyFallback={isPhoneOnlyFallback}
-                            currentLat={currentPosition.lat}
-                            currentLng={currentPosition.lng}
-                            currentHeading={headingSmoother.smooth(currentPosition.heading, currentPosition.speed, localPhoneHeading)}
-                            geofenceRadiusM={geofence.radiusMeters}
-                            onPickupConfirmed={() => {
-                                if (!isSamePickupDropoff) {
-                                    return;
-                                }
-
-                                const arrivedAtNow = Date.now();
-                                updateDeliveryStatus(params.deliveryId, 'ARRIVED', {
-                                    arrived_at: arrivedAtNow,
-                                    arrival_source: 'same_pickup_dropoff_fast_path',
-                                    boxId: params.boxId,
-                                }).then((ok) => {
-                                    if (!ok) return;
-                                    setDeliveryStatus('ARRIVED');
-                                    setArrivedAt((prev) => prev ?? arrivedAtNow);
-                                    dropoffArrivalPersistedRef.current = true;
-                                    requestBoxContextRefresh(params.boxId, 'same_pickup_dropoff_arrived').catch(() => { });
-
-                                    if (currentPosition.lat !== 0 || currentPosition.lng !== 0) {
-                                        writePhoneLocation(
-                                            params.boxId,
-                                            currentPosition.lat,
-                                            currentPosition.lng,
-                                            currentPosition.speed,
-                                            currentPosition.heading,
-                                            localPhoneHeading
-                                        ).catch(() => { });
-                                    }
-                                });
-                            }}
-
-                            onNavigate={handleNavigate}
-                        />
-                    )
-                )}
-
-
-                {/* Modals ... */}
-                {/* ... keeping existing modals ... */}
-                <Portal>
-
-                    <Modal
-                        visible={showBleModal}
-                        onDismiss={closeBleModal}
-                        contentContainerStyle={[styles.modal, { backgroundColor: c.modalBg }]}
-                    >
-                        <Text variant="titleLarge" style={{ marginBottom: 16, fontFamily: 'Inter_700Bold', color: c.text }}>
-                            BLE OTP Transfer
-                        </Text>
-
-                        <View style={styles.bleStatusContainer}>
-                            {(bleStatus === 'scanning' || bleStatus === 'connecting' || bleStatus === 'transferring') && (
-                                <Text style={styles.bleStatusIcon}>⏳</Text>
-                            )}
-                            {bleStatus === 'success' && <Text style={styles.bleStatusIcon}>✅</Text>}
-                            {bleStatus === 'error' && <Text style={styles.bleStatusIcon}>❌</Text>}
-                        </View>
-
-                        <Text style={[styles.bleStatusText, { color: c.text }]}>
-                            {bleStatus === 'scanning' ? 'Scanning...' :
-                                bleStatus === 'connecting' ? 'Connecting...' :
-                                    bleStatus === 'transferring' ? 'Transferring...' :
-                                        bleStatus === 'success' ? 'Success!' :
-                                            bleStatus === 'error' ? 'Failed' : 'Ready'}
-                        </Text>
-                        <Text style={[styles.bleMessageText, { color: c.modalText }]}>{bleMessage}</Text>
-
-                        <View style={styles.bleActions}>
-                            {bleStatus === 'error' && (
-                                <Button mode="contained" onPress={handleBleTransfer}>
-                                    Retry
-                                </Button>
-                            )}
-                            {bleStatus === 'success' && (
-                                <Button mode="contained" onPress={closeBleModal} buttonColor="#22c55e">
-                                    Done
-                                </Button>
-                            )}
-                            <Button mode="outlined" onPress={closeBleModal} style={{ marginTop: 8 }}>
-                                {bleStatus === 'success' ? 'Close' : 'Cancel'}
-                            </Button>
-                        </View>
-                    </Modal>
-                </Portal>
-
-
-
-                {/* EC-32: Cancellation Modal */}
-                <CancellationModal
-                    visible={showCancelModal}
-                    onDismiss={() => setShowCancelModal(false)}
-                    onSubmit={handleCancellationSubmit}
-                    loading={cancelLoading}
-                />
-
-                {/* EC-78: Reassignment Alert Modal */}
-                <ReassignmentAlertModal
-                    visible={showReassignmentModal}
-                    state={reassignmentState}
-                    type={getReassignmentType(reassignmentState, riderId || '')}
-                    onAcknowledge={handleReassignmentAcknowledge}
-                />
-            </Animated.View>
-        </ScrollView>
-    );
 }
 
 const styles = StyleSheet.create({
@@ -2836,3 +653,2429 @@ const styles = StyleSheet.create({
         backgroundColor: '#000',
     },
 });
+
+export default function ArrivalScreen() {
+    const navigation = useNavigation<any>();
+    const route = useRoute();
+    const params = route.params as RouteParams | undefined;
+    const insets = useSafeAreaInsets();
+    const { isDarkMode } = useAppTheme();
+    const c = {
+        background: isDarkMode ? '#121212' : '#f8f9fa',
+        text: isDarkMode ? '#ffffff' : '#1a1a1a',
+        modalBg: isDarkMode ? '#1e1e1e' : 'white',
+        modalText: isDarkMode ? '#e4e4e7' : '#666',
+        card: isDarkMode ? '#1e1e1e' : '#ffffff',
+        border: isDarkMode ? '#27272a' : '#e5e7eb',
+    };
+
+    if (!params?.deliveryId || !params?.boxId) {
+        return (
+            <View style={[styles.container, { justifyContent: 'center', padding: 24, backgroundColor: c.background }]}>
+                <Text variant="titleMedium" style={{ marginBottom: 12, color: c.text }}>
+                    Missing delivery context.
+                </Text>
+                <Button mode="contained" onPress={() => navigation.goBack()}>
+                    Go Back
+                </Button>
+            </View>
+        );
+    }
+
+    // Geofence State
+    // EC-XX: Dual-Check Geofence State
+    const [isInsideGeoFence, setIsInsideGeoFence] = useState(false); // Master switch (Phone && (Box || Offline || Fallback))
+    const [isPhoneInside, setIsPhoneInside] = useState(false);
+    const [isBoxInside, setIsBoxInside] = useState(false);
+    const [isBoxOffline, setIsBoxOffline] = useState(false);
+    const [isPhoneOnlyFallback, setIsPhoneOnlyFallback] = useState(false); // EC-FIX: Phone-only fallback when box is stuck
+    const [boxLocationLastSeen, setBoxLocationLastSeen] = useState<number>(0);
+    const [phoneLocationLastSeen, setPhoneLocationLastSeen] = useState<number>(0);
+    const [boxLocationSubscriptionEpoch, setBoxLocationSubscriptionEpoch] = useState(0);
+    const phoneGeofenceStateRef = useRef<GeofenceStabilityState>(createInitialState());
+    const boxGeofenceStateRef = useRef<GeofenceStabilityState>(createInitialState());
+    const masterSwitchDebounceRef = useRef<NodeJS.Timeout | null>(null);
+    const masterDecisionRef = useRef<boolean>(false);
+    const boxOfflineRef = useRef<boolean>(false);
+    const boxOfflineTransitionStartRef = useRef<number>(0);
+    const boxFirstLoadReceivedRef = useRef<boolean>(false); // Tracks whether we've received first box location callback
+    const phoneInsideSinceRef = useRef<number>(0); // Tracks when phone first entered geofence
+    // EC-FIX: Records the timestamp of the last geofence target switch.
+    // During the cooldown period, the master switch is blocked from flipping
+    // to true to prevent stale GPS evaluations from firing dropoff arrival.
+    const geofenceTransitionAtRef = useRef<number>(0);
+
+    const [currentPosition, setCurrentPosition] = useState({ lat: 0, lng: 0, accuracy: 25, heading: 0, speed: 0 });
+    const [localPhoneHeading, setLocalPhoneHeading] = useState<number | null>(null);
+    const headingSmoother = useHeadingSmoothing();
+
+    // EC-FIX: GPS Acquisition Gate — show a loading screen until phone GPS is acquired
+    const [gpsAcquired, setGpsAcquired] = useState(false);
+    const gpsAcquireTimerRef = useRef<NodeJS.Timeout | null>(null);
+    
+    // EC-FIX: Initialize geofenceTarget based on navigation params to prevent
+    // the brief window where geofence is in 'pickup' mode even when rider
+    // is already in dropoff phase (e.g. resuming an IN_TRANSIT delivery).
+    const initialGeofenceTarget = useMemo<GeofenceTarget>(() => {
+        const navStatus = params.status as string | undefined;
+        if (navStatus && ['PICKED_UP', 'IN_TRANSIT', 'ARRIVED', 'COMPLETED'].includes(navStatus)) {
+            return 'dropoff';
+        }
+        if (navStatus && ['RETURNING', 'TAMPERED'].includes(navStatus)) {
+            return 'return_pickup';
+        }
+        return 'pickup';
+    }, [params.status]);
+
+    // Once we have advanced beyond pickup, do not downgrade back to pickup if
+    // a late status read temporarily reports ASSIGNED/PENDING during hydration.
+    const geofenceTargetLockRef = useRef<GeofenceTarget>(initialGeofenceTarget);
+    
+    // EC-FIX: Compute initial geofence with correct coordinates based on delivery phase
+    // This prevents showing wrong distance (e.g., 10m) when params.targetLat/targetLng
+    // point to the wrong location (e.g., pickup instead of dropoff).
+    const initialGeofenceConfig = useMemo<GeofenceConfig>(() => {
+        // If we have explicit params for pickup/dropoff, use those with proper prioritization
+        if (initialGeofenceTarget === 'dropoff') {
+            const hasDropoffCoords = Number.isFinite(params.dropoffLat) && Number.isFinite(params.dropoffLng);
+            if (hasDropoffCoords) {
+                return createDefaultGeofence(params.dropoffLat as number, params.dropoffLng as number);
+            }
+        } else if (initialGeofenceTarget === 'return_pickup') {
+            const hasPickupCoords = Number.isFinite(params.pickupLat) && Number.isFinite(params.pickupLng);
+            if (hasPickupCoords) {
+                return createDefaultGeofence(params.pickupLat as number, params.pickupLng as number);
+            }
+        } else {
+            // 'pickup' phase
+            const hasPickupCoords = Number.isFinite(params.pickupLat) && Number.isFinite(params.pickupLng);
+            if (hasPickupCoords) {
+                return createDefaultGeofence(params.pickupLat as number, params.pickupLng as number);
+            }
+        }
+        // Fallback to params.targetLat/targetLng
+        return createDefaultGeofence(params.targetLat, params.targetLng);
+    }, [initialGeofenceTarget, params.pickupLat, params.pickupLng, params.dropoffLat, params.dropoffLng, params.targetLat, params.targetLng]);
+    
+    const [geofence, setGeofence] = useState<GeofenceConfig>(initialGeofenceConfig);
+    const [geofenceTarget, setGeofenceTarget] = useState<GeofenceTarget>(initialGeofenceTarget);
+    const [distanceMeters, setDistanceMeters] = useState<number | null>(null);
+    const [manualRefreshBusy, setManualRefreshBusy] = useState(false);
+    const [dropoffArrivalRetryTick, setDropoffArrivalRetryTick] = useState(0);
+
+    const applyPhonePosition = useCallback((coords: { latitude: number; longitude: number; accuracy: number | null; heading: number | null; speed: number | null; timestamp?: number | null }, fallbackAccuracy: number, sourceTimestamp?: number | null) => {
+        const position = {
+            lat: coords.latitude,
+            lng: coords.longitude,
+            accuracy: coords.accuracy ?? fallbackAccuracy,
+            heading: coords.heading ?? 0,
+            speed: coords.speed ?? 0,
+        };
+        const now = Date.now();
+        const fixTimestamp = typeof sourceTimestamp === 'number'
+            ? sourceTimestamp
+            : (typeof coords.timestamp === 'number' ? coords.timestamp : now);
+        const fixAgeMs = now - fixTimestamp;
+        const isStaleFix = fixAgeMs > PHONE_GPS_MAX_FIX_AGE_MS;
+        const isPreTransitionFix = fixTimestamp <= geofenceTransitionAtRef.current;
+
+        if (isStaleFix || isPreTransitionFix) {
+            setIsPhoneInside(false);
+            return;
+        }
+
+        setCurrentPosition(position);
+
+        // EC-FIX: During geofence transition cooldown, only update distance
+        // display but do NOT flip isPhoneInside to true. This prevents stale
+        // GPS callbacks (still referencing the old geofence center via closure)
+        // from causing premature dropoff ARRIVED while rider is at pickup.
+        const inTransitionCooldown =
+            geofenceTransitionAtRef.current > 0 &&
+            (now - geofenceTransitionAtRef.current) < GEOFENCE_TRANSITION_COOLDOWN_MS;
+
+        const quality = {
+            hdop: Math.max(0.8, Math.min(8, (position.accuracy || fallbackAccuracy) / 6)),
+            satellites: (position.accuracy || fallbackAccuracy) <= 20 ? 8 : ((position.accuracy || fallbackAccuracy) <= 40 ? 6 : 4),
+            timestamp: now,
+        };
+        const nextState = updateGeofenceState(
+            phoneGeofenceStateRef.current,
+            { lat: position.lat, lng: position.lng },
+            { latitude: geofence.centerLat, longitude: geofence.centerLng },
+            quality,
+            null,
+            now
+        );
+        const geometricResult = checkGeofence(position, geofence);
+        const isPickupTarget = isPickupLikeGeofenceTarget(geofenceTarget);
+        const clearInsideRadiusM = Math.min(
+            geofence.radiusMeters * (isPickupTarget ? PHONE_PICKUP_CLEAR_INSIDE_RATIO : PHONE_DROPOFF_CLEAR_INSIDE_RATIO),
+            isPickupTarget ? PHONE_PICKUP_CLEAR_INSIDE_MAX_M : PHONE_DROPOFF_CLEAR_INSIDE_MAX_M
+        );
+        const isClearInsideFix =
+            (isPickupTarget || geofenceTarget === 'dropoff') &&
+            geometricResult.isInside &&
+            nextState.rawDistanceM <= clearInsideRadiusM;
+        const effectiveState: GeofenceStabilityState = isClearInsideFix && nextState.stableState !== 'INSIDE'
+            ? {
+                ...nextState,
+                stableState: 'INSIDE',
+                rawState: 'INSIDE',
+                hysteresisCount: Math.max(nextState.hysteresisCount, 3),
+                lastStableChangeMs: now,
+            }
+            : nextState;
+
+        phoneGeofenceStateRef.current = effectiveState;
+        // EC-FIX: During transition cooldown, force phone-inside to false to prevent
+        // stale geofence evaluations from triggering premature arrival.
+        // EC-FIX v2: At dropoff, also reject readings with poor GPS accuracy.
+        // This prevents inaccurate phone GPS from falsely triggering ARRIVED
+        // when the box GPS isn't sending data (phone-only fallback path).
+        const isDropoffWithBadAccuracy =
+            geofenceTarget === 'dropoff' &&
+            (position.accuracy || fallbackAccuracy) > DROPOFF_MAX_ACCEPTABLE_ACCURACY_M;
+
+        if (inTransitionCooldown || isDropoffWithBadAccuracy) {
+            setIsPhoneInside(false);
+        } else {
+            setIsPhoneInside(effectiveState.stableState === 'INSIDE');
+        }
+        setDistanceMeters(geometricResult.distanceMeters);
+        setPhoneLocationLastSeen(now);
+    }, [geofence, geofenceTarget]);
+
+    // EC-FIX: Derive gpsAcquired — phone GPS is required, box is best-effort (4s timeout)
+    useEffect(() => {
+        if (gpsAcquired) return; // Once acquired, never revert
+
+        const hasPhoneGps = currentPosition.lat !== 0 || currentPosition.lng !== 0;
+        const hasBoxData = boxFirstLoadReceivedRef.current;
+
+        if (hasPhoneGps && (hasBoxData || isBoxOffline)) {
+            setGpsAcquired(true);
+            return;
+        }
+
+        // If phone GPS arrived but box is still pending, wait up to 4s then proceed
+        if (hasPhoneGps && !hasBoxData && !isBoxOffline) {
+            if (!gpsAcquireTimerRef.current) {
+                gpsAcquireTimerRef.current = setTimeout(() => {
+                    setGpsAcquired(true);
+                }, 4000);
+            }
+        }
+
+        // 8s hard timeout — proceed with whatever we have
+        const hardTimeout = setTimeout(() => {
+            setGpsAcquired(true);
+        }, 8000);
+
+        return () => {
+            clearTimeout(hardTimeout);
+            if (gpsAcquireTimerRef.current) {
+                clearTimeout(gpsAcquireTimerRef.current);
+                gpsAcquireTimerRef.current = null;
+            }
+        };
+    }, [currentPosition.lat, currentPosition.lng, isBoxOffline, gpsAcquired]);
+
+    // EC-11: Customer Not Home State
+    const [waitTimerState, setWaitTimerState] = useState<WaitTimerState>(
+        initWaitTimerState(params.deliveryId, params.boxId)
+    );
+    const [timerNowMs, setTimerNowMs] = useState(() => Date.now());
+    const [displayTime, setDisplayTime] = useState('5:00');
+    const [arrivalPhotoUri, setArrivalPhotoUri] = useState<string | null>(null);
+    const [isLoading, setIsLoading] = useState(false);
+    const timerTickTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+    const appStateRef = useRef<AppStateStatus>(AppState.currentState);
+
+    // Grace Period & No-Show State
+    const [arrivedAt, setArrivedAt] = useState<number | null>(null);
+    const [gracePeriodDisplay, setGracePeriodDisplay] = useState<string>('10:00');
+    const [gracePeriodExpired, setGracePeriodExpired] = useState(false);
+    const [noShowLoading, setNoShowLoading] = useState(false);
+    const [batteryIncidentReportedAt, setBatteryIncidentReportedAt] = useState<number | null>(null);
+    const [batteryTimeoutDisplay, setBatteryTimeoutDisplay] = useState('15:00');
+    const [reportingBatteryIncident, setReportingBatteryIncident] = useState(false);
+
+    // EC-04: OTP Lockout State
+    const [lockoutState, setLockoutState] = useState<LockoutState | null>(null);
+    const [lockoutCountdown, setLockoutCountdown] = useState('');
+
+    // EC-03: Battery State
+    const [batteryState, setBatteryState] = useState<DualBatteryState | null>(null);
+    const batteryMainPct = batteryState?.main?.percentage;
+    const batteryLockPct = batteryState?.secondary?.percentage;
+    const mainLow = Boolean(batteryState?.main?.lowBatteryWarning);
+    const lockLow = Boolean(batteryState?.secondary?.lowBatteryWarning);
+    const mainCritical = Boolean(batteryState?.main?.criticalBatteryWarning);
+    const lockCritical = Boolean(batteryState?.secondary?.criticalBatteryWarning);
+    const hasBatteryLow = mainLow || lockLow;
+    const hasBatteryCritical = mainCritical || lockCritical;
+    const batterySummary = [
+        batteryMainPct != null ? `MCU ${Math.round(batteryMainPct)}%` : null,
+        batteryLockPct != null ? `Lock ${Math.round(batteryLockPct)}%` : null,
+    ].filter(Boolean).join(' / ');
+    const batteryAlertSummary = [
+        (mainCritical || mainLow) && batteryMainPct != null ? `MCU ${Math.round(batteryMainPct)}%` : null,
+        (lockCritical || lockLow) && batteryLockPct != null ? `Lock ${Math.round(batteryLockPct)}%` : null,
+    ].filter(Boolean).join(' / ') || batterySummary;
+
+    // EC-18: Tamper State
+    const [tamperState, setTamperState] = useState<TamperState | null>(null);
+
+    // EC-15: Background Location State
+    const [bgLocationState, setBgLocationState] = useState<BackgroundLocationState | null>(null);
+
+    // EC-97: Low-Light State
+    const [lowLightState, setLowLightState] = useState<LowLightState | null>(null);
+    const tamperDeliveryFlaggedRef = useRef(false);
+    const tamperAlertShownRef = useRef(false);
+    const pickupArrivalNotifSentRef = useRef(false);
+    const dropoffArrivalSyncInFlightRef = useRef(false);
+    const dropoffArrivalPersistedRef = useRef(false);
+    const dropoffArrivalRetryTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+    // Lock Events (OTP + Face Detection from hardware)
+    const [lockEvent, setLockEvent] = useState<LockEvent | null>(null);
+    const lockEventNotifiedRef = useRef(false);
+
+    // EC-02: BLE Transfer State
+    const [showBleModal, setShowBleModal] = useState(false);
+    const [bleStatus, setBleStatus] = useState<'idle' | 'scanning' | 'connecting' | 'transferring' | 'success' | 'error'>('idle');
+    const [bleMessage, setBleMessage] = useState('');
+
+    // EC-32: Cancellation State
+    const [showCancelModal, setShowCancelModal] = useState(false);
+    const [cancelLoading, setCancelLoading] = useState(false);
+    const [returnCancellationState, setReturnCancellationState] = useState<CancellationState | null>(null);
+
+    // EC-78: Delivery Reassignment State
+    const [reassignmentState, setReassignmentState] = useState<ReassignmentState | null>(null);
+    const [showReassignmentModal, setShowReassignmentModal] = useState(false);
+    const authedUserId = useAuthStore((state: any) => state.user?.userId) as string | undefined;
+    const riderId = authedUserId;
+    const [deliveryStatus, setDeliveryStatus] = useState<string>('ASSIGNED');
+
+    const clearDropoffArrivalRetry = useCallback(() => {
+        if (dropoffArrivalRetryTimerRef.current) {
+            clearTimeout(dropoffArrivalRetryTimerRef.current);
+            dropoffArrivalRetryTimerRef.current = null;
+        }
+    }, []);
+
+    const scheduleDropoffArrivalRetry = useCallback((delayMs = DROPOFF_ARRIVAL_RETRY_MS) => {
+        if (dropoffArrivalPersistedRef.current) return;
+        clearDropoffArrivalRetry();
+        dropoffArrivalRetryTimerRef.current = setTimeout(() => {
+            dropoffArrivalRetryTimerRef.current = null;
+            dropoffArrivalSyncInFlightRef.current = false;
+            setDropoffArrivalRetryTick((prev) => prev + 1);
+        }, delayMs);
+    }, [clearDropoffArrivalRetry]);
+
+    useEffect(() => clearDropoffArrivalRetry, [clearDropoffArrivalRetry]);
+
+    const scheduleNextTimerTick = useCallback(() => {
+        if (timerTickTimeoutRef.current) {
+            clearTimeout(timerTickTimeoutRef.current);
+            timerTickTimeoutRef.current = null;
+        }
+
+        const now = Date.now();
+        const delay = Math.max(250, 1000 - (now % 1000) + 10);
+
+        timerTickTimeoutRef.current = setTimeout(() => {
+            setTimerNowMs(Date.now());
+            if (appStateRef.current === 'active') {
+                scheduleNextTimerTick();
+            }
+        }, delay);
+    }, []);
+
+    // Single app-aware ticker for all countdowns; avoids multiple long-lived intervals.
+    useEffect(() => {
+        setTimerNowMs(Date.now());
+        scheduleNextTimerTick();
+
+        const appStateSub = AppState.addEventListener('change', (nextState: AppStateStatus) => {
+            appStateRef.current = nextState;
+            if (nextState === 'active') {
+                setTimerNowMs(Date.now());
+                scheduleNextTimerTick();
+            } else if (timerTickTimeoutRef.current) {
+                clearTimeout(timerTickTimeoutRef.current);
+                timerTickTimeoutRef.current = null;
+            }
+        });
+
+        return () => {
+            appStateSub.remove();
+            if (timerTickTimeoutRef.current) {
+                clearTimeout(timerTickTimeoutRef.current);
+                timerTickTimeoutRef.current = null;
+            }
+        };
+    }, [scheduleNextTimerTick]);
+
+    // EC-15: Background location starts automatically when screen mounts
+    useEffect(() => {
+        if (!isBackgroundLocationRunning()) {
+            startBackgroundLocation(params.boxId);
+        }
+        // EC-15: Switch to ARRIVAL phase for maximum GPS precision near destination
+        setTrackingPhase('ARRIVAL');
+
+        // Subscribe to background location state
+        const unsubscribeBgLocation = subscribeToBackgroundLocationState(setBgLocationState);
+
+        // EC-04: Subscribe to OTP lockout state
+        const unsubscribeLockout = subscribeToLockout(params.boxId, (state) => {
+            setLockoutState(state);
+            if (state?.active) {
+                PremiumAlert.alert(
+                    '🔒 OTP Lockout Active',
+                    `Too many failed OTP attempts. Box is locked for ${Math.ceil((state.expires_at - Date.now()) / 60000)} minutes.`,
+                    [{ text: 'OK' }]
+                );
+            }
+        });
+
+        // EC-03: Subscribe to battery state
+        const unsubscribeBattery = subscribeToBattery(params.boxId, (state) => {
+            setBatteryState(state);
+            const isCritical = Boolean(
+                state?.main?.criticalBatteryWarning || state?.secondary?.criticalBatteryWarning
+            );
+            if (isCritical) {
+                const summary = [
+                    state?.main?.percentage != null ? `MCU ${Math.round(state.main.percentage)}%` : null,
+                    state?.secondary?.percentage != null ? `Lock ${Math.round(state.secondary.percentage)}%` : null,
+                ].filter(Boolean).join(' / ');
+                PremiumAlert.alert(
+                    '⚠️ Critical Battery',
+                    `Box battery is critically low${summary ? ` (${summary})` : ''}. Complete delivery quickly!`,
+                    [{ text: 'OK' }]
+                );
+            }
+        });
+
+        // EC-18: Subscribe to tamper state
+        const unsubscribeTamper = subscribeToTamper(params.boxId, (state) => {
+            setTamperState(state);
+            if (state?.detected) {
+                if (!tamperDeliveryFlaggedRef.current) {
+                    tamperDeliveryFlaggedRef.current = true;
+                    updateDeliveryStatus(params.deliveryId, 'TAMPERED', {
+                        tampered_at: Date.now(),
+                        tamper_lockdown: Boolean(state.lockdown),
+                    });
+                }
+                if (!tamperAlertShownRef.current) {
+                    tamperAlertShownRef.current = true;
+                    PremiumAlert.alert(
+                        'Security Hold',
+                        'A security incident was detected and controls are temporarily paused. Please contact support and follow incident workflow.',
+                        [{ text: 'Contact Support', style: 'destructive' }]
+                    );
+                }
+            } else {
+                tamperAlertShownRef.current = false;
+            }
+        });
+
+        // EC-97: Subscribe to low-light state
+        const unsubscribeLowLight = subscribeToLowLight(params.boxId, (state) => {
+            setLowLightState(state);
+            if (state && isLowLightFallbackRequired(state)) {
+                PremiumAlert.alert(
+                    '📷 Low Light Condition',
+                    'Camera cannot detect face due to poor lighting. Alternative verification will be required.',
+                    [{ text: 'OK' }]
+                );
+            }
+        });
+
+        // Lock Events: Subscribe to OTP + Face Detection results from hardware
+        const unsubscribeLockEvent = subscribeToLockEvents(params.boxId, (event) => {
+            setLockEvent(event);
+            if (event && !lockEventNotifiedRef.current) {
+                lockEventNotifiedRef.current = true;
+                if (event.unlocked) {
+                    // OTP valid + face detected → box unlocked
+                    showStatusNotification(
+                        '🔓 Box Unlocked',
+                        'OTP verified & face detected — box has been unlocked successfully.',
+                        { deliveryId: params.deliveryId, type: 'LOCK_EVENT' }
+                    );
+                    PremiumAlert.alert(
+                        '🔓 Box Unlocked',
+                        'The recipient has verified the OTP and their face was captured. The box is now open.',
+                        [{ text: 'OK' }]
+                    );
+                } else if (event.otp_valid && !event.face_detected) {
+                    // OTP correct but no face
+                    showStatusNotification(
+                        '👤 Face Not Detected',
+                        'OTP was correct but no face detected. Box remains locked.',
+                        { deliveryId: params.deliveryId, type: 'LOCK_EVENT' }
+                    );
+                } else if (!event.otp_valid) {
+                    // Wrong OTP entered
+                    showStatusNotification(
+                        '🔒 Invalid OTP',
+                        'An incorrect OTP was entered on the box keypad.',
+                        { deliveryId: params.deliveryId, type: 'LOCK_EVENT' }
+                    );
+                }
+                // Reset after a brief delay to allow re-notification on next event
+                setTimeout(() => { lockEventNotifiedRef.current = false; }, 5000);
+            }
+        });
+
+        return () => {
+            unsubscribeBgLocation();
+            unsubscribeLockout();
+            unsubscribeBattery();
+            unsubscribeTamper();
+            unsubscribeLowLight();
+            unsubscribeLockEvent();
+        };
+    }, [params.boxId, params.deliveryId]);
+
+    const [deliveryOtp, setDeliveryOtp] = useState<string | null>(null);
+    const [deliveryObj, setDeliveryObj] = useState<any | null>(null);
+
+    // Subscribe to cancellation state so we can resume return process if rider comes back
+    useEffect(() => {
+        const unsubscribe = subscribeToCancellation(params.deliveryId, (state) => {
+            setReturnCancellationState(state);
+        });
+        return () => unsubscribe();
+    }, [params.deliveryId]);
+
+    useEffect(() => {
+        const unsubscribe = subscribeToDelivery(params.deliveryId, (delivery) => {
+            if (!delivery?.status) {
+                return;
+            }
+            setDeliveryStatus(delivery.status);
+            setDeliveryObj(delivery);
+
+            if (DROPOFF_ARRIVAL_CONFIRMED_STATUSES.has(delivery.status)) {
+                dropoffArrivalPersistedRef.current = true;
+                dropoffArrivalSyncInFlightRef.current = false;
+                clearDropoffArrivalRetry();
+            } else if (DROPOFF_ARRIVAL_RETRYABLE_STATUSES.has(delivery.status)) {
+                dropoffArrivalPersistedRef.current = false;
+            }
+
+            // Track arrived_at timestamp for grace period
+            if (delivery.status === 'ARRIVED') {
+                const rawArrivedAt = delivery.arrived_at ?? delivery.updated_at;
+                if (rawArrivedAt) {
+                    const ts = typeof rawArrivedAt === 'number'
+                        ? rawArrivedAt
+                        : new Date(rawArrivedAt).getTime();
+                    if (Number.isFinite(ts)) {
+                        setArrivedAt((prev) => prev ?? ts);
+                    }
+                }
+            }
+
+            // EC-Fix: sync OTP code from Firebase (now stored in delivery node)
+            if (delivery.otp_code) {
+                setDeliveryOtp(delivery.otp_code);
+            }
+        });
+
+        // Fetch OTP from Supabase (fallback and initial load)
+        const fetchOtp = async () => {
+            try {
+                const { supabase } = await import('../../services/supabaseClient');
+                if (supabase) {
+                    const { data } = await supabase
+                        .from('deliveries')
+                        .select('otp_code')
+                        .eq('id', params.deliveryId)
+                        .single();
+                    if (data?.otp_code) {
+                        setDeliveryOtp(data.otp_code);
+                    }
+                }
+            } catch (e) {
+                console.error('[ArrivalScreen] Failed to fetch OTP:', e);
+            }
+        };
+        fetchOtp();
+
+        return unsubscribe;
+    }, [params.deliveryId, clearDropoffArrivalRetry]);
+
+    const isReturning = ['RETURNING', 'TAMPERED'].includes(deliveryStatus);
+    // EC-FIX: 'PICKED_UP' was missing — when Firebase reported PICKED_UP,
+    // isPickupConfirmed stayed false, forcing the geofence to pickup coords
+    // and causing the "4m away" bug at the wrong location during dropoff.
+    const isPickupConfirmed = ['PICKED_UP', 'IN_TRANSIT', 'ARRIVED', 'COMPLETED', 'RETURNING', 'TAMPERED'].includes(deliveryStatus);
+    const isDropoffPhase = geofenceTarget !== 'pickup';
+    // Prefer explicit params, fallback to delivery object fields returned by server
+    const resolvedPickupLat = Number.isFinite(params.pickupLat) ? params.pickupLat : (deliveryObj?.pickup_lat ?? deliveryObj?.pickupLat);
+    const resolvedPickupLng = Number.isFinite(params.pickupLng) ? params.pickupLng : (deliveryObj?.pickup_lng ?? deliveryObj?.pickupLng);
+    const resolvedDropoffLat = Number.isFinite(params.dropoffLat) ? params.dropoffLat : (deliveryObj?.dropoff_lat ?? deliveryObj?.dropoffLat);
+    const resolvedDropoffLng = Number.isFinite(params.dropoffLng) ? params.dropoffLng : (deliveryObj?.dropoff_lng ?? deliveryObj?.dropoffLng);
+
+    const hasPickupCoords = Number.isFinite(resolvedPickupLat) && Number.isFinite(resolvedPickupLng);
+    const hasDropoffCoords = Number.isFinite(resolvedDropoffLat) && Number.isFinite(resolvedDropoffLng);
+    const isSamePickupDropoff = Boolean(params.samePickupDropoff) || (
+        hasPickupCoords &&
+        hasDropoffCoords &&
+        calculateDistanceMeters(
+            resolvedPickupLat as number,
+            resolvedPickupLng as number,
+            resolvedDropoffLat as number,
+            resolvedDropoffLng as number
+        ) <= SAME_PICKUP_DROPOFF_RADIUS_M
+    );
+
+    useEffect(() => {
+        let mounted = true;
+
+        const hydrateSnapshot = async () => {
+            const snapshot = await loadRiderSessionSnapshot();
+            if (!mounted || !snapshot) return;
+            if (snapshot.deliveryId !== params.deliveryId || snapshot.boxId !== params.boxId) return;
+
+            const snapshotTarget: GeofenceTarget = snapshot.geofenceTarget === 'dropoff'
+                ? 'dropoff'
+                : snapshot.geofenceTarget === 'return_pickup'
+                    ? 'return_pickup'
+                    : 'pickup';
+            const lockedTarget = geofenceTargetLockRef.current;
+            const nextSnapshotTarget = lockedTarget !== 'pickup' && snapshotTarget === 'pickup'
+                ? lockedTarget
+                : snapshotTarget;
+
+            if (nextSnapshotTarget === 'dropoff' && hasDropoffCoords) {
+                setGeofence(createDefaultGeofence(resolvedDropoffLat as number, resolvedDropoffLng as number));
+                setGeofenceTarget('dropoff');
+                geofenceTargetLockRef.current = 'dropoff';
+            } else if (nextSnapshotTarget === 'return_pickup' && hasPickupCoords) {
+                setGeofence(createDefaultGeofence(resolvedPickupLat as number, resolvedPickupLng as number));
+                setGeofenceTarget('return_pickup');
+                geofenceTargetLockRef.current = 'return_pickup';
+            } else if (nextSnapshotTarget === 'pickup' && hasPickupCoords) {
+                setGeofence(createDefaultGeofence(resolvedPickupLat as number, resolvedPickupLng as number));
+                setGeofenceTarget('pickup');
+                geofenceTargetLockRef.current = 'pickup';
+            }
+
+            setBoxLocationLastSeen(snapshot.lastBoxHeartbeatAt || 0);
+            setPhoneLocationLastSeen(snapshot.lastPhoneGpsAt || 0);
+            if (typeof snapshot.lastDistanceMeters === 'number') {
+                setDistanceMeters(snapshot.lastDistanceMeters);
+            }
+        };
+
+        hydrateSnapshot();
+
+        return () => {
+            mounted = false;
+        };
+    }, [
+        params.deliveryId,
+        params.boxId,
+        params.pickupLat,
+        params.pickupLng,
+        params.dropoffLat,
+        params.dropoffLng,
+        hasPickupCoords,
+        hasDropoffCoords,
+    ]);
+
+    useEffect(() => {
+        const uiPhase = !isPickupConfirmed
+            ? 'pickup'
+            : isReturning
+                ? 'return_pickup'
+                : (waitTimerState.status === 'WAITING' || waitTimerState.status === 'EXPIRED')
+                    ? 'customer_wait'
+                    : deliveryStatus === 'ARRIVED'
+                        ? 'dropoff_arrived'
+                        : deliveryStatus === 'COMPLETED'
+                            ? 'completed'
+                            : 'dropoff';
+
+        saveRiderSessionSnapshot({
+            lastActiveDeliveryId: params.deliveryId,
+            deliveryId: params.deliveryId,
+            boxId: params.boxId,
+            geofenceTarget,
+            uiPhase,
+            lastDistanceMeters: distanceMeters,
+            lastBoxHeartbeatAt: boxLocationLastSeen,
+            lastPhoneGpsAt: phoneLocationLastSeen,
+        });
+
+        if (deliveryStatus === 'COMPLETED' || deliveryStatus === 'CANCELLED') {
+            clearRiderSessionSnapshot();
+        }
+    }, [
+        params.deliveryId,
+        params.boxId,
+        geofenceTarget,
+        deliveryStatus,
+        distanceMeters,
+        boxLocationLastSeen,
+        phoneLocationLastSeen,
+        isPickupConfirmed,
+        isReturning,
+        waitTimerState.status,
+    ]);
+
+    // ━━━ Grace Period Timer Effect ━━━
+    // Only starts when rider is physically inside the DROPOFF geofence.
+    // isInsideGeoFence at this point references the dropoff zone (geofenceTarget === 'dropoff')
+    // so the timer never ticks while the rider is still at the pickup location.
+    useEffect(() => {
+        if (!isDropoffPhase || !isInsideGeoFence || deliveryStatus !== 'ARRIVED' || !arrivedAt) return;
+
+        // Write grace period to Firebase once for admin visibility
+        import('../../services/firebaseClient').then(({ getFirebaseDatabase }) => {
+            writeGracePeriodToFirebase(getFirebaseDatabase(), params.deliveryId, arrivedAt).catch(() => { });
+        });
+    }, [isDropoffPhase, isInsideGeoFence, deliveryStatus, arrivedAt, params.deliveryId]);
+
+    useEffect(() => {
+        if (!isDropoffPhase || !isInsideGeoFence || deliveryStatus !== 'ARRIVED' || !arrivedAt) return;
+
+        setGracePeriodDisplay(formatGracePeriodRemaining(arrivedAt));
+        setGracePeriodExpired(isGracePeriodExpired(arrivedAt));
+    }, [isDropoffPhase, isInsideGeoFence, deliveryStatus, arrivedAt, timerNowMs]);
+
+    useEffect(() => {
+        if (!isDropoffPhase) {
+            setArrivedAt(null);
+            setGracePeriodDisplay('10:00');
+            setGracePeriodExpired(false);
+            setBatteryIncidentReportedAt(null);
+            setBatteryTimeoutDisplay('15:00');
+        }
+    }, [isDropoffPhase]);
+
+    useEffect(() => {
+        if (!isDropoffPhase || deliveryStatus !== 'ARRIVED' || !batteryIncidentReportedAt) return;
+
+        const remaining = BATTERY_HANDOFF_TIMEOUT_MS - (timerNowMs - batteryIncidentReportedAt);
+        setBatteryTimeoutDisplay(formatRemainingMinutesSeconds(remaining));
+    }, [isDropoffPhase, deliveryStatus, batteryIncidentReportedAt, timerNowMs]);
+
+    // ━━━ No-Show Handler ━━━
+    const handleMarkNoShow = async () => {
+        if (!arrivedAt || !riderId) return;
+
+        if (!isGracePeriodExpired(arrivedAt)) {
+            PremiumAlert.alert('Grace Period Active', 'You must wait for the full grace period before marking a no-show.');
+            return;
+        }
+
+        PremiumAlert.alert(
+            'Confirm No-Show',
+            'This will cancel the delivery and apply a penalty to the customer. This action cannot be undone.',
+            [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                    text: 'Confirm No-Show',
+                    style: 'destructive',
+                    onPress: async () => {
+                        setNoShowLoading(true);
+                        const result = await markNoShow(params.deliveryId, riderId);
+                        setNoShowLoading(false);
+
+                        if (result.success) {
+                            PremiumAlert.alert(
+                                '✅ No-Show Confirmed',
+                                'The delivery has been cancelled. You are now available for new orders.',
+                                [{ text: 'OK', onPress: () => navigation.goBack() }]
+                            );
+                        } else {
+                            PremiumAlert.alert('Error', result.error || 'Failed to mark no-show. Please try again.');
+                        }
+                    },
+                },
+            ]
+        );
+    };
+
+    const handleReportBatteryIncident = async () => {
+        if (!params.boxId || !params.deliveryId || reportingBatteryIncident) return;
+
+        setReportingBatteryIncident(true);
+        const ok = await reportBatteryDeadIncident({
+            boxId: params.boxId,
+            deliveryId: params.deliveryId,
+            stage: 'DROPOFF',
+            note: `Rider reported battery handoff risk while ARRIVED at ${new Date().toISOString()}`,
+        });
+        setReportingBatteryIncident(false);
+
+        if (ok) {
+            if (!batteryIncidentReportedAt) {
+                setBatteryIncidentReportedAt(Date.now());
+            }
+            PremiumAlert.alert(
+                'Battery Incident Reported',
+                'Customer, rider, and admin have been notified. Continue manual handoff and complete within the timeout window.'
+            );
+        } else {
+            PremiumAlert.alert(
+                'Report Failed',
+                'Could not report battery incident right now. Check network and try again.'
+            );
+        }
+    };
+
+    // Dynamically switch geofence target when transitioning from pickup to dropoff
+    useEffect(() => {
+        const desiredTarget: GeofenceTarget = isReturning
+            ? 'return_pickup'
+            : isPickupConfirmed
+                ? 'dropoff'
+                : 'pickup';
+        const currentLockedTarget = geofenceTargetLockRef.current;
+        const nextTarget = currentLockedTarget !== 'pickup' && desiredTarget === 'pickup'
+            ? currentLockedTarget
+            : desiredTarget;
+
+        const nextCoords = nextTarget === 'dropoff'
+            ? (hasDropoffCoords ? { lat: resolvedDropoffLat as number, lng: resolvedDropoffLng as number } : null)
+            : nextTarget === 'return_pickup' || nextTarget === 'pickup'
+                ? (hasPickupCoords ? { lat: resolvedPickupLat as number, lng: resolvedPickupLng as number } : null)
+                : null;
+
+        const targetChanged = nextTarget !== geofenceTarget;
+        const centerChanged = nextCoords
+            ? geofence.centerLat !== nextCoords.lat || geofence.centerLng !== nextCoords.lng
+            : false;
+
+        if (!targetChanged && !centerChanged) {
+            return;
+        }
+
+        // Reset geofence stabilizers when destination target changes.
+        phoneGeofenceStateRef.current = createInitialState();
+        boxGeofenceStateRef.current = createInitialState();
+        masterDecisionRef.current = false;
+        boxOfflineRef.current = false;
+        boxOfflineTransitionStartRef.current = 0;
+        // EC-FIX: Also reset the new fallback tracking refs
+        boxFirstLoadReceivedRef.current = false;
+        phoneInsideSinceRef.current = 0;
+        setIsPhoneOnlyFallback(false);
+        // EC-FIX: Clear stale distance so the old geofence's distance
+        // doesn't bleed into the new target (e.g. pickup distance showing in dropoff phase).
+        // This forces the distance to be recalculated with the new geofence center on next GPS update.
+        setDistanceMeters(null);
+
+        // EC-FIX: Record geofence transition timestamp. During the cooldown
+        // period, the master switch and applyPhonePosition are blocked from
+        // flipping inside-state to true, preventing stale pickup-geofence
+        // evaluations from triggering premature ARRIVED at the dropoff.
+        geofenceTransitionAtRef.current = Date.now();
+
+        geofenceTargetLockRef.current = nextTarget;
+
+        if (nextTarget !== 'pickup') {
+            requestBoxContextRefresh(
+                params.boxId,
+                nextTarget === 'dropoff' ? 'pickup_to_dropoff_transition' : 'pickup_to_return_transition'
+            ).catch(() => { });
+            setBoxLocationSubscriptionEpoch((prev) => prev + 1);
+        }
+
+        if (nextTarget === 'return_pickup' && nextCoords) {
+            setGeofence(createDefaultGeofence(nextCoords.lat, nextCoords.lng));
+            setGeofenceTarget('return_pickup');
+            // Reset stale inside-state so the old pickup check doesn't bleed into the new geofence
+            setIsInsideGeoFence(false);
+            setIsPhoneInside(false);
+            setIsBoxInside(false);
+            return;
+        }
+
+        if (nextTarget === 'dropoff' && nextCoords) {
+            setGeofence(createDefaultGeofence(nextCoords.lat, nextCoords.lng));
+            setGeofenceTarget('dropoff');
+            // Reset stale inside-state — rider is still at pickup, not dropoff yet.
+            // Without this reset, DropoffVerification's auto-arrive fires immediately
+            // because isInsideGeoFence is still true from the last pickup-geofence check.
+            setIsInsideGeoFence(false);
+            setIsPhoneInside(false);
+            setIsBoxInside(false);
+            return;
+        }
+
+        if (nextTarget === 'pickup' && nextCoords) {
+            setGeofence(createDefaultGeofence(nextCoords.lat, nextCoords.lng));
+            setGeofenceTarget('pickup');
+            return;
+        }
+
+        // If target coords are invalid/missing, fail safe to avoid accidental ARRIVED at wrong location.
+        setGeofenceTarget(nextTarget === 'pickup' ? 'pickup' : geofenceTarget);
+        setIsInsideGeoFence(false);
+        setIsPhoneInside(false);
+        setIsBoxInside(false);
+    }, [
+        geofence,
+        geofenceTarget,
+        isPickupConfirmed,
+        isReturning,
+        hasPickupCoords,
+        hasDropoffCoords,
+        resolvedPickupLat,
+        resolvedPickupLng,
+        resolvedDropoffLat,
+        resolvedDropoffLng,
+    ]);
+
+    // 1. Track PHONE Location (The "Golden Rule")
+    useEffect(() => {
+        let subscription: Location.LocationSubscription | null = null;
+
+        const startPhoneTracking = async () => {
+            const { status } = await Location.requestForegroundPermissionsAsync();
+            if (status !== 'granted') {
+                PremiumAlert.alert('Permission Denied', 'Phone location is required to verify arrival.');
+                return;
+            }
+
+            // Fast relock after resume/lockscreen: keep high-accuracy warm briefly.
+            startForegroundGpsWarmWindow(25000).catch(() => { });
+
+            // Now that we have a loading gate, we no longer need to seed with fast/inaccurate 
+            // cached locations (which caused the 'bouncing' effect the user noticed).
+            // We directly wait for the continuous high-accuracy watch to yield its first accurate fix.
+
+            // Stage 3: High-accuracy continuous GPS watch for precise ongoing checks.
+            subscription = await Location.watchPositionAsync(
+                {
+                    accuracy: Location.Accuracy.High,
+                    timeInterval: 2000,
+                    distanceInterval: geofenceTarget === 'dropoff'
+                        ? DROPOFF_PHONE_DISTANCE_INTERVAL_M
+                        : (isPickupLikeGeofenceTarget(geofenceTarget)
+                            ? PICKUP_PHONE_DISTANCE_INTERVAL_M
+                            : DEFAULT_PHONE_DISTANCE_INTERVAL_M),
+                },
+                (location) => {
+                    applyPhonePosition(location.coords, 25, location.timestamp);
+                }
+            );
+        };
+
+        startPhoneTracking();
+
+        return () => {
+            if (subscription) {
+                subscription.remove();
+            }
+        };
+    }, [geofence, geofenceTarget, applyPhonePosition]);
+
+    // Device Compass Heading (Foreground)
+    useEffect(() => {
+        let headingSub: Location.LocationSubscription | null = null;
+        const startHeadingWatcher = async () => {
+            try {
+                const { status } = await Location.getForegroundPermissionsAsync();
+                if (status === 'granted') {
+                    headingSub = await Location.watchHeadingAsync((data) => {
+                        setLocalPhoneHeading(data.trueHeading !== -1 ? data.trueHeading : data.magHeading);
+                    }).catch(err => {
+                        if (__DEV__) console.warn('Heading watcher failed (Simulator?):', err);
+                        return null;
+                    });
+                }
+            } catch (err) {
+                if (__DEV__) console.warn('Failed to start heading watcher:', err);
+            }
+        };
+        startHeadingWatcher();
+        return () => {
+            if (headingSub) headingSub.remove();
+        };
+    }, []);
+
+    // 2. Track BOX Location (The "Secondary Check")
+    // EC-FIX: Improved offline detection — null data = immediate offline (no debounce),
+    // stale data = debounced offline transition.
+    useEffect(() => {
+        const OFFLINE_SWITCH_DEBOUNCE_MS = 5000;
+
+        /** Mark box as immediately offline (skip debounce) — used when data is null/missing */
+        const markOfflineImmediate = () => {
+            if (!boxOfflineRef.current) {
+                boxOfflineRef.current = true;
+                setIsBoxOffline(true);
+                boxOfflineTransitionStartRef.current = 0;
+            }
+        };
+
+        /** Debounced offline state transition — used for stale data */
+        const updateOfflineState = (desiredOffline: boolean, now: number) => {
+            if (desiredOffline === boxOfflineRef.current) {
+                boxOfflineTransitionStartRef.current = 0;
+                return;
+            }
+
+            if (boxOfflineTransitionStartRef.current === 0) {
+                boxOfflineTransitionStartRef.current = now;
+                return;
+            }
+
+            if (now - boxOfflineTransitionStartRef.current >= OFFLINE_SWITCH_DEBOUNCE_MS) {
+                boxOfflineRef.current = desiredOffline;
+                setIsBoxOffline(desiredOffline);
+                boxOfflineTransitionStartRef.current = 0;
+            }
+        };
+
+        const unsubscribeLocation = subscribeToLocation(params.boxId, (location) => {
+            const now = Date.now();
+            boxFirstLoadReceivedRef.current = true;
+
+            // EC-FIX: No location data at all → box has never reported GPS → immediate offline.
+            // Previously this went through the 5s debounce, which blocked pickup for 5+ seconds
+            // even when the box was clearly powered off.
+            if (!location) {
+                markOfflineImmediate();
+                return;
+            }
+
+            const dataTimestamp = location.server_timestamp || location.timestamp || 0;
+            const isStale = dataTimestamp <= 0 || (now - dataTimestamp) > BOX_GPS_MAX_FIX_AGE_MS;
+
+            setBoxLocationLastSeen(dataTimestamp);
+
+            updateOfflineState(isStale, now);
+
+            if (!isStale) {
+                const position = {
+                    lat: location.latitude,
+                    lng: location.longitude,
+                    accuracy: 15, // Assume acceptable accuracy for Box GPS
+                };
+
+                const nextState = updateGeofenceState(
+                    boxGeofenceStateRef.current,
+                    { lat: position.lat, lng: position.lng },
+                    { latitude: geofence.centerLat, longitude: geofence.centerLng },
+                    { hdop: 1.5, satellites: 8, timestamp: now },
+                    null,
+                    now
+                );
+                boxGeofenceStateRef.current = nextState;
+                setIsBoxInside(nextState.stableState === 'INSIDE');
+            }
+        });
+
+        // EC-FIX: If the Firebase listener fires with no data on mount (box node doesn't exist),
+        // that callback already marks offline immediately. But if the subscription itself is slow
+        // to fire, set a safety timeout to mark offline after 3s if no callback received.
+        const safetyTimeout = setTimeout(() => {
+            if (!boxFirstLoadReceivedRef.current) {
+                markOfflineImmediate();
+            }
+        }, 3000);
+
+        return () => {
+            clearTimeout(safetyTimeout);
+            unsubscribeLocation();
+        };
+    }, [geofence, params.boxId, boxLocationSubscriptionEpoch]);
+
+    // Listener watchdog: if box stream goes stale while marked online, resubscribe.
+    useEffect(() => {
+        const interval = setInterval(() => {
+            if (!boxLocationLastSeen || isBoxOffline) return;
+            const ageMs = Date.now() - boxLocationLastSeen;
+            if (ageMs > 45000) {
+                setBoxLocationSubscriptionEpoch((prev) => prev + 1);
+            }
+        }, 12000);
+
+        return () => clearInterval(interval);
+    }, [boxLocationLastSeen, isBoxOffline]);
+
+    // 3. The "Master Switch" (Geofence Gate)
+    // EC-FIX v3: STRICT GEOFENCE GATING — Non-negotiable rule:
+    // At DROPOFF, isInsideGeoFence is true ONLY when at least one GPS source
+    // (phone or box) actually confirms the rider is inside the geofence.
+    // NO timer-based fallback, NO isBoxOffline override, NO phone-only shortcut.
+    // This ensures OTP is never revealed unless physically confirmed.
+    //
+    // At PICKUP (no OTP involved), the lenient fallback path is preserved
+    // so the rider isn't blocked if the box GPS isn't sending data.
+    useEffect(() => {
+        if (masterSwitchDebounceRef.current) {
+            clearTimeout(masterSwitchDebounceRef.current);
+        }
+
+        const debounceMs = geofenceTarget === 'dropoff' || isPickupLikeGeofenceTarget(geofenceTarget) ? 250 : 500;
+        masterSwitchDebounceRef.current = setTimeout(() => {
+            const inTransitionCooldown =
+                geofenceTransitionAtRef.current > 0 &&
+                (Date.now() - geofenceTransitionAtRef.current) < GEOFENCE_TRANSITION_COOLDOWN_MS;
+
+            let nextInside: boolean;
+
+            if (inTransitionCooldown) {
+                // Always blocked during geofence transition cooldown
+                nextInside = false;
+            } else if (geofenceTarget === 'dropoff') {
+                // DROPOFF: Strict geofence — either phone GPS or box GPS must
+                // confirm inside. No fallback, no timer override. Period.
+                nextInside = isPhoneInside || isBoxInside;
+            } else {
+                // PICKUP / RETURN: Lenient — phone inside + (box offline, box inside,
+                // or phone-only fallback timer). This prevents the rider from being
+                // stuck at pickup when the box GPS isn't working.
+                nextInside = isPhoneInside && (isBoxOffline || isBoxInside || isPhoneOnlyFallback);
+            }
+
+            if (nextInside !== masterDecisionRef.current) {
+                masterDecisionRef.current = nextInside;
+                setIsInsideGeoFence(nextInside);
+            }
+        }, debounceMs);
+
+        return () => {
+            if (masterSwitchDebounceRef.current) {
+                clearTimeout(masterSwitchDebounceRef.current);
+                masterSwitchDebounceRef.current = null;
+            }
+        };
+    }, [geofenceTarget, isPhoneInside, isBoxInside, isBoxOffline, isPhoneOnlyFallback]);
+
+    // 3b. EC-FIX: Phone-Only Fallback Timer
+    // If phone has been stably inside the geofence for 15 seconds but box status
+    // is stuck (neither offline nor inside), activate phone-only fallback.
+    // This safeguards against the debounce/hysteresis gap that blocks pickup indefinitely.
+    useEffect(() => {
+        // EC-FIX v3: DISABLED FOR DROPOFF. At dropoff, the master switch uses
+        // strict geofence gating (isPhoneInside || isBoxInside). No timer-based
+        // fallback is allowed — OTP must never be revealed without geofence confirmation.
+        if (geofenceTarget === 'dropoff') {
+            phoneInsideSinceRef.current = 0;
+            if (isPhoneOnlyFallback) setIsPhoneOnlyFallback(false);
+            return;
+        }
+
+        const PHONE_ONLY_FALLBACK_MS = isPickupLikeGeofenceTarget(geofenceTarget) ? 7000 : 15000;
+
+        if (isPhoneInside && !isBoxOffline && !isBoxInside && !isPhoneOnlyFallback) {
+            // Phone is inside but box status is stuck — start fallback countdown
+            if (phoneInsideSinceRef.current === 0) {
+                phoneInsideSinceRef.current = Date.now();
+            }
+
+            const timer = setTimeout(() => {
+                // Double-check conditions still hold after timeout
+                if (phoneInsideSinceRef.current > 0 && !boxOfflineRef.current) {
+                    console.log(`[ArrivalScreen] EC-FIX: Phone-only fallback activated - box status stuck for ${PHONE_ONLY_FALLBACK_MS}ms`);
+                    setIsPhoneOnlyFallback(true);
+                }
+            }, PHONE_ONLY_FALLBACK_MS);
+
+            return () => clearTimeout(timer);
+        }
+
+        // Reset fallback timer if phone leaves geofence or box comes online
+        if (!isPhoneInside) {
+            phoneInsideSinceRef.current = 0;
+            if (isPhoneOnlyFallback) setIsPhoneOnlyFallback(false);
+        }
+        if (isBoxOffline || isBoxInside) {
+            phoneInsideSinceRef.current = 0;
+            // Don't clear fallback here — it's no longer needed but clearing could cause flicker.
+            // The master switch will use the correct path (isBoxOffline or isBoxInside) instead.
+        }
+    }, [geofenceTarget, isPhoneInside, isBoxOffline, isBoxInside, isPhoneOnlyFallback]);
+
+    // 3c. Dropoff arrival sync
+    // Push ARRIVED and refresh the box as soon as the dropoff geofence is confirmed.
+    useEffect(() => {
+        const shouldSyncDropoffArrival =
+            geofenceTarget === 'dropoff' &&
+            isInsideGeoFence &&
+            !dropoffArrivalPersistedRef.current &&
+            DROPOFF_ARRIVAL_RETRYABLE_STATUSES.has(deliveryStatus);
+
+        if (!shouldSyncDropoffArrival) {
+            if (geofenceTarget !== 'dropoff' || !isInsideGeoFence || dropoffArrivalPersistedRef.current) {
+                dropoffArrivalSyncInFlightRef.current = false;
+                clearDropoffArrivalRetry();
+            }
+            return;
+        }
+
+        if (dropoffArrivalSyncInFlightRef.current) return;
+        dropoffArrivalSyncInFlightRef.current = true;
+        clearDropoffArrivalRetry();
+
+        const arrivedAtNow = Date.now();
+        const hasPhoneFix = currentPosition.lat !== 0 || currentPosition.lng !== 0;
+
+        const statusUpdate = updateDeliveryStatus(params.deliveryId, 'ARRIVED', {
+            arrived_at: arrivedAtNow,
+            arrival_source: 'rider_app_dropoff_geofence',
+            boxId: params.boxId,
+        }).then((ok) => {
+            if (!ok) throw new Error('ARRIVED transition failed');
+            return ok;
+        });
+        const syncTasks: Promise<unknown>[] = [
+            statusUpdate,
+            statusUpdate.then(() => requestBoxContextRefresh(params.boxId, 'dropoff_arrived')),
+        ];
+
+        if (hasPhoneFix) {
+            syncTasks.push(writePhoneLocation(
+                params.boxId,
+                currentPosition.lat,
+                currentPosition.lng,
+                currentPosition.speed,
+                currentPosition.heading,
+                localPhoneHeading
+            ));
+        }
+
+        Promise.allSettled(syncTasks).then((results) => {
+            if (results[0]?.status === 'rejected') {
+                console.warn('[ArrivalScreen] Dropoff ARRIVED sync failed', results[0].reason);
+                dropoffArrivalSyncInFlightRef.current = false;
+                scheduleDropoffArrivalRetry();
+                setBoxLocationSubscriptionEpoch((prev) => prev + 1);
+                return;
+            }
+
+            setDeliveryStatus('ARRIVED');
+            setArrivedAt((prev) => prev ?? arrivedAtNow);
+
+            if (!dropoffArrivalPersistedRef.current) {
+                scheduleDropoffArrivalRetry(DROPOFF_ARRIVAL_CONFIRMATION_RETRY_MS);
+            }
+
+            if (results[1]?.status === 'rejected') {
+                console.warn('[ArrivalScreen] Dropoff box context refresh failed', results[1].reason);
+            }
+            setBoxLocationSubscriptionEpoch((prev) => prev + 1);
+        });
+    }, [
+        geofenceTarget,
+        isInsideGeoFence,
+        deliveryStatus,
+        params.deliveryId,
+        params.boxId,
+        currentPosition.lat,
+        currentPosition.lng,
+        currentPosition.speed,
+        currentPosition.heading,
+        localPhoneHeading,
+        clearDropoffArrivalRetry,
+        scheduleDropoffArrivalRetry,
+        dropoffArrivalRetryTick,
+    ]);
+
+    // 4. Pickup Arrival Notification — fires once when rider first enters pickup geofence
+    useEffect(() => {
+        if (
+            geofenceTarget === 'pickup' &&
+            isInsideGeoFence &&
+            !pickupArrivalNotifSentRef.current &&
+            params.customerPhone &&
+            params.riderName
+        ) {
+            pickupArrivalNotifSentRef.current = true;
+            sendPickupArrivalNotification(
+                params.deliveryId,
+                params.customerPhone,
+                params.riderName
+            ).catch(() => { /* non-blocking */ });
+        }
+        // Reset if rider leaves before confirming pickup (allows re-fire on re-entry)
+        if (geofenceTarget === 'pickup' && !isInsideGeoFence) {
+            pickupArrivalNotifSentRef.current = false;
+        }
+    }, [geofenceTarget, isInsideGeoFence, params.customerPhone, params.riderName, params.deliveryId]);
+
+    // EC-04: Lockout countdown timer
+    useEffect(() => {
+        if (!lockoutState?.active) {
+            setLockoutCountdown('');
+            return;
+        }
+
+        const remaining = lockoutState.expires_at - timerNowMs;
+        setLockoutCountdown(remaining <= 0 ? 'Expired' : formatRemainingMinutesSeconds(remaining));
+    }, [lockoutState, timerNowMs]);
+
+    // Timer update effect
+    useEffect(() => {
+        if (waitTimerState.status !== 'WAITING') return;
+
+        setDisplayTime(getFormattedRemainingTime(waitTimerState, timerNowMs));
+
+        if (isWaitTimerExpired(waitTimerState, timerNowMs)) {
+            setWaitTimerState(prev => ({ ...prev, status: 'EXPIRED' }));
+        }
+    }, [waitTimerState, timerNowMs]);
+
+    // EC-11: Start wait timer (Customer Not Home)
+    const handleCustomerNotHome = async () => {
+        setIsLoading(true);
+
+        let photoUri: string | null = null;
+
+        // Capture arrival photo
+        try {
+            const photoResult = await ImagePicker.launchCameraAsync({
+                mediaTypes: ImagePicker.MediaTypeOptions.Images,
+                quality: 0.6,
+                allowsEditing: false,
+            });
+
+            if (!photoResult.canceled && photoResult.assets?.[0]) {
+                photoUri = photoResult.assets[0].uri;
+                setArrivalPhotoUri(photoUri);
+            }
+        } catch (e) {
+            console.log('[ArrivalScreen] Camera error:', e);
+        }
+
+        // Start wait timer (with or without photo)
+        let newState = startWaitTimer(waitTimerState, Date.now());
+
+        if (photoUri) {
+            newState = recordArrivalPhoto(newState, photoUri);
+        }
+
+        // Send notification to customer
+        if (params.customerPhone && params.riderName) {
+            const notified = await sendDriverWaitingNotification(
+                params.deliveryId,
+                params.customerPhone,
+                params.riderName
+            );
+            if (notified) {
+                newState = recordNotificationSent(newState, Date.now());
+            }
+        }
+
+        setWaitTimerState(newState);
+        await writeWaitTimerToFirebase(newState);
+        setIsLoading(false);
+    };
+
+    // EC-11: Customer arrived during wait
+    const handleCustomerArrived = async () => {
+        if (!isPickupConfirmed) {
+            return;
+        }
+
+        const newState = markCustomerArrived(waitTimerState);
+        setWaitTimerState(newState);
+        writeWaitTimerToFirebase(newState);
+        navigation.navigate('DeliveryCompletion', {
+            deliveryId: params.deliveryId,
+            boxId: params.boxId,
+        });
+    };
+
+    const handleProceedToHandover = async () => {
+        if (!isPickupConfirmed) {
+            return;
+        }
+
+        if (isInsideGeoFence && !['ARRIVED', 'COMPLETED'].includes(deliveryStatus)) {
+            await updateDeliveryStatus(params.deliveryId, 'ARRIVED', {
+                arrived_at: Date.now(),
+            });
+        }
+
+        navigation.navigate('DeliveryCompletion', {
+            deliveryId: params.deliveryId,
+            boxId: params.boxId,
+        });
+    };
+
+    // EC-11: Return with package
+    const handleReturn = async () => {
+        if (!canInitiateReturn(waitTimerState, Date.now())) {
+            PremiumAlert.alert('Please Wait', 'You must wait the full 5 minutes before returning.');
+            return;
+        }
+
+        PremiumAlert.alert(
+            'Confirm Return',
+            'Are you sure you want to return with the package? The customer will be notified.',
+            [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                    text: 'Return',
+                    style: 'destructive',
+                    onPress: async () => {
+                        setIsLoading(true);
+                        try {
+                            const result = await requestCancellation({
+                                deliveryId: params.deliveryId,
+                                boxId: params.boxId,
+                                reason: CancellationReason.CUSTOMER_UNAVAILABLE,
+                                reasonDetails: 'Dropoff unavailable after customer-not-home wait timer expired.',
+                                riderId: riderId || '',
+                                riderName: params.riderName,
+                                currentStatus: deliveryStatus || params.status || 'ARRIVED',
+                            });
+
+                            if (!result.success) {
+                                PremiumAlert.alert('Return Failed', result.error || 'Unable to start return-to-sender. Please retry.');
+                                return;
+                            }
+
+                            const newState = initiateReturn(waitTimerState, Date.now());
+                            setWaitTimerState(newState);
+                            await writeWaitTimerToFirebase(newState);
+                            setDeliveryStatus('RETURNING');
+
+                            navigation.navigate('CancellationConfirmation', {
+                                deliveryId: params.deliveryId,
+                                returnOtp: result.returnOtp,
+                                reason: CancellationReason.CUSTOMER_UNAVAILABLE,
+                                reasonDetails: 'Dropoff unavailable after customer-not-home wait timer expired.',
+                                senderName: params.senderName || 'Sender',
+                                pickupAddress: params.pickupAddress || params.targetAddress,
+                                pickupLat: params.pickupLat,
+                                pickupLng: params.pickupLng,
+                                boxId: params.boxId,
+                                isPickedUp: true,
+                            });
+                        } catch (err) {
+                            PremiumAlert.alert('Return Failed', 'An unexpected error occurred while starting the return.');
+                        } finally {
+                            setIsLoading(false);
+                        }
+                    }
+                }
+            ]
+        );
+    };
+
+    // EC-02: BLE OTP Transfer
+    const handleBleTransfer = async () => {
+        if (!deliveryOtp) {
+            PremiumAlert.alert('OTP Unavailable', 'Could not retrieve the delivery OTP. Please try again.');
+            return;
+        }
+
+        setShowBleModal(true);
+        setBleStatus('scanning');
+        setBleMessage('Scanning for nearby box...');
+
+        try {
+            const result = await bleOtpService.sendOtpToBox(
+                params.boxId,
+                deliveryOtp,
+                params.deliveryId,
+                {
+                    onScanStart: () => {
+                        setBleStatus('scanning');
+                        setBleMessage('Scanning for nearby Smart Box...');
+                    },
+                    onDeviceFound: (device) => {
+                        setBleMessage(`Found: ${device.name}`);
+                    },
+                    onConnecting: (name) => {
+                        setBleStatus('connecting');
+                        setBleMessage(`Connecting to ${name}...`);
+                    },
+                    onTransferring: () => {
+                        setBleStatus('transferring');
+                        setBleMessage('Transferring OTP...');
+                    },
+                    onSuccess: (name) => {
+                        setBleStatus('success');
+                        setBleMessage(`OTP sent to ${name} successfully!`);
+                    },
+                    onError: (error) => {
+                        setBleStatus('error');
+                        setBleMessage(error);
+                    }
+                }
+            );
+
+            if (!result.success) {
+                setBleStatus('error');
+                setBleMessage(result.message);
+            }
+        } catch (error) {
+            setBleStatus('error');
+            setBleMessage('BLE transfer failed');
+        }
+    };
+
+    const closeBleModal = () => {
+        setShowBleModal(false);
+        setBleStatus('idle');
+        setBleMessage('');
+        bleOtpService.stopScan();
+    };
+
+
+
+    // EC-32: Handle Cancellation Submit
+    const handleCancellationSubmit = async (reason: CancellationReason, details: string) => {
+        setCancelLoading(true);
+        try {
+            const result = await requestCancellation({
+                deliveryId: params.deliveryId,
+                boxId: params.boxId,
+                reason,
+                reasonDetails: details,
+                riderId: riderId || '',
+                riderName: params.riderName,
+                currentStatus: deliveryStatus || params.status || 'ARRIVED',
+            });
+
+            if (result.success) {
+                setShowCancelModal(false);
+                if (['IN_TRANSIT', 'ARRIVED', 'RETURNING', 'TAMPERED'].includes(deliveryStatus)) {
+                    setDeliveryStatus('RETURNING');
+                }
+                navigation.navigate('CancellationConfirmation', {
+                    deliveryId: params.deliveryId,
+                    returnOtp: result.returnOtp,
+                    reason: reason,
+                    reasonDetails: details,
+                    senderName: params.senderName || 'Sender',
+                    pickupAddress: params.pickupAddress || params.targetAddress,
+                    pickupLat: params.pickupLat,
+                    pickupLng: params.pickupLng,
+                    boxId: params.boxId,
+                    isPickedUp: ['IN_TRANSIT', 'ARRIVED', 'COMPLETED', 'RETURNING', 'TAMPERED'].includes(deliveryStatus || params.status || 'PENDING'),
+                });
+            } else {
+                PremiumAlert.alert('Cancellation Failed', result.error || 'Unknown error');
+            }
+        } catch (err) {
+            PremiumAlert.alert('Error', 'An unexpected error occurred');
+        } finally {
+            setCancelLoading(false);
+        }
+    };
+
+    // EC-78: Subscribe to Reassignment Updates
+    useEffect(() => {
+        // Use params.boxId if available, or fallback to 'BOX_001' for demo
+        const targetBoxId = params.boxId || 'BOX_001';
+        const unsubscribe = subscribeToReassignment(targetBoxId, (state) => {
+            setReassignmentState(state);
+        });
+        return unsubscribe;
+    }, [params.boxId]);
+
+    // EC-78: Handle Reassignment Modal and Timer
+    useEffect(() => {
+        if (reassignmentState && isReassignmentPending(reassignmentState)) {
+            const type = getReassignmentType(reassignmentState, riderId || '');
+            if (type) {
+                setShowReassignmentModal(true);
+                // Start auto-ack timer associated with this screen's context
+                const cleanup = startAutoAckTimer(params.boxId || 'BOX_001', riderId || '', reassignmentState, () => {
+                    handlePostAcknowledge(type);
+                });
+                return cleanup;
+            }
+        } else {
+            setShowReassignmentModal(false);
+        }
+    }, [reassignmentState, riderId, params.boxId]);
+
+    const handleReassignmentAcknowledge = async () => {
+        if (reassignmentState) {
+            await acknowledgeReassignment(params.boxId || 'BOX_001', riderId || '');
+            const type = getReassignmentType(reassignmentState, riderId || '');
+            handlePostAcknowledge(type);
+        }
+    };
+
+    const handlePostAcknowledge = (type: 'outgoing' | 'incoming' | null) => {
+        setShowReassignmentModal(false);
+        if (type === 'outgoing') {
+            // Delivery reassigned AWAY from this rider
+            PremiumAlert.alert(
+                'Delivery Reassigned',
+                'This delivery has been assigned to another rider. Returning to dashboard.',
+                [{ text: 'OK', onPress: () => navigation.navigate('RiderApp') }]
+            );
+        }
+    };
+
+    // Render different UI based on wait timer state
+    const renderWaitingUI = () => {
+        const waitCardStyle = {
+            backgroundColor: isDarkMode ? '#0b1220' : '#fffbeb',
+            borderColor: isDarkMode ? '#b45309' : '#fbbf24',
+        };
+        const labelColor = isDarkMode ? '#fbbf24' : '#b45309';
+        const timerColor = isDarkMode ? '#f59e0b' : '#d97706';
+        const subtextColor = isDarkMode ? '#fcd34d' : '#78350f';
+
+        return (
+            <Card style={[styles.waitCard, waitCardStyle]}>
+                <Card.Content>
+                    <View style={styles.timerContainer}>
+                        <Text style={[styles.timerLabel, { color: labelColor }]}>WAITING FOR CUSTOMER</Text>
+                        <Text style={[styles.timerDisplay, { color: timerColor }]}>{displayTime}</Text>
+                        <Text style={[styles.timerSubtext, { color: subtextColor }]}
+                        >
+                            {waitTimerState.status === 'EXPIRED'
+                                ? 'Timer expired - You may return'
+                                : 'Customer has been notified'}
+                        </Text>
+                    </View>
+
+                    {arrivalPhotoUri && (
+                        <View style={[styles.photoPreview, isDarkMode && { backgroundColor: '#1f2937' }]}>
+                            <Text style={[styles.photoLabel, isDarkMode && { color: '#d1fae5' }]}>📷 Arrival photo captured</Text>
+                        </View>
+                    )}
+
+                    <View style={styles.waitActions}>
+                        <Button
+                            mode="contained"
+                            onPress={handleCustomerArrived}
+                            style={[styles.button, { backgroundColor: '#16a34a' }]}
+                            labelStyle={{ color: '#ffffff' }}
+                            icon="check"
+                        >
+                            Customer Arrived
+                        </Button>
+
+                        <Button
+                            mode="contained"
+                            onPress={handleReturn}
+                            disabled={!canInitiateReturn(waitTimerState, Date.now())}
+                            style={[styles.button, { backgroundColor: '#dc2626' }]}
+                            labelStyle={{ color: '#ffffff' }}
+                            icon="keyboard-return"
+                        >
+                            Return with Package
+                        </Button>
+                    </View>
+                </Card.Content>
+            </Card>
+        );
+    };
+
+    const handleNavigate = () => {
+        // Resolve target coords based on the current geofence phase
+        let navLat: number | undefined;
+        let navLng: number | undefined;
+        let navAddress: string | undefined;
+
+        if (geofenceTarget === 'dropoff') {
+            navLat = params?.dropoffLat;
+            navLng = params?.dropoffLng;
+            navAddress = params?.dropoffAddress || params?.targetAddress;
+        } else if (geofenceTarget === 'return_pickup') {
+            navLat = params?.pickupLat;
+            navLng = params?.pickupLng;
+            navAddress = params?.pickupAddress || params?.targetAddress;
+        } else {
+            // pickup phase — use pickupLat/Lng if available, fall back to targetLat/Lng
+            navLat = params?.pickupLat || params?.targetLat;
+            navLng = params?.pickupLng || params?.targetLng;
+            navAddress = params?.pickupAddress || params?.targetAddress;
+        }
+
+        const hasCoords = navLat && navLng && (navLat !== 0 || navLng !== 0);
+        const label = navAddress || 'Destination';
+        const encodedLabel = encodeURIComponent(label);
+
+        const openWithFallback = async (primaryUrl: string, fallbackUrl: string) => {
+            try {
+                const supported = await Linking.canOpenURL(primaryUrl);
+                if (supported) {
+                    await Linking.openURL(primaryUrl);
+                } else {
+                    await Linking.openURL(fallbackUrl);
+                }
+            } catch (error) {
+                console.error('[ArrivalScreen handleNavigate] Failed to open maps:', error);
+                try {
+                    const browserUrl = hasCoords
+                        ? `https://www.google.com/maps/dir/?api=1&destination=${navLat},${navLng}&travelmode=driving`
+                        : `https://www.google.com/maps/search/?api=1&query=${encodedLabel}`;
+                    await Linking.openURL(browserUrl);
+                } catch (browserError) {
+                    console.error('[ArrivalScreen handleNavigate] Browser fallback also failed:', browserError);
+                }
+            }
+        };
+
+        if (hasCoords) {
+            const latLng = `${navLat},${navLng}`;
+            const primaryUrl = Platform.select({
+                ios: `maps:?ll=${latLng}&q=${encodedLabel}`,
+                android: `google.navigation:q=${latLng}&mode=d`,
+            })!;
+            const fallbackUrl = Platform.select({
+                ios: `https://maps.apple.com/?ll=${latLng}&q=${encodedLabel}`,
+                android: `geo:${latLng}?q=${latLng}(${encodedLabel})`,
+            })!;
+            openWithFallback(primaryUrl, fallbackUrl);
+        } else if (label) {
+            const primaryUrl = Platform.select({
+                ios: `maps:0,0?q=${encodedLabel}`,
+                android: `google.navigation:q=${encodedLabel}&mode=d`,
+            })!;
+            const fallbackUrl = Platform.select({
+                ios: `https://maps.apple.com/?q=${encodedLabel}`,
+                android: `geo:0,0?q=${encodedLabel}`,
+            })!;
+            openWithFallback(primaryUrl, fallbackUrl);
+        }
+    };
+
+    const handleManualRefresh = useCallback(async () => {
+        if (manualRefreshBusy) return;
+        setManualRefreshBusy(true);
+
+        try {
+            phoneGeofenceStateRef.current = createInitialState();
+            boxGeofenceStateRef.current = createInitialState();
+            masterDecisionRef.current = false;
+            phoneInsideSinceRef.current = 0;
+            setIsPhoneOnlyFallback(false);
+
+            if (!isBackgroundLocationRunning()) {
+                startBackgroundLocation(params.boxId).catch((err) => {
+                    console.warn('[ArrivalScreen] Background location restart failed', err);
+                });
+            }
+            setTrackingPhase('ARRIVAL');
+            startForegroundGpsWarmWindow(15000).catch(() => { });
+
+            const phoneRefresh = (async () => {
+                const permission = await Location.getForegroundPermissionsAsync();
+                let hasPermission = permission.status === 'granted';
+
+                if (!hasPermission) {
+                    const requested = await Location.requestForegroundPermissionsAsync();
+                    hasPermission = requested.status === 'granted';
+                }
+
+                if (!hasPermission) {
+                    throw new Error('Phone location permission not granted');
+                }
+
+                const hasRecentCurrentPosition =
+                    (currentPosition.lat !== 0 || currentPosition.lng !== 0) &&
+                    Date.now() - phoneLocationLastSeen <= MANUAL_REFRESH_CACHED_PHONE_MAX_AGE_MS;
+
+                if (hasRecentCurrentPosition) {
+                    applyPhonePosition({
+                        latitude: currentPosition.lat,
+                        longitude: currentPosition.lng,
+                        accuracy: currentPosition.accuracy,
+                        heading: currentPosition.heading,
+                        speed: currentPosition.speed,
+                    }, 25);
+                }
+
+                let loc: Location.LocationObject;
+                try {
+                    loc = await Promise.race([
+                        Location.getCurrentPositionAsync({
+                            accuracy: Location.Accuracy.High,
+                        }),
+                        new Promise<never>((_, reject) => {
+                            setTimeout(() => reject(new Error('Phone GPS refresh timed out')), MANUAL_REFRESH_PHONE_TIMEOUT_MS);
+                        }),
+                    ]) as Location.LocationObject;
+                } catch (error) {
+                    const lastKnown = await Location.getLastKnownPositionAsync({
+                        maxAge: MANUAL_REFRESH_CACHED_PHONE_MAX_AGE_MS,
+                        requiredAccuracy: MANUAL_REFRESH_LAST_KNOWN_ACCURACY_M,
+                    });
+
+                    if (!lastKnown) {
+                        throw error;
+                    }
+
+                    loc = lastKnown;
+                }
+
+                applyPhonePosition(loc.coords, 25, loc.timestamp);
+                await writePhoneLocation(
+                    params.boxId,
+                    loc.coords.latitude,
+                    loc.coords.longitude,
+                    loc.coords.speed ?? 0,
+                    loc.coords.heading ?? 0,
+                    localPhoneHeading
+                );
+            })();
+
+            const [boxResult, phoneResult] = await Promise.allSettled([
+                requestBoxContextRefresh(params.boxId, 'arrival_refresh'),
+                phoneRefresh,
+            ]);
+
+            setBoxLocationSubscriptionEpoch((prev) => prev + 1);
+
+            if (boxResult.status === 'rejected') {
+                console.warn('[ArrivalScreen] Manual refresh box GPS request failed', boxResult.reason);
+            }
+
+            if (phoneResult.status === 'rejected') {
+                console.warn('[ArrivalScreen] Manual refresh phone GPS failed', phoneResult.reason);
+            }
+
+            if (geofenceTarget === 'dropoff' && isInsideGeoFence && !dropoffArrivalPersistedRef.current) {
+                dropoffArrivalSyncInFlightRef.current = false;
+                clearDropoffArrivalRetry();
+                setDropoffArrivalRetryTick((prev) => prev + 1);
+            }
+        } finally {
+            setManualRefreshBusy(false);
+        }
+    }, [
+        manualRefreshBusy,
+        params.boxId,
+        applyPhonePosition,
+        currentPosition,
+        phoneLocationLastSeen,
+        localPhoneHeading,
+        geofenceTarget,
+        isInsideGeoFence,
+        clearDropoffArrivalRetry,
+    ]);
+
+    // EC-12: Render System Status (Horizontal Scroll)
+    const renderSystemStatus = () => {
+        const statuses = [];
+
+        // Tamper (Always Critical - Keep as full banner above, but also show here if we want, or skip)
+        // Leaving Tamper as full banner because it's a security emergency.
+
+        // Lockout
+        if (lockoutState?.active) {
+            statuses.push(
+                <Card key="lockout" style={[styles.statusPill, styles.statusPillError]}>
+                    <View style={styles.pillContent}>
+                        <Text style={styles.pillIcon}>🔒</Text>
+                        <View>
+                            <Text style={[styles.pillTitle, styles.textError]}>LOCKED</Text>
+                            <Text style={[styles.pillText, styles.textError]}>{lockoutCountdown}</Text>
+                        </View>
+                    </View>
+                </Card>
+            );
+        }
+
+        // Battery
+        if (hasBatteryLow) {
+            const isCritical = hasBatteryCritical;
+            statuses.push(
+                <Card key="battery" style={[styles.statusPill, isCritical ? styles.statusPillError : styles.statusPillWarning]}>
+                    <View style={styles.pillContent}>
+                        <Text style={styles.pillIcon}>{isCritical ? '🔴' : '🟡'}</Text>
+                        <View>
+                            <Text style={[styles.pillTitle, isCritical ? styles.textError : styles.textWarning]}>
+                                {isCritical ? 'CRITICAL' : 'LOW POWER'}
+                            </Text>
+                            <Text style={[styles.pillText, isCritical ? styles.textError : styles.textWarning]}>
+                                {batteryAlertSummary || '--'}
+                            </Text>
+                        </View>
+                    </View>
+                </Card>
+            );
+        }
+
+        // GPS
+        if (bgLocationState && bgLocationState.status !== 'RUNNING') {
+            statuses.push(
+                <Card key="gps" style={[styles.statusPill, styles.statusPillInfo]}>
+                    <View style={styles.pillContent}>
+                        <Text style={styles.pillIcon}>📍</Text>
+                        <View>
+                            <Text style={[styles.pillTitle, styles.textInfo]}>GPS PAUSED</Text>
+                            <Text style={[styles.pillText, styles.textInfo]}>Check Settings</Text>
+                        </View>
+                    </View>
+                </Card>
+            );
+        }
+
+        // Low Light
+        if (lowLightState?.isLowLight) {
+            const isCritical = lowLightState.fallbackRequired;
+            statuses.push(
+                <Card key="light" style={[styles.statusPill, isCritical ? styles.statusPillError : styles.statusPillWarning]}>
+                    <View style={styles.pillContent}>
+                        <Text style={styles.pillIcon}>{isCritical ? '📷' : '🌙'}</Text>
+                        <View>
+                            <Text style={[styles.pillTitle, isCritical ? styles.textError : styles.textWarning]}>
+                                {isCritical ? 'FALLBACK' : 'LOW LIGHT'}
+                            </Text>
+                            <Text style={[styles.pillText, isCritical ? styles.textError : styles.textWarning]}>
+                                {isCritical ? 'FaceID N/A' : 'Flash On'}
+                            </Text>
+                        </View>
+                    </View>
+                </Card>
+            );
+        }
+
+        if (statuses.length === 0) return null;
+
+        return (
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.systemStatusContainer} contentContainerStyle={styles.systemStatusContent}>
+                {statuses}
+            </ScrollView>
+        );
+    };
+
+    const screenAnim = useEntryAnimation(0);
+
+    // ──── GPS Acquisition Loading Gate ────
+    if (!gpsAcquired) {
+        const hasPhoneGps = currentPosition.lat !== 0 || currentPosition.lng !== 0;
+        const hasBoxData = boxFirstLoadReceivedRef.current;
+        return (
+            <View style={[styles.container, { backgroundColor: c.background, justifyContent: 'center', alignItems: 'center', padding: 32 }]}>
+                <View style={{ alignItems: 'center', marginBottom: 32 }}>
+                    <ActivityIndicator size="large" color={isDarkMode ? '#60a5fa' : '#2563eb'} style={{ marginBottom: 20 }} />
+                    <Text variant="headlineSmall" style={{ color: c.text, fontFamily: 'Inter_700Bold', marginBottom: 8 }}>
+                        Acquiring GPS Signal
+                    </Text>
+                    <Text variant="bodyMedium" style={{ color: isDarkMode ? '#a1a1aa' : '#6b7280', textAlign: 'center' }}>
+                        Locking onto your position for accurate geofence detection...
+                    </Text>
+                </View>
+
+                <View style={[styles.gpsGateCard, { backgroundColor: c.card, borderColor: c.border }]}>
+                    <View style={styles.gpsGateRow}>
+                        <Text style={{ fontSize: 18 }}>{hasPhoneGps ? '✅' : '📡'}</Text>
+                        <Text variant="bodyMedium" style={{ color: c.text, flex: 1, marginLeft: 12 }}>
+                            Phone GPS
+                        </Text>
+                        <Text variant="bodySmall" style={{ color: hasPhoneGps ? '#22c55e' : (isDarkMode ? '#a1a1aa' : '#9ca3af') }}>
+                            {hasPhoneGps ? 'Locked' : 'Acquiring...'}
+                        </Text>
+                    </View>
+
+                    <View style={[styles.gpsGateDivider, { backgroundColor: c.border }]} />
+
+                    <View style={styles.gpsGateRow}>
+                        <Text style={{ fontSize: 18 }}>{hasBoxData ? '✅' : (isBoxOffline ? '⚠️' : '📦')}</Text>
+                        <Text variant="bodyMedium" style={{ color: c.text, flex: 1, marginLeft: 12 }}>
+                            Smart Box
+                        </Text>
+                        <Text variant="bodySmall" style={{ color: hasBoxData ? '#22c55e' : (isBoxOffline ? '#f59e0b' : (isDarkMode ? '#a1a1aa' : '#9ca3af')) }}>
+                            {hasBoxData ? 'Connected' : (isBoxOffline ? 'Offline' : 'Connecting...')}
+                        </Text>
+                    </View>
+                </View>
+            </View>
+        );
+    }
+
+    return (
+        <ScrollView style={[styles.container, { backgroundColor: c.background }]} contentContainerStyle={[styles.content, { paddingTop: Math.max(insets.top, 20), paddingBottom: insets.bottom + 20 }]}>
+            <Animated.View style={screenAnim.style}>
+                {/* Critical Security Alerts (Full Width) */}
+                {tamperState?.detected && (
+                    <Card style={styles.tamperBanner}>
+                        <Card.Content style={styles.bannerContent}>
+                            <Text style={styles.bannerIcon}>🚨</Text>
+                            <View style={{ flex: 1 }}>
+                                <Text style={styles.tamperTitle}>SECURITY ALERT</Text>
+                                <Text style={styles.tamperText}>Box tamper detected - Lockdown active</Text>
+                            </View>
+                        </Card.Content>
+                    </Card>
+                )}
+
+                {/* System Status Pills */}
+                {renderSystemStatus()}
+
+                <Text variant="headlineMedium" style={[styles.pageTitle, { color: c.text }]}>
+                    Arrival & Verification
+                </Text>
+
+                <View style={styles.refreshRow}>
+                    <Button
+                        mode="contained"
+                        icon="refresh"
+                        onPress={handleManualRefresh}
+                        loading={manualRefreshBusy}
+                        disabled={manualRefreshBusy}
+                        buttonColor={isDarkMode ? '#0f172a' : '#111827'}
+                        textColor="#f8fafc"
+                        style={styles.refreshButton}
+                    >
+                        Refresh Status
+                    </Button>
+                </View>
+
+                {/* Status Modals & Top Alerts */}
+                {lockoutState?.active && (
+                    <View style={[styles.statusMessageContainer, styles.bgSubtleError, { marginTop: 16 }]}>
+                        <Text style={[styles.statusMessageText, styles.textError]}>
+                            🔒 Smart Box is locked out. Wait {Math.max(0, Math.ceil((lockoutState.expires_at - timerNowMs) / 60000))} minutes.
+                        </Text>
+                    </View>
+                )}
+                {hasBatteryCritical && (
+                    <View style={[styles.statusMessageContainer, styles.bgSubtleError, { marginTop: 16 }]}>
+                        <Text style={[styles.statusMessageText, styles.textError]}>
+                            ⚠️ Smart Box Battery Critical ({batteryAlertSummary || '--'})
+                        </Text>
+                    </View>
+                )}
+                {tamperState?.detected && (
+                    <View style={[styles.statusMessageContainer, styles.bgSubtleError, { marginTop: 16 }]}>
+                        <Text style={[styles.statusMessageText, styles.textError]}>
+                            🚨 TAMPER DETECTED! Box is in lockdown. Contact support.
+                        </Text>
+                    </View>
+                )}
+
+                {/* Grace Period Countdown Card */}
+                {isDropoffPhase && deliveryStatus === 'ARRIVED' && arrivedAt && (
+                    <Card style={[
+                        styles.gracePeriodCard,
+                        { 
+                            backgroundColor: gracePeriodExpired 
+                                ? (isDarkMode ? '#450a0a' : '#fef2f2') 
+                                : (isDarkMode ? '#1e293b' : '#f8fafc'),
+                            borderColor: gracePeriodExpired
+                                ? (isDarkMode ? '#991b1b' : '#ef4444')
+                                : (isDarkMode ? '#fbbf24' : '#f59e0b'),
+                            borderWidth: 2,
+                            borderRadius: 12
+                        }
+                    ]}>
+                        <Card.Content>
+                            <View style={styles.gracePeriodHeader}>
+                                <Text style={styles.gracePeriodIcon}>
+                                    {gracePeriodExpired ? '⏰' : '⏳'}
+                                </Text>
+                                <View style={{ flex: 1 }}>
+                                    <Text style={[styles.gracePeriodTitle, { color: gracePeriodExpired ? (isDarkMode ? '#f8fafc' : '#7f1d1d') : c.text }]}>
+                                        {gracePeriodExpired ? 'Grace Period Expired' : 'Grace Period Active'}
+                                    </Text>
+                                    <Text style={[styles.gracePeriodSubtext, { color: gracePeriodExpired ? (isDarkMode ? '#fca5a5' : '#b91c1c') : (isDarkMode ? '#94a3b8' : '#64748b') }]}>
+                                        {gracePeriodExpired
+                                            ? 'Customer did not appear. You may mark as No-Show.'
+                                            : 'Waiting for customer to arrive at location...'}
+                                    </Text>
+                                </View>
+                                <View style={[styles.gracePeriodTimerBox, { 
+                                    backgroundColor: isDarkMode ? '#0f172a' : '#1e293b', 
+                                    borderColor: gracePeriodExpired ? '#ef4444' : (isDarkMode ? '#334155' : '#000000'),
+                                    borderRadius: 8,
+                                    borderWidth: 2
+                                }]}>
+                                    <Text style={[
+                                        styles.gracePeriodTimer,
+                                        { color: gracePeriodExpired ? '#ef4444' : '#f8fafc' }
+                                    ]}>
+                                        {gracePeriodDisplay}
+                                    </Text>
+                                    <Text style={[styles.gracePeriodTimerLabel, { color: gracePeriodExpired ? '#fca5a5' : '#94a3b8' }]}>
+                                        {gracePeriodExpired ? 'EXPIRED' : 'remaining'}
+                                    </Text>
+                                </View>
+                            </View>
+
+                            {gracePeriodExpired && (
+                                <Button
+                                    mode="contained"
+                                    onPress={handleMarkNoShow}
+                                    loading={noShowLoading}
+                                    disabled={noShowLoading}
+                                    buttonColor="#dc2626"
+                                    textColor="white"
+                                    style={{ marginTop: 12, borderRadius: 8 }}
+                                    icon="account-cancel"
+                                >
+                                    Mark as Customer No-Show
+                                </Button>
+                            )}
+                        </Card.Content>
+                    </Card>
+                )}
+
+                {isDropoffPhase && deliveryStatus === 'ARRIVED' && hasBatteryCritical && (
+                    <Card style={[
+                        styles.batteryIncidentCard, 
+                        { 
+                            backgroundColor: isDarkMode ? '#450a0a' : '#fef2f2', 
+                            borderColor: isDarkMode ? '#991b1b' : '#ef4444',
+                            borderWidth: 2,
+                            borderRadius: 12
+                        }
+                    ]}>
+                        <Card.Content>
+                            <View style={styles.batteryIncidentHeader}>
+                                <Text style={styles.batteryIncidentIcon}>🔋</Text>
+                                <View style={{ flex: 1 }}>
+                                    <Text style={[styles.batteryIncidentTitle, { color: isDarkMode ? '#f8fafc' : '#7f1d1d' }]}>Battery Handoff Incident</Text>
+                                    <Text style={[styles.batteryIncidentSubtext, { color: isDarkMode ? '#fca5a5' : '#b91c1c' }]}>
+                                        Report once if handoff is blocked by power loss. Auto-cancel SLA is 15 minutes.
+                                    </Text>
+                                </View>
+                                <View style={[styles.batteryIncidentTimerBox, { 
+                                    backgroundColor: isDarkMode ? '#0f172a' : '#1e293b', 
+                                    borderColor: isDarkMode ? '#334155' : '#000000',
+                                    borderRadius: 8,
+                                    borderWidth: 2
+                                }]}>
+                                    <Text style={[styles.batteryIncidentTimer, { color: '#f8fafc' }]}>{batteryIncidentReportedAt ? batteryTimeoutDisplay : '15:00'}</Text>
+                                    <Text style={[styles.batteryIncidentTimerLabel, { color: '#94a3b8' }]}>{batteryIncidentReportedAt ? 'remaining' : 'window'}</Text>
+                                </View>
+                            </View>
+
+                            <Button
+                                mode={batteryIncidentReportedAt ? 'outlined' : 'contained'}
+                                onPress={handleReportBatteryIncident}
+                                loading={reportingBatteryIncident}
+                                disabled={reportingBatteryIncident}
+                                buttonColor={batteryIncidentReportedAt ? undefined : '#dc2626'}
+                                textColor={batteryIncidentReportedAt ? (isDarkMode ? '#f8fafc' : '#dc2626') : 'white'}
+                                style={{ marginTop: 12, borderRadius: 8, borderColor: batteryIncidentReportedAt ? (isDarkMode ? '#475569' : '#dc2626') : undefined }}
+                                icon={batteryIncidentReportedAt ? 'check-circle' : 'alert-circle'}
+                            >
+                                {batteryIncidentReportedAt ? 'Incident Reported (Tap to Re-send)' : 'Report Battery Incident'}
+                            </Button>
+                        </Card.Content>
+                    </Card>
+                )}
+
+                {(waitTimerState.status === 'WAITING' || waitTimerState.status === 'EXPIRED') ? (
+                    renderWaitingUI()
+                ) : (
+                    isPickupConfirmed ? (
+                        isReturning ? (
+                            // ── EC-32: Return Journey Card ──────────────────────────────────────────
+                            <Card style={{ margin: 16, borderRadius: 0, borderWidth: 3, borderColor: '#000', backgroundColor: '#fff', overflow: 'hidden' }} elevation={0}>
+                                {/* Map Preview */}
+                                <View style={{ height: 160, width: '100%', backgroundColor: '#000', position: 'relative' }}>
+                                    {isMapboxNativeAvailable() && currentPosition.lat !== 0 && params.pickupLng && params.pickupLat ? (
+                                        <MapboxGL.MapView
+                                            style={{ flex: 1 }}
+                                            logoEnabled={false}
+                                            compassEnabled={false}
+                                            scaleBarEnabled={false}
+                                            attributionEnabled={false}
+                                            scrollEnabled={false}
+                                            pitchEnabled={false}
+                                            rotateEnabled={false}
+                                            zoomEnabled={false}
+                                            styleURL={isDarkMode ? StyleURL.Dark : StyleURL.Street}
+                                        >
+                                            <MapboxGL.Camera
+                                                zoomLevel={16}
+                                                centerCoordinate={[params.pickupLng, params.pickupLat]}
+                                                animationMode="flyTo"
+                                            />
+
+                                            {/* 1. The Geofence Zone Circle */}
+                                            <MapboxGL.ShapeSource id="return-geofence" shape={buildGeofenceCircleGeoJSON(params.pickupLng, params.pickupLat, 50)}>
+                                                <MapboxGL.FillLayer
+                                                    id="return-geofence-fill"
+                                                    style={{
+                                                        fillColor: isInsideGeoFence ? '#4CAF50' : '#2196F3',
+                                                        fillOpacity: 0.2,
+                                                    }}
+                                                />
+                                                <MapboxGL.LineLayer
+                                                    id="return-geofence-line"
+                                                    style={{
+                                                        lineColor: isInsideGeoFence ? '#4CAF50' : '#2196F3',
+                                                        lineWidth: 2,
+                                                    }}
+                                                />
+                                            </MapboxGL.ShapeSource>
+
+                                            {/* 2. The Return Target Point Marker */}
+                                            <MapboxGL.PointAnnotation id="return-target" coordinate={[params.pickupLng, params.pickupLat]}>
+                                                <View style={{
+                                                    width: 28, height: 28, borderRadius: 14,
+                                                    alignItems: 'center', justifyContent: 'center',
+                                                    borderWidth: 2, borderColor: 'white',
+                                                    backgroundColor: isInsideGeoFence ? '#4CAF50' : '#2196F3',
+                                                    shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.3, shadowRadius: 3, elevation: 4
+                                                }}>
+                                                    <Text style={{ color: 'white', fontSize: 16 }}>↩️</Text>
+                                                </View>
+                                            </MapboxGL.PointAnnotation>
+
+                                            {/* 3. Rider Current Position */}
+                                            {currentPosition.lat != null && currentPosition.lng != null && (
+                                                <AnimatedRiderMarker
+                                                    latitude={currentPosition.lat}
+                                                    longitude={currentPosition.lng}
+                                                    rotation={headingSmoother.smooth(currentPosition.heading, currentPosition.speed, localPhoneHeading)}
+                                                    speed={currentPosition.speed}
+                                                />
+                                            )}
+                                        </MapboxGL.MapView>
+                                    ) : (
+                                        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: isDarkMode ? '#27272a' : '#f4f4f5' }}>
+                                            {currentPosition.lat === 0 ? (
+                                                <>
+                                                    <ActivityIndicator size="small" color="#4CAF50" />
+                                                    <Text style={{ marginTop: 8, color: isDarkMode ? '#a1a1aa' : '#71717a' }}>Acquiring GPS...</Text>
+                                                </>
+                                            ) : (
+                                                <Text style={{ fontSize: 32 }}>📍</Text>
+                                            )}
+                                        </View>
+                                    )}
+
+                                    {distanceMeters !== null && (
+                                        <View style={{
+                                            position: 'absolute', top: 12, right: 12,
+                                            paddingHorizontal: 10, paddingVertical: 4, borderRadius: 16,
+                                            alignItems: 'center', justifyContent: 'center', borderWidth: 1,
+                                            backgroundColor: c.card, borderColor: isDarkMode ? '#3f3f46' : '#e4e4e7',
+                                            shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 4, elevation: 3
+                                        }}>
+                                            <Text variant="labelMedium" style={{ fontFamily: 'Inter_700Bold', color: c.text }}>
+                                                {distanceMeters < 1000 ? `${Math.round(distanceMeters)}m` : `${(distanceMeters / 1000).toFixed(1)}km`}
+                                            </Text>
+                                            <Text variant="labelSmall" style={{ color: isDarkMode ? '#a1a1aa' : '#71717a' }}>away</Text>
+                                        </View>
+                                    )}
+                                </View>
+
+                                {/* Destination Info & Buttons below map */}
+                                <Card.Content style={{ paddingTop: 16 }}>
+                                    <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>
+                                        <Text variant="titleMedium" style={{ fontFamily: 'Inter_700Bold', flex: 1, color: c.text }}>Return Journey</Text>
+                                        <View style={{ backgroundColor: '#2196F3', width: 28, height: 28, borderRadius: 6, alignItems: 'center', justifyContent: 'center' }}>
+                                            <Text style={{ color: 'white', fontSize: 16 }}>↩️</Text>
+                                        </View>
+                                    </View>
+                                    <Text variant="bodySmall" style={{ color: isDarkMode ? '#a1a1aa' : '#666', marginBottom: 4 }}>Return destination</Text>
+                                    <Text variant="bodyMedium" style={{ fontFamily: 'Inter_600SemiBold', marginBottom: 16, color: c.text }}>
+                                        {params.pickupAddress || params.targetAddress}
+                                    </Text>
+
+                                    <Button
+                                        mode="outlined"
+                                        icon="navigation"
+                                        onPress={handleNavigate}
+                                        style={{ marginBottom: 12, borderRadius: 8 }}
+                                    >
+                                        Navigate to Pickup
+                                    </Button>
+                                    <Button
+                                        mode="contained"
+                                        icon="package-variant-closed"
+                                        onPress={() => {
+                                            if (returnCancellationState?.returnOtp) {
+                                                navigation.navigate('ReturnPackage', {
+                                                    deliveryId: params.deliveryId,
+                                                    returnOtp: returnCancellationState.returnOtp,
+                                                    pickupAddress: params.pickupAddress || params.targetAddress,
+                                                    senderName: params.senderName || 'Sender',
+                                                    pickupLat: params.pickupLat,
+                                                    pickupLng: params.pickupLng,
+                                                    boxId: params.boxId,
+                                                });
+                                            } else {
+                                                navigation.navigate('CancellationConfirmation', {
+                                                    deliveryId: params.deliveryId,
+                                                    returnOtp: '------',
+                                                    reason: CancellationReason.OTHER,
+                                                    senderName: params.senderName || 'Sender',
+                                                    pickupAddress: params.pickupAddress || params.targetAddress,
+                                                    pickupLat: params.pickupLat,
+                                                    pickupLng: params.pickupLng,
+                                                    isPickedUp: ['PICKED_UP', 'IN_TRANSIT', 'ARRIVED', 'COMPLETED', 'RETURNING', 'TAMPERED'].includes(params.status || 'PENDING'),
+                                                });
+                                            }
+                                        }}
+                                        style={{ borderRadius: 8 }}
+                                    >
+                                        Continue Return Process
+                                    </Button>
+                                </Card.Content>
+                            </Card>
+                        ) : (
+                            <DropoffVerification
+                                deliveryId={params.deliveryId}
+                                boxId={params.boxId}
+                                targetAddress={params.dropoffAddress || params.targetAddress}
+                                targetLat={params.dropoffLat || params.targetLat}
+                                targetLng={params.dropoffLng || params.targetLng}
+                                recipientName={params.recipientName}
+                                customerPhone={params.customerPhone}
+                                deliveryNotes={params.deliveryNotes}
+                                deliveryStatus={deliveryStatus}
+                                isInsideGeoFence={isInsideGeoFence}
+                                distanceMeters={distanceMeters}
+                                isPhoneInside={isPhoneInside}
+                                isBoxInside={isBoxInside}
+                                isBoxOffline={isBoxOffline}
+                                lastBoxHeartbeatAt={boxLocationLastSeen}
+                                lastPhoneGpsAt={phoneLocationLastSeen}
+                                currentLat={currentPosition.lat}
+                                currentLng={currentPosition.lng}
+                                currentHeading={headingSmoother.smooth(currentPosition.heading, currentPosition.speed, localPhoneHeading)}
+                                geofenceRadiusM={geofence.radiusMeters}
+                                onDeliveryCompleted={() => navigation.goBack()}
+
+                                onNavigate={handleNavigate}
+                                onShowBleModal={handleBleTransfer}
+                                onShowCancelModal={() => setShowCancelModal(true)}
+                                onShowCustomerNotHome={handleCustomerNotHome}
+                                isWaitTimerActive={false}
+                                canAutoArrive={geofenceTarget !== 'pickup'}
+                            />
+                        )
+                    ) : (
+                        <PickupVerification
+                            deliveryId={params.deliveryId}
+                            boxId={params.boxId}
+                            targetAddress={params.pickupAddress || params.targetAddress}
+                            targetLat={params.pickupLat || params.targetLat}
+                            targetLng={params.pickupLng || params.targetLng}
+                            senderName={params.senderName}
+                            senderPhone={params.senderPhone}
+                            deliveryNotes={params.deliveryNotes}
+                            isInsideGeoFence={isInsideGeoFence}
+                            distanceMeters={distanceMeters}
+                            isPhoneInside={isPhoneInside}
+                            isBoxInside={isBoxInside}
+                            isBoxOffline={isBoxOffline}
+                            isPhoneOnlyFallback={isPhoneOnlyFallback}
+                            currentLat={currentPosition.lat}
+                            currentLng={currentPosition.lng}
+                            currentHeading={headingSmoother.smooth(currentPosition.heading, currentPosition.speed, localPhoneHeading)}
+                            geofenceRadiusM={geofence.radiusMeters}
+                            onPickupConfirmed={() => {
+                                if (!isSamePickupDropoff) {
+                                    return;
+                                }
+
+                                const arrivedAtNow = Date.now();
+                                updateDeliveryStatus(params.deliveryId, 'ARRIVED', {
+                                    arrived_at: arrivedAtNow,
+                                    arrival_source: 'same_pickup_dropoff_fast_path',
+                                    boxId: params.boxId,
+                                }).then((ok) => {
+                                    if (!ok) return;
+                                    setDeliveryStatus('ARRIVED');
+                                    setArrivedAt((prev) => prev ?? arrivedAtNow);
+                                    dropoffArrivalPersistedRef.current = true;
+                                    requestBoxContextRefresh(params.boxId, 'same_pickup_dropoff_arrived').catch(() => { });
+
+                                    if (currentPosition.lat !== 0 || currentPosition.lng !== 0) {
+                                        writePhoneLocation(
+                                            params.boxId,
+                                            currentPosition.lat,
+                                            currentPosition.lng,
+                                            currentPosition.speed,
+                                            currentPosition.heading,
+                                            localPhoneHeading
+                                        ).catch(() => { });
+                                    }
+                                });
+                            }}
+
+                            onNavigate={handleNavigate}
+                            deliveryOtp={params.otpCode}
+                        />
+                    )
+                )}
+
+
+                {/* Modals ... */}
+                {/* ... keeping existing modals ... */}
+                <Portal>
+
+                    <Modal
+                        visible={showBleModal}
+                        onDismiss={closeBleModal}
+                        contentContainerStyle={[styles.modal, { backgroundColor: c.modalBg }]}
+                    >
+                        <Text variant="titleLarge" style={{ marginBottom: 16, fontFamily: 'Inter_700Bold', color: c.text }}>
+                            BLE OTP Transfer
+                        </Text>
+
+                        <View style={styles.bleStatusContainer}>
+                            {(bleStatus === 'scanning' || bleStatus === 'connecting' || bleStatus === 'transferring') && (
+                                <Text style={styles.bleStatusIcon}>⏳</Text>
+                            )}
+                            {bleStatus === 'success' && <Text style={styles.bleStatusIcon}>✅</Text>}
+                            {bleStatus === 'error' && <Text style={styles.bleStatusIcon}>❌</Text>}
+                        </View>
+
+                        <Text style={[styles.bleStatusText, { color: c.text }]}>
+                            {bleStatus === 'scanning' ? 'Scanning...' :
+                                bleStatus === 'connecting' ? 'Connecting...' :
+                                    bleStatus === 'transferring' ? 'Transferring...' :
+                                        bleStatus === 'success' ? 'Success!' :
+                                            bleStatus === 'error' ? 'Failed' : 'Ready'}
+                        </Text>
+                        <Text style={[styles.bleMessageText, { color: c.modalText }]}>{bleMessage}</Text>
+
+                        <View style={styles.bleActions}>
+                            {bleStatus === 'error' && (
+                                <Button mode="contained" onPress={handleBleTransfer}>
+                                    Retry
+                                </Button>
+                            )}
+                            {bleStatus === 'success' && (
+                                <Button mode="contained" onPress={closeBleModal} buttonColor="#22c55e">
+                                    Done
+                                </Button>
+                            )}
+                            <Button mode="outlined" onPress={closeBleModal} style={{ marginTop: 8 }}>
+                                {bleStatus === 'success' ? 'Close' : 'Cancel'}
+                            </Button>
+                        </View>
+                    </Modal>
+                </Portal>
+
+
+
+                {/* EC-32: Cancellation Modal */}
+                <CancellationModal
+                    visible={showCancelModal}
+                    onDismiss={() => setShowCancelModal(false)}
+                    onSubmit={handleCancellationSubmit}
+                    loading={cancelLoading}
+                />
+
+                {/* EC-78: Reassignment Alert Modal */}
+                <ReassignmentAlertModal
+                    visible={showReassignmentModal}
+                    state={reassignmentState}
+                    type={getReassignmentType(reassignmentState, riderId || '')}
+                    onAcknowledge={handleReassignmentAcknowledge}
+                />
+            </Animated.View>
+        </ScrollView>
+    );
+}
