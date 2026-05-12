@@ -294,6 +294,18 @@ export async function requestCancellation(
       await update(hardwareRef, {
         return_otp: null,
         return_active: false,
+        otp_code: null,
+        otp_issued_at: null,
+        delivery_id: null,
+        target_lat: null,
+        target_lng: null,
+        pickup_lat: null,
+        pickup_lng: null,
+        same_pickup_dropoff: null,
+        command: 'NONE',
+        refresh_context_at: serverTimestamp(),
+        context_cleared_at: serverTimestamp(),
+        context_cleared_reason: 'CANCELLED',
       });
     }
 

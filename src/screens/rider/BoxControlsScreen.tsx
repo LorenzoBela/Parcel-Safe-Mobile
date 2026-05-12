@@ -56,7 +56,7 @@ import {
     subscribeToLocation,
     LocationData,
 } from '../../services/firebaseClient';
-import { updateDeliveryStatus } from '../../services/riderMatchingService';
+import { DeliveryRecord, subscribeToDelivery, updateDeliveryStatus } from '../../services/riderMatchingService';
 import { subscribeToAdminOverride, AdminOverrideState, getOverrideNotificationMessage } from '../../services/adminOverrideService';
 import { bleOtpService, BleBoxDevice, BleTransferResult } from '../../services/bleOtpService';
 import {
@@ -111,6 +111,7 @@ export default function BoxControlsScreen() {
     const riderId = authedUserId;
     const [cachedBoxId, setCachedBoxId] = useState<string | null>(null);
     const [boxState, setBoxState] = useState<BoxState | null>(null);
+    const [activeDelivery, setActiveDelivery] = useState<DeliveryRecord | null>(null);
 
     // EC-03: Battery Monitoring State (dual-channel: MCU 7.5V + Lock 12V)
     const [batteryState, setBatteryState] = useState<DualBatteryState | null>(null);
@@ -273,6 +274,7 @@ export default function BoxControlsScreen() {
     const routeDeliveryId = route?.params?.deliveryId as string | undefined;
 
     // Last-resort fallback for dev screens when box has no active delivery.
+    const hasActiveDeliveryContext = Boolean(routeDeliveryId || boxState?.delivery_id);
     const activeDeliveryId = routeDeliveryId || boxState?.delivery_id || 'DEL_001';
     const activeOtpCode = boxState?.otp_code || '';
     const incidentPhaseLabel =
@@ -293,6 +295,40 @@ export default function BoxControlsScreen() {
     const lockAwaitingCloseNeedsAssist = lockAwaitingClose && commandAckDetails === 'reed_open';
     const lockCloseConfirmed = commandAckCommand === 'LOCKED' && commandAckStatus === 'executed' && commandAckDetails === 'reed_closed_confirmed';
     const requiresPinOnlyUnlock = Boolean(adminOverrideState?.active || tamperState?.detected);
+    const activeDeliveryStatus = activeDelivery?.status
+        ? String(activeDelivery.status).trim().toUpperCase()
+        : null;
+    const deliveryUnlockBlocked = Boolean(
+        isLocked &&
+        hasActiveDeliveryContext &&
+        activeDeliveryStatus !== 'ARRIVED'
+    );
+    const deliveryUnlockStatusLabel = activeDeliveryStatus || 'SYNCING';
+
+    const getDeliveryUnlockBlockMessage = () => {
+        if (!activeDeliveryStatus) {
+            return 'Delivery status is still syncing. For security, box unlock is blocked until the app confirms you are ARRIVED at the drop-off.';
+        }
+
+        if (activeDeliveryStatus === 'IN_TRANSIT' || activeDeliveryStatus === 'PICKED_UP') {
+            return 'Box unlock is blocked while you are in transit to the drop-off. Arrive inside the drop-off geofence first, then unlock for handoff.';
+        }
+
+        return `Box unlock is blocked for delivery status ${activeDeliveryStatus}. Unlock is only available after the delivery is marked ARRIVED.`;
+    };
+
+    useEffect(() => {
+        if (!hasActiveDeliveryContext || activeDeliveryId === 'DEL_001') {
+            setActiveDelivery(null);
+            return;
+        }
+
+        const unsubscribe = subscribeToDelivery(activeDeliveryId, (delivery) => {
+            setActiveDelivery(delivery);
+        });
+
+        return () => unsubscribe();
+    }, [activeDeliveryId, hasActiveDeliveryContext]);
 
     // Initialize Logs and Subscriptions
     useEffect(() => {
@@ -504,6 +540,18 @@ export default function BoxControlsScreen() {
         setShowUnlockProgress(false);
     };
 
+    const guardDropoffUnlockPhase = () => {
+        if (!deliveryUnlockBlocked) {
+            return true;
+        }
+
+        addLog(`Unlock blocked by delivery phase: ${deliveryUnlockStatusLabel}`, 'warning');
+        PremiumAlert.alert('Unlock Blocked', getDeliveryUnlockBlockMessage());
+        resetUnlockProgress();
+        setShowUnlockPinModal(false);
+        return false;
+    };
+
     const loadActiveTamperIncident = async () => {
         if (!tamperState?.detected || !isPaired) {
             setActiveTamperIncident(null);
@@ -670,6 +718,11 @@ export default function BoxControlsScreen() {
             navigation.navigate('PairBox' as never);
             return;
         }
+
+        if (isLocked && !guardDropoffUnlockPhase()) {
+            return;
+        }
+
         // EC-90: Block unlock if solenoid is blocked due to low voltage
         if (isLocked && powerState?.solenoid_blocked) {
             PremiumAlert.alert(
@@ -764,8 +817,6 @@ export default function BoxControlsScreen() {
                 setManualOverrideSending(false);
                 unlockActionLockRef.current = false;
             }
-
-            return;
         }
 
         const action = "LOCKED";
@@ -801,6 +852,10 @@ export default function BoxControlsScreen() {
 
     const handleSubmitUnlockWithPin = async () => {
         if (unlockActionLockRef.current || unlockPinSubmitting) {
+            return;
+        }
+
+        if (isLocked && !guardDropoffUnlockPhase()) {
             return;
         }
 
@@ -856,6 +911,10 @@ export default function BoxControlsScreen() {
     };
 
     const handleEmergencyOpen = () => {
+        if (isLocked && !guardDropoffUnlockPhase()) {
+            return;
+        }
+
         PremiumAlert.alert(
             "Emergency Open",
             "This will force the lock open and trigger an incident report. Continue?",
@@ -1115,6 +1174,10 @@ export default function BoxControlsScreen() {
 
     // EC-97: Face Unlock Handler
     const handleFaceUnlock = async () => {
+        if (isLocked && !guardDropoffUnlockPhase()) {
+            return;
+        }
+
         if (lockHealth?.overheated) {
             PremiumAlert.alert('🔥 System Overheated', 'Wait for cool down.');
             return;
@@ -1421,19 +1484,30 @@ export default function BoxControlsScreen() {
                         onPress={toggleLock}
                         disabled={!isPaired || manualOverrideSending || boxState?.status === 'UNLOCKING'}
                         style={[styles.lockButton, {
-                            backgroundColor: !isPaired ? c.search : (isLocked ? c.accent : c.redText),
-                            opacity: (!isPaired || manualOverrideSending || boxState?.status === 'UNLOCKING') ? 0.5 : 1,
+                            backgroundColor: !isPaired ? c.search : (deliveryUnlockBlocked ? c.orangeText : (isLocked ? c.accent : c.redText)),
+                            opacity: (!isPaired || manualOverrideSending || boxState?.status === 'UNLOCKING') ? 0.5 : (deliveryUnlockBlocked ? 0.7 : 1),
                         }]}
                     >
                         {(manualOverrideSending || boxState?.status === 'UNLOCKING') ? (
                             <ActivityIndicator size={18} color={c.accentText} />
                         ) : (
-                            <MaterialCommunityIcons name={isLocked ? "lock" : "lock-open"} size={18} color={!isPaired ? c.textTer : c.accentText} />
+                            <MaterialCommunityIcons name={deliveryUnlockBlocked ? "lock-alert" : (isLocked ? "lock" : "lock-open")} size={18} color={!isPaired ? c.textTer : c.accentText} />
                         )}
                         <Text style={[styles.lockButtonText, { color: !isPaired ? c.textTer : c.accentText }]}>
-                            {isPaired ? (boxState?.status === 'UNLOCKING' ? "Actuating…" : (isLocked ? "Unlock Box" : "Lock Box")) : "Pair Required"}
+                            {isPaired ? (boxState?.status === 'UNLOCKING' ? "Actuating…" : (deliveryUnlockBlocked ? "Unlock Blocked" : (isLocked ? "Unlock Box" : "Lock Box"))) : "Pair Required"}
                         </Text>
                     </TouchableOpacity>
+
+                    {deliveryUnlockBlocked && (
+                        <View style={[styles.inlineNotice, { backgroundColor: c.orangeBg, borderColor: c.orangeText }]}>
+                            <Text style={{ color: c.orangeText, fontFamily: 'Inter_700Bold', fontSize: 13 }}>
+                                Drop-off arrival required
+                            </Text>
+                            <Text style={{ marginTop: 2, color: c.orangeText, fontSize: 11 }}>
+                                Status: {deliveryUnlockStatusLabel}. Unlock is disabled until this delivery is marked ARRIVED.
+                            </Text>
+                        </View>
+                    )}
 
                     {showUnlockProgress && isLocked && (
                         <View style={{ marginTop: 10 }}>
