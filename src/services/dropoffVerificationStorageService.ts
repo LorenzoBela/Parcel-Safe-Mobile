@@ -15,6 +15,7 @@ export interface DropoffVerificationSnapshot {
     previewVersion?: number;
     proofVersion: number;
     manualModeEnabled: boolean;
+    phoneFallbackVerified?: boolean;
     savedAt: number;
 }
 

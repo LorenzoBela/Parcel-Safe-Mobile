@@ -1,10 +1,14 @@
-import React, { useEffect, useState } from 'react';
-import { View, StyleSheet, ActivityIndicator, TouchableOpacity, TextInput } from 'react-native';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
+import { View, StyleSheet, ActivityIndicator, TouchableOpacity, TextInput, AppState, AppStateStatus } from 'react-native';
 import { Surface, Text, useTheme } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { supabase } from '../services/supabaseClient';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { parseUTCString } from '../utils/date';
+import { useNavigation } from '@react-navigation/native';
+
+/** Polling interval as fallback for unreliable Supabase Realtime on mobile */
+const POLL_INTERVAL_MS = 60_000;
 
 interface EarningsWidgetProps {
     riderId: string;
@@ -13,12 +17,17 @@ interface EarningsWidgetProps {
 
 export default function EarningsWidget({ riderId, dailyGoal: initialDailyGoal = 1500 }: EarningsWidgetProps) {
     const theme = useTheme();
+    const navigation = useNavigation();
     const [earnings, setEarnings] = useState<number>(0);
     const [completedTrips, setCompletedTrips] = useState<number>(0);
-    const [isLoading, setIsLoading] = useState(true);
+    const [isInitialLoad, setIsInitialLoad] = useState(true);
     const [dailyGoal, setDailyGoal] = useState<number>(initialDailyGoal);
     const [isEditingGoal, setIsEditingGoal] = useState(false);
     const [tempGoalInput, setTempGoalInput] = useState<string>('');
+
+    // Ref to keep riderId accessible from callbacks without stale closures
+    const riderIdRef = useRef(riderId);
+    riderIdRef.current = riderId;
 
     // Load saved goal on mount
     useEffect(() => {
@@ -48,15 +57,21 @@ export default function EarningsWidget({ riderId, dailyGoal: initialDailyGoal = 
         setIsEditingGoal(false);
     };
 
-    const fetchTodayEarnings = async () => {
-        if (!riderId) return;
-        setIsLoading(true);
+    /**
+     * Fetches today's completed deliveries and sums their fares.
+     * `silent` flag prevents the loading spinner on background re-fetches.
+     */
+    const fetchTodayEarnings = useCallback(async (silent = false) => {
+        const currentRiderId = riderIdRef.current;
+        if (!currentRiderId) return;
+
+        if (!silent) setIsInitialLoad(true);
         try {
             // Keep date basis consistent with history/deliveries screens.
             const { data, error } = await supabase
                 .from('deliveries')
                 .select('estimated_fare, delivered_at, updated_at, created_at')
-                .eq('rider_id', riderId)
+                .eq('rider_id', currentRiderId)
                 .eq('status', 'COMPLETED');
 
             if (error) throw error;
@@ -81,16 +96,18 @@ export default function EarningsWidget({ riderId, dailyGoal: initialDailyGoal = 
         } catch (error) {
             console.error('[EarningsWidget] Error fetching earnings:', error);
         } finally {
-            setIsLoading(false);
+            setIsInitialLoad(false);
         }
-    };
+    }, []);
 
+    // ── Core effect: initial fetch + Realtime subscription + polling fallback ──
     useEffect(() => {
-        fetchTodayEarnings();
+        // Initial fetch (shows loading spinner)
+        fetchTodayEarnings(false);
 
-        // Listen for new completed deliveries in real-time to update the widget live!
+        // Listen for delivery row changes via Supabase Realtime
         const subscription = supabase
-            .channel('public:deliveries')
+            .channel(`earnings:deliveries:${riderId}`)
             .on(
                 'postgres_changes',
                 {
@@ -100,16 +117,42 @@ export default function EarningsWidget({ riderId, dailyGoal: initialDailyGoal = 
                     filter: `rider_id=eq.${riderId}`,
                 },
                 () => {
-                    // Keep dashboard metrics in sync whenever rider delivery rows change.
-                    fetchTodayEarnings();
+                    // Silent re-fetch — no loading spinner flicker
+                    fetchTodayEarnings(true);
                 }
             )
             .subscribe();
 
+        // Polling fallback: Supabase Realtime on mobile can silently disconnect
+        const pollTimer = setInterval(() => {
+            fetchTodayEarnings(true);
+        }, POLL_INTERVAL_MS);
+
         return () => {
             supabase.removeChannel(subscription);
+            clearInterval(pollTimer);
         };
-    }, [riderId]);
+    }, [riderId, fetchTodayEarnings]);
+
+    // ── Re-fetch when app returns to foreground ──
+    useEffect(() => {
+        const handleAppStateChange = (nextState: AppStateStatus) => {
+            if (nextState === 'active') {
+                fetchTodayEarnings(true);
+            }
+        };
+
+        const sub = AppState.addEventListener('change', handleAppStateChange);
+        return () => sub.remove();
+    }, [fetchTodayEarnings]);
+
+    // ── Re-fetch when this screen gains navigation focus ──
+    useEffect(() => {
+        const unsubscribe = navigation.addListener('focus', () => {
+            fetchTodayEarnings(true);
+        });
+        return unsubscribe;
+    }, [navigation, fetchTodayEarnings]);
 
     const progress = Math.min(earnings / dailyGoal, 1);
     const isGoalMet = earnings >= dailyGoal;
@@ -125,14 +168,14 @@ export default function EarningsWidget({ riderId, dailyGoal: initialDailyGoal = 
                         Today's Earnings
                     </Text>
                 </View>
-                {!isLoading && (
+                {!isInitialLoad && (
                     <Text variant="labelMedium" style={{ color: theme.colors.primary, fontFamily: 'Inter_700Bold' }}>
                         {completedTrips} Trips
                     </Text>
                 )}
             </View>
 
-            {isLoading ? (
+            {isInitialLoad ? (
                 <View style={styles.loadingContainer}>
                     <ActivityIndicator size="small" color={theme.colors.primary} />
                 </View>

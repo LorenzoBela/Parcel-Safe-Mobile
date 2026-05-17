@@ -2807,6 +2807,7 @@ export default function ArrivalScreen() {
                                 senderPhone={params.senderPhone}
                                 deliveryNotes={params.deliveryNotes}
                                 deliveryStatus={deliveryStatus}
+                                returnOtp={returnCancellationState?.returnOtp ?? deliveryObj?.return_otp ?? null}
                                 isInsideGeoFence={isInsideGeoFence}
                                 distanceMeters={distanceMeters}
                                 isPhoneInside={isPhoneInside}
@@ -2833,6 +2834,7 @@ export default function ArrivalScreen() {
                                 customerPhone={params.customerPhone}
                                 deliveryNotes={params.deliveryNotes}
                                 deliveryStatus={deliveryStatus}
+                                deliveryOtp={deliveryOtp}
                                 isInsideGeoFence={isInsideGeoFence}
                                 distanceMeters={distanceMeters}
                                 isPhoneInside={isPhoneInside}

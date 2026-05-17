@@ -3,6 +3,7 @@ import { View, StyleSheet, Linking, Image, ActivityIndicator } from 'react-nativ
 import { Text, Card, Button, IconButton, Switch } from 'react-native-paper';
 import * as ImagePicker from 'expo-image-picker';
 import SwipeConfirmButton from '../../../components/SwipeConfirmButton';
+import RiderPhoneOtpFaceFallback from './RiderPhoneOtpFaceFallback';
 import { uploadDeliveryProofPhoto } from '../../../services/proofPhotoService';
 import { updateDeliveryStatus } from '../../../services/riderMatchingService';
 import { subscribeToDeliveryProof, subscribeToPhotoAuditLog, subscribeToBoxState, BoxState, subscribeToCamera, CameraState, subscribeToLockEvents, LockEvent, updateBoxState, getDeliveryProofSnapshot, getPhotoAuditLogSnapshot, getLockEventSnapshot, getBoxStateSnapshot, subscribeToPhotoUploadState, PhotoUploadState } from '../../../services/firebaseClient';
@@ -64,6 +65,7 @@ interface DropoffVerificationProps {
     customerPhone?: string;
     deliveryNotes?: string;
     deliveryStatus: string;
+    deliveryOtp?: string | null;
 
     isInsideGeoFence: boolean;
     distanceMeters: number | null;
@@ -104,6 +106,7 @@ type DropoffVerificationCacheState = {
     previewVersion: number;
     proofVersion: number;
     manualModeEnabled: boolean;
+    phoneFallbackVerified?: boolean;
 };
 
 const verificationCacheByDelivery: Record<string, DropoffVerificationCacheState> = {};
@@ -118,6 +121,7 @@ export default function DropoffVerification({
     customerPhone,
     deliveryNotes,
     deliveryStatus,
+    deliveryOtp,
     isInsideGeoFence,
     distanceMeters,
     isPhoneInside,
@@ -184,6 +188,8 @@ export default function DropoffVerification({
     const [fallbackPhotoLoaded, setFallbackPhotoLoaded] = useState(false);
     const [proofWaitTimedOut, setProofWaitTimedOut] = useState(false);
     const [manualModeEnabled, setManualModeEnabled] = useState(false);
+    const [phoneFallbackVerified, setPhoneFallbackVerified] = useState(false);
+    const [manualPhoneFallbackRequested, setManualPhoneFallbackRequested] = useState(false);
     const [manualCommandLoading, setManualCommandLoading] = useState(false);
     const [otpConfirmedByCloud, setOtpConfirmedByCloud] = useState(false);
     const [faceConfirmedByCloud, setFaceConfirmedByCloud] = useState(false);
@@ -214,7 +220,11 @@ export default function DropoffVerification({
     const effectivePreviewProofUrl = hardwarePreviewUrl || auditPreviewUrl;
     const effectiveHardwareProofUrl = hardwareProofUrl || auditProofUrl;
     const hasFallbackProof = !!fallbackPhotoUri;
-    const fallbackModeActive = retryExhausted || cameraFailed || lowLightFallbackRequired;
+    const hardwareUnavailableFallback =
+        isInsideGeoFence &&
+        (isBoxOffline || cameraFailed || retryExhausted || lowLightFallbackRequired || proofWaitTimedOut);
+    const fallbackModeActive =
+        retryExhausted || cameraFailed || lowLightFallbackRequired || phoneFallbackVerified || hardwareUnavailableFallback;
     const displayedPreviewProofUrl = withProofCacheBust(effectivePreviewProofUrl, previewVersion);
     const displayedHardwareProofUrl = withProofCacheBust(effectiveHardwareProofUrl, proofVersion);
     const displayedProofUrl =
@@ -304,6 +314,7 @@ export default function DropoffVerification({
             setPreviewVersion(cached.previewVersion ?? 0);
             setProofVersion(cached.proofVersion);
             setManualModeEnabled(cached.manualModeEnabled);
+            setPhoneFallbackVerified(cached.phoneFallbackVerified ?? false);
             if (cached.boxOtpValidated) {
                 setOtpConfirmedByCloud(true);
                 setOtpSyncPending(false);
@@ -335,6 +346,7 @@ export default function DropoffVerification({
             previewVersion,
             proofVersion,
             manualModeEnabled,
+            phoneFallbackVerified,
         };
 
         verificationCacheByDelivery[deliveryId] = snapshot;
@@ -353,6 +365,7 @@ export default function DropoffVerification({
         previewVersion,
         proofVersion,
         manualModeEnabled,
+        phoneFallbackVerified,
     ]);
 
     useEffect(() => {
@@ -545,8 +558,8 @@ export default function DropoffVerification({
     }, [displayedHardwareProofUrl]);
 
     useEffect(() => {
-        setFallbackPhotoLoaded(false);
-    }, [fallbackPhotoUri]);
+        setFallbackPhotoLoaded(phoneFallbackVerified && !!fallbackPhotoUri);
+    }, [fallbackPhotoUri, phoneFallbackVerified]);
 
     useEffect(() => {
         if (!displayedProofUrl) return;
@@ -794,6 +807,36 @@ export default function DropoffVerification({
         }
     };
 
+    const handlePhoneFallbackVerified = useCallback(async (photoUri: string) => {
+        setFallbackPhotoUri(photoUri);
+        setFallbackPhotoLoaded(true);
+        setCameraFailed(true);
+        setPhoneFallbackVerified(true);
+        markFaceVerified();
+
+        // Send unlock command — hardware keypad/cam was bypassed, so the box
+        // never received a local OTP entry that would trigger its own solenoid.
+        try {
+            const requestId = `phone_fallback_unlock_${Date.now()}`;
+            await enqueueBoxCommand({
+                deliveryId,
+                boxId,
+                command: 'UNLOCKING',
+                requestId,
+                requestedBy: 'mobile_rider_phone_fallback',
+            });
+            await flushQueuedBoxCommands(async (item) => {
+                await updateBoxState(item.boxId, {
+                    command: item.command,
+                    command_request_id: item.requestId,
+                    command_requested_by: item.requestedBy,
+                } as any);
+            });
+        } catch {
+            // Best-effort unlock — the periodic flush and swipe handler will retry.
+        }
+    }, [markFaceVerified, deliveryId, boxId]);
+
     const handleManualBoxCommand = async (command: 'UNLOCKING' | 'LOCKED') => {
         if (!manualModeEnabled || !isInsideGeoFence || !otpConfirmedByCloud || !faceConfirmedByCloud) {
             PremiumAlert.alert('Manual Control Locked', 'Enable manual mode and complete geofence, OTP, and face checks first.');
@@ -893,7 +936,7 @@ export default function DropoffVerification({
 
                 resolvedProofUrl = uploadResult.url || null;
 
-                if (!hardwareSuccess) {
+                if (!hardwareSuccess && !phoneFallbackVerified) {
                     await updateBoxState(boxId, {
                         command: 'UNLOCKING',
                     });
@@ -913,6 +956,8 @@ export default function DropoffVerification({
                 proof_photo_uploaded_at: completedAt,
                 proof_photo_preview_url: effectivePreviewProofUrl || null,
                 box_id: boxId,
+                fallback_photo_used: !!fallbackPhotoUri && !effectiveHardwareProofUrl,
+                verification_source: phoneFallbackVerified ? 'rider_phone_fallback' : 'smart_box',
             });
 
             if (!statusSaved) {
@@ -981,7 +1026,17 @@ export default function DropoffVerification({
     // Can the rider swipe to complete?
     const canSwipe = proofGate.canSwipe;
     // Can the rider see the fallback photo button?
-    const showFallbackButton = proofGate.fallbackAllowed;
+    const showFallbackButton = proofGate.fallbackAllowed && otpConfirmedByCloud && faceConfirmedByCloud && !phoneFallbackVerified;
+    const showPhoneFallback =
+        (hardwareUnavailableFallback || manualPhoneFallbackRequested) &&
+        !proofGate.visibleProofLoaded &&
+        !phoneFallbackVerified;
+    const showManualFallbackButton =
+        isInsideGeoFence &&
+        !hardwareUnavailableFallback &&
+        !phoneFallbackVerified &&
+        !proofGate.visibleProofLoaded &&
+        !manualPhoneFallbackRequested;
     const canManualControl = manualModeEnabled && isInsideGeoFence && otpConfirmedByCloud && faceConfirmedByCloud;
     const isSyncPending = otpSyncPending || faceSyncPending;
     const lockAckCommand = (boxState as any)?.command_ack_command;
@@ -1340,7 +1395,40 @@ export default function DropoffVerification({
                             )}
                         </View>
 
+                        {/* Manual fallback trigger — rider reports hardware not working */}
+                        {showManualFallbackButton && (
+                            <View style={{ marginTop: 16 }}>
+                                <Button
+                                    mode="outlined"
+                                    icon="alert-circle-outline"
+                                    onPress={() => setManualPhoneFallbackRequested(true)}
+                                    disabled={isLoading}
+                                    textColor={c.warningText}
+                                    style={{ borderColor: c.warningText, borderRadius: 8 }}
+                                >
+                                    Cam & Keypad Not Working?
+                                </Button>
+                                <Text style={{ marginTop: 6, fontSize: 11, color: c.subtleText, textAlign: 'center' }}>
+                                    Use your phone to enter the OTP and take a face photo instead.
+                                </Text>
+                            </View>
+                        )}
+
                         {/* Fallback photo button — visible after box confirms OTP or if camera fails */}
+                        {showPhoneFallback && (
+                            <View style={{ marginTop: 16 }}>
+                                <RiderPhoneOtpFaceFallback
+                                    expectedOtp={deliveryOtp}
+                                    subjectLabel="the customer"
+                                    proofLabel="Face Photo"
+                                    isDarkMode={isDarkMode}
+                                    colors={c}
+                                    disabled={isLoading}
+                                    onVerified={handlePhoneFallbackVerified}
+                                />
+                            </View>
+                        )}
+
                         {showFallbackButton && (
                             <View style={{ marginTop: 16 }}>
                                 <Button

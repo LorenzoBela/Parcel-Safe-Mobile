@@ -14,7 +14,7 @@ dayjs.extend(timezone);
 const PH_TIMEZONE = 'Asia/Manila';
 import * as Location from 'expo-location';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import MapboxGL, { isMapboxNativeAvailable, MapFallback } from '../../components/map/MapboxWrapper';
+import MapboxGL, { isMapboxNativeAvailable, MapFallback, getTrafficLineLayerStyle } from '../../components/map/MapboxWrapper';
 import AnimatedRiderMarker from '../../components/map/AnimatedRiderMarker';
 import LottieView from 'lottie-react-native';
 import { useLocationRedundancy, getStatusMessage, getStatusColor } from '../../hooks/useLocationRedundancy';
@@ -2975,20 +2975,7 @@ export default function RiderDashboard() {
                                                 <MapboxGL.LineLayer
                                                     id="traffic-line-preview"
                                                     sourceLayerID="traffic"
-                                                    style={{
-                                                        lineJoin: 'round',
-                                                        lineCap: 'round',
-                                                        lineColor: [
-                                                            'match', ['get', 'congestion'],
-                                                            'low', '#10B981',
-                                                            'moderate', '#F59E0B',
-                                                            'heavy', '#EF4444',
-                                                            'severe', '#991B1B',
-                                                            '#6B7280',
-                                                        ],
-                                                        lineWidth: 2.5,
-                                                        lineOpacity: 0.75,
-                                                    }}
+                                                    style={getTrafficLineLayerStyle(isDarkMode) as any}
                                                 />
                                             </MapboxGL.VectorSource>
                                         )}
@@ -3352,20 +3339,7 @@ export default function RiderDashboard() {
                                                 <MapboxGL.LineLayer
                                                     id="traffic-line-job"
                                                     sourceLayerID="traffic"
-                                                    style={{
-                                                        lineJoin: 'round',
-                                                        lineCap: 'round',
-                                                        lineColor: [
-                                                            'match', ['get', 'congestion'],
-                                                            'low', '#10B981',
-                                                            'moderate', '#F59E0B',
-                                                            'heavy', '#EF4444',
-                                                            'severe', '#991B1B',
-                                                            '#6B7280',
-                                                        ],
-                                                        lineWidth: 2.5,
-                                                        lineOpacity: 0.75,
-                                                    }}
+                                                    style={getTrafficLineLayerStyle(isDarkMode) as any}
                                                 />
                                             </MapboxGL.VectorSource>
                                         )}

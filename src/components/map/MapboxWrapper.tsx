@@ -188,6 +188,26 @@ export const StyleURL = {
     SatelliteStreets: (isMapboxAvailable && MapboxGLModule?.StyleURL?.SatelliteStreets) || 'mapbox://styles/mapbox/satellite-streets-v12',
 };
 
+export const getTrafficLineLayerStyle = (isDarkMode: boolean) => ({
+    lineJoin: 'round',
+    lineCap: 'round',
+    lineColor: [
+        'match', ['get', 'congestion'],
+        'low', isDarkMode ? '#34D399' : '#10B981',
+        'moderate', isDarkMode ? '#FBBF24' : '#F59E0B',
+        'heavy', isDarkMode ? '#FB7185' : '#EF4444',
+        'severe', isDarkMode ? '#F43F5E' : '#DC2626',
+        isDarkMode ? '#E5E7EB' : '#6B7280',
+    ],
+    lineWidth: [
+        'interpolate', ['linear'], ['zoom'],
+        10, isDarkMode ? 2.5 : 2,
+        16, isDarkMode ? 5 : 3.5,
+    ],
+    lineOpacity: isDarkMode ? 0.95 : 0.8,
+    lineEmissiveStrength: isDarkMode ? 1 : 0,
+});
+
 const styles = StyleSheet.create({
     fallback: {
         flex: 1,

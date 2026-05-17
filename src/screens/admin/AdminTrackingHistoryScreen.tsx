@@ -15,7 +15,7 @@ import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/dat
 import { listTrackingHistorySessions, TrackingHistorySession } from '../../services/adminApiService';
 import { useAppTheme } from '../../context/ThemeContext';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { MapboxGL, setAccessToken, setTelemetryEnabled } from '../../components/map/MapboxWrapper';
+import { MapboxGL, setAccessToken, setTelemetryEnabled, getTrafficLineLayerStyle } from '../../components/map/MapboxWrapper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 
 const lightC = {
@@ -915,19 +915,7 @@ export default function AdminTrackingHistoryScreen() {
                                                             <MapboxGL.LineLayer
                                                                 id="traffic-layer"
                                                                 sourceLayerID="traffic"
-                                                                style={{
-                                                                    lineColor: [
-                                                                        'match',
-                                                                        ['get', 'congestion'],
-                                                                        'low', '#10B981',
-                                                                        'moderate', '#F59E0B',
-                                                                        'heavy', '#EF4444',
-                                                                        'severe', '#991B1B',
-                                                                        '#6B7280'
-                                                                    ],
-                                                                    lineWidth: 3,
-                                                                    lineOpacity: 0.75,
-                                                                } as any}
+                                                                style={getTrafficLineLayerStyle(isDarkMode) as any}
                                                             />
                                                         </MapboxGL.VectorSource>
                                                     )}

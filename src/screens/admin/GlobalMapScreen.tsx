@@ -9,7 +9,7 @@ import { useAppTheme } from '../../context/ThemeContext';
 import { useEntryAnimation } from '../../hooks/useEntryAnimation';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
-import MapboxGL from '../../components/map/MapboxWrapper';
+import MapboxGL, { getTrafficLineLayerStyle } from '../../components/map/MapboxWrapper';
 import AnimatedRiderMarker from '../../components/map/AnimatedRiderMarker';
 import bearing from '@turf/bearing';
 import { point } from '@turf/helpers';
@@ -1111,20 +1111,7 @@ export default function GlobalMapScreen() {
                             <MapboxGL.LineLayer
                                 id="traffic-line"
                                 sourceLayerID="traffic"
-                                style={{
-                                    lineJoin: 'round',
-                                    lineCap: 'round',
-                                    lineColor: [
-                                        'match', ['get', 'congestion'],
-                                        'low', '#10B981',
-                                        'moderate', '#F59E0B',
-                                        'heavy', '#EF4444',
-                                        'severe', '#991B1B',
-                                        '#6B7280',
-                                    ],
-                                    lineWidth: 2.5,
-                                    lineOpacity: 0.75,
-                                }}
+                                style={getTrafficLineLayerStyle(isDarkMode) as any}
                             />
                         </MapboxGL.VectorSource>
                     )}

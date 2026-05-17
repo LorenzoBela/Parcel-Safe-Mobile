@@ -3,6 +3,7 @@ import { ActivityIndicator, Image, Linking, StyleSheet, View } from 'react-nativ
 import { Button, IconButton, Text } from 'react-native-paper';
 import * as ImagePicker from 'expo-image-picker';
 import SwipeConfirmButton from '../../../components/SwipeConfirmButton';
+import RiderPhoneOtpFaceFallback from './RiderPhoneOtpFaceFallback';
 import { uploadReturnPhoto } from '../../../services/proofPhotoService';
 import { markPackageRetrieved } from '../../../services/cancellationService';
 import {
@@ -21,6 +22,7 @@ import {
     subscribeToLockEvents,
     subscribeToPhotoAuditLog,
     subscribeToPhotoUploadState,
+    updateBoxState,
 } from '../../../services/firebaseClient';
 import { PremiumAlert } from '../../../services/PremiumAlertService';
 import { useAppTheme } from '../../../context/ThemeContext';
@@ -69,6 +71,7 @@ interface ReturnVerificationProps {
     senderPhone?: string;
     deliveryNotes?: string;
     deliveryStatus: string;
+    returnOtp?: string | null;
 
     isInsideGeoFence: boolean;
     distanceMeters: number | null;
@@ -100,6 +103,7 @@ type ReturnVerificationCacheState = {
     auditProofUrl: string | null;
     previewVersion: number;
     proofVersion: number;
+    phoneFallbackVerified?: boolean;
 };
 
 const verificationCacheByDelivery: Record<string, ReturnVerificationCacheState> = {};
@@ -114,6 +118,7 @@ export default function ReturnVerification({
     senderPhone,
     deliveryNotes,
     deliveryStatus,
+    returnOtp,
     isInsideGeoFence,
     distanceMeters,
     isPhoneInside,
@@ -146,6 +151,8 @@ export default function ReturnVerification({
     const [hardwareProofFailed, setHardwareProofFailed] = useState(false);
     const [proofWaitTimedOut, setProofWaitTimedOut] = useState(false);
     const [otpConfirmedByCloud, setOtpConfirmedByCloud] = useState(false);
+    const [phoneFallbackVerified, setPhoneFallbackVerified] = useState(false);
+    const [manualPhoneFallbackRequested, setManualPhoneFallbackRequested] = useState(false);
     const [otpSyncPending, setOtpSyncPending] = useState(false);
     const [faceSyncPending, setFaceSyncPending] = useState(false);
     const [boxOtpValidated, setBoxOtpValidated] = useState(false);
@@ -190,7 +197,11 @@ export default function ReturnVerification({
     const lowLightFallbackRequired = retryExhausted && lockEvent?.failure_reason === 'LOW_LIGHT';
     const effectivePreviewProofUrl = hardwarePreviewUrl || auditPreviewUrl;
     const effectiveHardwareProofUrl = hardwareProofUrl || auditProofUrl;
-    const fallbackModeActive = retryExhausted || cameraFailed || lowLightFallbackRequired;
+    const hardwareUnavailableFallback =
+        isInsideGeoFence &&
+        (isBoxOffline || cameraFailed || retryExhausted || lowLightFallbackRequired || proofWaitTimedOut);
+    const fallbackModeActive =
+        retryExhausted || cameraFailed || lowLightFallbackRequired || phoneFallbackVerified || hardwareUnavailableFallback;
     const displayedPreviewProofUrl = withProofCacheBust(effectivePreviewProofUrl, previewVersion);
     const displayedHardwareProofUrl = withProofCacheBust(effectiveHardwareProofUrl, proofVersion);
     const displayedProofUrl =
@@ -326,6 +337,7 @@ export default function ReturnVerification({
         setAuditProofUrl(cached.auditProofUrl);
         setPreviewVersion(cached.previewVersion);
         setProofVersion(cached.proofVersion);
+        setPhoneFallbackVerified(cached.phoneFallbackVerified ?? false);
         if (cached.boxOtpValidated) setOtpConfirmedByCloud(true);
     }, [deliveryId]);
 
@@ -342,6 +354,7 @@ export default function ReturnVerification({
             auditProofUrl,
             previewVersion,
             proofVersion,
+            phoneFallbackVerified,
         };
     }, [
         auditPreviewUrl,
@@ -356,6 +369,7 @@ export default function ReturnVerification({
         hardwareSuccess,
         previewVersion,
         proofVersion,
+        phoneFallbackVerified,
     ]);
 
     useEffect(() => {
@@ -374,8 +388,8 @@ export default function ReturnVerification({
     }, [displayedHardwareProofUrl]);
 
     useEffect(() => {
-        setFallbackPhotoLoaded(false);
-    }, [fallbackPhotoUri]);
+        setFallbackPhotoLoaded(phoneFallbackVerified && !!fallbackPhotoUri);
+    }, [fallbackPhotoUri, phoneFallbackVerified]);
 
     useEffect(() => {
         if (!displayedProofUrl) return;
@@ -533,6 +547,26 @@ export default function ReturnVerification({
         }
     };
 
+    const handlePhoneFallbackVerified = useCallback(async (photoUri: string) => {
+        setFallbackPhotoUri(photoUri);
+        setFallbackPhotoLoaded(true);
+        setCameraFailed(true);
+        setPhoneFallbackVerified(true);
+        markFaceVerified();
+
+        // Send unlock command — hardware keypad/cam was bypassed, so the box
+        // never received a local OTP entry that would trigger its own solenoid.
+        try {
+            await updateBoxState(boxId, {
+                command: 'UNLOCKING',
+                command_request_id: `phone_fallback_return_unlock_${Date.now()}`,
+                command_requested_by: 'mobile_rider_phone_fallback_return',
+            } as any);
+        } catch {
+            // Best-effort unlock — swipe handler will surface an error if needed.
+        }
+    }, [markFaceVerified, boxId]);
+
     const handleReturnSwipe = async () => {
         if (String(deliveryStatus).toUpperCase() === 'RETURNED') {
             onReturnCompleted();
@@ -586,7 +620,17 @@ export default function ReturnVerification({
     };
 
     const canSwipe = proofGate.canSwipe;
-    const showFallbackButton = proofGate.fallbackAllowed;
+    const showFallbackButton = proofGate.fallbackAllowed && otpConfirmedByCloud && faceDetected && !phoneFallbackVerified;
+    const showPhoneFallback =
+        (hardwareUnavailableFallback || manualPhoneFallbackRequested) &&
+        !proofGate.visibleProofLoaded &&
+        !phoneFallbackVerified;
+    const showManualFallbackButton =
+        isInsideGeoFence &&
+        !hardwareUnavailableFallback &&
+        !phoneFallbackVerified &&
+        !proofGate.visibleProofLoaded &&
+        !manualPhoneFallbackRequested;
     const isSyncPending = otpSyncPending || faceSyncPending;
     const zoneStatusText = !isInsideGeoFence
         ? 'Navigate to the return location.'
@@ -867,6 +911,39 @@ export default function ReturnVerification({
                                 </>
                             )}
                         </View>
+
+                        {/* Manual fallback trigger — rider reports hardware not working */}
+                        {showManualFallbackButton && (
+                            <View style={{ marginTop: 16 }}>
+                                <Button
+                                    mode="outlined"
+                                    icon="alert-circle-outline"
+                                    onPress={() => setManualPhoneFallbackRequested(true)}
+                                    disabled={isLoading}
+                                    textColor={c.warningText}
+                                    style={{ borderColor: c.warningText, borderRadius: 8 }}
+                                >
+                                    Cam & Keypad Not Working?
+                                </Button>
+                                <Text style={{ marginTop: 6, fontSize: 11, color: c.subtleText, textAlign: 'center' }}>
+                                    Use your phone to enter the OTP and take a face photo instead.
+                                </Text>
+                            </View>
+                        )}
+
+                        {showPhoneFallback && (
+                            <View style={{ marginTop: 16 }}>
+                                <RiderPhoneOtpFaceFallback
+                                    expectedOtp={returnOtp}
+                                    subjectLabel="the sender"
+                                    proofLabel="Return Face Photo"
+                                    isDarkMode={isDarkMode}
+                                    colors={c}
+                                    disabled={isLoading}
+                                    onVerified={handlePhoneFallbackVerified}
+                                />
+                            </View>
+                        )}
 
                         {showFallbackButton && (
                             <View style={{ marginTop: 16 }}>

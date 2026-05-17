@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { View, StyleSheet, Dimensions, TouchableOpacity, Alert, Share, Image, Animated, Easing, Linking, ActivityIndicator, Modal, TextInput, ScrollView } from 'react-native';
 import { useHeadingSmoothing } from '../../hooks/useHeadingSmoothing';
-import MapboxGL, { isMapboxNativeAvailable, MapFallback } from '../../components/map/MapboxWrapper';
+import MapboxGL, { isMapboxNativeAvailable, MapFallback, getTrafficLineLayerStyle } from '../../components/map/MapboxWrapper';
 import { Text, Card, Avatar, Button, IconButton, Surface, useTheme } from 'react-native-paper';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -1274,20 +1274,7 @@ export default function TrackOrderScreen() {
                             <MapboxGL.LineLayer
                                 id="traffic-line"
                                 sourceLayerID="traffic"
-                                style={{
-                                    lineJoin: 'round',
-                                    lineCap: 'round',
-                                    lineColor: [
-                                        'match', ['get', 'congestion'],
-                                        'low', '#10B981',
-                                        'moderate', '#F59E0B',
-                                        'heavy', '#EF4444',
-                                        'severe', '#991B1B',
-                                        '#6B7280',
-                                    ],
-                                    lineWidth: 2.5,
-                                    lineOpacity: 0.75,
-                                }}
+                                style={getTrafficLineLayerStyle(theme.dark) as any}
                             />
                         </MapboxGL.VectorSource>
                     )}
