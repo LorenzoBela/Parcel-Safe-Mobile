@@ -7,7 +7,7 @@ import { ref, onValue, off } from 'firebase/database';
  */
 class RecallService {
     private static instance: RecallService;
-    private recallListener: ((isRecalled: boolean, returnOtp: string | null) => void) | null = null;
+    private recallListener: ((isRecalled: boolean) => void) | null = null;
     private activeRef: any = null;
 
     private constructor() { }
@@ -24,7 +24,7 @@ class RecallService {
      * @param deliveryId 
      * @param callback 
      */
-    public listenForRecall(deliveryId: string, callback: (isRecalled: boolean, returnOtp: string | null) => void) {
+    public listenForRecall(deliveryId: string, callback: (isRecalled: boolean) => void) {
         if (!deliveryId) return;
 
         this.recallListener = callback;
@@ -35,10 +35,9 @@ class RecallService {
         onValue(this.activeRef, (snapshot) => {
             const data = snapshot.val();
             if (data && data.is_recalled) {
-                // Return OTP might be null if not yet generated, but usually is sent with recall
-                callback(true, data.return_otp || null);
+                callback(true);
             } else {
-                callback(false, null);
+                callback(false);
             }
         });
     }

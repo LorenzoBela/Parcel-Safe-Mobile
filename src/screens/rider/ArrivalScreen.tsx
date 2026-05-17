@@ -105,31 +105,7 @@ import { showStatusNotification } from '../../services/pushNotificationService';
 import useAuthStore from '../../store/authStore';
 import PickupVerification from './components/PickupVerification';
 import DropoffVerification from './components/DropoffVerification';
-
-// Mapbox for geofence preview
-import MapboxGL, { isMapboxNativeAvailable, StyleURL } from '../../components/map/MapboxWrapper';
-import AnimatedRiderMarker from '../../components/map/AnimatedRiderMarker';
-
-function buildGeofenceCircleGeoJSON(
-    centerLng: number,
-    centerLat: number,
-    radiusM: number,
-    segments: number = 64
-): GeoJSON.Feature<GeoJSON.Polygon> {
-    const coords: [number, number][] = [];
-    for (let i = 0; i <= segments; i++) {
-        const angle = (i / segments) * 2 * Math.PI;
-        const dLat = (radiusM / 111320) * Math.cos(angle);
-        const dLng = (radiusM / (111320 * Math.cos((centerLat * Math.PI) / 180))) * Math.sin(angle);
-        coords.push([centerLng + dLng, centerLat + dLat]);
-    }
-    return {
-        type: 'Feature',
-        properties: {},
-        geometry: { type: 'Polygon', coordinates: [coords] },
-    };
-}
-
+import ReturnVerification from './components/ReturnVerification';
 
 interface RouteParams {
     deliveryId: string;
@@ -2056,7 +2032,6 @@ export default function ArrivalScreen() {
 
                             navigation.navigate('CancellationConfirmation', {
                                 deliveryId: params.deliveryId,
-                                returnOtp: result.returnOtp,
                                 reason: CancellationReason.CUSTOMER_UNAVAILABLE,
                                 reasonDetails: 'Dropoff unavailable after customer-not-home wait timer expired.',
                                 senderName: params.senderName || 'Sender',
@@ -2197,7 +2172,6 @@ export default function ArrivalScreen() {
                 // Navigate to confirmation
                 navigation.navigate('CancellationConfirmation', {
                     deliveryId: params.deliveryId,
-                    returnOtp: result.returnOtp,
                     reason: reason,
                     reasonDetails: details,
                     senderName: params.senderName || 'Sender',
@@ -2823,153 +2797,31 @@ export default function ArrivalScreen() {
                 ) : (
                     isPickupConfirmed ? (
                         isReturning ? (
-                            // ── EC-32: Return Journey Card ──────────────────────────────────────────
-                            <Card style={{ margin: 16, borderRadius: 0, borderWidth: 3, borderColor: '#000', backgroundColor: '#fff', overflow: 'hidden' }} elevation={0}>
-                                {/* Map Preview */}
-                                <View style={{ height: 160, width: '100%', backgroundColor: '#000', position: 'relative' }}>
-                                    {isMapboxNativeAvailable() && currentPosition.lat !== 0 && params.pickupLng && params.pickupLat ? (
-                                        <MapboxGL.MapView
-                                            style={{ flex: 1 }}
-                                            logoEnabled={false}
-                                            compassEnabled={false}
-                                            scaleBarEnabled={false}
-                                            attributionEnabled={false}
-                                            scrollEnabled={false}
-                                            pitchEnabled={false}
-                                            rotateEnabled={false}
-                                            zoomEnabled={false}
-                                            styleURL={isDarkMode ? StyleURL.Dark : StyleURL.Street}
-                                        >
-                                            <MapboxGL.Camera
-                                                zoomLevel={16}
-                                                centerCoordinate={[params.pickupLng, params.pickupLat]}
-                                                animationMode="flyTo"
-                                            />
-
-                                            {/* 1. The Geofence Zone Circle */}
-                                            <MapboxGL.ShapeSource id="return-geofence" shape={buildGeofenceCircleGeoJSON(params.pickupLng, params.pickupLat, 50)}>
-                                                <MapboxGL.FillLayer
-                                                    id="return-geofence-fill"
-                                                    style={{
-                                                        fillColor: isInsideGeoFence ? '#4CAF50' : '#2196F3',
-                                                        fillOpacity: 0.2,
-                                                    }}
-                                                />
-                                                <MapboxGL.LineLayer
-                                                    id="return-geofence-line"
-                                                    style={{
-                                                        lineColor: isInsideGeoFence ? '#4CAF50' : '#2196F3',
-                                                        lineWidth: 2,
-                                                    }}
-                                                />
-                                            </MapboxGL.ShapeSource>
-
-                                            {/* 2. The Return Target Point Marker */}
-                                            <MapboxGL.PointAnnotation id="return-target" coordinate={[params.pickupLng, params.pickupLat]}>
-                                                <View style={{
-                                                    width: 28, height: 28, borderRadius: 14,
-                                                    alignItems: 'center', justifyContent: 'center',
-                                                    borderWidth: 2, borderColor: 'white',
-                                                    backgroundColor: isInsideGeoFence ? '#4CAF50' : '#2196F3',
-                                                    shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.3, shadowRadius: 3, elevation: 4
-                                                }}>
-                                                    <Text style={{ color: 'white', fontSize: 16 }}>↩️</Text>
-                                                </View>
-                                            </MapboxGL.PointAnnotation>
-
-                                            {/* 3. Rider Current Position */}
-                                            {currentPosition.lat != null && currentPosition.lng != null && (
-                                                <AnimatedRiderMarker
-                                                    latitude={currentPosition.lat}
-                                                    longitude={currentPosition.lng}
-                                                    rotation={headingSmoother.smooth(currentPosition.heading, currentPosition.speed, localPhoneHeading)}
-                                                    speed={currentPosition.speed}
-                                                />
-                                            )}
-                                        </MapboxGL.MapView>
-                                    ) : (
-                                        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: isDarkMode ? '#27272a' : '#f4f4f5' }}>
-                                            {currentPosition.lat === 0 ? (
-                                                <>
-                                                    <ActivityIndicator size="small" color="#4CAF50" />
-                                                    <Text style={{ marginTop: 8, color: isDarkMode ? '#a1a1aa' : '#71717a' }}>Acquiring GPS...</Text>
-                                                </>
-                                            ) : (
-                                                <Text style={{ fontSize: 32 }}>📍</Text>
-                                            )}
-                                        </View>
-                                    )}
-
-                                    {distanceMeters !== null && (
-                                        <View style={{
-                                            position: 'absolute', top: 12, right: 12,
-                                            paddingHorizontal: 10, paddingVertical: 4, borderRadius: 16,
-                                            alignItems: 'center', justifyContent: 'center', borderWidth: 1,
-                                            backgroundColor: c.card, borderColor: isDarkMode ? '#3f3f46' : '#e4e4e7',
-                                            shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 4, elevation: 3
-                                        }}>
-                                            <Text variant="labelMedium" style={{ fontFamily: 'Inter_700Bold', color: c.text }}>
-                                                {distanceMeters < 1000 ? `${Math.round(distanceMeters)}m` : `${(distanceMeters / 1000).toFixed(1)}km`}
-                                            </Text>
-                                            <Text variant="labelSmall" style={{ color: isDarkMode ? '#a1a1aa' : '#71717a' }}>away</Text>
-                                        </View>
-                                    )}
-                                </View>
-
-                                {/* Destination Info & Buttons below map */}
-                                <Card.Content style={{ paddingTop: 16 }}>
-                                    <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>
-                                        <Text variant="titleMedium" style={{ fontFamily: 'Inter_700Bold', flex: 1, color: c.text }}>Return Journey</Text>
-                                        <View style={{ backgroundColor: '#2196F3', width: 28, height: 28, borderRadius: 6, alignItems: 'center', justifyContent: 'center' }}>
-                                            <Text style={{ color: 'white', fontSize: 16 }}>↩️</Text>
-                                        </View>
-                                    </View>
-                                    <Text variant="bodySmall" style={{ color: isDarkMode ? '#a1a1aa' : '#666', marginBottom: 4 }}>Return destination</Text>
-                                    <Text variant="bodyMedium" style={{ fontFamily: 'Inter_600SemiBold', marginBottom: 16, color: c.text }}>
-                                        {params.pickupAddress || params.targetAddress}
-                                    </Text>
-
-                                    <Button
-                                        mode="outlined"
-                                        icon="navigation"
-                                        onPress={handleNavigate}
-                                        style={{ marginBottom: 12, borderRadius: 8 }}
-                                    >
-                                        Navigate to Pickup
-                                    </Button>
-                                    <Button
-                                        mode="contained"
-                                        icon="package-variant-closed"
-                                        onPress={() => {
-                                            if (returnCancellationState?.returnOtp) {
-                                                navigation.navigate('ReturnPackage', {
-                                                    deliveryId: params.deliveryId,
-                                                    returnOtp: returnCancellationState.returnOtp,
-                                                    pickupAddress: params.pickupAddress || params.targetAddress,
-                                                    senderName: params.senderName || 'Sender',
-                                                    pickupLat: params.pickupLat,
-                                                    pickupLng: params.pickupLng,
-                                                    boxId: params.boxId,
-                                                });
-                                            } else {
-                                                navigation.navigate('CancellationConfirmation', {
-                                                    deliveryId: params.deliveryId,
-                                                    returnOtp: '------',
-                                                    reason: CancellationReason.OTHER,
-                                                    senderName: params.senderName || 'Sender',
-                                                    pickupAddress: params.pickupAddress || params.targetAddress,
-                                                    pickupLat: params.pickupLat,
-                                                    pickupLng: params.pickupLng,
-                                                    isPickedUp: ['PICKED_UP', 'IN_TRANSIT', 'ARRIVED', 'COMPLETED', 'RETURNING', 'TAMPERED'].includes(params.status || 'PENDING'),
-                                                });
-                                            }
-                                        }}
-                                        style={{ borderRadius: 8 }}
-                                    >
-                                        Continue Return Process
-                                    </Button>
-                                </Card.Content>
-                            </Card>
+                            <ReturnVerification
+                                deliveryId={params.deliveryId}
+                                boxId={params.boxId}
+                                targetAddress={params.pickupAddress || params.targetAddress}
+                                targetLat={params.pickupLat || params.targetLat}
+                                targetLng={params.pickupLng || params.targetLng}
+                                senderName={params.senderName}
+                                senderPhone={params.senderPhone}
+                                deliveryNotes={params.deliveryNotes}
+                                deliveryStatus={deliveryStatus}
+                                isInsideGeoFence={isInsideGeoFence}
+                                distanceMeters={distanceMeters}
+                                isPhoneInside={isPhoneInside}
+                                isBoxInside={isBoxInside}
+                                isBoxOffline={isBoxOffline}
+                                lastBoxHeartbeatAt={boxLocationLastSeen}
+                                lastPhoneGpsAt={phoneLocationLastSeen}
+                                currentLat={currentPosition.lat}
+                                currentLng={currentPosition.lng}
+                                currentHeading={headingSmoother.smooth(currentPosition.heading, currentPosition.speed, localPhoneHeading)}
+                                geofenceRadiusM={geofence.radiusMeters}
+                                onReturnCompleted={() => navigation.navigate('RiderApp')}
+                                onNavigate={handleNavigate}
+                                onShowCancelModal={() => setShowCancelModal(true)}
+                            />
                         ) : (
                             <DropoffVerification
                                 deliveryId={params.deliveryId}

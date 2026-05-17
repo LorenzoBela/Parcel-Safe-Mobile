@@ -68,7 +68,6 @@ export interface CancellationRequest {
 
 export interface CancellationResult {
   success: boolean;
-  returnOtp?: string;
   error?: string;
 }
 
@@ -321,7 +320,7 @@ export async function requestCancellation(
       deliveryId: request.deliveryId,
       toStatus: newStatus,
       cancellationReason: formatCancellationReason(request.reason),
-      metadata: { reasonDetails: request.reasonDetails, returnOtp },
+      metadata: { reasonDetails: request.reasonDetails },
     };
     console.log('[EC-32] Transition payload:', transitionPayload);
     
@@ -355,7 +354,6 @@ export async function requestCancellation(
     // (map will naturally expire after DEDUP_WINDOW_MS)
     return {
       success: true,
-      returnOtp: returnOtp,
     };
   } catch (error) {
     console.error('[EC-32] Cancellation failed:', error);

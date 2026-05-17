@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { View, StyleSheet, Dimensions, TouchableOpacity, Alert, Share, Image, Animated, Easing, Linking, ActivityIndicator, Modal, TextInput } from 'react-native';
+import { View, StyleSheet, Dimensions, TouchableOpacity, Alert, Share, Image, Animated, Easing, Linking, ActivityIndicator, Modal, TextInput, ScrollView } from 'react-native';
 import { useHeadingSmoothing } from '../../hooks/useHeadingSmoothing';
 import MapboxGL, { isMapboxNativeAvailable, MapFallback } from '../../components/map/MapboxWrapper';
 import { Text, Card, Avatar, Button, IconButton, Surface, useTheme } from 'react-native-paper';
@@ -28,7 +28,6 @@ import {
 } from '../../services/cancellationService';
 import statusUpdateService from '../../services/statusUpdateService';
 import { showStatusNotification, updateOngoingNotification } from '../../services/pushNotificationService';
-import * as Clipboard from 'expo-clipboard';
 import CustomerCancellationModal from '../../components/modals/CustomerCancellationModal';
 import useAuthStore from '../../store/authStore';
 import { lineString, point } from '@turf/helpers';
@@ -153,7 +152,7 @@ function PulseRing() {
                 width: 56,
                 height: 56,
                 borderRadius: 28,
-                backgroundColor: '#10b981',
+                backgroundColor: '#94a3b8',
                 opacity: pulseAnim,
                 transform: [{ scale: scaleAnim }],
             }}
@@ -185,6 +184,7 @@ export default function TrackOrderScreen() {
     const [isRouteView, setIsRouteView] = useState(false);
     const [isNavigationMode, setIsNavigationMode] = useState(false);
     const [isBottomSheetExpanded, setIsBottomSheetExpanded] = useState(true);
+    const [showTraffic, setShowTraffic] = useState(false);
     const [pickupPhotoVersion, setPickupPhotoVersion] = useState<number>(0);
     const [proofPhotoVersion, setProofPhotoVersion] = useState<number>(0);
     const [returnPhotoVersion, setReturnPhotoVersion] = useState<number>(0);
@@ -262,6 +262,24 @@ export default function TrackOrderScreen() {
     }, [isTerminalState]);
 
     const MAPBOX_TOKEN = process.env.EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN;
+    const isReturnFlow = delivery?.status === 'RETURNING' || delivery?.status === 'RETURNED';
+    const mapStyleUrl = theme.dark
+        ? 'mapbox://styles/mapbox/navigation-night-v1'
+        : MapboxGL.StyleURL.Light;
+    const monoAccent = theme.dark ? '#e2e8f0' : '#0f172a';
+    const monoAccentSoft = theme.dark ? 'rgba(226, 232, 240, 0.12)' : 'rgba(15, 23, 42, 0.08)';
+    const monoAccentSoftStrong = theme.dark ? 'rgba(226, 232, 240, 0.2)' : 'rgba(15, 23, 42, 0.14)';
+    const monoAccentLine = theme.dark ? 'rgba(226, 232, 240, 0.55)' : 'rgba(15, 23, 42, 0.45)';
+    const monoMuted = theme.dark ? '#94a3b8' : '#6b7280';
+    const monoSubtle = theme.dark ? '#64748b' : '#9ca3af';
+    const monoOnAccent = theme.dark ? '#0f172a' : '#f8fafc';
+    const routeLineColor = isReturnFlow ? monoAccentLine : monoAccent;
+    const etaBadgeColor = monoAccent;
+    const pickupFenceFill = monoAccentSoft;
+    const pickupFenceLine = monoAccentLine;
+    const dropoffFenceFill = monoAccentSoftStrong;
+    const dropoffFenceLine = theme.dark ? 'rgba(226, 232, 240, 0.75)' : 'rgba(15, 23, 42, 0.6)';
+    const bottomSheetMaxHeight = Math.min(Dimensions.get('window').height * 0.6, 540);
 
     const destination = {
         latitude: delivery?.dropoff_lat ?? params.dropoffLat ?? 0,
@@ -759,12 +777,17 @@ export default function TrackOrderScreen() {
         });
     }, [delivery?.rider_id]);
 
-    const copyReturnOtp = async () => {
-        if (cancellation?.returnOtp) {
-            await Clipboard.setStringAsync(cancellation.returnOtp);
-            PremiumAlert.alert('Copied', 'Return OTP copied to clipboard');
+    const deliveryStatusUpper = String(delivery?.status || '').toUpperCase();
+    const showReturnAuthorization =
+        !!cancellation &&
+        !cancellation.packageRetrieved &&
+        ['CANCELLED', 'RETURNING', 'TAMPERED'].includes(deliveryStatusUpper);
+
+    useEffect(() => {
+        if (showReturnAuthorization) {
+            setIsBottomSheetExpanded(false);
         }
-    };
+    }, [showReturnAuthorization]);
 
     // Customer cancellation handler
     const handleCancellationSubmit = async (reason: CustomerCancellationReason, details: string) => {
@@ -1135,7 +1158,7 @@ export default function TrackOrderScreen() {
             {MAPBOX_TOKEN && !isMapLoading ? (
                 <MapboxGL.MapView
                     style={styles.map}
-                    styleURL={theme.dark ? MapboxGL.StyleURL.Dark : MapboxGL.StyleURL.Light}
+                    styleURL={mapStyleUrl}
                     logoEnabled={false}
                     attributionEnabled={false}
                     onCameraChanged={updateCameraBearing}
@@ -1149,13 +1172,13 @@ export default function TrackOrderScreen() {
 
                     {/* Route Line */}
                     <MapboxGL.ShapeSource id="route" shape={routeGeoJson}>
-                        <MapboxGL.LineLayer
-                            id="route-line"
-                            style={{
-                                lineColor: theme.colors.primary,
-                                lineWidth: 5,
-                            }}
-                        />
+                            <MapboxGL.LineLayer
+                                id="route-line"
+                                style={{
+                                    lineColor: routeLineColor,
+                                    lineWidth: 5,
+                                }}
+                            />
                     </MapboxGL.ShapeSource>
 
                     {/* P1: Completed Route (Traveled segment — dashed gray) */}
@@ -1164,7 +1187,7 @@ export default function TrackOrderScreen() {
                             <MapboxGL.LineLayer
                                 id="completed-route-line"
                                 style={{
-                                    lineColor: theme.dark ? '#94a3b8' : '#9ca3af',
+                                    lineColor: monoSubtle,
                                     lineWidth: 4,
                                     lineOpacity: 0.5,
                                     lineDasharray: [2, 2],
@@ -1181,7 +1204,7 @@ export default function TrackOrderScreen() {
                             title="Pickup"
                         >
                             <View style={styles.markerContainer}>
-                                <Avatar.Icon size={40} icon="package-variant" style={{ backgroundColor: 'orange' }} />
+                                <Avatar.Icon size={40} icon="package-variant" color={monoOnAccent} style={{ backgroundColor: monoAccent }} />
                             </View>
                         </MapboxGL.PointAnnotation>
                     )}
@@ -1203,7 +1226,7 @@ export default function TrackOrderScreen() {
                         title="Destination"
                     >
                         <View style={styles.markerContainer}>
-                            <MaterialCommunityIcons name="map-marker" size={40} color="#F44336" />
+                            <MaterialCommunityIcons name="map-marker" size={40} color={monoAccent} />
                         </View>
                     </MapboxGL.PointAnnotation>
 
@@ -1213,13 +1236,13 @@ export default function TrackOrderScreen() {
                         <MapboxGL.FillLayer
                             id="pickup-fence-fill"
                             style={{
-                                fillColor: 'rgba(33, 150, 243, 0.25)', // Blue fill
+                                fillColor: pickupFenceFill,
                             }}
                         />
                         <MapboxGL.LineLayer
                             id="pickup-fence-outline"
                             style={{
-                                lineColor: 'rgba(33, 150, 243, 0.8)', // Blue border
+                                lineColor: pickupFenceLine,
                                 lineWidth: 2,
                             }}
                         />
@@ -1230,17 +1253,44 @@ export default function TrackOrderScreen() {
                         <MapboxGL.FillLayer
                             id="dropoff-fence-fill"
                             style={{
-                                fillColor: 'rgba(76, 175, 80, 0.25)',
+                                fillColor: dropoffFenceFill,
                             }}
                         />
                         <MapboxGL.LineLayer
                             id="dropoff-fence-outline"
                             style={{
-                                lineColor: 'rgba(76, 175, 80, 0.8)',
+                                lineColor: dropoffFenceLine,
                                 lineWidth: 2,
                             }}
                         />
                     </MapboxGL.ShapeSource>
+                    
+                    {/* Traffic layer */}
+                    {showTraffic && (
+                        <MapboxGL.VectorSource
+                            id="mapbox-traffic"
+                            url="mapbox://mapbox.mapbox-traffic-v1"
+                        >
+                            <MapboxGL.LineLayer
+                                id="traffic-line"
+                                sourceLayerID="traffic"
+                                style={{
+                                    lineJoin: 'round',
+                                    lineCap: 'round',
+                                    lineColor: [
+                                        'match', ['get', 'congestion'],
+                                        'low', '#10B981',
+                                        'moderate', '#F59E0B',
+                                        'heavy', '#EF4444',
+                                        'severe', '#991B1B',
+                                        '#6B7280',
+                                    ],
+                                    lineWidth: 2.5,
+                                    lineOpacity: 0.75,
+                                }}
+                            />
+                        </MapboxGL.VectorSource>
+                    )}
                 </MapboxGL.MapView>
             ) : !isMapLoading ? (
                 <View style={[styles.map, styles.mapFallback]}>
@@ -1259,6 +1309,15 @@ export default function TrackOrderScreen() {
 
             {/* Recenter & Navigation on Rider Buttons */}
             <View style={[styles.recenterActions, { top: 20 + insets.top, flexDirection: 'row', gap: 8 }]}>
+                {/* Traffic Mode Button */}
+                <Surface style={[styles.iconButtonSurface, { backgroundColor: theme.colors.surface }]} elevation={2}>
+                    <IconButton
+                        icon={showTraffic ? "road-variant" : "road"}
+                        size={24}
+                        iconColor={showTraffic ? '#4CAF50' : theme.colors.onSurface}
+                        onPress={() => setShowTraffic(!showTraffic)}
+                    />
+                </Surface>
                 {/* Navigation Mode Button */}
                 <Surface style={[styles.iconButtonSurface, { backgroundColor: theme.colors.surface }]} elevation={2}>
                     <IconButton
@@ -1341,18 +1400,20 @@ export default function TrackOrderScreen() {
             </View>
 
             {/* Bottom Sheet Info */}
-            <View style={[styles.bottomSheet, { backgroundColor: theme.colors.surface, paddingBottom: 24 + insets.bottom }]}>
+            <View style={[styles.bottomSheet, { backgroundColor: theme.colors.surface, paddingBottom: 24 + insets.bottom, maxHeight: isBottomSheetExpanded ? bottomSheetMaxHeight : undefined }]}>
                 <TouchableOpacity onPress={() => setIsBottomSheetExpanded(!isBottomSheetExpanded)} activeOpacity={0.7}>
                     <View style={[styles.handleBar, { backgroundColor: theme.colors.outline }]} />
 
                     <View style={styles.statusHeader}>
                         <View style={{ flex: 1 }}>
                             {delivery?.status === 'COMPLETED' ? (
-                                <Text variant="titleLarge" style={{ fontFamily: 'Inter_700Bold', color: '#4CAF50' }}>Delivery Complete!</Text>
+                                <Text variant="titleLarge" style={{ fontFamily: 'Inter_700Bold', color: monoAccent }}>Delivery Complete!</Text>
                             ) : delivery?.status === 'TAMPERED' ? (
-                                <Text variant="titleLarge" style={{ fontFamily: 'Inter_700Bold', color: theme.colors.error }}>Security Hold</Text>
-                            ) : cancellation && delivery?.status === 'CANCELLED' ? (
-                                <Text variant="titleLarge" style={{ fontFamily: 'Inter_700Bold', color: theme.colors.error }}>Delivery Cancelled</Text>
+                                <Text variant="titleLarge" style={{ fontFamily: 'Inter_700Bold', color: monoAccent }}>Security Hold</Text>
+                            ) : showReturnAuthorization ? (
+                                <Text variant="titleLarge" style={{ fontFamily: 'Inter_700Bold', color: monoAccent }}>
+                                    {deliveryStatusUpper === 'RETURNING' ? 'Package Returning' : 'Delivery Cancelled'}
+                                </Text>
                             ) : (
                                 <Text variant="titleLarge" style={{ fontFamily: 'Inter_700Bold', color: theme.colors.onSurface }}>
                                     {delivery?.status === 'ARRIVED' ? 'Rider Arrived' : (isPickedUp ? 'Delivery In Progress' : 'Heading to Pickup')}
@@ -1372,17 +1433,17 @@ export default function TrackOrderScreen() {
                                     </Text>
                                 ) : delivery?.status === 'TAMPERED' ? (
                                     <View>
-                                        <Text variant="bodyMedium" style={{ color: theme.colors.error }}>
+                                        <Text variant="bodyMedium" style={{ color: monoAccent }}>
                                             Security Hold is active. We detected a box incident and our team is investigating.
                                         </Text>
-                                        <Text variant="bodySmall" style={{ color: theme.colors.error, marginTop: 4 }}>
+                                        <Text variant="bodySmall" style={{ color: monoAccent, marginTop: 4 }}>
                                             When: {tamperEventTime}
                                         </Text>
-                                        <Text variant="bodySmall" style={{ color: theme.colors.error }}>
+                                        <Text variant="bodySmall" style={{ color: monoAccent }}>
                                             Last known location: {tamperWhere}
                                         </Text>
                                     </View>
-                                ) : cancellation && delivery?.status === 'CANCELLED' ? (
+                                ) : showReturnAuthorization ? (
                                     <Text variant="bodyMedium" style={{ color: theme.colors.onSurfaceVariant }}>
                                         {wasSecurityIncidentCancelled
                                             ? 'Cancelled after security review. Refund processing is in progress.'
@@ -1407,15 +1468,15 @@ export default function TrackOrderScreen() {
                             )}
                         </View>
                         {!isTerminalState && !cancellation && (
-                            <Surface style={styles.etaBadge} elevation={0}>
-                                <Text style={{ color: 'white', fontFamily: 'Inter_700Bold' }}>
+                            <Surface style={[styles.etaBadge, { backgroundColor: etaBadgeColor }]} elevation={0}>
+                                <Text style={{ color: monoOnAccent, fontFamily: 'Inter_700Bold' }}>
                                     {eta !== null ? `${eta} min\n(Arrives ~${dayjs().add(eta, 'minute').format('h:mm A')})` : 'Calculating...'}
                                 </Text>
-                                <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 10 }}>
+                                <Text style={{ color: monoOnAccent, fontSize: 10, opacity: 0.7 }}>
                                     {isPickedUp ? 'to you' : 'to pickup'}
                                 </Text>
                                 {distanceToTarget !== null && (
-                                    <Text style={{ color: 'rgba(255,255,255,0.85)', fontSize: 11, marginTop: 2, fontFamily: 'Inter_600SemiBold' }}>
+                                    <Text style={{ color: monoOnAccent, fontSize: 11, marginTop: 2, fontFamily: 'Inter_600SemiBold', opacity: 0.85 }}>
                                         {distanceToTarget < 1
                                             ? `${Math.round(distanceToTarget * 1000)}m away`
                                             : `${distanceToTarget.toFixed(1)}km away`}
@@ -1423,8 +1484,8 @@ export default function TrackOrderScreen() {
                                 )}
                                 {riderLiveLocation?.speed != null && (
                                     <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4 }}>
-                                        <MaterialCommunityIcons name="speedometer" size={12} color="rgba(255,255,255,0.85)" />
-                                        <Text style={{ color: 'rgba(255,255,255,0.85)', fontSize: 11, fontFamily: 'Inter_600SemiBold', marginLeft: 4 }}>
+                                        <MaterialCommunityIcons name="speedometer" size={12} color={monoOnAccent} style={{ opacity: 0.85 }} />
+                                        <Text style={{ color: monoOnAccent, fontSize: 11, fontFamily: 'Inter_600SemiBold', marginLeft: 4, opacity: 0.85 }}>
                                             {formatSpeed(riderLiveLocation.speed)}
                                         </Text>
                                     </View>
@@ -1432,35 +1493,43 @@ export default function TrackOrderScreen() {
                             </Surface>
                         )}
                         {delivery?.status === 'COMPLETED' && (
-                            <MaterialCommunityIcons name="check-circle" size={48} color="#4CAF50" />
+                            <MaterialCommunityIcons name="check-circle" size={48} color={monoAccent} />
                         )}
                         {delivery?.status === 'TAMPERED' && (
-                            <MaterialCommunityIcons name="alert-circle" size={48} color={theme.colors.error} />
+                            <MaterialCommunityIcons name="alert-circle" size={48} color={monoAccent} />
                         )}
                     </View>
                 </TouchableOpacity>
 
                 {isBottomSheetExpanded && (
-                    <>
+                    <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.bottomSheetContent}>
                         {/* EC-32: Cancellation Details & Return OTP */}
-                        {cancellation && delivery?.status === 'CANCELLED' && (
-                            <Surface style={[styles.cancellationCard, { backgroundColor: theme.colors.errorContainer }]} elevation={1}>
+                        {showReturnAuthorization && (
+                            <Surface style={[styles.cancellationCard, { backgroundColor: monoAccentSoftStrong }]} elevation={1}>
                                 <View style={styles.cancellationHeader}>
-                                    <MaterialCommunityIcons name="alert-circle-outline" size={24} color={theme.colors.error} />
+                                    <MaterialCommunityIcons name="alert-circle-outline" size={24} color={monoAccent} />
                                     <Text style={{ marginLeft: 8, color: theme.colors.onSurface, fontFamily: 'Inter_700Bold' }}>Return Authorization</Text>
                                 </View>
                                 <Text style={{ marginBottom: 12, color: theme.colors.onSurfaceVariant }}>
-                                    Please provide this OTP to the rider to retrieve your package.
+                                    Return OTP is hidden for security. Open it when the rider reaches the pickup location.
                                 </Text>
 
-                                <TouchableOpacity onPress={copyReturnOtp} activeOpacity={0.7}>
-                                    <Surface style={styles.otpContainer} elevation={2}>
-                                        <Text variant="displaySmall" style={{ letterSpacing: 4, fontFamily: 'Inter_700Bold', color: theme.colors.primary }}>
-                                            {cancellation.returnOtp}
-                                        </Text>
-                                        <MaterialCommunityIcons name="content-copy" size={20} color={theme.colors.primary} style={{ position: 'absolute', right: 16 }} />
-                                    </Surface>
-                                </TouchableOpacity>
+                                <Button
+                                    mode="contained"
+                                    style={[styles.viewOtpBtn, { shadowColor: monoAccent, shadowOpacity: 0.2, shadowRadius: 6, shadowOffset: { width: 0, height: 3 }, elevation: 3 }]}
+                                    buttonColor={monoAccent}
+                                    textColor={monoOnAccent}
+                                    icon="key-variant"
+                                    onPress={() => {
+                                        navigation.navigate('ReturnOTP', {
+                                            returnOtp: cancellation?.returnOtp,
+                                            returnOtpIssuedAt: cancellation?.returnOtpIssuedAt,
+                                            deliveryId: deliveryId,
+                                        });
+                                    }}
+                                >
+                                    <Text style={{ fontFamily: 'Inter_600SemiBold', color: monoOnAccent }}>View Return OTP</Text>
+                                </Button>
                             </Surface>
                         )}
 
@@ -1476,7 +1545,7 @@ export default function TrackOrderScreen() {
                                 <Text variant="titleMedium" style={{ fontFamily: 'Inter_700Bold', color: theme.colors.onSurface }}>{riderDetails.name}</Text>
                                 <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>{riderDetails.vehicle}</Text>
                                 <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4 }}>
-                                    <MaterialCommunityIcons name="star" size={16} color="#FFC107" />
+                                    <MaterialCommunityIcons name="star" size={16} color={monoAccent} />
                                     <Text variant="labelSmall" style={{ marginLeft: 4, color: theme.colors.onSurface }}>{riderDetails.rating}</Text>
                                 </View>
                             </View>
@@ -1484,8 +1553,8 @@ export default function TrackOrderScreen() {
                                 <IconButton
                                     mode="contained"
                                     icon="phone"
-                                    containerColor={theme.dark ? '#1A237E' : '#E3F2FD'}
-                                    iconColor="#2196F3"
+                                    containerColor={monoAccentSoft}
+                                    iconColor={monoAccent}
                                     size={24}
                                     onPress={() => {
                                         if (!riderDetails.phone) {
@@ -1498,8 +1567,8 @@ export default function TrackOrderScreen() {
                                 <IconButton
                                     mode="contained"
                                     icon="message-text"
-                                    containerColor={theme.dark ? '#1B5E20' : '#E8F5E9'}
-                                    iconColor="#4CAF50"
+                                    containerColor={monoAccentSoft}
+                                    iconColor={monoAccent}
                                     size={24}
                                     onPress={() => {
                                         if (!riderDetails.phone) {
@@ -1519,7 +1588,7 @@ export default function TrackOrderScreen() {
                                     <Card.Title title="Pickup Photo" titleVariant="titleSmall" />
                                     <Card.Cover source={{ uri: pickupPhotoUri }} style={{ height: 180 }} />
                                     {delivery.picked_up_at && (
-                                        <Text style={{ padding: 10, textAlign: 'center', color: '#666', fontSize: 12 }}>
+                                        <Text style={{ padding: 10, textAlign: 'center', color: theme.colors.onSurfaceVariant, fontSize: 12 }}>
                                             Taken on {dayjs.utc(parseUTCString(delivery.picked_up_at)).add(8, 'hour').format('MMM D, YYYY h:mm A')}
                                         </Text>
                                     )}
@@ -1535,7 +1604,7 @@ export default function TrackOrderScreen() {
                                         <Card.Title title="Proof of Delivery" titleVariant="titleSmall" />
                                         <Card.Cover source={{ uri: proofPhotoUri }} style={{ height: 180 }} />
                                         {delivery.delivered_at && (
-                                            <Text style={{ padding: 10, textAlign: 'center', color: '#666', fontSize: 12 }}>
+                                            <Text style={{ padding: 10, textAlign: 'center', color: theme.colors.onSurfaceVariant, fontSize: 12 }}>
                                                 Taken on {dayjs.utc(parseUTCString(delivery.delivered_at)).add(8, 'hour').format('MMM D, YYYY h:mm A')}
                                             </Text>
                                         )}
@@ -1543,19 +1612,22 @@ export default function TrackOrderScreen() {
                                 )}
                                 <Button
                                     mode="contained"
-                                    style={styles.viewOtpBtn}
+                                    style={[styles.viewOtpBtn, { shadowColor: monoAccent, shadowOpacity: 0.2, shadowRadius: 6, shadowOffset: { width: 0, height: 3 }, elevation: 3 }]}
+                                    buttonColor={monoAccent}
+                                    textColor={monoOnAccent}
                                     icon="home"
                                     onPress={() => navigation.navigate('Home')}
                                 >
-                                    Back to Home
+                                    <Text style={{ fontFamily: 'Inter_600SemiBold', color: monoOnAccent }}>Back to Home</Text>
                                 </Button>
                                 <Button
                                     mode="outlined"
-                                    style={{ marginTop: 8, borderRadius: 12 }}
+                                    style={{ marginTop: 8, borderRadius: 12, borderColor: monoAccentLine }}
+                                    textColor={monoAccent}
                                     icon="history"
                                     onPress={() => navigation.navigate('DeliveryLog')}
                                 >
-                                    View Delivery History
+                                    <Text style={{ fontFamily: 'Inter_600SemiBold', color: monoAccent }}>View Delivery History</Text>
                                 </Button>
                             </View>
                         )}
@@ -1565,7 +1637,7 @@ export default function TrackOrderScreen() {
                                 <Card style={{ marginBottom: 12, borderRadius: 12 }} mode="elevated">
                                     <Card.Title title="Return Verification" titleVariant="titleSmall" />
                                     <Card.Cover source={{ uri: returnPhotoUri }} style={{ height: 180 }} />
-                                    <Text style={{ padding: 10, textAlign: 'center', color: '#666', fontSize: 12 }}>
+                                    <Text style={{ padding: 10, textAlign: 'center', color: theme.colors.onSurfaceVariant, fontSize: 12 }}>
                                         Sender return proof captured
                                     </Text>
                                 </Card>
@@ -1579,7 +1651,8 @@ export default function TrackOrderScreen() {
                                     mode="contained"
                                     style={styles.viewOtpBtn}
                                     icon="headset"
-                                    buttonColor={theme.colors.error}
+                                    buttonColor={monoAccent}
+                                    textColor={monoOnAccent}
                                     onPress={() => PremiumAlert.alert('Support', 'Please contact support at support@parcel-safe.app or call +63 XXX XXX XXXX.')}
                                 >
                                     Contact Support
@@ -1600,18 +1673,21 @@ export default function TrackOrderScreen() {
                             <>
                                 <Button
                                     mode="outlined"
-                                    style={styles.cancelBtn}
+                                    style={{ marginTop: 12, borderRadius: 12, borderColor: monoAccentLine }}
+                                    textColor={monoAccent}
                                     icon="share-variant"
                                     onPress={handleShareTracking}
                                 >
-                                    Share Tracking Link
+                                    <Text style={{ fontFamily: 'Inter_600SemiBold', color: monoAccent }}>Share Tracking Link</Text>
                                 </Button>
 
                                 {/* OTP is only relevant once rider has arrived at the drop-off location */}
                                 {!cancellation && delivery?.status === 'ARRIVED' && (
                                     <Button
                                         mode="contained"
-                                        style={styles.viewOtpBtn}
+                                        style={[styles.viewOtpBtn, delivery?.box_id ? { shadowColor: monoAccent, shadowOpacity: 0.2, shadowRadius: 6, shadowOffset: { width: 0, height: 3 }, elevation: 3 } : undefined]}
+                                        buttonColor={delivery?.box_id ? monoAccent : undefined}
+                                        textColor={delivery?.box_id ? monoOnAccent : undefined}
                                         icon="lock-open"
                                         onPress={() => {
                                             const boxId = delivery?.box_id;
@@ -1622,7 +1698,7 @@ export default function TrackOrderScreen() {
                                         }}
                                         disabled={!delivery?.box_id}
                                     >
-                                        View Secure OTP
+                                        <Text style={{ fontFamily: 'Inter_600SemiBold', color: delivery?.box_id ? monoOnAccent : undefined }}>View Secure OTP</Text>
                                     </Button>
                                 )}
 
@@ -1640,7 +1716,7 @@ export default function TrackOrderScreen() {
                                 )}
                             </>
                         )}
-                    </>
+                    </ScrollView>
                 )}
             </View>
 
@@ -1682,23 +1758,23 @@ export default function TrackOrderScreen() {
                         </View>
 
                         <View style={{ flexDirection: 'row', justifyContent: 'space-between', gap: 12 }}>
-                            <Surface style={[styles.modalStatCard, { backgroundColor: theme.dark ? '#1A237E' : '#E3F2FD' }]} elevation={0}>
-                                <Text variant="labelMedium" style={{ color: '#2196F3' }}>RATING</Text>
+                            <Surface style={[styles.modalStatCard, { backgroundColor: monoAccentSoft }]} elevation={0}>
+                                <Text variant="labelMedium" style={{ color: monoMuted }}>RATING</Text>
                                 <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 8 }}>
-                                    <Text variant="displaySmall" style={{ fontFamily: 'Inter_700Bold', color: '#2196F3', marginRight: 4 }}>
+                                    <Text variant="displaySmall" style={{ fontFamily: 'Inter_700Bold', color: monoAccent, marginRight: 4 }}>
                                         {riderDetails.rating}
                                     </Text>
-                                    <MaterialCommunityIcons name="star" size={24} color="#FFC107" />
+                                    <MaterialCommunityIcons name="star" size={24} color={monoAccent} />
                                 </View>
                             </Surface>
 
-                            <Surface style={[styles.modalStatCard, { backgroundColor: theme.dark ? '#1B5E20' : '#E8F5E9' }]} elevation={0}>
-                                <Text variant="labelMedium" style={{ color: '#4CAF50' }}>DELIVERIES</Text>
+                            <Surface style={[styles.modalStatCard, { backgroundColor: monoAccentSoft }]} elevation={0}>
+                                <Text variant="labelMedium" style={{ color: monoMuted }}>DELIVERIES</Text>
                                 <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 8 }}>
-                                    <Text variant="displaySmall" style={{ fontFamily: 'Inter_700Bold', color: '#4CAF50', marginRight: 4 }}>
+                                    <Text variant="displaySmall" style={{ fontFamily: 'Inter_700Bold', color: monoAccent, marginRight: 4 }}>
                                         {riderProfile?.totalDeliveries || 0}
                                     </Text>
-                                    <MaterialCommunityIcons name="bike" size={24} color="#4CAF50" />
+                                    <MaterialCommunityIcons name="bike" size={24} color={monoAccent} />
                                 </View>
                             </Surface>
                         </View>
@@ -1721,12 +1797,12 @@ export default function TrackOrderScreen() {
                         <View style={{ alignItems: 'center', marginBottom: 24 }}>
                             <View style={{
                                 width: 80, height: 80, borderRadius: 40,
-                                backgroundColor: '#10B981', justifyContent: 'center', alignItems: 'center',
+                                backgroundColor: monoAccent, justifyContent: 'center', alignItems: 'center',
                                 marginBottom: 16,
-                                shadowColor: '#10B981', shadowOpacity: 0.5, shadowRadius: 10, shadowOffset: { width: 0, height: 4 },
+                                shadowColor: monoAccent, shadowOpacity: 0.35, shadowRadius: 10, shadowOffset: { width: 0, height: 4 },
                                 elevation: 8
                             }}>
-                                <MaterialCommunityIcons name="check" size={48} color="white" />
+                                <MaterialCommunityIcons name="check" size={48} color={monoOnAccent} />
                             </View>
                             <Text variant="headlineSmall" style={{ fontFamily: 'Inter_700Bold', color: theme.colors.onSurface, textAlign: 'center' }}>
                                 Delivery Complete!
@@ -1747,9 +1823,9 @@ export default function TrackOrderScreen() {
                                     <MaterialCommunityIcons
                                         name={ratingScore >= star ? "star" : "star-outline"}
                                         size={48}
-                                        color={ratingScore >= star ? "#FFC107" : theme.colors.onSurfaceVariant}
+                                        color={ratingScore >= star ? monoAccent : theme.colors.onSurfaceVariant}
                                         style={ratingScore >= star ? {
-                                            textShadowColor: 'rgba(255, 193, 7, 0.4)',
+                                            textShadowColor: theme.dark ? 'rgba(226, 232, 240, 0.35)' : 'rgba(15, 23, 42, 0.25)',
                                             textShadowOffset: { width: 0, height: 2 },
                                             textShadowRadius: 8,
                                         } : undefined}
@@ -1875,6 +1951,9 @@ const styles = StyleSheet.create({
         shadowOpacity: 0.1,
         shadowRadius: 10,
     },
+    bottomSheetContent: {
+        paddingBottom: 12,
+    },
     handleBar: {
         width: 40,
         height: 4,
@@ -1911,22 +1990,14 @@ const styles = StyleSheet.create({
         paddingVertical: 6,
     },
     cancellationCard: {
-        padding: 16,
+        padding: 12,
         borderRadius: 12,
-        marginBottom: 20,
+        marginBottom: 14,
     },
     cancellationHeader: {
         flexDirection: 'row',
         alignItems: 'center',
         marginBottom: 8,
-    },
-    otpContainer: {
-        backgroundColor: 'white',
-        padding: 16,
-        borderRadius: 8,
-        alignItems: 'center',
-        justifyContent: 'center',
-        flexDirection: 'row',
     },
     cancelBtn: {
         marginTop: 12,

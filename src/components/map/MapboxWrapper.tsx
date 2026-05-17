@@ -137,6 +137,8 @@ const createMockComponent = (name: string) => {
 const SafeCamera = createMockComponent('Camera');
 const SafePointAnnotation = createMockComponent('PointAnnotation');
 const SafeShapeSource = createMockComponent('ShapeSource');
+const SafeVectorSource = createMockComponent('VectorSource');
+const SafeRasterSource = createMockComponent('RasterSource');
 const SafeLineLayer = createMockComponent('LineLayer');
 const SafeCircleLayer = createMockComponent('CircleLayer');
 const SafeFillLayer = createMockComponent('FillLayer');
@@ -210,22 +212,24 @@ const styles = StyleSheet.create({
 
 // Default export mimics the @rnmapbox/maps structure
 const MapboxGL = {
-    MapView: SafeMapView,
-    Camera: SafeCamera,
-    PointAnnotation: SafePointAnnotation,
-    ShapeSource: SafeShapeSource,
-    LineLayer: SafeLineLayer,
-    CircleLayer: SafeCircleLayer,
-    MarkerView: SafeMarkerView,
-    UserLocation: SafeUserLocation,
-    FillLayer: SafeFillLayer,
-    SymbolLayer: SafeSymbolLayer,
-    Images: SafeImages,
-    Callout: SafeCallout,
-    setAccessToken,
-    setTelemetryEnabled,
-    StyleURL,
-    isAvailable: isMapboxNativeAvailable,
+  MapView: SafeMapView,
+  Camera: SafeCamera,
+  PointAnnotation: SafePointAnnotation,
+  ShapeSource: SafeShapeSource,
+  VectorSource: SafeVectorSource,
+  RasterSource: SafeRasterSource,
+  LineLayer: SafeLineLayer,
+  CircleLayer: SafeCircleLayer,
+  MarkerView: SafeMarkerView,
+  UserLocation: SafeUserLocation,
+  FillLayer: SafeFillLayer,
+  SymbolLayer: SafeSymbolLayer,
+  Images: SafeImages,
+  Callout: SafeCallout,
+  setAccessToken,
+  setTelemetryEnabled,
+  StyleURL,
+  isAvailable: isMapboxNativeAvailable,
 };
 
 export { MapboxGL };

@@ -275,7 +275,9 @@ export default function DeliveryDetailScreen() {
         return 'N/A';
     }, [deliveryData.distance, deliveryData.distance_text, pickupLat, pickupLng, dropoffLat, dropoffLng]);
 
-    const isCancelled = deliveryData.status === 'Cancelled' || deliveryData.status === 'Tampered';
+    const normalizedStatus = String(deliveryData.status || '').toUpperCase();
+    const isReturnFlow = ['CANCELLED', 'RETURNING', 'RETURNED', 'TAMPERED'].includes(normalizedStatus);
+    const isCancelled = ['CANCELLED', 'TAMPERED'].includes(normalizedStatus);
 
     // Default coordinates for the map center
     const deliveryLocation = {
@@ -704,10 +706,10 @@ export default function DeliveryDetailScreen() {
                             <MaterialCommunityIcons name="map-marker" size={24} color={c.icon} />
                             <View style={[styles.detailTextContainer, { flex: 1 }]}>
                                 <Text variant="bodyLarge" style={[styles.detailLabel, { color: c.text }]}>
-                                    {deliveryData.status === 'Cancelled' ? 'Return Destination (Pickup Point)' : 'Dropoff Address'}
+                                    {isReturnFlow ? 'Return Destination (Pickup Point)' : 'Dropoff Address'}
                                 </Text>
                                 <Text variant="bodyMedium" style={[styles.detailValue, { color: c.textSec }]}>
-                                    {deliveryData.status === 'Cancelled'
+                                    {isReturnFlow
                                         ? (deliveryData.pickupAddress || deliveryData.pickup_address || 'N/A')
                                         : (deliveryData.dropoffAddress || deliveryData.dropoff_address || deliveryData.address || 'N/A')}
                                 </Text>
@@ -742,13 +744,11 @@ export default function DeliveryDetailScreen() {
                 }
 
                 {/* Proof of Delivery */}
-                <Text variant="titleMedium" style={[styles.sectionTitle, { color: c.text }]}>
-                    {String(deliveryData.status || '').toUpperCase() === 'RETURNED' ? 'Return Verification' : 'Proof of Delivery'}
-                </Text>
+                <Text variant="titleMedium" style={[styles.sectionTitle, { color: c.text }]}>Proof of Delivery</Text>
                 {
-                    (returnImageUri || proofImageUri) ? (
+                    proofImageUri ? (
                         <Card style={styles.imageCard} mode="elevated">
-                            <Image source={{ uri: returnImageUri || proofImageUri }} style={styles.proofImage} resizeMode="cover" />
+                            <Image source={{ uri: proofImageUri }} style={styles.proofImage} resizeMode="cover" />
                             {deliveryData.delivered_at && (
                                 <Text style={{ padding: 10, textAlign: 'center', color: c.textSec, fontSize: 12 }}>
                                     Taken on {dayjs.utc(parseUTCString(deliveryData.delivered_at)).add(8, 'hour').format('MMM D, YYYY h:mm A')}
@@ -759,6 +759,25 @@ export default function DeliveryDetailScreen() {
                         <Text style={{ color: c.textSec, fontStyle: 'italic', marginBottom: 20 }}>No proof of delivery image available.</Text>
                     )
                 }
+
+                {/* Return Verification */}
+                {isReturnFlow && (
+                    <>
+                        <Text variant="titleMedium" style={[styles.sectionTitle, { color: c.text }]}>Return Verification</Text>
+                        {returnImageUri ? (
+                            <Card style={styles.imageCard} mode="elevated">
+                                <Image source={{ uri: returnImageUri }} style={styles.proofImage} resizeMode="cover" />
+                                {(deliveryData.return_photo_uploaded_at || deliveryData.returned_at) && (
+                                    <Text style={{ padding: 10, textAlign: 'center', color: c.textSec, fontSize: 12 }}>
+                                        Taken on {dayjs.utc(parseUTCString(deliveryData.return_photo_uploaded_at || deliveryData.returned_at)).add(8, 'hour').format('MMM D, YYYY h:mm A')}
+                                    </Text>
+                                )}
+                            </Card>
+                        ) : (
+                            <Text style={{ color: c.textSec, fontStyle: 'italic', marginBottom: 20 }}>No return verification image available.</Text>
+                        )}
+                    </>
+                )}
 
                 {
                     deliveryData.status === 'Tampered' && (

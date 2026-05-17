@@ -13,10 +13,6 @@ jest.mock('expo-clipboard', () => ({
 // Mock Alert
 jest.spyOn(PremiumAlert, 'alert');
 
-// Mock Service
-jest.mock('../../services/cancellationService', () => ({
-    getReturnOtpRemainingHours: jest.fn(() => 23),
-}));
 
 describe('ReturnOtpDisplay', () => {
     const mockProps = {
@@ -44,15 +40,14 @@ describe('ReturnOtpDisplay', () => {
 
     it('renders correctly in full mode', () => {
         const { getByText } = renderWithProvider(<ReturnOtpDisplay {...mockProps} />);
-        expect(getByText('Return Authorization OTP')).toBeTruthy();
+        expect(getByText('Return OTP')).toBeTruthy();
         expect(getByText('123456')).toBeTruthy();
-        expect(getByText('Valid for 23 hours')).toBeTruthy();
     });
 
     it('renders correctly in compact mode', () => {
         const { getByText, queryByText } = renderWithProvider(<ReturnOtpDisplay {...mockProps} compact={true} />);
         expect(getByText('123456')).toBeTruthy();
-        expect(queryByText('Return Authorization OTP')).toBeNull();
+        expect(queryByText('Return OTP')).toBeNull();
     });
 
     it('handles clipboard copy', async () => {
@@ -69,13 +64,8 @@ describe('ReturnOtpDisplay', () => {
         });
 
         expect(Clipboard.setStringAsync).toHaveBeenCalledWith('123456');
-        expect(PremiumAlert.alert).toHaveBeenCalledWith('Copied!', 'OTP copied to clipboard');
+        expect(PremiumAlert.alert).toHaveBeenCalledWith('COPIED!', 'OTP COPIED TO CLIPBOARD');
         expect(mockProps.onCopy).toHaveBeenCalled();
-    });
-
-    it('hides validity if showValidity is false', () => {
-        const { queryByText } = renderWithProvider(<ReturnOtpDisplay {...mockProps} showValidity={false} />);
-        expect(queryByText(/Valid for/)).toBeNull();
     });
 
     it('does not require onCopy to be provided', async () => {
@@ -88,14 +78,6 @@ describe('ReturnOtpDisplay', () => {
         });
 
         expect(Clipboard.setStringAsync).toHaveBeenCalledWith('222333');
-        expect(PremiumAlert.alert).toHaveBeenCalledWith('Copied!', 'OTP copied to clipboard');
-    });
-
-    it('hides validity in compact mode when showValidity is false', () => {
-        const { queryByText } = renderWithProvider(
-            <ReturnOtpDisplay {...mockProps} compact={true} showValidity={false} />
-        );
-
-        expect(queryByText(/Valid for/)).toBeNull();
+        expect(PremiumAlert.alert).toHaveBeenCalledWith('COPIED!', 'OTP COPIED TO CLIPBOARD');
     });
 });

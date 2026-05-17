@@ -2409,12 +2409,12 @@ export async function checkActiveBookings(userId: string): Promise<any | null> {
                             .maybeSingle();
 
                         const sbStatus = String(sbData?.status ?? '').toUpperCase();
-                        if (['CANCELLED', 'COMPLETED', 'RETURNED', 'TAMPERED', 'EXPIRED'].includes(sbStatus)) {
+                        if (['CANCELLED', 'COMPLETED', 'RETURNED', 'EXPIRED'].includes(sbStatus)) {
                             console.log('[checkActiveBookings] Ignoring non-active booking:', key, sbStatus);
                             continue;
                         }
 
-                        if (['PENDING', 'ASSIGNED', 'IN_TRANSIT', 'ARRIVED'].includes(sbStatus)) {
+                        if (['PENDING', 'ASSIGNED', 'IN_TRANSIT', 'ARRIVED', 'RETURNING', 'TAMPERED'].includes(sbStatus)) {
                             candidate.status = sbStatus;
                             return candidate;
                         }
@@ -2442,7 +2442,7 @@ export async function checkActiveBookings(userId: string): Promise<any | null> {
                 .from('deliveries')
                 .select('*')
                 .eq('customer_id', userId)
-                .in('status', ['PENDING', 'ASSIGNED', 'IN_TRANSIT', 'ARRIVED'])
+                .in('status', ['PENDING', 'ASSIGNED', 'IN_TRANSIT', 'ARRIVED', 'RETURNING', 'TAMPERED'])
                 .order('created_at', { ascending: false })
                 .limit(1);
 

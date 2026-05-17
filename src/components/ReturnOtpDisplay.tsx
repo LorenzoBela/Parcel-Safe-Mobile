@@ -2,41 +2,45 @@
  * EC-32: Return OTP Display Component
  * 
  * A prominent, reusable component for displaying the return OTP
- * with copy functionality and validity timer.
+ * with copy functionality.
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { View, StyleSheet, TouchableOpacity } from 'react-native';
-import { Text, Surface, IconButton, useTheme } from 'react-native-paper';
+import { Text, Surface } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import * as Clipboard from 'expo-clipboard';
 
-import { getReturnOtpRemainingHours } from '../services/cancellationService';
 import { PremiumAlert } from '../services/PremiumAlertService';
 import { useAppTheme } from '../context/ThemeContext';
 
-// ── Uber-style dual palette ──
 const lightC = {
-    bg: '#FFFFFF', card: '#FFFFFF', search: '#F2F2F7',
-    text: '#000000', textSec: '#6B6B6B', textTer: '#AEAEB2',
-    border: '#E5E5EA', accent: '#000000', accentText: '#FFFFFF',
-    divider: '#F2F2F7',
-    greenBg: '#ECFDF5', greenText: '#059669',
-    redBg: '#FEF2F2', redText: '#DC2626',
-    orangeBg: '#FFF7ED', orangeText: '#EA580C',
-    blueBg: '#EFF6FF', blueText: '#2563EB',
-    purpleBg: '#F5F3FF', purpleText: '#7C3AED',
+    bg: '#f6f4f1',
+    card: '#ffffff',
+    panel: '#f7f5f2',
+    text: '#1c1917',
+    textSec: '#57534e',
+    textTer: '#a8a29e',
+    border: '#e7e5e4',
+    accent: '#111827',
+    accentText: '#ffffff',
+    gold: '#b45309',
+    goldSoft: 'rgba(180, 83, 9, 0.1)',
+    green: '#16a34a',
 };
 const darkC = {
-    bg: '#000000', card: '#1C1C1E', search: '#2C2C2E',
-    text: '#FFFFFF', textSec: '#8E8E93', textTer: '#636366',
-    border: '#38383A', accent: '#FFFFFF', accentText: '#000000',
-    divider: '#2C2C2E',
-    greenBg: '#052E16', greenText: '#4ADE80',
-    redBg: '#450A0A', redText: '#FCA5A5',
-    orangeBg: '#431407', orangeText: '#FDBA74',
-    blueBg: '#172554', blueText: '#93C5FD',
-    purpleBg: '#2E1065', purpleText: '#C4B5FD',
+    bg: '#0b0c10',
+    card: '#0f172a',
+    panel: '#111827',
+    text: '#f8fafc',
+    textSec: '#94a3b8',
+    textTer: '#64748b',
+    border: '#1f2937',
+    accent: '#f8fafc',
+    accentText: '#0b0c10',
+    gold: '#f59e0b',
+    goldSoft: 'rgba(245, 158, 11, 0.15)',
+    green: '#22c55e',
 };
 
 interface ReturnOtpDisplayProps {
@@ -49,28 +53,12 @@ interface ReturnOtpDisplayProps {
 
 export default function ReturnOtpDisplay({
     otp,
-    issuedAt,
     compact = false,
-    showValidity = true,
     onCopy,
 }: ReturnOtpDisplayProps) {
     const { isDarkMode } = useAppTheme();
     const c = isDarkMode ? darkC : lightC;
     const [copied, setCopied] = useState(false);
-    const [remainingHours, setRemainingHours] = useState(24);
-
-    useEffect(() => {
-        if (issuedAt && showValidity) {
-            const updateRemaining = () => {
-                const hours = getReturnOtpRemainingHours(issuedAt, Date.now());
-                setRemainingHours(hours);
-            };
-
-            updateRemaining();
-            const interval = setInterval(updateRemaining, 60000);
-            return () => clearInterval(interval);
-        }
-    }, [issuedAt, showValidity]);
 
     const handleCopy = async () => {
         await Clipboard.setStringAsync(otp);
@@ -82,135 +70,129 @@ export default function ReturnOtpDisplay({
 
     if (compact) {
         return (
-            <TouchableOpacity onPress={handleCopy} activeOpacity={0.8}>
+            <TouchableOpacity onPress={handleCopy} activeOpacity={0.85}>
                 <Surface
                     style={[
                         styles.compactContainer,
                         {
-                            backgroundColor: copied ? c.text : c.search,
-                            borderColor: copied ? c.text : c.border,
+                            backgroundColor: copied ? c.accent : c.panel,
+                            borderColor: copied ? c.gold : c.border,
                             borderWidth: 1,
-                            borderRadius: 0,
                         }
                     ]}
                     elevation={0}
                 >
-                    <MaterialCommunityIcons name="key-variant" size={16} color={copied ? c.bg : c.text} />
+                    <MaterialCommunityIcons name="key-variant" size={16} color={copied ? c.accentText : c.gold} />
                     <Text
                         style={{
                             letterSpacing: 4,
-                            color: copied ? c.bg : c.text,
+                            color: copied ? c.accentText : c.text,
                             marginLeft: 8,
                             fontFamily: 'Inter_900Black',
-                            fontSize: 16
+                            fontSize: 16,
                         }}
                     >
                         {otp}
                     </Text>
-                    <MaterialCommunityIcons
-                        name={copied ? "check" : "content-copy"}
-                        size={16}
-                        color={copied ? c.bg : c.text}
-                        style={{ marginLeft: 8 }}
-                    />
                 </Surface>
             </TouchableOpacity>
         );
     }
 
     return (
-        <Surface style={[styles.container, { backgroundColor: c.card, borderWidth: 1, borderColor: c.border }]} elevation={0}>
-            <View style={styles.header}>
-                <MaterialCommunityIcons name="key-variant" size={24} color={c.text} />
-                <Text style={{ marginLeft: 8, fontFamily: 'Inter_900Black', color: c.text, textTransform: 'uppercase', letterSpacing: 0.5, fontSize: 14 }}>
-                    Return Authorization OTP
-                </Text>
+        <Surface style={[styles.container, { backgroundColor: c.card, borderColor: c.border }]} elevation={0}>
+            <View style={[styles.accentBar, { backgroundColor: c.gold }]} />
+            <View style={styles.headerRow}>
+                <View style={styles.headerLeft}>
+                    <View style={[styles.iconHalo, { backgroundColor: c.goldSoft }]}>
+                        <MaterialCommunityIcons name="shield-key-outline" size={20} color={c.gold} />
+                    </View>
+                    <View style={{ marginLeft: 10 }}>
+                        <Text style={{ fontFamily: 'Inter_800ExtraBold', color: c.text, fontSize: 14, textTransform: 'uppercase', letterSpacing: 0.6 }}>
+                            Return OTP
+                        </Text>
+                        <Text style={{ color: c.textSec, fontFamily: 'Inter_500Medium', fontSize: 12 }}>
+                            Use at pickup for return authorization
+                        </Text>
+                    </View>
+                </View>
             </View>
-
-            <Text style={{ color: c.textSec, marginBottom: 16, fontFamily: 'Inter_500Medium', fontSize: 13, lineHeight: 18 }}>
-                Give this code to the sender to retrieve their package from the box.
-            </Text>
 
             <TouchableOpacity onPress={handleCopy} activeOpacity={0.9}>
                 <Surface
                     style={[
                         styles.otpBox,
                         {
-                            backgroundColor: c.text,
-                            borderRadius: 0,
-                            paddingVertical: 24,
+                            backgroundColor: copied ? c.gold : c.accent,
+                            borderColor: copied ? c.gold : c.border,
                         }
                     ]}
                     elevation={0}
                 >
                     <Text
-                        style={{
-                            letterSpacing: 12,
-                            color: c.bg,
-                            fontFamily: 'Inter_900Black',
-                            fontSize: 32,
-                            textAlign: 'center'
-                        }}
+                        style={[
+                            styles.otpText,
+                            { color: copied ? c.accentText : c.accentText }
+                        ]}
                     >
                         {otp}
                     </Text>
-                    <IconButton
-                        icon={copied ? "check" : "content-copy"}
-                        size={24}
-                        iconColor={copied ? c.greenText : c.bg}
-                        style={styles.copyButton}
-                    />
                 </Surface>
             </TouchableOpacity>
-
-            {showValidity && (
-                <View style={[styles.validityBadge, { backgroundColor: c.search, borderRadius: 0, marginTop: 12 }]}>
-                    <MaterialCommunityIcons name="clock-outline" size={16} color={c.text} />
-                    <Text style={{ marginLeft: 6, color: c.text, fontFamily: 'Inter_700Bold', fontSize: 12, textTransform: 'uppercase' }}>
-                        Valid for {remainingHours} hours
-                    </Text>
-                </View>
-            )}
         </Surface>
     );
 }
 
 const styles = StyleSheet.create({
     container: {
-        padding: 20,
-        borderRadius: 0,
+        padding: 18,
+        borderRadius: 18,
+        borderWidth: 1,
     },
-    header: {
+    accentBar: {
+        height: 3,
+        borderRadius: 999,
+        marginBottom: 14,
+        opacity: 0.9,
+    },
+    headerRow: {
         flexDirection: 'row',
         alignItems: 'center',
-        marginBottom: 8,
+        justifyContent: 'space-between',
+        marginBottom: 16,
+    },
+    headerLeft: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        flex: 1,
+    },
+    iconHalo: {
+        width: 36,
+        height: 36,
+        borderRadius: 18,
+        alignItems: 'center',
+        justifyContent: 'center',
     },
     otpBox: {
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'center',
-        padding: 20,
-        borderRadius: 12,
-        marginBottom: 12,
-    },
-    copyButton: {
-        position: 'absolute',
-        right: 8,
-    },
-    validityBadge: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'center',
-        paddingVertical: 8,
+        paddingVertical: 20,
         paddingHorizontal: 16,
-        borderRadius: 20,
-        alignSelf: 'center',
+        borderRadius: 16,
+        borderWidth: 1,
+    },
+    otpText: {
+        letterSpacing: 10,
+        fontFamily: 'Inter_900Black',
+        fontSize: 30,
+        textAlign: 'center',
     },
     compactContainer: {
         flexDirection: 'row',
         alignItems: 'center',
         paddingVertical: 8,
         paddingHorizontal: 12,
-        borderRadius: 8,
+        borderRadius: 12,
     },
 });

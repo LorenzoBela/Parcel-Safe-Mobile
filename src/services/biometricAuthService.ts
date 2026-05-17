@@ -117,7 +117,7 @@ export async function authenticateBiometricForUnlock(): Promise<BiometricAuthRes
   try {
     const authResult = await LocalAuthentication.authenticateAsync({
       promptMessage: 'Authorize unlock',
-      fallbackLabel: 'Use Personal PIN',
+      fallbackLabel: 'Use device passcode',
       disableDeviceFallback: false,
       cancelLabel: 'Cancel',
     });

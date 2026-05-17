@@ -323,6 +323,7 @@ export default function GlobalMapScreen() {
     const [listVisible, setListVisible] = useState(false);
     const [fleetFilter, setFleetFilter] = useState<FleetFilter>('ALL');
     const [expandedFeedIds, setExpandedFeedIds] = useState<Set<string>>(new Set());
+    const [showTraffic, setShowTraffic] = useState(false);
 
     const [sidebarAddresses, setSidebarAddresses] = useState<Map<string, string>>(new Map());
 
@@ -1101,6 +1102,33 @@ export default function GlobalMapScreen() {
                         pitch={navMode ? NAV_PITCH_DEG : 0}
                     />
 
+                    {/* Traffic layer — toggled by showTraffic state */}
+                    {showTraffic && (
+                        <MapboxGL.VectorSource
+                            id="mapbox-traffic"
+                            url="mapbox://mapbox.mapbox-traffic-v1"
+                        >
+                            <MapboxGL.LineLayer
+                                id="traffic-line"
+                                sourceLayerID="traffic"
+                                style={{
+                                    lineJoin: 'round',
+                                    lineCap: 'round',
+                                    lineColor: [
+                                        'match', ['get', 'congestion'],
+                                        'low', '#10B981',
+                                        'moderate', '#F59E0B',
+                                        'heavy', '#EF4444',
+                                        'severe', '#991B1B',
+                                        '#6B7280',
+                                    ],
+                                    lineWidth: 2.5,
+                                    lineOpacity: 0.75,
+                                }}
+                            />
+                        </MapboxGL.VectorSource>
+                    )}
+
                     {/* Per-box rider markers — PointAnnotation for reliable Android touch */}
                     {filteredBoxes.map((box) => {
                         const anim = animationStates.current.get(box.id);
@@ -1304,6 +1332,12 @@ export default function GlobalMapScreen() {
                                     size={20}
                                     iconColor={uiText}
                                     onPress={() => setListVisible((v) => !v)}
+                                />
+                                <IconButton
+                                    icon={showTraffic ? 'road-variant' : 'road'}
+                                    size={20}
+                                    iconColor={showTraffic ? uiAccent : uiTextSec}
+                                    onPress={() => setShowTraffic((v) => !v)}
                                 />
                         </View>
                     </View>

@@ -272,6 +272,7 @@ export default function AdminTrackingHistoryScreen() {
     const [showDatePicker, setShowDatePicker] = useState(false);
     const [datePickerMode, setDatePickerMode] = useState<'start' | 'end'>('start');
     const [filtersExpanded, setFiltersExpanded] = useState(true);
+    const [showTraffic, setShowTraffic] = useState(false);
     const [page, setPage] = useState(1);
     const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
     const [cameraCenter, setCameraCenter] = useState<[number, number]>(DEFAULT_CENTER);
@@ -830,9 +831,21 @@ export default function AdminTrackingHistoryScreen() {
                                     {selectedSession ? formatDateLabel(selectedSession.date) : 'N/A'} - {selectedSession ? getSessionBoxLabel(selectedSession) : 'N/A'}
                                 </Text>
                             </View>
-                            <TouchableOpacity onPress={() => setSelectedSessionId(null)} style={[styles.modalClose, { borderColor: c.border }]}> 
-                                <MaterialCommunityIcons name="close" size={18} color={c.textSec} />
-                            </TouchableOpacity>
+                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                                <TouchableOpacity 
+                                    onPress={() => setShowTraffic(prev => !prev)} 
+                                    style={[styles.modalClose, { borderColor: c.border, backgroundColor: showTraffic ? 'rgba(76, 175, 80, 0.1)' : 'transparent' }]}
+                                >
+                                    <MaterialCommunityIcons 
+                                        name={showTraffic ? "road-variant" : "road"} 
+                                        size={18} 
+                                        color={showTraffic ? "#4CAF50" : c.textSec} 
+                                    />
+                                </TouchableOpacity>
+                                <TouchableOpacity onPress={() => setSelectedSessionId(null)} style={[styles.modalClose, { borderColor: c.border }]}> 
+                                    <MaterialCommunityIcons name="close" size={18} color={c.textSec} />
+                                </TouchableOpacity>
+                            </View>
                         </View>
 
                         <ScrollView style={styles.modalBody} contentContainerStyle={styles.modalBodyContent}>
@@ -896,6 +909,28 @@ export default function AdminTrackingHistoryScreen() {
                                                         zoomLevel={cameraZoom}
                                                         animationDuration={800}
                                                     />
+
+                                                    {showTraffic && (
+                                                        <MapboxGL.VectorSource id="traffic-source" url="mapbox://mapbox.mapbox-traffic-v1">
+                                                            <MapboxGL.LineLayer
+                                                                id="traffic-layer"
+                                                                sourceLayerID="traffic"
+                                                                style={{
+                                                                    lineColor: [
+                                                                        'match',
+                                                                        ['get', 'congestion'],
+                                                                        'low', '#10B981',
+                                                                        'moderate', '#F59E0B',
+                                                                        'heavy', '#EF4444',
+                                                                        'severe', '#991B1B',
+                                                                        '#6B7280'
+                                                                    ],
+                                                                    lineWidth: 3,
+                                                                    lineOpacity: 0.75,
+                                                                } as any}
+                                                            />
+                                                        </MapboxGL.VectorSource>
+                                                    )}
 
                                                     {combinedRouteFeature ? (
                                                         <MapboxGL.ShapeSource id="history-route-combined" shape={combinedRouteFeature as any}>

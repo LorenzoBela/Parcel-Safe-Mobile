@@ -2,27 +2,23 @@
  * EC-32: Cancellation Confirmation Screen
  * 
  * Shown to riders after successfully cancelling a delivery.
- * Displays the return OTP and next steps for returning the package.
+ * Displays next steps for returning the package.
  */
 
-import React, { useState, useEffect, useCallback } from 'react';
-import { View, StyleSheet, ScrollView, TouchableOpacity, BackHandler } from 'react-native';
+import React, { useCallback } from 'react';
+import { View, StyleSheet, ScrollView, BackHandler } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Text, Surface, Button, Card, Avatar, useTheme, IconButton, Divider } from 'react-native-paper';
+import { Text, Surface, Button, Avatar, useTheme } from 'react-native-paper';
 import { useNavigation, useRoute, useFocusEffect } from '@react-navigation/native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 
-import LottieView from 'lottie-react-native';
 import {
     formatCancellationReason,
     CancellationReason,
-    getReturnOtpRemainingHours,
-    RETURN_OTP_VALIDITY_MS
 } from '../../services/cancellationService';
 
 interface RouteParams {
     deliveryId: string;
-    returnOtp: string;
     reason: CancellationReason;
     reasonDetails?: string;
     senderName?: string;
@@ -40,11 +36,8 @@ export default function CancellationConfirmationScreen() {
     const insets = useSafeAreaInsets();
     const params = route.params as RouteParams;
 
-    const remainingHours = params.returnOtp === '------' ? 24 : getReturnOtpRemainingHours(Date.now(), Date.now());
-
     const {
         deliveryId = 'TRK-XXXX-XXXX',
-        returnOtp = '------',
         reason = CancellationReason.OTHER,
         reasonDetails = '',
         senderName = 'Sender',
@@ -69,14 +62,17 @@ export default function CancellationConfirmationScreen() {
     );
 
     const handleStartReturn = () => {
-        navigation.navigate('ReturnPackage', {
+        navigation.navigate('Arrival', {
             deliveryId,
-            returnOtp,
+            boxId,
+            targetAddress: pickupAddress,
+            targetLat: pickupLat ?? 0,
+            targetLng: pickupLng ?? 0,
             pickupAddress,
-            senderName,
             pickupLat,
             pickupLng,
-            boxId,
+            senderName,
+            status: 'RETURNING',
         });
     };
 

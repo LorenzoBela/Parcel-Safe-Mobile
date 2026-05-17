@@ -24,6 +24,7 @@ import ReportScreen from '../screens/client/ReportScreen';
 import CustomerDashboard from '../screens/client/CustomerDashboard';
 import TrackOrderScreen from '../screens/client/TrackOrderScreen';
 import DeliveryLogScreen from '../screens/client/DeliveryLogScreen';
+import ReturnOTPScreen from '../screens/client/ReturnOTPScreen';
 
 import RiderDashboard from '../screens/rider/RiderDashboard';
 import AssignedDeliveriesScreen from '../screens/rider/AssignedDeliveriesScreen';
@@ -34,7 +35,6 @@ import DeliveryRecordsScreen from '../screens/rider/DeliveryRecordsScreen'; // F
 import TheftAlertScreen from '../screens/rider/TheftAlertScreen';
 import TrackMyBoxScreen from '../screens/rider/TrackMyBoxScreen';
 import CancellationConfirmationScreen from '../screens/rider/CancellationConfirmationScreen';
-import ReturnPackageScreen from '../screens/rider/ReturnPackageScreen';
 import JobDetailScreen from '../screens/rider/JobDetailScreen';
 import PairBoxScreen from '../screens/rider/PairBoxScreen';
 import RiderLoadingScreen from '../screens/rider/RiderLoadingScreen';
@@ -446,6 +446,7 @@ export default function AppNavigator() {
                 <Stack.Screen name="Rates" component={RatesScreen} />
                 <Stack.Screen name="Report" component={ReportScreen} />
                 <Stack.Screen name="TrackOrder" component={TrackOrderScreen} />
+                <Stack.Screen name="ReturnOTP" component={ReturnOTPScreen} options={{ headerShown: false }} />
                 <Stack.Screen name="DeliveryLog" component={DeliveryLogScreen} />
                 <Stack.Screen name="DeliveryDetail" component={DeliveryDetailScreen} />
                 <Stack.Screen name="PhotoAudit" component={PhotoAuditScreen} />
@@ -478,10 +479,8 @@ export default function AppNavigator() {
 
                 {/* EC-32: Cancellation Screens */}
                 <Stack.Screen name="CancellationConfirmation" component={CancellationConfirmationScreen} options={{ headerShown: true, title: 'Cancellation Confirmed' }} />
-                <Stack.Screen name="ReturnPackage" component={ReturnPackageScreen} options={{ headerShown: true, title: 'Return Package' }} />
                 <Stack.Screen name="CustomerCancellationConfirm" component={require('../screens/client/CustomerCancellationConfirmScreen').default} options={{ headerShown: true, title: 'Order Cancelled' }} />
             </Stack.Navigator>
         </NavigationContainer>
     );
 }
-

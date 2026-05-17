@@ -187,6 +187,8 @@ const PROMO_SLIDES = [
     },
 ];
 
+const ACTIVE_DELIVERY_STATUSES = ['PENDING', 'ASSIGNED', 'IN_TRANSIT', 'ARRIVED', 'RETURNING', 'TAMPERED'];
+
 // ─── Status helpers ─────────────────────────────────────────────────────────────
 function formatStatus(status: string): string {
     switch (status) {
@@ -198,6 +200,8 @@ function formatStatus(status: string): string {
         case 'COMPLETED': return 'Delivered';
         case 'CANCELLED': return 'Cancelled';
         case 'RETURNING': return 'Returning';
+        case 'RETURNED': return 'Returned';
+        case 'TAMPERED': return 'Security Hold';
         default: return status.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
     }
 }
@@ -308,7 +312,7 @@ export default function CustomerDashboard() {
                 .from('deliveries')
                 .select('*, rider:rider_id(full_name)')
                 .eq('customer_id', authedUser.userId)
-                .in('status', ['PENDING', 'ASSIGNED', 'IN_TRANSIT', 'ARRIVED'])
+                .in('status', ACTIVE_DELIVERY_STATUSES)
                 .order('created_at', { ascending: false })
                 .limit(1)
                 .single();
@@ -318,7 +322,11 @@ export default function CustomerDashboard() {
                     id: data.id, status: data.status,
                     eta: data.estimated_dropoff_time ? dayjs(data.estimated_dropoff_time).format('h:mm A') : null,
                     rider: data.rider?.full_name || 'Finding a rider...',
-                    location: data.status === 'PENDING' ? (data.pickup_address || 'Pickup Point') : (data.dropoff_address || 'Dropoff Point'),
+                    location: ['RETURNING', 'TAMPERED'].includes(data.status)
+                        ? (data.pickup_address || 'Return destination')
+                        : data.status === 'PENDING'
+                            ? (data.pickup_address || 'Pickup Point')
+                            : (data.dropoff_address || 'Dropoff Point'),
                     shareToken: data.share_token,
                 });
             } else { setActiveDelivery(null); }
@@ -362,14 +370,14 @@ export default function CustomerDashboard() {
                 .from('deliveries')
                 .select('*', { count: 'exact', head: true })
                 .eq('customer_id', authedUser.userId)
-                .eq('status', 'COMPLETED');
+                .in('status', ['COMPLETED', 'RETURNED']);
             setCompletedDeliveries(completed ?? 0);
 
             const { count: inTransit } = await supabase
                 .from('deliveries')
                 .select('*', { count: 'exact', head: true })
                 .eq('customer_id', authedUser.userId)
-                .in('status', ['IN_TRANSIT', 'ASSIGNED', 'ARRIVED']);
+                .in('status', ACTIVE_DELIVERY_STATUSES);
             setInTransitDeliveries(inTransit ?? 0);
         } catch { /* silent */ }
     }, [authedUser?.userId]);
@@ -643,7 +651,7 @@ export default function CustomerDashboard() {
                             <MaterialCommunityIcons name="package-variant" size={32} color={c.textTer} />
                         </View>
                         <Text style={[styles.emptyTitle, { color: c.textSec }]}>No active delivery</Text>
-                        <Text style={[styles.emptySub, { color: c.textTer }]}>Tap "Send a Package" below to book your first delivery</Text>
+                        <Text style={[styles.emptySub, { color: c.textTer }]}>Tap Send a Package below to book your first delivery</Text>
                     </View>
                 )}
                 </Animated.View>

@@ -428,6 +428,7 @@ export default function RiderDashboard() {
     const [mapZoomLevel, setMapZoomLevel] = useState(15);
     const headingSmoother = useHeadingSmoothing();
     const [showMapControls, setShowMapControls] = useState(false);
+    const [showTraffic, setShowTraffic] = useState(false);
 
     // Real-time address for map preview card
     const [liveAddress, setLiveAddress] = useState<string>('Locating...');
@@ -552,15 +553,21 @@ export default function RiderDashboard() {
                 resetQuickUnlockProgress();
             }, 1200);
         } catch (error: any) {
-            console.error('[QuickUnlock] Biometric failed:', error);
+            console.error('[QuickUnlock] Authenticated unlock failed:', error);
             resetQuickUnlockProgress();
             if (isPinOnlyUnlockError(error)) {
                 PremiumAlert.alert(
                     'Personal PIN Required',
                     'High-risk unlock requires your Rider Personal PIN. Your phone unlock PIN is different and cannot be used for box unlock authorization.'
                 );
+                openPinModal();
+                return;
             }
-            openPinModal();
+
+            PremiumAlert.alert(
+                'Unlock Failed',
+                error?.message || 'Could not send the unlock command after phone authentication. Please try again.'
+            );
         } finally {
             setQuickUnlockSubmitting(false);
             quickUnlockActionLockRef.current = false;
@@ -862,7 +869,7 @@ export default function RiderDashboard() {
 
 
     // EC-85: Recall State
-    const [recallState, setRecallState] = useState<{ isRecalled: boolean; returnOtp: string | null }>({ isRecalled: false, returnOtp: null });
+    const [recallState, setRecallState] = useState<{ isRecalled: boolean }>({ isRecalled: false });
 
     // Incoming Order State (for rider matching)
     const [incomingRequests, setIncomingRequests] = useState<Array<{ requestId: string; data: RiderOrderRequest }>>([]);
@@ -1857,7 +1864,6 @@ export default function RiderDashboard() {
                     // Navigate to confirmation screen with return OTP
                     navigation.navigate('CancellationConfirmation', {
                         deliveryId: nextDelivery.id,
-                        returnOtp: result.returnOtp,
                         reason: reason,
                         reasonDetails: details,
                         senderName: nextDelivery.customer,
@@ -2797,11 +2803,9 @@ export default function RiderDashboard() {
                         <View style={{ flex: 1, marginLeft: 12 }}>
                             <Text style={[styles.bannerTitle, { color: c.redText }]}>PACKAGE RECALLED</Text>
                             <Text style={[styles.bannerText, { color: c.redText }]}>Return to Sender immediately!</Text>
-                            {recallState.returnOtp && (
-                                <Text style={[styles.bannerText, { color: c.redText, fontFamily: 'Inter_700Bold', marginTop: 4 }]}>
-                                    Return OTP: {recallState.returnOtp}
-                                </Text>
-                            )}
+                            <Text style={[styles.bannerText, { color: c.redText, marginTop: 4 }]}>
+                                The sender can view the Return OTP in their app.
+                            </Text>
                         </View>
                     </View>
                 )}
@@ -2962,6 +2966,32 @@ export default function RiderDashboard() {
                                             rotation={headingSmoother.smooth(riderLocation?.coords.heading ?? -1, displaySpeed, localPhoneHeading ?? undefined)}
                                             speed={displaySpeed}
                                         />
+                                        {/* Traffic layer */}
+                                        {showTraffic && (
+                                            <MapboxGL.VectorSource
+                                                id="mapbox-traffic-preview"
+                                                url="mapbox://mapbox.mapbox-traffic-v1"
+                                            >
+                                                <MapboxGL.LineLayer
+                                                    id="traffic-line-preview"
+                                                    sourceLayerID="traffic"
+                                                    style={{
+                                                        lineJoin: 'round',
+                                                        lineCap: 'round',
+                                                        lineColor: [
+                                                            'match', ['get', 'congestion'],
+                                                            'low', '#10B981',
+                                                            'moderate', '#F59E0B',
+                                                            'heavy', '#EF4444',
+                                                            'severe', '#991B1B',
+                                                            '#6B7280',
+                                                        ],
+                                                        lineWidth: 2.5,
+                                                        lineOpacity: 0.75,
+                                                    }}
+                                                />
+                                            </MapboxGL.VectorSource>
+                                        )}
                                     </MapboxGL.MapView>
                                     {/* Address Overlay with Refresh Button */}
                                     <View style={styles.mapPreviewOverlay}>
@@ -3037,6 +3067,19 @@ export default function RiderDashboard() {
                                                     activeOpacity={0.7}
                                                 >
                                                     <MaterialCommunityIcons name="minus" size={24} color="#FFFFFF" />
+                                                </TouchableOpacity>
+                                                
+                                                {/* Traffic Toggle */}
+                                                <TouchableOpacity
+                                                    onPress={() => setShowTraffic(!showTraffic)}
+                                                    style={{
+                                                        width: 36, height: 36, borderRadius: 18,
+                                                        backgroundColor: showTraffic ? '#4CAF50' : 'rgba(0,0,0,0.6)',
+                                                        alignItems: 'center', justifyContent: 'center'
+                                                    }}
+                                                    activeOpacity={0.7}
+                                                >
+                                                    <MaterialCommunityIcons name={showTraffic ? "road-variant" : "road"} size={20} color="#FFFFFF" />
                                                 </TouchableOpacity>
                                             </>
                                         )}
@@ -3298,6 +3341,33 @@ export default function RiderDashboard() {
                                                     }}
                                                 />
                                             </MapboxGL.ShapeSource>
+                                        )}
+                                        
+                                        {/* Traffic layer */}
+                                        {showTraffic && (
+                                            <MapboxGL.VectorSource
+                                                id="mapbox-traffic-job"
+                                                url="mapbox://mapbox.mapbox-traffic-v1"
+                                            >
+                                                <MapboxGL.LineLayer
+                                                    id="traffic-line-job"
+                                                    sourceLayerID="traffic"
+                                                    style={{
+                                                        lineJoin: 'round',
+                                                        lineCap: 'round',
+                                                        lineColor: [
+                                                            'match', ['get', 'congestion'],
+                                                            'low', '#10B981',
+                                                            'moderate', '#F59E0B',
+                                                            'heavy', '#EF4444',
+                                                            'severe', '#991B1B',
+                                                            '#6B7280',
+                                                        ],
+                                                        lineWidth: 2.5,
+                                                        lineOpacity: 0.75,
+                                                    }}
+                                                />
+                                            </MapboxGL.VectorSource>
                                         )}
                                     </MapboxGL.MapView>
                                 ) : (
